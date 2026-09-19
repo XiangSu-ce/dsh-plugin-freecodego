@@ -1,0 +1,37 @@
+.action,
+.engine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border: 1px solid var(--fcg-line);
+  border-radius: var(--fcg-radius-full);
+  background: var(--fcg-bg-layer-2);
+  color: var(--fcg-text-secondary);
+  font-size: var(--fcg-font-caption);
+}
+.action { padding: 0 9px; cursor: pointer; }
+.action:hover { color: var(--fcg-text-primary); background: var(--fcg-bg-hover); }
+.sessionDeleteOverlay { position: fixed; z-index: 60; line-height: 0; }
+.sessionDeleteError { position: fixed; z-index: 61; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: min(420px, calc(100vw - 24px)); padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--fcg-danger) 28%, transparent); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-danger) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-danger); font-size: var(--fcg-font-caption); line-height: 18px; box-shadow: var(--fcg-shadow-2); }
+.sessionDeleteError span { overflow-wrap: anywhere; }
+.sessionDeleteError button { border: 0; padding: 0 2px; background: transparent; color: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+.sessionDelete { width: 16px; min-height: 16px; padding: 0; border: 0; border-radius: 4px; color: var(--fcg-danger); background: transparent; }
+.sessionDelete:hover { color: var(--fcg-danger); background: color-mix(in srgb, var(--fcg-danger) 10%, transparent); }
+.engine { padding-left: 9px; }
+.engineControl { position: relative; display: inline-flex; align-items: center; }
+.engineLabel { color: var(--fcg-text-tertiary); }
+.engineSelect { border: 0; outline: 0; padding: 4px 8px 4px 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* The native select otherwise expands to the longest option and forces the
+   entire composer tool row to wrap. Keep the closed control compact; opening
+   it still exposes every provider/model name in the browser's menu. */
+.execution { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-full); color: var(--fcg-text-tertiary); background: var(--fcg-bg-layer-2); font-size: var(--fcg-font-caption); white-space: nowrap; }
+.executionNative { border-color: color-mix(in srgb, var(--fcg-success) 42%, var(--fcg-line)); color: var(--fcg-success); background: color-mix(in srgb, var(--fcg-success) 7%, var(--fcg-bg-layer-2)); }
+.engineNotice { position: absolute; z-index: 20; top: calc(100% + 8px); left: 0; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 248px; padding: 10px 28px 10px 12px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 45%, var(--fcg-line)); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-2); color: var(--fcg-text-secondary); box-shadow: var(--fcg-shadow-2); font-size: var(--fcg-font-caption); line-height: 1.45; }
+.engineNotice strong { color: var(--fcg-text-primary); font-size: var(--fcg-font-caption); }
+.engineNotice span { grid-column: 1 / -1; }
+.engineNotice button { position: absolute; top: 6px; right: 7px; border: 0; padding: 0; background: transparent; color: var(--fcg-text-tertiary); font-size: 17px; line-height: 1; cursor: pointer; }
+.engineError { position: absolute; z-index: 20; top: calc(100% + 8px); left: 0; width: 248px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--fcg-danger) 32%, var(--fcg-line)); border-radius: var(--fcg-radius-md); background: color-mix(in srgb, var(--fcg-danger) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-danger); font-size: var(--fcg-font-caption); line-height: 1.45; box-shadow: var(--fcg-shadow-2); overflow-wrap: anywhere; }
+.engineError span { display: block; }
+.engineRetry { margin-top: 6px; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--fcg-danger) 32%, var(--fcg-line)); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-2); color: inherit; font: inherit; cursor: pointer; }
+.engineRetry:hover { background: color-mix(in srgb, var(--fcg-danger) 12%, var(--fcg-bg-layer-2)); }

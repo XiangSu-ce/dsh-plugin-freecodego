@@ -1,0 +1,50 @@
+/**
+ * The companion strip above the composer.
+ *
+ * Measurements come from the local token layer (`theme.css`), so the row follows
+ * light/dark and the host's spacing scale instead of carrying values of its own.
+ *
+ * **The lane has one height.** `72px` is `COMPANION_MAX_PX` (64) plus the row's
+ * vertical breathing space, and it is the row's floor for as long as the session
+ * is open — the character inside is what scales with the column, never the row.
+ * That is the whole point: a strip that appeared and disappeared with the work
+ * would shift the composer stack (and the transcript above it) by its own height
+ * twice every turn. `companion-bar.client.spec.tsx` asserts this number against
+ * the constant, so raising the character's ceiling without raising the lane is a
+ * failing test rather than a jump nobody notices until it ships.
+ */
+
+.root {
+  display: flex;
+  gap: var(--fcg-space-3);
+  align-items: center;
+  min-height: 72px;
+  padding: 0 var(--fcg-space-2);
+  /* Only the resting look changes between poses, and it fades rather than snaps. */
+  transition: opacity var(--fcg-slow) var(--fcg-ease);
+}
+
+/* The two quiet ends draw back: present, so nothing moves, but not competing with
+   the composer or with the todo, goal, and queue strips above it. */
+.root[data-fcg-companion-rest='true'] {
+  opacity: 0.4;
+}
+
+.mark {
+  flex: none;
+  display: block;
+  /* The strip is the reference; only the drawing inside it is measured. */
+  color: var(--fcg-text-primary);
+}
+
+.label {
+  min-width: 0;
+  color: var(--fcg-text-secondary);
+  font-size: var(--fcg-font-body);
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  /* One line always, so a long label cannot grow the lane. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

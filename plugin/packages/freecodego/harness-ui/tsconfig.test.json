@@ -1,0 +1,35 @@
+{
+  // The package project (`tsconfig.json`) includes only `src`, so nothing under
+  // `tests/` was ever type-checked: a fixture could omit a required prop, name a
+  // removed prop, or drift from the shape it is standing in for, and the suite
+  // stayed green. This project is the missing half — same compiler shape, with
+  // `tests` added and Node builtins available (the specs read files and paths).
+  //
+  // Type-only: `noEmit` and the declaration/composite flags are switched off, so
+  // this never writes into `lib/` and cannot collide with the build.
+  "extends": "../../../tsconfig.base.client.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "types": ["node"]
+  },
+  "include": ["src", "tests"],
+  "references": [
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../api/remotes/tsconfig.client.json" },
+    { "path": "../../client/locale" },
+    { "path": "../../client/connection/tsconfig.client.json" },
+    { "path": "../../client/store" },
+    { "path": "../../client/ui-renderer" },
+    { "path": "../../client/ui-conversation" },
+    { "path": "../../client/ui-chat" },
+    { "path": "../../client/ui-settings" },
+    { "path": "../../client/ui-slots" },
+    { "path": "../../client/ui-sidebar" },
+    { "path": "../harness-plugin" }
+  ]
+}

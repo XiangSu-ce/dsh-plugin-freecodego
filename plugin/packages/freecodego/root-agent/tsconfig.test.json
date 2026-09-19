@@ -1,0 +1,25 @@
+{
+  // See `../freecodego-api/tsconfig.test.json` for why this project exists and
+  // why its `references` repeats the package project's list.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src", "tests"],
+  "references": [
+    { "path": "../native-runtime-host" },
+    { "path": "../native-runtime-protocol" },
+    { "path": "../../core/agent" },
+    { "path": "../../llm/llm" },
+    { "path": "../../core/scope" },
+    { "path": "../../core/session" },
+    { "path": "../../session/session-persistence" },
+    { "path": "../../interaction/user-approval" },
+    { "path": "../../interaction/user-questions" }
+  ]
+}

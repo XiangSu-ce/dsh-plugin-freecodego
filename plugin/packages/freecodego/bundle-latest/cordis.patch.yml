@@ -1,0 +1,56 @@
+# Standard DeepSeek Harness 0.1.6-alpha.2 FreeCodeGo composition.
+- id: llm-deepseek
+  disabled: true
+- id: web-search-deepseek
+  disabled: true
+- id: system-prompt
+  config:
+    persona: >-
+      You are a coding agent powered by FreeCodeGo. Your working directory is
+      {{cwd}}. Harness owns the active workspace, session history, permissions,
+      tools, and model routing. Never reveal internal provider IDs, route keys,
+      or transport aliases to the user. When asked about model identity,
+      identify as the FreeCodeGo coding agent; do not infer, claim, or speculate
+      about an underlying model identity.
+- id: session-persistence-jsonl
+  inject:
+    - freeCodeGoSessionEvents
+- insert:
+    - id: freecodego-session-events
+      name: 'freecodego/session-events'
+    # The Harness's team runtime, loaded BEFORE the FreeCodeGo plugin. The order is
+    # load-bearing: the plugin decides at construction whether to register its own
+    # board and member lifecycle, and that decision has to be settled before the
+    # first request catalog is assembled rather than changing mid-session. Nothing
+    # here depends on FreeCodeGo, so the earlier position costs nothing.
+    - id: freecodego-agent-team
+      name: 'freecodego/agent-team'
+      config:
+        maxMembers: 8
+        maxTasks: 256
+        maxPendingMessagesPerMember: 64
+        maxMessageBytes: 65536
+        disposalTimeoutMs: 5000
+    - id: freecodego-tool-agent-team
+      name: 'freecodego/tool-agent-team'
+      config:
+        freshProvider: spawn
+        forkProvider: fork
+    # The Harness's own reminder scheduler. It is not mounted by any upstream
+    # bundle — only by an example config — so without this row the composition has
+    # `@deepseek-ai/dsh-client-ui-schedule` on the client plane with no host
+    # projection behind it, and no `schedule_create`/`schedule_list`/
+    # `schedule_delete` for a model to call. The plugin's own cron tools used to
+    # stand in for those three verbs; this row is what replaced them.
+    - id: freecodego-schedule
+      name: 'freecodego/schedule'
+    # The Harness's Auto-preset authorization gate: while a session's permission
+    # preset is `auto`, every native call is classified by a reviewer before its
+    # body runs. Mounting it also advertises the preset, which is the only way a
+    # user can select it. The plugin's own approval reviewer stands down on this
+    # preset (see action-reviewer.ts), so an Auto action gets one verdict, not two.
+    - id: freecodego-auto-review
+      name: 'freecodego/auto-review'
+    - id: freecodego
+      name: 'freecodego'
+      config: {}

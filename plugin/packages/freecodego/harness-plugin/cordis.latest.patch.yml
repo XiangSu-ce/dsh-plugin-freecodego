@@ -1,0 +1,15 @@
+# Latest Harness composition. It leaves the official RC.1 controller and
+# model-selection entries authoritative and only inserts FreeCodeGo surfaces.
+- id: llm-deepseek
+  disabled: true
+- id: web-search-deepseek
+  disabled: true
+- insert:
+    - id: freecodego-harness-plugin
+      name: '@deepseek-ai/dsh-freecodego-harness-plugin'
+      config: {}
+    - id: freecodego-agent-engine-router
+      name: '@deepseek-ai/dsh-freecodego-agent-engine-router'
+      config: {}
+    - id: freecodego-harness-ui
+      name: '@deepseek-ai/dsh-freecodego-harness-ui'

@@ -1,0 +1,10 @@
+This package includes derived timeout and abort helpers from FreeCodeGo.
+
+FreeCodeGo is licensed under the GNU Affero General Public License
+v3 (AGPL-3.0-only) as of the 0.1.4 release; versions up to 0.1.3 were
+MIT-licensed. The upstream helper code this package derives from was
+taken from the MIT-licensed era and remains available under MIT from
+its original source.
+
+The upstream FreeCodeGo LICENSE file retains the applicable license
+text for the respective era.

@@ -1,0 +1,1090 @@
+.root {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--fcg-text-primary);
+  font-size: var(--fcg-font-body-lg);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--fcg-line);
+}
+
+.toolbarTitle { min-width: 0; }
+.kicker {
+  color: var(--fcg-text-tertiary);
+  font-size: var(--fcg-font-caption);
+  font-weight: 600;
+  letter-spacing: .08em;
+  line-height: 18px;
+  text-transform: uppercase;
+}
+.title { margin: 1px 0 0; font-size: var(--fcg-font-section); font-weight: 600; line-height: 24px; }
+.toolbarAction, .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 5px 13px;
+  border: 1px solid var(--fcg-line);
+  border-radius: var(--fcg-radius-sm);
+  background: var(--fcg-bg-layer-2);
+  color: var(--fcg-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fcg-font-caption);
+  text-decoration: none;
+  line-height: 18px;
+  white-space: nowrap;
+  transition: background var(--fcg-fast) var(--fcg-ease), border-color var(--fcg-fast) var(--fcg-ease), color var(--fcg-fast) var(--fcg-ease);
+}
+.toolbarAction:hover, .button:hover { background: var(--fcg-bg-hover); }
+.button:disabled { cursor: not-allowed; opacity: .45; }
+.button:focus-visible, .toolbarAction:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.buttonPrimary:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-btn-primary-fill) 30%, transparent); }
+.buttonPrimary { border-color: transparent; background: var(--fcg-btn-primary-fill); color: var(--fcg-text-on-brand); }
+.buttonPrimary:hover:not(:disabled) { border-color: transparent; background: var(--fcg-btn-primary-hover); }
+.buttonPrimary:hover { background: var(--fcg-btn-primary-hover); }
+.buttonDanger { color: var(--fcg-danger); }
+
+.loading, .error { padding: 18px 0; color: var(--fcg-text-tertiary); }
+.error { color: var(--fcg-danger); }
+.syncNotice { display: flex; align-items: center; gap: 10px; margin: 14px 0 0; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--fcg-brand) 24%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-brand) 6%, var(--fcg-bg-layer-1)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.syncNoticeOffline { border-color: color-mix(in srgb, var(--fcg-warn-label) 34%, var(--fcg-line)); background: color-mix(in srgb, var(--fcg-warn-label) 7%, var(--fcg-bg-layer-1)); color: var(--fcg-warn-label); }
+.syncDot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: var(--fcg-radius-full); background: var(--fcg-brand); animation: sync-pulse 1.25s ease-in-out infinite; }
+.syncNoticeOffline .syncDot { background: var(--fcg-warn-label); animation: none; }
+@keyframes sync-pulse { 50% { opacity: .38; transform: scale(.8); } }
+.sections { display: grid; gap: 0; }
+.pageTabs { display: flex; gap: 4px; margin: 0 0 14px; padding: 3px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-tip); }
+.pageTab { flex: 1; min-height: 30px; padding: 5px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); transition: background var(--fcg-fast) var(--fcg-ease), color var(--fcg-fast) var(--fcg-ease); }
+.pageTabActive { background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); box-shadow: var(--fcg-shadow-1); font-weight: 600; }
+.modelCategoryActions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; width: 100%; align-items: center; margin-top: 8px; }
+.modelCategoryActions .select { min-width: 0; width: 100%; }
+.routingCell:has(.modelCategoryActions) { align-items: start; }
+.routingCell:has(.modelCategoryActions) > .pageTabs { grid-column: 2; width: 100%; margin: 0; box-sizing: border-box; }
+.routingCell:has(.modelCategoryActions) > .select { grid-column: 1; grid-row: 2; width: 100%; }
+.routingCell:has(.modelCategoryActions) > .modelCategoryActions { grid-column: 2; grid-row: 2; margin-top: 0; }
+.modelCategoryActions .button { min-height: 42px; }
+.community { min-width: 0; padding: 4px 0 17px; }
+.communityHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 13px 0 14px; border-bottom: 1px solid var(--fcg-line); }
+.communityIntro { max-width: 520px; margin: 5px 0 0; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.communityFilterBar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0 2px; }
+.communityFilters { display: flex; min-width: 0; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.communityFilter { min-height: 28px; padding: 4px 10px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-2); color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); white-space: nowrap; }
+.communityFilter:hover { background: var(--fcg-bg-hover); }
+.communityFilterActive { border-color: var(--fcg-text-primary); background: var(--fcg-text-primary); color: var(--fcg-bg-layer-2); }
+.communityInstalledEntry { min-height: 30px; flex: 0 0 auto; padding: 5px 10px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); font-weight: 600; white-space: nowrap; }
+.communityInstalledEntry:hover { background: var(--fcg-bg-hover); }
+.communityInstalledEntryActive { border-color: var(--fcg-text-primary); background: var(--fcg-text-primary); color: var(--fcg-bg-layer-2); }
+.capabilityCommunity { margin-top: 12px; padding: 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.capabilityCommunityHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.capabilityCommunityGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 9px; margin-top: 11px; }
+.marketplaceGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; margin-top: 13px; }
+.capabilityCommunityCard { display: grid; gap: 8px; min-width: 0; padding: 12px 14px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.capabilityCommunityCard strong { font-size: var(--fcg-font-body); }
+.capabilityCommunityCard p { min-height: 36px; margin: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.capabilityCommunityCard small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.capabilityCommunityCard .button { width: 100%; margin-top: 2px; }
+.capabilityCommunityTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.capabilityCommunityKind { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 700; letter-spacing: .07em; }
+.marketplaceIdentity { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.capabilityIcon { display: inline-flex; width: 28px; height: 28px; flex: 0 0 auto; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 700; object-fit: cover; }
+.capabilityIconMcp { border-color: color-mix(in srgb, var(--fcg-brand) 35%, var(--fcg-line)); background: color-mix(in srgb, var(--fcg-brand) 11%, var(--fcg-bg-layer-1)); color: var(--fcg-brand); }
+.marketplaceControls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, .4fr); gap: 8px; margin-top: 12px; }
+/* Doubles as a neutral button: details open an in-plugin dialog, not a tab. */
+.marketplaceLink { appearance: none; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); text-decoration: none; }
+.marketplaceLink:hover { color: var(--fcg-text-primary); text-decoration: underline; }
+.marketplacePagination { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 13px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.communitySearch { display: grid; gap: 5px; margin-top: 12px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.communityGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; padding-top: 14px; }
+.communityCard { display: flex; min-width: 0; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); cursor: pointer; transition: border-color var(--fcg-fast) var(--fcg-ease), transform var(--fcg-fast) var(--fcg-ease), box-shadow var(--fcg-fast) var(--fcg-ease); }
+.communityCard:hover, .communityCard:focus-visible { border-color: var(--fcg-line-strong); box-shadow: var(--fcg-shadow-2); outline: none; transform: translateY(-1px); }
+.communityCardTop { display: flex; min-width: 0; align-items: center; gap: 8px; }
+img.communityPluginIcon { display: block; width: 34px; height: 34px; flex: 0 0 auto; overflow: hidden; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); object-fit: cover; }
+.communityIdentity { display: grid; min-width: 0; gap: 1px; }
+.communityIdentity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fcg-font-body); }
+.communityIdentity small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.communityCategory { margin-left: auto; padding: 2px 6px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-hover); color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.communityDescription { display: -webkit-box; min-height: 54px; margin: 0; overflow: hidden; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.communityFeatures, .communityFeatureList { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.communityStats { display: flex; gap: 10px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.communityState { color: var(--fcg-success); font-size: var(--fcg-font-caption); font-weight: 600; }
+.communityIncompatible { min-height: 30px; padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 35%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); color: var(--fcg-warn-label); font-size: var(--fcg-font-caption); line-height: 18px; }
+.communityInstall { width: 100%; margin-top: auto; }
+.communityProgress { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.communityRestart { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 10px 11px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 35%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 6%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.communityFootnote { display: block; margin-top: 13px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.communityModalBackdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 38%); }
+.communityModal { display: flex; width: min(760px, 100%); max-height: min(820px, 92vh); min-width: 0; flex-direction: column; gap: 12px; padding: 18px; overflow: hidden; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-lg); background: var(--fcg-bg-layer-2); box-shadow: var(--fcg-shadow-pop); }
+.communityModalHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.communityModalTitle { margin: 2px 0 0; font-size: var(--fcg-font-section); line-height: 25px; }
+.communityModalOwner { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.communityModalSummary { margin: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-body); line-height: 20px; }
+.communityModalHeader img.communityPluginIcon { width: 40px; height: 40px; margin-top: 8px; }
+.communityModalStats { display: flex; align-items: center; gap: 12px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.communityModalStats a { color: var(--fcg-text-primary); }
+.communityReadme { min-height: 180px; overflow: auto; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); }
+.communityReadme pre { margin: 0; padding: 13px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fcg-text-secondary); font: var(--fcg-font-caption)/19px var(--fcg-font-mono); }
+.communityModalFooter { display: flex; justify-content: flex-end; gap: 8px; }
+.section { min-width: 0; padding: 24px 0; border-bottom: 1px solid var(--fcg-line-subtle); }
+.section:last-child { border-bottom: 0; }
+.sectionHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.sectionName { font-size: var(--fcg-font-body-lg); font-weight: 650; letter-spacing: -0.01em; line-height: 20px; }
+.sectionMeta { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.badge { padding: 3px 8px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-hover); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.badgeLive { color: var(--fcg-success); }
+/* A failing self-check reads as danger, not as the neutral "no state yet" pill. */
+.badgeDanger { color: var(--fcg-danger); }
+/* Raw backend snapshot: monospace, bounded, and scrollable so a large account
+   object cannot stretch the panel. It is a fallback for support, not a view. */
+.diagnosticsDump { max-height: 240px; margin: 4px 0 0; padding: 8px 10px; overflow: auto; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-input); color: var(--fcg-text-secondary); font-family: var(--fcg-font-mono); font-size: var(--fcg-font-caption); line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.routingGrid { grid-template-columns: 1fr; gap: 8px; }
+.routingCell { display: grid; min-height: 0; grid-template-columns: minmax(150px, .7fr) minmax(0, 1fr); align-items: center; gap: 18px; padding: 12px 14px; }
+.routingCell.selectCell { grid-template-rows: none; align-content: normal; }
+.routingCell .select { min-height: 42px; }
+.routingCopy { display: grid; min-width: 0; gap: 2px; }
+.routingCell:not(.selectCell) .routingCopy { grid-column: 1 / -1; grid-template-columns: minmax(150px, .7fr) auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.routingCell:not(.selectCell) .cellHint { margin-top: 0; }
+.infoCell { min-width: 0; padding: 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.cellLabel { display: block; margin-bottom: 4px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.cellValue { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.cellHint { display: block; margin-top: 3px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+/* Community feedback row on the overview page. Wraps rather than squeezing the
+   join button, so the link stays a full-size target on a narrow panel. */
+.feedbackRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 18px; }
+.feedbackRow > .routingCopy { flex: 1 1 220px; }
+/* The join control is the shared `.button` face on an anchor; this only adds
+   the icon gap and drops the underline the anchor element brings with it. */
+.telegramLink { flex: none; gap: 7px; text-decoration: none; }
+.telegramIcon { display: block; flex: none; }
+.selectCell { display: grid; gap: 5px; }
+.select, .input { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-input); color: var(--fcg-text-primary); font: inherit; font-size: var(--fcg-font-body); outline: none; transition: border-color var(--fcg-fast) var(--fcg-ease), box-shadow var(--fcg-fast) var(--fcg-ease); }
+.select:hover, .input:hover { border-color: var(--fcg-line-strong); }
+.select:focus, .input:focus { border-color: var(--fcg-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 16%, transparent); }
+.accountList { display: flex; flex-direction: column; gap: 8px; }
+.accountManager { display: grid; gap: 10px; margin-top: 10px; padding: 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.extensionList { display: grid; gap: 6px; margin-top: 14px; }
+.extensionRow { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 12px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); cursor: pointer; }
+.extensionRow span { display: grid; gap: 3px; min-width: 0; }
+.extensionRow small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.engineSelect { flex: 0 0 auto; width: 216px; cursor: pointer; }
+.switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--fcg-line-strong);
+  border-radius: var(--fcg-radius-full);
+  background: var(--fcg-bg-tip);
+  cursor: pointer;
+  outline: none;
+  transition: background var(--fcg-fast) var(--fcg-ease), border-color var(--fcg-fast) var(--fcg-ease);
+}
+.switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  /* A superellipse would deform this knob into a squircle; keep it circular. */
+  corner-shape: round;
+  background: var(--fcg-bg-layer-2);
+  box-shadow: var(--fcg-shadow-1);
+  transition: transform var(--fcg-fast) var(--fcg-ease);
+}
+.switch:checked { border-color: var(--fcg-brand); background: var(--fcg-brand); }
+.switch:checked::before { transform: translateX(16px); }
+.switch:hover:not(:disabled) { border-color: var(--fcg-brand); }
+.switch:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.switch:disabled { cursor: not-allowed; opacity: 0.45; }
+.capabilityForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 12px; padding: 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.capabilityForm label { display: grid; gap: 5px; min-width: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.capabilityFormHead { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 10px; }
+.capabilityFull { grid-column: 1 / -1; }
+.skillList { display: grid; gap: 8px; margin-top: 12px; }
+.capabilityStats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.capabilityStats div { display: grid; gap: 2px; padding: 12px 14px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); }
+.capabilityStats strong { font-size: var(--fcg-font-section); line-height: 21px; }
+.capabilityStats small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.advisorStandalone { padding-top: 2px; }
+.engineeringSection .capabilityStats { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.advisorStats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.advisorStats div { display: grid; min-width: 0; gap: 3px; padding: 12px 14px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); }
+.advisorStats strong { overflow: hidden; font-size: var(--fcg-font-body-lg); line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.advisorStats small, .advisorEvidence small { overflow-wrap: anywhere; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.advisorWarning { margin-top: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 35%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 6%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; overflow-wrap: anywhere; }
+.advisorEvidence { display: grid; gap: 3px; margin-top: 12px; padding: 10px 11px; border-left: 2px solid var(--fcg-text-primary); background: var(--fcg-bg-layer-1); }
+.advisorEvidence strong { font-size: var(--fcg-font-caption); }
+.advisorEvidence span { color: var(--fcg-text-secondary); font: var(--fcg-font-caption)/16px var(--fcg-font-mono); }
+.advisorModelField { display: grid; gap: 5px; min-width: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.advisorModelTrigger { display: grid; width: 100%; min-height: 42px; gap: 2px; padding: 8px 9px; overflow: hidden; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); cursor: pointer; font: inherit; text-align: left; }
+.advisorModelTrigger:hover { border-color: var(--fcg-line-strong); }
+.advisorModelTrigger:disabled { cursor: not-allowed; opacity: .55; }
+.advisorModelTrigger small { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.advisorPickerBackdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 38%); }
+.advisorPicker { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; width: min(680px, 100%); height: min(720px, 92vh); gap: 11px; padding: 17px; overflow: hidden; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-lg); background: var(--fcg-bg-layer-2); box-shadow: var(--fcg-shadow-pop); }
+.advisorPickerHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.advisorPickerHeader > div { display: grid; gap: 3px; }
+.advisorPickerHeader strong { font-size: 16px; }
+.advisorPickerHeader small, .advisorManual > small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.advisorModelList { display: grid; min-height: 0; gap: 7px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: 6px; }
+.advisorModelOption { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 11px 12px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); color: var(--fcg-text-primary); cursor: pointer; font: inherit; text-align: left; }
+.advisorModelOption:hover { border-color: var(--fcg-line-strong); background: var(--fcg-bg-layer-2); }
+.advisorModelSelected { border-color: var(--fcg-brand); background: var(--fcg-bg-layer-2); box-shadow: inset 0 0 0 1px var(--fcg-brand); }
+.advisorModelOption > span { display: grid; min-width: 0; gap: 2px; }
+.advisorModelOption small { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.advisorModelOption code { max-width: 45%; overflow: hidden; color: var(--fcg-text-secondary); font: var(--fcg-font-caption)/16px var(--fcg-font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.advisorManual { display: grid; gap: 6px; border-top: 1px solid var(--fcg-line); padding-top: 10px; }
+.advisorManual summary { cursor: pointer; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.advisorNotes { display: grid; gap: 8px; margin-top: 12px; }
+.advisorNote { display: grid; gap: 7px; padding: 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.advisorNoteHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.advisorNoteHeader small, .advisorNote footer { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.advisorNote p { margin: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; overflow-wrap: anywhere; }
+.advisorSeverity { display: inline-flex; width: fit-content; border-radius: var(--fcg-radius-full); padding: 2px 7px; font-size: var(--fcg-font-caption); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.advisorSeverityNit { background: var(--fcg-bg-hover); color: var(--fcg-text-secondary); }
+.advisorSeverityConcern { background: color-mix(in srgb, var(--fcg-warn) 13%, var(--fcg-bg-layer-2)); color: var(--fcg-warn-label); }
+.advisorSeverityBlocker { background: color-mix(in srgb, var(--fcg-danger) 11%, var(--fcg-bg-layer-2)); color: var(--fcg-danger); }
+.memoryPanel { display: grid; gap: 12px; margin-top: 16px; padding: 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.memoryHeader, .memoryDetailHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.memoryHeader > div:first-child, .memoryDetailHeader > div { display: grid; min-width: 0; gap: 3px; }
+.memoryHeader strong, .memoryDetailHeader strong { font-size: var(--fcg-font-body); }
+.memoryHeader small, .memoryDetailHeader small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.memoryActions, .memoryRecordActions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.memoryActions .button, .memoryRecordActions .button { min-height: 26px; padding: 3px 8px; font-size: var(--fcg-font-caption); }
+/* Memory search: the box and its two actions share one row, so the list below
+   keeps its full width instead of being squeezed by a permanent toolbar. */
+.memorySearchRow { display: flex; align-items: center; gap: 7px; }
+.memorySearchRow .input { flex: 1 1 auto; }
+.memorySearchRow .button { flex: 0 0 auto; min-height: 30px; padding: 4px 10px; font-size: var(--fcg-font-caption); }
+/* The injection preview is deliberately distinct from the record list: it is a
+   different question (what the model gets) asked of the same store. */
+.memoryRecall { display: grid; gap: 6px; padding: 9px 11px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.memoryRecallHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.memoryRecallHead span { display: grid; gap: 2px; min-width: 0; }
+.memoryRecallHead small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.memoryRecallHead .button { flex: 0 0 auto; min-height: 24px; padding: 2px 8px; font-size: var(--fcg-font-caption); }
+.memoryRecallList { display: flex; flex-wrap: wrap; gap: 6px; }
+.memoryRecallList span { padding: 3px 9px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-1); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.memoryList { display: grid; gap: 7px; max-height: 360px; overflow: auto; padding-right: 3px; }
+.memoryRecord { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 10px 12px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.memoryRecordSelected { box-shadow: inset 0 0 0 1px var(--fcg-brand); }
+.memoryRecordSelect { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--fcg-text-primary); cursor: pointer; font: inherit; text-align: left; }
+.memoryRecordSelect:disabled { cursor: not-allowed; opacity: .6; }
+.memoryRecordSelect > span { display: grid; min-width: 0; gap: 3px; }
+.memoryRecordSelect strong, .memoryRecordSelect small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memoryRecordSelect strong { font-size: var(--fcg-font-caption); }
+.memoryRecordSelect small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.memoryTrust { flex: 0 0 auto; border-radius: var(--fcg-radius-full); padding: 2px 6px; background: var(--fcg-bg-hover); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 600; }
+.memoryTrustReviewed { background: color-mix(in srgb, var(--fcg-success) 12%, var(--fcg-bg-layer-2)); color: var(--fcg-success); }
+.memoryTrustDraft { background: color-mix(in srgb, var(--fcg-warn) 13%, var(--fcg-bg-layer-2)); color: var(--fcg-warn-label); }
+.memoryDetail { display: grid; gap: 9px; padding: 11px; border: 1px solid color-mix(in srgb, var(--fcg-text-primary) 18%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.memoryDetail p { max-height: 240px; margin: 0; overflow: auto; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 19px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.memoryTags { display: flex; gap: 5px; flex-wrap: wrap; }
+.memoryTags span { border-radius: var(--fcg-radius-full); padding: 2px 6px; background: var(--fcg-bg-hover); color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.memoryTimeline { display: grid; gap: 5px; border-top: 1px solid var(--fcg-line); padding-top: 9px; }
+.memoryTimeline strong { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.memoryTimeline button { overflow: hidden; padding: 0; border: 0; background: transparent; color: var(--fcg-text-tertiary); cursor: pointer; font: var(--fcg-font-caption)/16px var(--fcg-font-mono); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.memoryTimeline button:hover, .memoryTimelineCurrent { color: var(--fcg-text-primary) !important; }
+.graphPanel { display: grid; gap: 10px; margin-top: 14px; padding: 12px; border: 1px solid color-mix(in srgb, var(--fcg-brand) 24%, var(--fcg-line)); border-radius: var(--fcg-radius-md); background: linear-gradient(135deg, color-mix(in srgb, var(--fcg-brand) 5%, var(--fcg-bg-layer-2)), var(--fcg-bg-layer-1)); }
+.graphState { display: grid; gap: 3px; padding: 10px 11px; border-left: 2px solid var(--fcg-brand); background: var(--fcg-bg-layer-2); }
+.graphState strong { font-size: var(--fcg-font-caption); }
+.graphState small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.graphInstallList { display: grid; gap: 8px; }
+.graphInstallRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.graphInstallRow > div { display: grid; min-width: 0; flex: 1; gap: 4px; }
+.graphInstallRow strong { font-size: var(--fcg-font-caption); }
+.graphInstallRow small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.graphInstallRow .input { margin-top: 4px; }
+.verificationGrid { display: grid; gap: 7px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.verificationGrid article { display: grid; min-width: 0; gap: 4px; padding: 10px 12px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.verificationGrid strong { font-size: var(--fcg-font-caption); text-transform: uppercase; }
+.verificationGrid small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.verificationGrid pre { max-height: 120px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fcg-text-secondary); font: var(--fcg-font-caption)/19px var(--fcg-font-mono); }
+.mcpTemplateBar { display: flex; align-items: center; gap: 7px; margin-top: 12px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.templateButton { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 3px 8px; border: 1px dashed var(--fcg-line-strong); border-radius: var(--fcg-radius-sm); background: transparent; color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); }
+.templateButton:hover { border-style: solid; border-color: var(--fcg-text-primary); color: var(--fcg-text-primary); }
+.mcpPresetHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 14px; }
+.mcpPresetHeading strong { font-size: var(--fcg-font-caption); }
+.mcpPresetHeading small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.mcpPresetGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.mcpPresetCard { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-md); background: linear-gradient(135deg, var(--fcg-bg-layer-2), var(--fcg-bg-layer-1)); color: var(--fcg-text-primary); cursor: pointer; font: inherit; text-align: left; }
+.mcpPresetCard:hover { border-color: var(--fcg-line-strong); box-shadow: var(--fcg-shadow-1); transform: translateY(-1px); }
+.mcpPresetCard:disabled { cursor: not-allowed; opacity: .55; transform: none; }
+.mcpPresetCard > span:not(.mcpPresetIcon) { display: grid; min-width: 0; gap: 2px; }
+.mcpPresetCard strong { overflow: hidden; font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.mcpPresetCard small { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.mcpPresetCard b { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 500; white-space: nowrap; }
+.mcpPresetIcon, .mcpServerIcon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-brand) 12%, var(--fcg-bg-layer-2)); color: var(--fcg-brand); }
+.mcpServerIcon { width: 32px; height: 32px; }
+.mcpMarketplaceGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.mcpMarketplaceCard { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; min-width: 0; padding: 10px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-md); background: linear-gradient(135deg, var(--fcg-bg-layer-2), var(--fcg-bg-layer-1)); }
+.mcpMarketplaceIcon { width: 30px; height: 30px; flex: 0 0 auto; object-fit: cover; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.mcpMarketplaceCopy { display: grid; min-width: 0; gap: 3px; }
+.mcpMarketplaceCopy > div { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.mcpMarketplaceCopy strong, .mcpMarketplaceCopy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcpMarketplaceCopy strong { font-size: var(--fcg-font-caption); }
+.mcpMarketplaceCopy span { flex: 0 0 auto; padding: 2px 6px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-hover); color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.mcpMarketplaceCopy small, .mcpMarketplaceCopy em { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); font-style: normal; line-height: 18px; }
+.mcpMarketplaceActions { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mcpMarketplaceActions a { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); text-decoration: none; }
+.mcpMarketplaceActions a:hover { color: var(--fcg-text-primary); text-decoration: underline; }
+.mcpMarketplaceActions .button { min-height: 27px; padding: 3px 8px; font-size: var(--fcg-font-caption); }
+.mcpJsonPanel { display: grid; gap: 9px; margin-top: 12px; padding: 11px; border: 1px solid color-mix(in srgb, var(--fcg-brand) 32%, var(--fcg-line)); border-radius: var(--fcg-radius-md); background: color-mix(in srgb, var(--fcg-brand) 4%, var(--fcg-bg-layer-1)); }
+.mcpJsonPanel .capabilityFormHead { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 4px 10px; }
+.mcpJsonPanel .capabilityFormHead small { grid-column: 1 / -1; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.mcpJsonInput { width: 100%; min-height: 170px; box-sizing: border-box; resize: vertical; padding: 10px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); font: var(--fcg-font-caption)/18px var(--fcg-font-mono); outline: none; }
+.mcpJsonInput:focus { border-color: var(--fcg-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 16%, transparent); }
+.mcpServerList { display: grid; gap: 8px; margin-top: 12px; }
+.mcpServerCard { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 12px 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-2); }
+.mcpServerMain { display: grid; min-width: 0; gap: 4px; }
+.mcpServerMain > small { overflow: hidden; color: var(--fcg-text-tertiary); font: var(--fcg-font-caption)/16px var(--fcg-font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.mcpServerTitle { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.mcpServerTitle strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fcg-font-body); }
+.mcpServerActions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+.inlineSwitch { display: inline-flex; align-items: center; gap: 4px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.inlineSwitch input { width: 14px; height: 14px; margin: 0; accent-color: var(--fcg-brand); cursor: pointer; }
+.emptyCapability { display: grid; gap: 4px; margin-top: 12px; padding: 18px 14px; border: 1px dashed var(--fcg-line-strong); border-radius: var(--fcg-radius-md); color: var(--fcg-text-secondary); text-align: center; }
+.emptyCapability small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.skillPanel { display: grid; gap: 8px; margin-top: 14px; padding-top: 1px; }
+.skillPanelHeader { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.skillPanelHeader small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+/* One library row. It is a real button so the detail dialog is reachable by
+   keyboard and assistive tech, which means the UA button face is stripped. */
+.skillCard { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid transparent; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); }
+.skillCard:hover { border-color: var(--fcg-line); background: var(--fcg-bg-layer-2); }
+/* The body is the button: the invocation switch sits beside it, because a
+   checkbox nested inside a button is neither focusable nor valid. */
+.skillCardBody { display: grid; flex: 1; gap: 4px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; font: inherit; text-align: left; }
+.skillCardBody:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.skillCardControl { display: grid; flex: none; justify-items: end; gap: 2px; padding-top: 2px; }
+.skillCardToggle { display: flex; align-items: center; gap: 6px; color: var(--fcg-text-tertiary); cursor: pointer; font-size: var(--fcg-font-caption); white-space: nowrap; }
+.skillCardToggle input { margin: 0; }
+.skillCardClear { padding: 0; border: 0; background: none; color: var(--fcg-brand); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); }
+.skillCardClear:disabled { opacity: 0.5; cursor: default; }
+/* The same switch inside the Skill detail dialog, where the row is the dialog
+   itself rather than a library row, so it needs its own alignment. */
+.skillDetailControl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 10px; padding: 9px 12px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); }
+.skillDetailControl > small { flex-basis: 100%; }
+/* A resolved forward target under the alias body, set apart so the alias line
+   above is not mistaken for the whole Skill. */
+.skillForward { margin-top: 12px; }
+.skillForwardHead { display: grid; gap: 2px; margin-bottom: 6px; }
+.skillForwardHead strong { font-size: var(--fcg-font-caption); }
+.skillForwardHead small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.skillCardHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.skillCard strong { font-size: var(--fcg-font-caption); }
+.skillCard p { margin: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.skillCard small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+/* Companion-file chips in the Skill dialog. */
+.skillFileBar { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+.skillFileChip { max-width: 100%; padding: 4px 9px; overflow: hidden; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-2); color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.skillFileChip:hover { background: var(--fcg-bg-hover); color: var(--fcg-text-primary); }
+.skillFileChipActive { border-color: var(--fcg-brand); color: var(--fcg-text-primary); }
+.skillFileChip:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.workbuddyHeaderActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.accountManagerButton { min-height: 28px; padding: 4px 9px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); white-space: nowrap; }
+.accountManagerButton:hover { background: var(--fcg-bg-hover); color: var(--fcg-text-primary); }
+.accountRow { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
+.accountIdentity { min-width: 0; }
+.accountIdentityWithAvatar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.accountText { min-width: 0; }
+.accountAvatar { display: inline-grid; flex: 0 0 auto; width: 42px; height: 42px; place-items: center; overflow: hidden; border: 1px solid transparent; border-radius: var(--fcg-radius-md); box-shadow: 0 2px 8px rgb(15 23 42 / 10%); }
+.accountAvatarRemote { border-color: var(--fcg-line); background: #fff; }
+.accountAvatarRemote img { width: 100%; height: 100%; object-fit: cover; }
+.accountAvatarMonogram { font-size: var(--fcg-font-section); font-weight: 800; line-height: 1; letter-spacing: -.04em; }
+.accountAvatarQq { border-color: #1688d8; background: linear-gradient(145deg, #38bdf8, #1263bd); color: #fff; }
+.accountAvatarGoogle { border-color: #d8dce5; background: linear-gradient(145deg, var(--fcg-bg-layer-2), var(--fcg-bg-layer-1)); color: #4285f4; text-shadow: 1px 0 #ea4335, 0 1px #34a853, -1px 0 #fbbc05; }
+.accountAvatarGeneric { border-color: var(--fcg-line); background: var(--fcg-bg-layer-1); color: var(--fcg-text-tertiary); }
+.accountAvatarGeneric svg { width: 22px; height: 22px; fill: currentColor; }
+.accountName { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.accountEmail { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.accountActions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+.clineUsage { display: grid; gap: 7px; margin-top: 4px; }
+.clineUsageHead { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.clineUsageRow { display: grid; grid-template-columns: 84px minmax(0, 1fr) 44px; align-items: center; gap: 10px; }
+.clineUsageLabel { overflow: hidden; color: var(--fcg-text-tertiary); text-overflow: ellipsis; white-space: nowrap; font-size: var(--fcg-font-caption); }
+.clineUsageValue { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-variant-numeric: tabular-nums; text-align: right; }
+.clineUsageMeter { height: 4px; overflow: hidden; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-hover); }
+.clineUsageFill { height: 100%; border-radius: inherit; background: var(--fcg-brand); transition: width .3s ease; }
+.clineUsageFillHigh { background: var(--fcg-warn); }
+/* Value + label sit in one quiet pill so a bare currency figure is never left
+   unlabelled. Only `.balance` is styled here — `.accountRow` / `.accountActions`
+   are shared with the account lists and keep their own density. */
+.balance { display: inline-flex; align-items: baseline; gap: 7px; padding: 5px 11px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-2); color: var(--fcg-success); font-size: var(--fcg-font-body-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.balanceLabel { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); font-weight: 500; }
+.authForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
+/* ─── Account sign-in card ────────────────────────────────────────────
+   The overview login is the first surface a fresh install shows, so it gets
+the DeepSeek console idiom: a centered card with a segmented 登录/注册 switch,
+filled fields with a brand focus ring, and one brand-blue action. Everything
+is scoped under .authPanel so the shared .input / .button / .authForm rules
+that the provider key forms rely on keep their own density. */
+.authPanel { display: grid; gap: 16px; box-sizing: border-box; width: 100%; padding: 26px 24px 22px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-lg); background: var(--fcg-bg-layer-1); box-shadow: var(--fcg-shadow-2); }
+
+/* Signed-out account section: a value column beside the form.
+ *
+ * The form used to be a 400px card centred in a full-width panel, which left two
+ * empty gutters and made the section look unfinished. The column below takes that
+ * space with the reasons to sign in, so the card keeps a comfortable measure
+ * without the page looking half-empty. It collapses to one column first, because
+ * a squeezed two-column layout is worse than the wide form it replaced. */
+/* One card across the whole row: signing in is the only thing this state has to
+   say, and a card that fills the panel needs no second column to look finished. */
+.authLayout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 20px; margin-top: 6px; }
+.authHead { display: grid; gap: 6px; justify-items: center; text-align: center; }
+.authTitle { color: var(--fcg-text-primary); font-size: 17px; font-weight: 650; letter-spacing: -.01em; line-height: 24px; }
+.authSubtitle { max-width: 300px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.authTabs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-tip); }
+.authTab { min-height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); transition: background var(--fcg-fast) var(--fcg-ease), color var(--fcg-fast) var(--fcg-ease); }
+.authTab:hover { color: var(--fcg-text-primary); }
+.authTab:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.authTabActive { background: var(--fcg-bg-layer-1); box-shadow: var(--fcg-shadow-1); color: var(--fcg-text-primary); font-weight: 600; }
+.authStack { display: grid; gap: 11px; }
+/* Field fill uses the opaque tip surface, not --fcg-bg-input: that one is pure
+   white under the light theme, which would erase the field outline against the
+   white card. The tip surface is a light gray in light theme and a lifted gray
+   in dark theme, which is the filled-field look this card wants. */
+.authPanel .input { min-height: 42px; padding: 10px 13px; border-color: transparent; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-tip); font-size: var(--fcg-font-body); }
+.authPanel .input::placeholder { color: var(--fcg-text-tertiary); }
+.authPanel .input:hover:not(:focus) { border-color: var(--fcg-line); }
+.authPanel .input:focus { border-color: var(--fcg-brand); background: var(--fcg-bg-layer-1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 16%, transparent); }
+/* Chrome paints autofilled credentials with its own wash; an inset fill keeps the field on the card's surface. */
+.authPanel .input:-webkit-autofill, .authPanel .input:-webkit-autofill:hover, .authPanel .input:-webkit-autofill:focus { -webkit-text-fill-color: var(--fcg-text-primary); box-shadow: 0 0 0 60px var(--fcg-bg-tip) inset; }
+.authCodeRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.authCodeSend { min-height: 42px; padding: 0 14px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); font-variant-numeric: tabular-nums; white-space: nowrap; transition: background var(--fcg-fast) var(--fcg-ease), border-color var(--fcg-fast) var(--fcg-ease), color var(--fcg-fast) var(--fcg-ease); }
+.authCodeSend:hover:not(:disabled) { border-color: var(--fcg-line-strong); background: var(--fcg-bg-hover); }
+.authCodeSend:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.authCodeSend:disabled { cursor: not-allowed; color: var(--fcg-text-tertiary); }
+/* The brand blue (not the host's primary fill, which many palettes render as
+   plain black) plus a fixed white foreground: this is the one deliberate
+   DeepSeek-branded surface, and --fcg-text-on-brand would put near-black text
+   on it under the dark theme. */
+.authSubmit { width: 100%; min-height: 42px; border: 1px solid transparent; border-radius: var(--fcg-radius-md); background: var(--fcg-brand); color: var(--fcg-text-on-brand-fixed); cursor: pointer; font: inherit; font-size: var(--fcg-font-body); font-weight: 600; letter-spacing: .01em; transition: background var(--fcg-fast) var(--fcg-ease), box-shadow var(--fcg-fast) var(--fcg-ease), transform var(--fcg-fast) var(--fcg-ease); }
+.authSubmit:hover:not(:disabled) { background: var(--fcg-brand-strong); }
+.authSubmit:active:not(:disabled) { transform: translateY(1px); }
+.authSubmit:disabled { cursor: not-allowed; opacity: .5; }
+.authSubmit:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 30%, transparent); }
+.authNote, .authStep { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; text-align: center; }
+.authStep { color: var(--fcg-text-secondary); }
+.authSocialRow { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.authSocialButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-sizing: border-box; min-height: 42px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-body); font-weight: 550; transition: border-color var(--fcg-fast) var(--fcg-ease), background var(--fcg-fast) var(--fcg-ease), color var(--fcg-fast) var(--fcg-ease); }
+.authSocialButton svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.authSocialButton:hover:not(:disabled) { border-color: var(--fcg-line-strong); background: var(--fcg-bg-hover); color: var(--fcg-text-primary); }
+.authSocialButton:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.authSocialButton:disabled { cursor: progress; opacity: .6; }
+/* The account card keeps a real social row (Google / GitHub) above the email
+   form; the divider is what separates the two credential paths. */
+.authDivider { display: flex; align-items: center; gap: 10px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.authDivider::before, .authDivider::after { flex: 1; height: 1px; background: var(--fcg-line); content: ''; }
+.authNotice { padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--fcg-brand) 26%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-brand) 6%, var(--fcg-bg-layer-1)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; text-align: center; }
+.authFull { grid-column: 1 / -1; }
+.remember { display: flex; align-items: center; gap: 8px; color: var(--fcg-text-secondary); cursor: pointer; font-size: var(--fcg-font-caption); }
+.remember input { width: 15px; height: 15px; margin: 0; accent-color: var(--fcg-brand); cursor: pointer; }
+.paymentBar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--fcg-line-subtle); }
+.paymentHeading { display: block; margin-bottom: 3px; font-size: var(--fcg-font-title); font-weight: 600; letter-spacing: -.01em; color: var(--fcg-text-primary); }
+.paymentMethod { display: inline-flex; align-items: center; gap: 8px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.paymentMethod .select { width: auto; min-width: 135px; }
+.alert { margin-bottom: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--fcg-danger) 28%, transparent); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-danger) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-danger); font-size: var(--fcg-font-caption); line-height: 18px; overflow-wrap: anywhere; }
+.alert button { margin-left: 10px; border: 0; padding: 0; background: transparent; color: inherit; font-size: var(--fcg-font-caption); cursor: pointer; text-decoration: underline; white-space: nowrap; }
+.pending { display: grid; gap: 8px; margin-bottom: 12px; padding: 10px 11px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 35%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 6%, var(--fcg-bg-layer-2)); }
+.pendingTitle { font-weight: 600; }
+.pendingHint { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.pendingRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.pendingText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ─── Developer-credit tiers: a handheld-cartridge shell ─────────────
+   The ladder is drawn as classic pixel hardware instead of coupon cards: a 2px
+   ink outline with stepped 8px notches (clip-path), a solid offset shadow that
+   steps further out on hover, a pressed-in slot for the offer, and one chunky
+   arcade key per tier. The "ink" is the brand blue pulled toward the page's own
+   text colour and every surface is a theme token, so the shell keeps its
+   contrast under the dark host instead of hardcoding a navy that only reads on
+   white. `align-items: stretch` on the grid keeps equal-height shells and
+   `margin-top: auto` on the button pins the actions to one baseline. */
+.plans,
+.planShared {
+  --pixel-ink: color-mix(in srgb, var(--fcg-brand) 58%, var(--fcg-text-primary));
+  --pixel-face: var(--fcg-bg-layer-1);
+  --pixel-recess: color-mix(in srgb, var(--fcg-text-primary) 4%, var(--fcg-bg-layer-1));
+  --pixel-recess-edge: color-mix(in srgb, var(--pixel-ink) 26%, transparent);
+  --pixel-recess-rule: color-mix(in srgb, var(--pixel-ink) 22%, transparent);
+  --pixel-rule: color-mix(in srgb, var(--pixel-ink) 18%, transparent);
+  /* The stepped silhouette, declared once: the card, its offset shadow and every
+     chip reuse it, which is what keeps the notches identical at any size. */
+  --pixel-notch: polygon(0 8px, 4px 8px, 4px 4px, 8px 4px, 8px 0, calc(100% - 8px) 0, calc(100% - 8px) 4px, calc(100% - 4px) 4px, calc(100% - 4px) 8px, 100% 8px, 100% calc(100% - 8px), calc(100% - 4px) calc(100% - 8px), calc(100% - 4px) calc(100% - 4px), calc(100% - 8px) calc(100% - 4px), calc(100% - 8px) 100%, 8px 100%, 8px calc(100% - 4px), 4px calc(100% - 4px), 4px calc(100% - 8px), 0 calc(100% - 8px));
+  --pixel-chip: polygon(0 3px, 3px 3px, 3px 0, calc(100% - 3px) 0, calc(100% - 3px) 3px, 100% 3px, 100% calc(100% - 3px), calc(100% - 3px) calc(100% - 3px), calc(100% - 3px) 100%, 3px 100%, 3px calc(100% - 3px), 0 calc(100% - 3px));
+}
+/* Room for the shells' offset shadows, which are painted outside their own box
+   and would otherwise be trimmed by the panel's padding. The minimum track is
+   tied to the panel's own column width on purpose: the ladder is meant to read as
+   a pair of identical handhelds, and a 268px floor pushed the second shell onto
+   its own row at the default panel width. */
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(236px, 1fr)); gap: 16px; padding: 0 6px 6px 0; }
+/* The shadow is its own element behind the card rather than a `box-shadow`: the
+   stepped silhouette clips one, and a `drop-shadow` filter would soften the
+   whole subtree's text along with it. */
+.planShell { position: relative; display: flex; }
+.planShell::before { position: absolute; inset: 0; transform: translate(6px, 6px); background: var(--pixel-ink); clip-path: var(--pixel-notch); content: ''; transition: transform var(--fcg-fast) var(--fcg-ease); }
+.planShell:hover::before { transform: translate(8px, 8px); }
+.plan { position: relative; display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 11px; padding: 16px 16px 14px; border: 2px solid var(--pixel-ink); background: var(--pixel-face); clip-path: var(--pixel-notch); transition: transform var(--fcg-fast) var(--fcg-ease); }
+.plan:hover { transform: translate(-2px, -2px); }
+/* Status header: the hardware indicator, the tier's name and its chips, over a
+   rule that separates the nameplate from the slot below it. */
+.planTop { display: flex; align-items: center; gap: 8px; padding-bottom: 9px; border-bottom: 2px solid var(--pixel-rule); }
+.planDot { flex: 0 0 auto; width: 9px; height: 9px; border: 1px solid var(--pixel-ink); background: var(--fcg-brand); box-shadow: 1px 1px 0 0 var(--pixel-ink); }
+.planName { min-width: 0; flex: 1; overflow: hidden; color: var(--fcg-text-primary); text-overflow: ellipsis; white-space: nowrap; font-size: var(--fcg-font-body-lg); font-weight: 800; letter-spacing: -.012em; }
+/* The brand fill stays blue in both host themes, so the foreground has to be
+   the theme-invariant white: `--fcg-text-on-brand` flips to near-black under
+   the dark theme and would land on a blue pill. */
+.planTag { flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--pixel-ink); background: var(--fcg-brand); color: var(--fcg-text-on-brand-fixed); font-family: var(--fcg-font-mono); font-size: 10px; font-weight: 700; letter-spacing: .06em; white-space: nowrap; clip-path: var(--pixel-chip); }
+/* The markdown badge is the header's second chip: the same stepped silhouette,
+   tinted with the success colour so a saving never reads as a tier name. */
+.planSave { flex: 0 0 auto; padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--fcg-success) 52%, var(--pixel-ink)); background: color-mix(in srgb, var(--fcg-success) 13%, transparent); color: var(--fcg-success); font-size: 10px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; clip-path: var(--pixel-chip); }
+/* Only the recommended tier's slot is tinted. The shell, the shadow, the bullets
+   and the button stay identical on every card, which is what keeps six tiers
+   reading as one product instead of six promotions. */
+.planFeatured .planRecess { background: color-mix(in srgb, var(--fcg-brand) 8%, var(--pixel-recess)); }
+/* The guarantees every tier shares are stated once, under the grid, instead of
+ * being repeated identically inside each card. The strip wears the same ink
+ * outline as the shells so it reads as part of the same hardware. */
+.planShared { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 16px; padding: 10px 12px; border: 2px solid var(--pixel-ink); background: var(--pixel-recess); box-shadow: inset 2px 2px 0 0 var(--pixel-recess-edge); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.planShared small { color: var(--fcg-text-tertiary); font-family: var(--fcg-font-mono); font-size: 10px; font-weight: 700; letter-spacing: .1em; }
+.planShared span { display: inline-flex; align-items: center; gap: 6px; }
+/* The offer sits in a pressed-in slot, the way a cartridge sits in a handheld:
+   two notched steps of shadow on the inside edge read as depth without a
+   gradient, and the figure lands on the recessed face instead of floating in the
+   card's padding. */
+.planRecess { display: flex; align-items: stretch; padding: 10px 12px; border: 2px solid var(--pixel-ink); background: var(--pixel-recess); box-shadow: inset 2px 2px 0 0 var(--pixel-recess-edge); }
+.planCreditBlock { display: grid; flex: 1 1 auto; min-width: 0; gap: 3px; }
+.planPriceLabel { display: flex; align-items: center; gap: 5px; color: var(--fcg-brand); font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+/* The decorative hardware code beside "到账额度" / "You get": a marque, not a
+   label, so it is hidden from assistive tech and never localized. */
+.planRecessCode { font-family: var(--fcg-font-mono); letter-spacing: .14em; }
+.planPriceRow { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.planPrice { color: var(--fcg-text-primary); font-size: 26px; font-weight: 800; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.planOriginalPrice { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-decoration: line-through; }
+/* What actually leaves the account, in the payer's own currency, split off by a
+   hairline so the two figures never read as one number. */
+.planPayBlock { display: grid; align-content: center; justify-items: end; gap: 3px; margin-left: 12px; padding-left: 12px; border-left: 2px solid var(--pixel-recess-rule); }
+.planPayLabel { color: var(--fcg-text-tertiary); font-size: 10px; font-weight: 600; }
+.planPayable { color: var(--fcg-brand); font-size: var(--fcg-font-title); font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.features { display: grid; gap: 6px; padding-top: 10px; border-top: 2px solid var(--pixel-rule); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 17px; }
+/* Two columns so the pixel mark keeps its own lane: a wrapped bullet stays flush
+   with the text instead of sliding back under the mark. */
+.features > span { display: grid; grid-template-columns: 12px minmax(0, 1fr); align-items: start; gap: 8px; }
+.planCheck { display: block; width: 7px; height: 7px; margin-top: 5px; border: 1px solid var(--pixel-ink); background: var(--fcg-brand); }
+.planFeatureText { min-width: 0; }
+/* The arcade key: a solid fill, a lit top edge and a hard 3px base that the press
+   collapses, so the control travels like a physical button instead of fading or
+   scaling. Square corners only — a pixel shell has no other radius. */
+.planButton { width: 100%; min-height: 40px; margin-top: auto; border: 2px solid var(--pixel-ink); border-radius: 0; background: var(--fcg-brand); color: var(--fcg-text-on-brand-fixed); font-weight: 700; letter-spacing: .04em; box-shadow: inset 0 2px 0 0 color-mix(in srgb, #fff 38%, transparent), 0 3px 0 0 var(--pixel-ink); transition: background var(--fcg-fast) var(--fcg-ease), box-shadow 60ms linear, transform 60ms linear; }
+.planButton:hover:not(:disabled) { background: var(--fcg-brand-strong); box-shadow: inset 0 2px 0 0 color-mix(in srgb, #fff 48%, transparent), 0 4px 0 0 var(--pixel-ink); }
+.planButton:active:not(:disabled) { transform: translateY(3px); box-shadow: inset 0 1px 0 0 rgb(0 0 0 / 18%), 0 0 0 0 var(--pixel-ink); }
+/* The two lines a card keeps for itself under its price, and they stay two lines
+   because they say different things: the first is the backend's own description
+   of the tier (or this ladder's credit when it sends none), the second is the
+   shape of the payment — a top-up, never a subscription. */
+.planBlurb { display: grid; gap: 3px; }
+.planPerk { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 17px; }
+.planLead { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 17px; }
+/* Landing strip under the key: the arrival promise on the left, the marque on the
+   right, both at the same weight as the rest of the fine print. */
+.planFootnote { display: flex; align-items: center; gap: 6px; color: var(--fcg-text-tertiary); font-size: 11px; }
+.planDotOk { flex: 0 0 auto; width: 6px; height: 6px; background: var(--fcg-success); }
+.planBrandMark { margin-left: auto; color: var(--fcg-brand); font-family: var(--fcg-font-mono); font-size: 10px; font-weight: 700; letter-spacing: .05em; }
+.pricingSection { display: grid; gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--fcg-line); }
+.pricingHeader { display: flex; align-items: end; justify-content: space-between; gap: 14px; }
+.pricingHeader > div { display: grid; gap: 3px; }
+.pricingSearch { width: min(250px, 100%); min-height: 32px; padding: 6px 10px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); outline: none; background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); font: inherit; font-size: var(--fcg-font-caption); }
+.pricingSearch:focus { border-color: var(--fcg-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 16%, transparent); }
+.pricingNotice { padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 35%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+/* Horizontally scrollable rather than squeezed: six price columns have a real
+   minimum width, and shrinking them below it clipped the numbers into each other
+   (`US$2.00US$10.0`) which is worse than a scrollbar. */
+.pricingTableWrap { width: 100%; overflow-x: auto; overflow-y: hidden; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-2); }
+.pricingTable { width: 100%; min-width: 660px; table-layout: fixed; border-collapse: collapse; font-size: var(--fcg-font-caption); }
+.pricingTable th { padding: 10px 14px; border-bottom: 1px solid var(--fcg-line-subtle); background: var(--fcg-bg-layer-1); color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); font-weight: 600; letter-spacing: .02em; text-align: left; white-space: nowrap; }
+.pricingTable td { padding: 10px 12px; border-bottom: 1px solid var(--fcg-line-subtle); color: var(--fcg-text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pricingTable tbody tr:last-child td { border-bottom: 0; }
+.pricingTable tbody tr:hover { background: var(--fcg-bg-hover); }
+/* The free block has its own heading and its own table so the billed rows above
+   stay the first thing read. */
+.pricingFreeSection { display: grid; gap: 8px; margin-top: 6px; padding-top: 14px; border-top: 1px dashed var(--fcg-line-subtle); }
+.pricingFreeHeader { display: grid; gap: 2px; }
+.pricingFreeHeader strong { color: var(--fcg-text-primary); font-size: var(--fcg-font-body); font-weight: 650; }
+/* The card picker's methods: named chips so a payer checks "does mine work?"
+   without opening the form. */
+.paymentMethods { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.paymentMethodChip { padding: 2px 9px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-1); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 550; letter-spacing: .01em; white-space: nowrap; }
+.pricingTable th:first-child, .pricingTable td:first-child { width: 34%; }
+.pricingTable td:first-child { white-space: normal; }
+/* The pricing table carries the backend's group name column, so its model
+   column can give up width — a group name is a plan title, not a vendor. */
+.pricingSection .pricingTable th:first-child, .pricingSection .pricingTable td:first-child { width: 26%; }
+.pricingSection .pricingTable th:nth-child(2), .pricingSection .pricingTable td:nth-child(2) { width: 22%; }
+.pricingSection .pricingTable td.pricingGroup { white-space: normal; }
+.pricingTable strong { display: block; color: var(--fcg-text-primary); font-size: var(--fcg-font-caption); font-weight: 600; }
+.pricingTable code { display: block; margin-top: 2px; overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.pricingTable small { display: block; margin-top: 3px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+/* ─── Token usage ───────────────────────────────────────────────────────
+   Rebuilt around a GitHub-style daily heatmap (reference: dsh-heatmap-cost):
+   balance strip, window summary cards, per-model cost bars, and a per-model
+   trend shown while a model filter is active. Every color keys off --fcg-*
+   tokens so the panel follows the host light/dark switch with no local
+   overrides. */
+.tokenHero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: -2px 0 14px; padding: 10px 0 14px; border-bottom: 1px solid var(--fcg-line); }
+.tokenEyebrow { display: flex; align-items: center; gap: 8px; color: var(--fcg-brand); font-weight: 650; font-size: var(--fcg-font-caption); letter-spacing: .06em; text-transform: uppercase; }
+.tokenPulse { width: 7px; height: 7px; border-radius: 50%; corner-shape: round; background: var(--fcg-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-success) 18%, transparent); }
+.tokenTitle { margin: 3px 0 0; font-size: var(--fcg-font-display); line-height: 31px; letter-spacing: -.03em; }
+.tokenSourceTabs { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); }
+.tokenSourceTabs button { min-height: 30px; padding: 5px 14px; border: 0; border-radius: 5px; background: transparent; color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); }
+.tokenSourceTabs button:hover { background: var(--fcg-bg-hover); }
+.tokenSourceTabs .tokenSourceActive { background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); box-shadow: var(--fcg-shadow-1); font-weight: 600; }
+.tokenBalRow { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px 16px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.tokenBalDot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; corner-shape: round; background: var(--fcg-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-success) 18%, transparent); }
+.tokenBalDot[data-level="low"] { background: var(--fcg-warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-warn) 18%, transparent); }
+.tokenBalDot[data-level="danger"] { background: var(--fcg-danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-danger) 18%, transparent); }
+.tokenBalAmount { color: var(--fcg-text-primary); font-size: 20px; font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -.01em; }
+.tokenBalBadge { padding: 2px 9px; border-radius: var(--fcg-radius-full); background: color-mix(in srgb, var(--fcg-success) 12%, transparent); color: var(--fcg-success); font-size: var(--fcg-font-caption); line-height: 18px; white-space: nowrap; }
+.tokenBalBadge[data-level="low"] { background: color-mix(in srgb, var(--fcg-warn) 13%, transparent); color: var(--fcg-warn-label); }
+.tokenBalBadge[data-level="danger"] { background: color-mix(in srgb, var(--fcg-danger) 12%, transparent); color: var(--fcg-danger); }
+.tokenBalUpdated { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.tokenBalHint { flex: 1; min-width: 0; overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.tokenBalRefresh { min-height: 28px; margin-left: auto; padding: 4px 12px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: transparent; color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); transition: color var(--fcg-fast) var(--fcg-ease), border-color var(--fcg-fast) var(--fcg-ease); }
+.tokenBalRefresh:hover { border-color: var(--fcg-line-strong); color: var(--fcg-text-primary); }
+.tokenSessionRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 10px 16px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.tokenSessionRow strong { color: var(--fcg-text-primary); font-variant-numeric: tabular-nums; }
+
+/* Cache-miss attribution: the part of the input total that was billed twice. */
+.tokenCacheWaste { margin-top: 10px; padding: 14px 16px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); display: flex; flex-direction: column; gap: 10px; }
+.tokenCacheWasteHead { display: flex; align-items: baseline; gap: 8px; }
+.tokenCacheWasteHead strong { color: var(--fcg-text-primary); font-size: var(--fcg-font-body); }
+.tokenCacheWasteClean { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.tokenCacheWasteStats { display: flex; flex-wrap: wrap; gap: 8px; }
+.tokenCacheWasteStat { flex: 1 1 120px; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.tokenCacheWasteStat span { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.tokenCacheWasteStat b { color: var(--fcg-text-primary); font-size: var(--fcg-font-body); font-variant-numeric: tabular-nums; }
+.tokenCacheWasteStat[data-tone="warn"] b { color: var(--fcg-warn-label); }
+.tokenCacheWasteCauses { display: flex; flex-wrap: wrap; gap: 6px; }
+.tokenCacheWasteCause { padding: 2px 9px; border-radius: var(--fcg-radius-full); font-size: var(--fcg-font-caption); line-height: 18px; background: color-mix(in srgb, var(--fcg-warn) 10%, transparent); color: var(--fcg-text-secondary); }
+.tokenCacheWasteCause[data-cause="idle-gap"] { background: color-mix(in srgb, var(--fcg-warn) 10%, transparent); }
+.tokenCacheWasteCause[data-cause="model-changed"] { background: color-mix(in srgb, var(--fcg-danger) 10%, transparent); }
+.tokenCacheWasteCause[data-cause="prefix-changed"] { background: color-mix(in srgb, var(--fcg-accent, var(--fcg-text-tertiary)) 12%, transparent); }
+.tokenCacheWasteCause b { color: var(--fcg-text-primary); font-variant-numeric: tabular-nums; }
+.tokenCacheWasteWorst { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tokenCacheWasteWorst li { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: baseline; gap: 10px; font-size: var(--fcg-font-caption); color: var(--fcg-text-secondary); }
+.tokenCacheWasteWorstHead { color: var(--fcg-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+.tokenCacheWasteWorstModel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tokenCacheWasteWorstTokens { color: var(--fcg-text-primary); font-variant-numeric: tabular-nums; }
+.tokenCacheWasteWorstCause { text-align: right; color: var(--fcg-text-tertiary); }
+.tokenCacheWasteFoot { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-variant-numeric: tabular-nums; }
+.tokenCacheWasteHint { margin: 0; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 1.5; }
+.tokenSummaryGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-top: 9px; }
+.tokenMetric { display: grid; gap: 4px; min-width: 0; padding: 12px 14px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.tokenMetric span { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
+.tokenMetric strong { overflow: hidden; color: var(--fcg-text-primary); font-size: 22px; font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: -.02em; line-height: 26px; text-overflow: ellipsis; white-space: nowrap; }
+.tokenMetric small { overflow: hidden; color: var(--fcg-text-tertiary); font-variant-numeric: tabular-nums; font-size: var(--fcg-font-caption); line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.tokenPanel { margin-top: 12px; padding: 14px 16px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.tokenPanelHeader { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; min-height: 30px; }
+/* Direct-child grid was overriding .tokenRangePills' inline-flex (higher
+   specificity), stacking the range pills vertically and bloating the header.
+   The title now lives in its own class and the pills keep their lane. */
+.tokenPanelTitle { display: grid; gap: 2px; min-width: 0; }
+.tokenPanelHeader strong { font-size: 15px; }
+.tokenPanelKicker { color: var(--fcg-brand); font: 700 var(--fcg-font-caption)/16px var(--fcg-font-mono); letter-spacing: .11em; }
+/* One-line horizontal pill strip: never wraps, never grows the header.
+   On narrow panels it scrolls within its own lane instead. */
+.tokenRangePills { display: inline-flex; flex: 0 1 auto; flex-wrap: nowrap; gap: 2px; max-width: 100%; overflow-x: auto; padding: 2px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); scrollbar-width: none; }
+.tokenRangePills::-webkit-scrollbar { display: none; }
+.tokenRangePills button { flex: 0 0 auto; min-height: 22px; padding: 2px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--fcg-text-tertiary); cursor: pointer; font: var(--fcg-font-caption)/16px var(--fcg-font-mono); white-space: nowrap; }
+.tokenRangePills .tokenRangeActive { background: var(--fcg-brand-subtle); color: var(--fcg-brand); font-weight: 650; }
+/* Model filter pills above the chart. */
+.tokenHeatFilter { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 10px; }
+.tokenHeatFilterLabel { margin-right: 2px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.tokenHeatFilterBtn { display: inline-flex; max-width: 150px; overflow: hidden; gap: 6px; align-items: center; padding: 2px 9px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-full); background: transparent; color: var(--fcg-text-secondary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.tokenHeatFilterBtn:hover { border-color: var(--fcg-line-strong); color: var(--fcg-text-primary); }
+.tokenHeatFilterBtnActive { border-color: transparent; background: color-mix(in srgb, var(--model-color, var(--fcg-brand)) 14%, transparent); color: var(--model-color, var(--fcg-brand)); font-weight: 600; }
+.tokenPillDot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; corner-shape: round; background: var(--model-color, var(--fcg-text-tertiary)); }
+/* DeepSeek-console usage chart: a magnitude rail in the left gutter, thin
+   opaque bars whose stack mirrors the console's token split, a hover
+   crosshair and the console's own tooltip. */
+.tokenChartHead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.tokenChartTitle { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 600; }
+.tokenChartTotal { color: var(--fcg-text-primary); font-size: var(--fcg-font-body); font-variant-numeric: tabular-nums; font-weight: 650; letter-spacing: -.01em; }
+.tokenChartModel { margin-left: auto; color: var(--model-color, var(--fcg-brand)); font: 600 var(--fcg-font-caption)/18px var(--fcg-font-mono); }
+/* Bars take the model's own brand hue (one segment per model), so these tokens
+   cover the console chrome instead: the three blue steps are the cache-hit /
+   cache-miss / output split the tooltip swatches read from, and the tooltip
+   itself is the console's near-black card. */
+.tokenChartWrap {
+  --fcg-chart-hit: #bcd7f8;
+  --fcg-chart-miss: #7aaff0;
+  --fcg-chart-out: #2f6fe0;
+  --fcg-chart-tip-bg: #ffffff;
+  --fcg-chart-tip-fg: #1a1a1c;
+  --fcg-chart-tip-muted: #6b7280;
+  position: relative;
+  min-width: 0;
+}
+body[data-ds-dark-theme] .tokenChartWrap {
+  --fcg-chart-hit: #a9c8f0;
+  --fcg-chart-miss: #5f97e8;
+  --fcg-chart-out: #3d7ef0;
+  --fcg-chart-tip-bg: #1f1f21;
+  --fcg-chart-tip-fg: #f5f6f8;
+  --fcg-chart-tip-muted: #a1a1a8;
+}
+.tokenChartPlot { position: relative; }
+.tokenChartGrid { position: absolute; left: 0; right: 0; height: 1px; background: var(--fcg-line-subtle); opacity: .8; pointer-events: none; }
+.tokenChartGrid span { position: absolute; left: 0; bottom: 3px; color: var(--fcg-text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1; }
+.tokenChartBar { position: absolute; bottom: 0; overflow: hidden; border-radius: 3px 3px 0 0; background: var(--fcg-chart-out); transition: filter 90ms var(--fcg-ease); cursor: pointer; }
+.tokenChartBar[data-active] { filter: brightness(1.14); }
+.tokenChartBar[data-empty] { background: var(--fcg-line-subtle); opacity: .3; }
+.tokenChartCross { position: absolute; bottom: 0; top: 0; pointer-events: none; border-left: 1px solid color-mix(in srgb, var(--fcg-text-tertiary) 40%, transparent); }
+/* Stacked model segments. Each one is positioned by the ported visual layout
+   (so tiny models keep a minimum height) and painted with its model hue.
+   Neighbours sit flush with no stroke between them: the layout already tiles
+   the bar exactly, and the vendor hues plus the per-vendor shade ramp are what
+   separate two models, not a gutter. */
+.tokenChartSeg { position: absolute; left: 0; width: 100%; }
+.tokenChartSeg[data-top] { border-radius: 3px 3px 0 0; }
+.tokenChartLegend { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 16px; margin-top: 6px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.tokenChartLegend span { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }
+.tokenChartLegend i { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 2px; }
+/* Tight rows: a five-model stack plus the token split is ten rows, and the
+   tooltip still has to clear the plot without spilling over the axis. */
+.tokenChartTip { position: absolute; z-index: 5; padding: 8px 10px; border-radius: 8px; background: var(--fcg-chart-tip-bg); color: var(--fcg-chart-tip-muted); box-shadow: 0 10px 30px rgb(0 0 0 / 28%); pointer-events: none; display: grid; gap: 3px; font-size: var(--fcg-font-caption); line-height: 14px; }
+.tokenChartTipHead { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 2px; color: var(--fcg-chart-tip-fg); font-size: 13px; }
+.tokenChartTipHead b { font-variant-numeric: tabular-nums; }
+.tokenChartTipRow { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.tokenChartTipRow b { margin-left: auto; color: var(--fcg-chart-tip-fg); font-variant-numeric: tabular-nums; font-weight: 600; }
+.tokenChartSwatch { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 2px; background: var(--fcg-line-strong); }
+.tokenChartSwatch[data-tone="hit"] { background: var(--fcg-chart-hit); }
+.tokenChartSwatch[data-tone="miss"] { background: var(--fcg-chart-miss); }
+.tokenChartSwatch[data-tone="out"] { background: var(--fcg-chart-out); }
+.tokenChartSwatch[data-tone="req"] { border-radius: 50%; corner-shape: round; background: var(--fcg-chart-tip-muted); }
+.tokenChartAxis { position: relative; height: 18px; margin-top: 2px; padding-left: 46px; }
+.tokenChartAxis span { position: absolute; transform: translateX(-50%); color: var(--fcg-text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tokenChartAxis span:first-child { transform: none; }
+.tokenChartAxis span:last-child { transform: translateX(-100%); }
+/* Window totals strip under the chart: the at-a-glance sums the reference
+   billing pages show (tokens / requests / cost / daily average). */
+.tokenHeatTotals { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--fcg-line-subtle); color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.tokenHeatTotals b { margin-right: 3px; color: var(--fcg-text-primary); font-variant-numeric: tabular-nums; font-weight: 650; }
+.tokenHeatDaily { margin-left: auto; }
+.tokenModelBars { display: grid; gap: 6px; margin-bottom: 12px; }
+.tokenModelBarRow { display: grid; grid-template-columns: minmax(90px, 180px) minmax(0, 1fr) auto; gap: 10px; align-items: center; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-variant-numeric: tabular-nums; }
+.tokenModelBarName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tokenModelBarTrack { height: 4px; overflow: hidden; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-tip); }
+.tokenModelBarTrack i { display: block; height: 100%; border-radius: inherit; background: var(--model-color, var(--fcg-brand)); }
+.tokenModelBarRow b { color: var(--fcg-text-primary); font-weight: 600; }
+.tokenModelDot { display: inline-block; width: 7px; height: 7px; flex: 0 0 auto; margin-right: 6px; border-radius: 50%; corner-shape: round; background: var(--model-color, var(--fcg-text-tertiary)); }
+.tokenNotice { margin-top: 10px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 35%, var(--fcg-line-subtle)); border-radius: var(--fcg-radius-md); background: color-mix(in srgb, var(--fcg-warn) 8%, var(--fcg-bg-layer-1)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.tokenGatewayTable { overflow-x: auto; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); }
+.tokenGatewayTable .pricingTable { min-width: 560px; }
+.tokenEmpty { display: grid; min-height: 90px; place-items: center; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+@media (max-width: 700px) { .tokenSummaryGrid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .tokenHero { align-items: flex-start; flex-direction: column; } .tokenTitle { font-size: 22px; } .tokenSummaryGrid { grid-template-columns: 1fr; } .tokenPanelHeader { gap: 6px; } .tokenChartTip { width: 190px; } .tokenHeatTotals { gap: 4px 10px; } .tokenHeatDaily { margin-left: 0; } .tokenModelBarRow { grid-template-columns: minmax(70px, 110px) minmax(0, 1fr) auto; } }
+.pricePair { display: grid; gap: 1px; min-width: 0; line-height: 18px; }
+.priceOriginal { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-decoration: line-through; text-overflow: ellipsis; white-space: nowrap; }
+/* A price somebody pays is the point of the row, so it is the one thing in the
+   table that carries colour: brand blue for the tariff, green when it is a
+   markdown off the published rate — and FREE keeps its own green chip.
+
+   These are scoped under `.pricingTable` on purpose. The table's own
+   `.pricingTable strong` rule (one class, one element) sets every `<strong>` in a
+   cell to plain body colour at caption size, and it outranks a bare class:
+   the prices were rendering in exactly that flat colour no matter what the pair
+   component asked for. */
+.pricingTable .priceCurrent, .pricingTable .priceCurrentDiscount { display: block; color: var(--fcg-brand); font-size: var(--fcg-font-body); font-weight: 650; letter-spacing: -.01em; }
+.pricingTable .priceCurrentDiscount { color: var(--fcg-success); }
+.pricingRequest { color: var(--fcg-text-primary) !important; font-weight: 600; }
+/* Per-image tiers: one price per resolution, side by side so the three can be
+   compared at a glance. Each tier stacks its original over its current price
+   exactly like `.pricePair`, so a markdown reads the same here as anywhere else. */
+.imageTiers { display: inline-flex; flex-wrap: wrap; gap: 4px 18px; align-items: start; }
+.imageTier { display: grid; gap: 1px; min-width: 0; }
+.imageTierLabel { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); font-style: normal; font-weight: 600; letter-spacing: .02em; }
+.pricingEmpty { padding: 28px !important; color: var(--fcg-text-tertiary) !important; text-align: center; }
+.order { display: grid; gap: 10px; margin-top: 20px; padding: 18px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-lg); background: var(--fcg-bg-layer-1); }
+.orderTitle { font-size: var(--fcg-font-body); font-weight: 600; letter-spacing: -.01em; }
+.orderActions { display: flex; gap: 7px; flex-wrap: wrap; }
+.qr { width: 160px; height: 160px; max-width: 100%; object-fit: contain; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: #fff; }
+.qrWrap { display: grid; justify-items: start; gap: 8px; }
+.textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); padding: 10px 12px; background: var(--fcg-bg-input); color: var(--fcg-text-primary); font: inherit; line-height: 1.5; outline: none; transition: border-color var(--fcg-fast) var(--fcg-ease), box-shadow var(--fcg-fast) var(--fcg-ease); }
+.textarea:focus { border-color: var(--fcg-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 16%, transparent); }
+.qrText { max-width: min(100%, 520px); overflow-wrap: anywhere; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+@media (max-width: 800px) { .marketplaceGrid, .mcpMarketplaceGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* ---------------------------------------------------------------------------
+   Provider pool accounts (Cline / WorkBuddy)
+
+   One card per account: identity, state chips, and a meter. Both free-model
+   providers render through this block, so they read as one family instead of
+   two hand-built lists. Numerals are tabular here because these cards are read
+   by comparing figures between accounts.
+   --------------------------------------------------------------------------- */
+.poolManager { display: grid; gap: 12px; }
+.poolToolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.poolToolbarNote { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.poolToolbarActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.poolToggle { display: inline-flex; align-items: center; gap: 7px; color: var(--fcg-text-secondary); cursor: pointer; font-size: var(--fcg-font-caption); }
+.poolToggle input { width: 14px; height: 14px; margin: 0; accent-color: var(--fcg-brand); cursor: pointer; }
+.poolList { display: grid; gap: 10px; }
+.poolAccount { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); transition: border-color var(--fcg-fast) var(--fcg-ease), background var(--fcg-fast) var(--fcg-ease); }
+.poolAccount:hover { border-color: var(--fcg-line-strong); background: var(--fcg-bg-layer-2); }
+.poolAccountHead { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.poolIdentity { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+.poolMonogram { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 9px; background: var(--fcg-brand-subtle); color: var(--fcg-brand); font: 650 11px/1 var(--fcg-font-mono); letter-spacing: .02em; text-transform: uppercase; }
+.poolIdentityText { min-width: 0; }
+.poolName { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fcg-text-primary); font-size: var(--fcg-font-body); font-weight: 600; }
+.poolSub { display: block; margin-top: 2px; overflow: hidden; color: var(--fcg-text-tertiary); text-overflow: ellipsis; white-space: nowrap; font-size: var(--fcg-font-caption); font-variant-numeric: tabular-nums; }
+.poolChips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.poolChip { padding: 2px 8px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-hover); color: var(--fcg-text-secondary); font-size: 11px; line-height: 16px; white-space: nowrap; }
+.poolChipLive { background: color-mix(in srgb, var(--fcg-success) 14%, transparent); color: var(--fcg-success); }
+.poolChipWarn { background: color-mix(in srgb, var(--fcg-warn) 16%, transparent); color: var(--fcg-warn); }
+.poolChipDanger { background: color-mix(in srgb, var(--fcg-danger) 14%, transparent); color: var(--fcg-danger); }
+.poolMeterRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.poolMeterTrack { display: block; height: 5px; overflow: hidden; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-hover); }
+.poolMeterFill { display: block; height: 100%; border-radius: inherit; background: var(--fcg-brand); transition: width .3s var(--fcg-ease); }
+.poolMeterFillWarn { background: var(--fcg-warn); }
+.poolMeterFillDanger { background: var(--fcg-danger); }
+.poolMetric { color: var(--fcg-text-secondary); font: 600 var(--fcg-font-caption)/1 var(--fcg-font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.poolActions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.poolFootnote { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+
+@media (max-width: 520px) { .poolAccountHead { align-items: flex-start; flex-wrap: wrap; } .poolIdentity { flex-basis: 100%; } .poolActions { justify-content: flex-start; } }
+
+@media (max-width: 520px) { .authForm, .capabilityForm { grid-template-columns: 1fr; } .authFull, .capabilityFull { grid-column: auto; } .capabilityStats, .advisorStats { grid-template-columns: 1fr; } .mcpServerCard { align-items: flex-start; flex-direction: column; } .mcpServerActions { justify-content: flex-start; } .skillPanelHeader, .pricingHeader { align-items: flex-start; flex-direction: column; gap: 7px; } .pricingSearch { width: 100%; } .marketplaceControls, .mcpMarketplaceGrid { grid-template-columns: 1fr; } .marketplaceGrid { grid-template-columns: 1fr; } .accountRow { align-items: flex-start; flex-direction: column; } .accountActions { justify-content: flex-start; } .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .communityGrid { grid-template-columns: 1fr; } .capabilityCommunityGrid { grid-template-columns: 1fr; } .capabilityCommunityHeader { align-items: flex-start; flex-direction: column; } .communityFilterBar { gap: 8px; } .communityInstalledEntry { padding-inline: 8px; } .communityRestart, .advisorPickerHeader { align-items: flex-start; flex-direction: column; } .communityModalBackdrop, .advisorPickerBackdrop { padding: 10px; } .communityModal { max-height: 95vh; padding: 14px; } .advisorPicker { height: 95vh; padding: 14px; } .communityModalStats { align-items: flex-start; flex-direction: column; gap: 4px; } .advisorModelOption { align-items: flex-start; flex-direction: column; gap: 4px; } .advisorModelOption code { max-width: 100%; } }
+@media (max-width: 520px) { .routingCell { grid-template-columns: 1fr; gap: 8px; } .routingCell:not(.selectCell) .routingCopy { grid-template-columns: 1fr; gap: 2px; } .authForm, .capabilityForm { grid-template-columns: 1fr; } .authFull, .capabilityFull { grid-column: auto; } .capabilityStats, .advisorStats { grid-template-columns: 1fr; } .accountRow { align-items: flex-start; flex-direction: column; } .accountActions { justify-content: flex-start; } .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .communityGrid { grid-template-columns: 1fr; } .capabilityCommunityGrid { grid-template-columns: 1fr; } .communityRestart { align-items: flex-start; flex-direction: column; } .communityModalBackdrop { padding: 10px; } .communityModal { max-height: 95vh; padding: 14px; } .communityModalStats { align-items: flex-start; flex-direction: column; gap: 4px; } }
+@media (max-width: 360px) { .plans { grid-template-columns: 1fr; } }
+
+/* ─── Headroom statistics ──────────────────────────────────────────────
+   Was a 17-row list of label/badge pairs, most of them zero: the reader had
+   to scroll past "0" fourteen times to reach the explanation. Four headline
+   figures now carry the decision, and the breakdowns sit behind <details>. */
+.statGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: var(--fcg-space-2); margin-top: var(--fcg-space-3); }
+.statCell { display: grid; gap: 2px; min-width: 0; padding: 10px 12px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.statLabel { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.statValue { overflow: hidden; color: var(--fcg-text-primary); font-size: var(--fcg-font-title); font-variant-numeric: tabular-nums; font-weight: 650; letter-spacing: -0.01em; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+
+.details { margin-top: var(--fcg-space-2); }
+.detailsSummary { padding: 5px 0; color: var(--fcg-text-secondary); cursor: pointer; font-size: var(--fcg-font-caption); line-height: 18px; }
+.detailsSummary:hover { color: var(--fcg-text-primary); }
+.detailsSummary:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); border-radius: var(--fcg-radius-sm); }
+
+.chipGrid { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--fcg-space-1) 0 var(--fcg-space-2); }
+.statChip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-2); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; white-space: nowrap; }
+.statChip b { color: var(--fcg-text-primary); font-variant-numeric: tabular-nums; font-weight: 650; }
+/* A compressor that never fired stays legible but recedes, so the eye lands on
+   the ones that actually did something. */
+.statChipIdle { color: var(--fcg-text-tertiary); opacity: .62; }
+.statChipIdle b { color: var(--fcg-text-tertiary); }
+
+@media (max-width: 520px) { .statGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ─── Engineering council controls ─────────────────────────────────────
+   Three engines and four tuning knobs were seven full-width rows, so a
+   single logical group ("who reviews" + "how the review runs") owned most
+   of a screen. Peers of the same kind now sit side by side. */
+.toggleGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: var(--fcg-space-2); margin-top: var(--fcg-space-2); }
+.toggleCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fcg-space-2);
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--fcg-line-subtle);
+  border-radius: var(--fcg-radius-md);
+  background: var(--fcg-bg-layer-1);
+  cursor: pointer;
+  transition: border-color var(--fcg-fast) var(--fcg-ease), background var(--fcg-fast) var(--fcg-ease);
+}
+.toggleCard:hover { border-color: var(--fcg-line); background: var(--fcg-bg-layer-2); }
+/* An unavailable engine reads as inert without becoming unreadable: the
+   reason still has to be legible, because it is the only thing to act on. */
+.toggleCardDisabled { cursor: not-allowed; opacity: .55; }
+.toggleCardDisabled:hover { border-color: var(--fcg-line-subtle); background: var(--fcg-bg-layer-1); }
+.toggleCardText { display: grid; min-width: 0; gap: 1px; }
+.toggleCardText strong { overflow: hidden; color: var(--fcg-text-primary); font-size: var(--fcg-font-caption); font-weight: 600; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.toggleCardText small { overflow: hidden; color: var(--fcg-text-tertiary); font-size: 11px; line-height: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.toggleCardNote { color: var(--fcg-warn-label); font-size: 11px; line-height: 15px; }
+
+.tuningGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: var(--fcg-space-2); margin-top: var(--fcg-space-3); }
+.tuningCell { display: grid; min-width: 0; gap: 4px; }
+.tuningLabel { overflow: hidden; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.tuningHint { overflow: hidden; color: var(--fcg-text-tertiary); font-size: 11px; line-height: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.tuningCell .select { min-height: 32px; padding: 5px 9px; }
+
+/* A named sub-group inside a settings section: a quiet label, then its rows. */
+.subGroup { display: grid; gap: var(--fcg-space-2); margin-top: var(--fcg-space-4); }
+.subGroupLabel { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 600; letter-spacing: .02em; line-height: 18px; }
+
+/* ─── Council findings ─────────────────────────────────────────────────
+   Findings were rendered as bare <p> runs, so an engine name, a severity
+   word, and the actual claim all carried equal weight and the eye had
+   nothing to sort by. Severity now leads, the claim is the body, and the
+   engine trails. */
+.councilJob { display: grid; gap: var(--fcg-space-3); }
+.councilJobHead { display: flex; align-items: baseline; gap: var(--fcg-space-2); min-width: 0; flex-wrap: wrap; }
+.councilJobId { overflow: hidden; color: var(--fcg-text-tertiary); font-family: var(--fcg-font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.councilReport { display: grid; gap: var(--fcg-space-2); min-width: 0; }
+.councilReportTurn { font-size: var(--fcg-font-body); }
+
+.councilState {
+  padding: 2px 8px;
+  border-radius: var(--fcg-radius-full);
+  background: var(--fcg-bg-hover);
+  color: var(--fcg-text-secondary);
+  font-size: var(--fcg-font-caption);
+  font-weight: 600;
+  line-height: 18px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.councilStateOk { background: var(--fcg-success-subtle); color: var(--fcg-success); }
+.councilStateBlocked { background: var(--fcg-danger-subtle); color: var(--fcg-danger); }
+.councilStateNowrap { flex: 0 0 auto; max-width: none; white-space: nowrap; word-break: keep-all; }
+
+.councilCallout { display: grid; gap: 2px; padding: 9px 11px; border-left: 2px solid var(--fcg-line-strong); border-radius: 0 var(--fcg-radius-sm) var(--fcg-radius-sm) 0; background: var(--fcg-bg-layer-2); }
+.councilCallout p { margin: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; overflow-wrap: anywhere; }
+.councilCalloutBlocked { border-left-color: var(--fcg-danger); background: color-mix(in srgb, var(--fcg-danger) 6%, var(--fcg-bg-layer-2)); }
+
+.findingList { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.findingRow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: var(--fcg-space-2); padding: 8px 10px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.findingBody { display: grid; min-width: 0; gap: 2px; }
+.findingTitle { color: var(--fcg-text-primary); font-size: var(--fcg-font-caption); font-weight: 600; line-height: 18px; }
+.findingEvidence { margin: 0; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 17px; overflow-wrap: anywhere; }
+.findingEngine { flex: 0 0 auto; color: var(--fcg-text-tertiary); font-size: 11px; line-height: 18px; white-space: nowrap; }
+.findingSeverity { flex: 0 0 auto; padding: 1px 7px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-tip); color: var(--fcg-text-secondary); font-size: 10px; font-weight: 600; line-height: 16px; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
+.findingSeverity_blocker { background: var(--fcg-danger-subtle); color: var(--fcg-danger); }
+.findingSeverity_warning { background: var(--fcg-warn-subtle); color: var(--fcg-warn-label); }
+
+.findingSeverity_info { background: var(--fcg-bg-hover); color: var(--fcg-text-tertiary); }
+.findingSeverity_unknown { background: var(--fcg-bg-tip); color: var(--fcg-text-tertiary); }
+
+@media (max-width: 520px) {
+  .toggleGrid, .tuningGrid { grid-template-columns: 1fr; }
+  .findingRow { grid-template-columns: auto minmax(0, 1fr); }
+  .findingEngine { grid-column: 2; }
+}
+
+/* ─── Advisor settings form ────────────────────────────────────────────
+   The standalone Advisor page stacked four full-width form rows and a
+   right-floated save button, so configuration read as a tall form rather
+   than a settings surface. Mode/model/cooldown are one logical group —
+   "how the review runs" — and share a grid; the save action sits beside
+   the evidence note it finalises. */
+.advisorFormGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--fcg-space-3); margin-top: var(--fcg-space-3); }
+.advisorField { display: grid; min-width: 0; gap: 5px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.advisorField > span { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 16px; }
+.advisorField .advisorModelTrigger { height: 100%; }
+.advisorModelTrigger { display: grid; align-content: center; gap: 2px; }
+.advisorModelTrigger strong { overflow: hidden; color: var(--fcg-text-primary); font-size: var(--fcg-font-body); font-weight: 600; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Footer: evidence note left, save action right — one row, one decision. */
+.advisorFoot { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--fcg-space-3); margin-top: var(--fcg-space-4); flex-wrap: wrap; }
+.advisorFoot .advisorEvidence { flex: 1 1 320px; margin-top: 0; }
+.advisorFoot .buttonPrimary { flex: 0 0 auto; }
+
+@media (max-width: 520px) {
+  .advisorFormGrid { grid-template-columns: 1fr; }
+  .advisorFoot { align-items: stretch; flex-direction: column; }
+  .advisorFoot .buttonPrimary { width: 100%; }
+}
+
+/* ─── Engineering surfaces ─────────────────────────────────────────────
+   Shared compact hierarchy for memory, checkpoints, graph and council. */
+.engineeringHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--fcg-space-3); }
+.engineeringHeader > div:first-child { display: grid; min-width: 0; gap: 3px; }
+.engineeringHeader strong { color: var(--fcg-text-primary); font-size: var(--fcg-font-body-lg); }
+.engineeringHeader small { max-width: 620px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.engineeringKicker { color: var(--fcg-text-tertiary); font-size: 11px; font-weight: 650; letter-spacing: .08em; }
+.engineeringSummary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--fcg-space-2); }
+.engineeringSummary span { padding: 3px 9px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-1); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.engineeringSummary b { color: var(--fcg-text-primary); }
+.actionMenu { position: relative; }
+.actionMenu summary { list-style: none; }
+.actionMenu summary::-webkit-details-marker { display: none; }
+.actionMenuPop { position: absolute; z-index: 4; top: calc(100% + 5px); right: 0; display: grid; min-width: 150px; gap: 4px; padding: 6px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-2); box-shadow: var(--fcg-shadow-2); }
+.actionMenuPop .button { justify-content: flex-start; border-color: transparent; background: transparent; }
+.actionMenuPop .button:hover { background: var(--fcg-bg-hover); }
+.engineeringComposer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--fcg-space-2); margin-top: var(--fcg-space-3); padding: var(--fcg-space-3); border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.engineeringComposer .input { min-width: 0; }
+@media (max-width: 520px) { .engineeringHeader { flex-direction: column; } .engineeringComposer { grid-template-columns: 1fr; } }
+.composerLabel { display: block; margin-bottom: 5px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 600; line-height: 16px; }
+.engineeringComposer > div { min-width: 0; }
+.engineeringComposer > div:nth-child(1), .engineeringComposer > div:nth-child(2) { display: grid; align-content: start; }
+
+/* A free tier is not priced at zero: one badge per column says the same thing in
+ * less ink and stops a wall of US$0.00 from looking like a billing fault. */
+.pricingTable .priceFree { padding: 1px 7px; border-radius: var(--fcg-radius-full); background: color-mix(in srgb, var(--fcg-success) 14%, transparent); color: var(--fcg-success); font-size: var(--fcg-font-caption); font-weight: 700; letter-spacing: .04em; }
+/* A rejected checkout is reported beside the grid it came from, not at the panel
+ * top, so a validation failure cannot read as a button that does nothing. */
+.paymentNotice { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-top: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 38%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 19px; }
+.invoicePanel { display: grid; gap: 12px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--fcg-line); }
+.invoiceHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.invoiceOrders { display: grid; gap: 6px; }
+.invoiceOrderRow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); cursor: pointer; }
+.invoiceOrderText { display: grid; gap: 2px; min-width: 0; }
+.invoiceOrderText small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.invoiceForm { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.invoiceForm label { display: grid; gap: 5px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.invoiceForm .input { min-width: 0; }
+.invoiceActions { display: flex; gap: 8px; flex-wrap: wrap; }
+.invoiceNotice { padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 38%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.invoicePreview { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); font-family: var(--fcg-font-mono); font-size: var(--fcg-font-caption); line-height: 18px; resize: vertical; }
+.invoicePanel > .sectionMeta { line-height: 18px; }
+/* ---------------------------------------------------------------------------
+   In-panel payment dialog
+
+   The backend's own checkout page is `frame-ancestors 'none'`, so the payment
+   surface has to be ours: a Stripe Payment Element (which brings its own
+   iframe) or a QR, both inside this panel. The widths are stated here rather
+   than inherited because a card form that is narrower than the dialog looks
+   broken, and one that is wider scrolls sideways.
+--------------------------------------------------------------------------- */
+/* Wide enough for Stripe's card row, narrow enough to still read as a dialog:
+   the form fills it, so there is no empty half-card to look at. */
+.payDialog { width: min(372px, calc(100vw - 36px)); }
+.payDialogBody { display: grid; gap: 10px; }
+.payDialogHead { display: grid; gap: 1px; padding-bottom: 12px; border-bottom: 1px solid var(--fcg-line-subtle); }
+.payDialogLabel { color: var(--fcg-text-tertiary); font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+.payDialogAmount { font-size: 27px; font-weight: 660; letter-spacing: -.028em; color: var(--fcg-text-primary); line-height: 34px; font-variant-numeric: tabular-nums; }
+.payDialogMeta { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
+.payDialogCredit { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.payDialogCredit strong { color: var(--fcg-text-primary); font-weight: 650; font-variant-numeric: tabular-nums; }
+.payDialogState { margin-left: auto; padding: 2px 9px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-tip); color: var(--fcg-text-tertiary); font-size: 11px; font-weight: 600; white-space: nowrap; }
+/* No floor larger than Stripe's own height: a fixed 180px box left a white gap
+   under a short card form. */
+.payDialogElement { min-height: 0; }
+.payDialogPaid { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--fcg-ok, #2f9e6f) 42%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-ok, #2f9e6f) 10%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.payDialogNote { display: block; margin-top: 2px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.payDialogQr, .payDialogLink { display: grid; gap: 10px; justify-items: start; }
+.payDialogFooter { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+/* ── Plan review overlay ──────────────────────────────────────────────
+   The numbered plan surface: every line is a selectable row, because a
+   remark addresses a line range rather than "the plan" in general. Kept on
+   the host's own tokens so the scroll surface is readable in dark theme. */
+.planReviewBody { display: grid; max-height: 300px; overflow: auto; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-input); }
+.planReviewLine { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; width: 100%; padding: 2px 10px; border: 0; background: transparent; color: var(--fcg-text-primary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); line-height: 18px; text-align: left; }
+.planReviewLine:hover { background: var(--fcg-bg-hover); }
+.planReviewLineSelected { background: var(--fcg-bg-active); }
+.planReviewLineNumber { color: var(--fcg-text-tertiary); font-family: var(--fcg-font-mono); text-align: right; }
+.planReviewLineText { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.planReviewRemark { display: grid; gap: 8px; padding: 10px 11px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }

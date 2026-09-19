@@ -1,0 +1,468 @@
+/** Static third-party Loader-resource conflict detection and automatic entry disablement. */
+
+import { createRequire } from 'node:module'
+import { readFile, stat } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { harnessHomeDirectory } from './data-home.ts'
+import { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
+import type { Entry, EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
+import z from '@deepseek-ai/schemastery'
+import type { FreeCodeGoSettingsPort } from './policy.ts'
+import type {
+  FreeCodeGoPluginConflictRecord,
+  FreeCodeGoPluginConflictResource,
+  FreeCodeGoPluginConflictSettings,
+  FreeCodeGoPluginConflictStatus,
+} from './types.ts'
+
+const MAX_SOURCE_BYTES = 2_000_000
+const MAX_SOURCE_FILES = 50
+const MAX_RECORDS = 100
+const RESOURCE_NAME = /^[A-Za-z0-9_.:/@-]{1,256}$/
+
+type ResourceClaim = {
+  readonly resource: FreeCodeGoPluginConflictResource
+  readonly resourceName: string
+}
+
+type OwnedClaim = ResourceClaim & {
+  readonly entryId: string
+  /** Loader entry that owns the claim; effective ids may be composite. */
+  readonly ownerId: string
+  readonly moduleName: string
+}
+
+/** Schema embedded in the FreeCodeGo settings namespace. */
+export const FreeCodeGoPluginConflictSettingsSchema = z.object({
+  pluginConflictProtectionEnabled: z.boolean().default(true),
+  pluginConflictRecords: z.array(z.object({
+    id: z.string().min(1).max(256),
+    detectedAt: z.number(),
+    resource: z.union([
+      z.const('tool'), z.const('command'), z.const('settings'), z.const('route'), z.const('provider'), z.const('slot'),
+    ]),
+    resourceName: z.string().min(1).max(256),
+    disabledEntryId: z.string().min(1).max(512),
+    disabledModuleName: z.string().min(1).max(512),
+    keptEntryId: z.string().min(1).max(512),
+    keptModuleName: z.string().min(1).max(512),
+  })).default([]),
+}) as z<FreeCodeGoPluginConflictSettings>
+
+/**
+ * Extract only literal registrations that have a globally exclusive identity.
+ * Dynamic registrations are intentionally ignored rather than guessed.
+ */
+export function scanPluginResourceClaims(source: string): readonly ResourceClaim[] {
+  const claims = new Map<string, ResourceClaim>()
+  const add = (resource: FreeCodeGoPluginConflictResource, resourceName: string): void => {
+    const normalized = resourceName.trim()
+    if (!RESOURCE_NAME.test(normalized)) return
+    claims.set(`${resource}:${normalized}`, { resource, resourceName: normalized })
+  }
+  const addNames = (resource: FreeCodeGoPluginConflictResource, expression: RegExp): void => {
+    for (const match of source.matchAll(expression)) add(resource, match[2] ?? '')
+  }
+
+  // Registration targets may be aliased (`const t = ctx.tools; t.register(…)`)
+  // and a long `description` before `name` can exceed any fixed window, so the
+  // receiver is optional and the pre-name window is generous. Matching is
+  // anchored on the `name:`/`path:` literal itself with a nearby registration
+  // call before it, which keeps false positives low while recovering aliased
+  // and long-description registrations that previously went undetected.
+  // Name-carrying `register({ name })` calls are classified by *receiver*, in one
+  // pass. Two independent generic patterns cannot work here: they would each
+  // match the other's call sites, so `ctx.tools.register({name})` was claimed as
+  // both a tool and a command. That double claim made two plugins conflict over
+  // a name only one of them owned, and the guard would disable the later one.
+  //
+  // The receiver is deliberately still generic for tools — plugins reach their
+  // registry as `ctx.tools`, an alias, or a scoped `childCtx.tools` — while the
+  // receivers that carry their own exclusive identity elsewhere are excluded
+  // rather than re-classified. The tradeoff is unchanged from before: an
+  // unrelated `<x>.register({ name })` on some other registry is still read as a
+  // tool, which is the price of recovering aliased registrations.
+  for (const match of source.matchAll(/\b((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*)\.register\s*\(\s*(?:[A-Za-z_$][\w$]*\s*\(\s*)?\{[\s\S]{0,4000}?\bname\s*:\s*(['"])([^'"]+)\2/g)) {
+    const last = (match[1] ?? '').split('.').pop() ?? ''
+    // Handled by the settings/slot patterns below, which see the real identity.
+    if (last === 'settings' || last === 'slots' || last === 'sessionProjections') continue
+    add(last === 'commands' ? 'command' : 'tool', match[3] ?? '')
+  }
+  addNames('settings', /\bsettings\s*\.\s*register\s*\(\s*(['"])([^'"]+)\1\s*,/g)
+  addNames('route', /\b[A-Za-z_$][\w$]*\s*\.\s*register\s*\(\s*\{[\s\S]{0,4000}?\bpath\s*:\s*(['"])([^'"]+)\1/g)
+
+  for (const registration of source.matchAll(/\bslots\s*\.\s*register\s*\(\s*\{([\s\S]{0,900}?)\}\s*,/g)) {
+    const name = literalProperty(registration[1] ?? '', 'name')
+    const id = literalProperty(registration[1] ?? '', 'id')
+    if (name !== undefined && id !== undefined) add('slot', `${name}:${id}`)
+  }
+
+  for (const adapter of source.matchAll(/\bregisterAdapter\s*\(\s*\[([^\]]*)\]/g)) {
+    for (const provider of adapter[1]?.matchAll(/(['"])([^'"]+)\1/g) ?? []) add('provider', provider[2] ?? '')
+  }
+  return [...claims.values()]
+}
+
+/** Automatically prevents newly loaded entries from claiming an active exclusive resource. */
+export class FreeCodeGoPluginConflictGuard {
+  private readonly claims = new Map<string, OwnedClaim>()
+  private readonly sourceClaims = new Map<string, Promise<readonly ResourceClaim[]>>()
+  private readonly wrappedEntries = new WeakSet<Entry>()
+  private settings: FreeCodeGoSettingsPort | undefined
+  private records: readonly FreeCodeGoPluginConflictRecord[]
+  private sequence = 0
+  private seedTask: Promise<void> | undefined
+  private preflightTask = Promise.resolve()
+  private started = false
+  private enabled: boolean
+
+  constructor(
+    private readonly ctx: Context,
+    settings: FreeCodeGoSettingsPort | undefined,
+  ) {
+    this.settings = settings
+    this.records = settings?.get()?.pluginConflictRecords ?? []
+    this.enabled = settings?.get()?.pluginConflictProtectionEnabled ?? bootstrapConflictProtectionEnabled()
+  }
+
+  /** Install plugin-owned Loader lifecycle wrappers and seed active entry claims. */
+  start(): void {
+    if (this.started) return
+    this.started = true
+    this.seedTask ??= this.seed()
+    this.ctx.effect(() => {
+      const disposeEntryInit = this.ctx.on('loader/entry-init', (entry) => {
+        this.wrapEntry(entry)
+      }, { global: true })
+      const disposePartial = this.ctx.on('loader/partial-dispose', (entry) => {
+        this.forget(entry.id)
+        if (entry.options.group || entry.disabled || entry.fiber === undefined || entry.fiber.uid === null) return
+        // Re-claim inside the preflight queue: a synchronous remember would
+        // race a concurrent entry's init and let it steal these resource
+        // names while the async claims scan is still in flight.
+        void this.enqueuePreflight(entry, entry.options).catch(() => undefined)
+      }, { global: true })
+      return () => {
+        disposeEntryInit()
+        disposePartial()
+      }
+    }, 'freecodego: plugin conflict lifecycle guard')
+  }
+
+  /** Attach settings after a pre-Loader bootstrap installation. */
+  configure(settings: FreeCodeGoSettingsPort | undefined): void {
+    if (settings === undefined || settings === this.settings) return
+    this.settings = settings
+    this.enabled = settings.get()?.pluginConflictProtectionEnabled ?? true
+    const persisted = settings.get()?.pluginConflictRecords ?? []
+    const merged = [...persisted, ...this.records.filter(record => !persisted.some(item => sameConflict(item, record)))].slice(-MAX_RECORDS)
+    this.records = merged
+    // A settings write can fail (disk full, permissions); losing the merge is
+    // preferable to an unhandled rejection crashing the Host.
+    if (merged.length !== persisted.length) void settings.update({ pluginConflictRecords: merged }).catch(() => undefined)
+  }
+
+  /** Return the browser-safe policy and automatic-repair history. */
+  snapshot(): FreeCodeGoPluginConflictStatus {
+    const current = this.settings?.get()
+    return {
+      pluginConflictProtectionEnabled: current?.pluginConflictProtectionEnabled ?? this.enabled,
+      pluginConflictRecords: this.records,
+    }
+  }
+
+  /** Persist the global automatic-repair switch. */
+  async setEnabled(enabled: boolean): Promise<FreeCodeGoPluginConflictStatus> {
+    this.enabled = enabled
+    await this.settings?.update({ pluginConflictProtectionEnabled: enabled })
+    return this.snapshot()
+  }
+
+  private async seed(): Promise<void> {
+    const loader = this.ctx.get('loader')
+    if (loader === undefined) return
+    for (const entry of loader.entries()) {
+      this.wrapEntry(entry)
+      if (entry.options.group || entry.disabled || entry.fiber === undefined || entry.fiber.uid === null) continue
+      await this.remember(entry, entry.options)
+    }
+  }
+
+  /**
+   * The Loader exposes no pre-start policy event, so intercept each entry's
+   * lifecycle instead: `init()` is the only start path on Harness 0.1.6, which
+   * inlined the private `_start` seam into `_init`. Older loader builds still
+   * expose `_start`, so the wrapper keeps covering it when it is there. The
+   * wrapper lives in this plugin and leaves the Harness Loader implementation
+   * untouched.
+   */
+  private wrapEntry(entry: Entry): void {
+    if (this.wrappedEntries.has(entry)) return
+    this.wrappedEntries.add(entry)
+    const target = entry as unknown as {
+      init: () => Promise<void>
+      _start?: (plugin: unknown) => Promise<void>
+      options: EntryOptions
+      disabled: boolean
+    }
+    const init = target.init.bind(entry)
+    target.init = async (): Promise<void> => {
+      await this.preflightBeforeStart(entry, target.options)
+      if (target.disabled) return
+      await init()
+    }
+    // Harness 0.1.6 inlined the private `_start` seam into `_init`, so `init()`
+    // is the only start path left to intercept; older loader builds still expose
+    // `_start`, and wrapping it there keeps replacement updates covered. Binding
+    // a missing method used to throw inside `loader/entry-init`, which stopped
+    // every entry from starting on the newer loader.
+    if (typeof target._start !== 'function') return
+    const start = target._start.bind(entry)
+    target._start = async (plugin: unknown): Promise<void> => {
+      await this.preflightBeforeStart(entry, target.options)
+      if (target.disabled) return
+      await start(plugin)
+    }
+  }
+
+  private async preflightBeforeStart(entry: Entry, candidate: EntryOptions): Promise<void> {
+    await this.seedTask
+    await this.enqueuePreflight(entry, candidate)
+  }
+
+  private async preflight(entry: Entry, candidate: EntryOptions): Promise<void> {
+    if (candidate.group || candidate.disabled) return
+    const candidateEntryId = effectiveEntryId(entry, candidate)
+    const candidateClaims = await this.claimsFor(entry, candidate)
+    const candidateFiles = await this.scannedFilesFor(entry, candidate)
+    const conflict = this.snapshot().pluginConflictProtectionEnabled
+      ? candidateClaims.map(claim => ({ claim, existing: this.claims.get(resourceKey(claim)) }))
+        .find((value): value is { claim: ResourceClaim; existing: OwnedClaim } =>
+          value.existing !== undefined
+          && value.existing.entryId !== candidateEntryId
+          // A package may be mounted more than once with different config
+          // (for example spawn and fork subagent tools). Its registrations
+          // are intentionally shared and the Loader scopes them per entry;
+          // treating the same module as a third-party conflict disables a
+          // legitimate capability before it can start.
+          && value.existing.moduleName !== candidate.name
+          // Two entries whose scanned sources overlap (one entry's claims were
+          // read from the other entry's file — the FreeCodeGo bundle pattern:
+          // `session-events.js` re-exports `bootstrap.js`) share one physical
+          // registration and must not disable each other. Independent plugins
+          // in separate files scan disjoint file sets and still conflict.
+          && !this.claimsReadFromOverlappingSources(value.existing.entryId, candidateFiles))
+      : undefined
+    if (conflict === undefined) {
+      this.rememberClaims(entry, candidate, candidateClaims)
+      this.resolvedScannedFiles.set(candidateEntryId, new Set(candidateFiles))
+      return
+    }
+
+    candidate.disabled = true
+    await this.record({
+      resource: conflict.claim.resource,
+      resourceName: conflict.claim.resourceName,
+      disabledEntryId: candidateEntryId,
+      disabledModuleName: candidate.name,
+      keptEntryId: conflict.existing.entryId,
+      keptModuleName: conflict.existing.moduleName,
+    })
+  }
+
+  private async remember(entry: Entry, options: EntryOptions): Promise<void> {
+    this.rememberClaims(entry, options, await this.claimsFor(entry, options))
+    const effectiveId = effectiveEntryId(entry, options)
+    this.resolvedScannedFiles.set(effectiveId, new Set(await this.scannedFilesFor(entry, options)))
+  }
+
+  private rememberClaims(entry: Entry, options: EntryOptions, claims: readonly ResourceClaim[]): void {
+    const entryId = effectiveEntryId(entry, options)
+    for (const claim of claims) {
+      const key = resourceKey(claim)
+      if (!this.claims.has(key)) this.claims.set(key, { ...claim, entryId, ownerId: entry.id, moduleName: options.name })
+    }
+  }
+
+  private claimsFor(entry: Entry, options: EntryOptions): Promise<readonly ResourceClaim[]> {
+    const sourceKey = `${entry.context.baseUrl ?? ''}\u0000${options.name}`
+    const cached = this.sourceClaims.get(sourceKey)
+    if (cached !== undefined) return cached
+    const task = this.readSources(entry, options.name)
+      .then(result => scanPluginResourceClaims(result.sources), () => undefined)
+      .then((claims) => {
+        // A failed read must not be cached as "no claims" forever: a transient
+        // EBUSY/EMFILE during early startup would blind conflict detection for
+        // the module until the Host restarts. Only successful scans stay
+        // memoized; failures evict so the next claim check retries.
+        if (claims === undefined) {
+          this.sourceClaims.delete(sourceKey)
+          return [] as readonly ResourceClaim[]
+        }
+        return claims
+      })
+    this.sourceClaims.set(sourceKey, task)
+    return task
+  }
+
+  /** Set of files whose source was scanned for one module's claims. Two entries
+   * whose scanned file sets overlap claim the same registrations from the same
+   * physical source, which is intentional composition — not a conflict. */
+  private readonly scannedFiles = new Map<string, Promise<ReadonlySet<string>>>()
+
+  private scannedFilesFor(entry: Entry, options: EntryOptions): Promise<ReadonlySet<string>> {
+    const sourceKey = `${entry.context.baseUrl ?? ''}\u0000${options.name}`
+    const cached = this.scannedFiles.get(sourceKey)
+    if (cached !== undefined) return cached
+    const task = this.readSources(entry, options.name)
+      .then(result => result.files, () => new Set<string>())
+    this.scannedFiles.set(sourceKey, task)
+    return task
+  }
+
+  private async readSources(entry: Entry, moduleName: string): Promise<{ sources: string; files: ReadonlySet<string> }> {
+    if (moduleName.startsWith('cordis:')) return { sources: '', files: new Set<string>() }
+    const resolver = createRequire(entry.context.baseUrl ?? import.meta.url)
+    const filename = resolver.resolve(moduleName)
+    const visited = new Set<string>()
+    const sources: string[] = []
+    let totalBytes = 0
+
+    const visit = async (current: string): Promise<void> => {
+      if (visited.has(current) || visited.size >= MAX_SOURCE_FILES || totalBytes >= MAX_SOURCE_BYTES) return
+      visited.add(current)
+      // Bound the read by the file size first: one packed bundle could exceed
+      // the entire byte budget and would otherwise be loaded fully into memory.
+      const info = await stat(current).catch(() => undefined)
+      if (info === undefined || !info.isFile() || info.size > MAX_SOURCE_BYTES) return
+      const source = await readFile(current, 'utf8')
+      totalBytes += Buffer.byteLength(source, 'utf8')
+      if (totalBytes > MAX_SOURCE_BYTES) return
+      sources.push(source)
+      const currentResolver = createRequire(current)
+      for (const specifier of relativeModuleSpecifiers(source)) {
+        try {
+          await visit(currentResolver.resolve(specifier))
+        } catch {
+          // An optional or non-Node-compatible local import cannot be scanned.
+        }
+      }
+    }
+
+    await visit(filename)
+    return { sources: sources.join('\n'), files: visited }
+  }
+
+  private async record(input: Omit<FreeCodeGoPluginConflictRecord, 'id' | 'detectedAt'>): Promise<void> {
+    // Preflight re-detects the same conflict on every startup; refresh the
+    // existing record instead of appending duplicates that flood the history.
+    const existing = this.records.find(record => sameConflict(record, { id: '', detectedAt: 0, ...input }))
+    if (existing !== undefined) return
+    const record: FreeCodeGoPluginConflictRecord = {
+      id: `plugin-conflict-${Date.now()}-${++this.sequence}`,
+      detectedAt: Date.now(),
+      ...input,
+    }
+    this.records = [...this.records, record].slice(-MAX_RECORDS)
+    await this.settings?.update({ pluginConflictRecords: this.records })
+  }
+
+  private enqueuePreflight(entry: Entry, candidate: EntryOptions): Promise<void> {
+    const task = this.preflightTask.then(() => this.preflight(entry, candidate))
+    this.preflightTask = task.catch(() => undefined)
+    return task
+  }
+
+  private forget(entryId: string): void {
+    for (const [key, claim] of this.claims) {
+      // Composite effective ids (`${parentEntry.id}:${options.id}`) belong to
+      // the owning loader entry too, so partial disposal releases its claims.
+      if (claim.ownerId === entryId || claim.entryId === entryId || claim.entryId.startsWith(`${entryId}:`)) this.claims.delete(key)
+    }
+  }
+
+  /** True when the entry that owns the existing claim and the candidate entry
+   * scanned at least one common source file. An overlap means both entries'
+   * claim sets were derived from the same physical registration (one file's
+   * source was pulled in through the other's relative-import graph), which is
+   * shared-source composition inside one package — not a third-party conflict. */
+  private claimsReadFromOverlappingSources(existingEntryId: string, candidateFiles: ReadonlySet<string>): boolean {
+    if (candidateFiles.size === 0) return false
+    const existingFiles = this.resolvedScannedFiles.get(existingEntryId)
+    if (existingFiles === undefined) return false
+    for (const file of candidateFiles) {
+      if (existingFiles.has(file)) return true
+    }
+    return false
+  }
+
+  /** Entry id → scanned file-set snapshot, refreshed when claims are remembered. */
+  private readonly resolvedScannedFiles = new Map<string, ReadonlySet<string>>()
+}
+
+function resourceKey(value: ResourceClaim): string {
+  return `${value.resource}:${value.resourceName}`
+}
+
+function effectiveEntryId(entry: Entry, options: EntryOptions): string {
+  if (entry.options.id !== undefined) return entry.id
+  const parentEntry = entry.parent?.tree.ctx.fiber.entry
+  return parentEntry === undefined ? options.id : `${parentEntry.id}:${options.id}`
+}
+
+function literalProperty(source: string, property: string): string | undefined {
+  const match = source.match(new RegExp(`\\b${property}\\s*:\\s*(['\"])([^'\"]+)\\1`))
+  return match?.[2]
+}
+
+function relativeModuleSpecifiers(source: string): readonly string[] {
+  const specifiers = new Set<string>()
+  const add = (expression: RegExp): void => {
+    for (const match of source.matchAll(expression)) specifiers.add(match[2] ?? '')
+  }
+  add(/\b(?:import|export)\s+(?:[\s\S]*?\s+from\s+)?(['"])(\.{1,2}\/[^'"]+)\1/g)
+  add(/\brequire\s*\(\s*(['"])(\.{1,2}\/[^'"]+)\1\s*\)/g)
+  return [...specifiers]
+}
+
+function bootstrapConflictProtectionEnabled(): boolean {
+  const settingsPath = join(harnessHomeDirectory(), 'settings.yaml')
+  try {
+    const source = readFileSync(settingsPath, 'utf8')
+    const match = source.match(/^freecodego-harness:\s*\r?\n(?:[ \t]+[^\r\n]*\r?\n)*?[ \t]+pluginConflictProtectionEnabled:\s*(true|false)\s*(?:#.*)?$/m)
+    return match?.[1] === undefined ? true : match[1] === 'true'
+  } catch {
+    // The settings document is absent before the profile's first start.
+    return true
+  }
+}
+
+function sameConflict(left: FreeCodeGoPluginConflictRecord, right: FreeCodeGoPluginConflictRecord): boolean {
+  return left.resource === right.resource
+    && left.resourceName === right.resourceName
+    && left.disabledEntryId === right.disabledEntryId
+    && left.disabledModuleName === right.disabledModuleName
+    && left.keptEntryId === right.keptEntryId
+    && left.keptModuleName === right.keptModuleName
+}
+
+const installedGuards = new WeakMap<Context, FreeCodeGoPluginConflictGuard>()
+
+/** Install the guard before Loader starts the profile's configured entries. */
+export function installFreeCodeGoPluginConflictGuard(
+  ctx: Context,
+  settings?: FreeCodeGoSettingsPort,
+): FreeCodeGoPluginConflictGuard {
+  const root = ctx.root
+  let guard = installedGuards.get(root)
+  if (guard === undefined) {
+    guard = new FreeCodeGoPluginConflictGuard(root, settings)
+    installedGuards.set(root, guard)
+  } else {
+    guard.configure(settings)
+  }
+  guard.start()
+  return guard
+}

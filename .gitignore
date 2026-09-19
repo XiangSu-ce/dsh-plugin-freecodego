@@ -1,0 +1,28 @@
+# The workspace hosts mutable application state and an upstream Harness copy.
+# Git tracks only the private FreeCodeGo source beneath plugin/. Its nested
+# .gitignore further limits that tree to FreeCodeGo-owned files.
+/*
+!/.gitignore
+# The front page is a root-level file, so the blanket `/*` above drops it unless
+# it is named here — measured on this repository's own first commit, which
+# carried 816 of its 817 files because `git check-ignore -v README.md` reported
+# `.gitignore:4:/*`. The same applies to anything added at the root later
+# (a LICENSE, CI, or release output), which is the trade the blanket rule makes.
+!/README.md
+!/plugin/
+!/plugin/**
+
+# The former nested repository is retained locally as a migration backup.
+/plugin/.git/
+/plugin/.git.plugin-repository-backup/
+
+# A `.tmp-` name means throwaway, but the tree beneath plugin/ is tracked whole,
+# so one-shot code-generation scripts get committed here by mistake and are
+# cited nowhere. This file used to carry the rule that was meant to stop them,
+# pointed at `harness-plugin/scripts/.tmp-*` — and it blocked nothing, because a
+# deeper `.gitignore` overrides a shallower one: `plugin/.gitignore`'s
+# `!/packages/freecodego/**` is what git reports as the deciding pattern for
+# every such path, so three more scratch files were committed in the package
+# root while this rule sat here naming them. The rule now lives beside that
+# allowlist in `plugin/.gitignore`, where it is decided in favour of; a pattern
+# kept here would only read as protection while providing none.

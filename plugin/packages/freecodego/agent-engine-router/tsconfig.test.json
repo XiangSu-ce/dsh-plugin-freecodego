@@ -1,0 +1,23 @@
+{
+  // See `../freecodego-api/tsconfig.test.json` for why this project exists and
+  // why its `references` repeats the package project's list.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src", "tests"],
+  "references": [
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../../vendor/schemastery" },
+    { "path": "../../core/agent" },
+    { "path": "../../core/agent-loop" },
+    { "path": "../root-agent" },
+    { "path": "../runtime-codex" },
+    { "path": "../runtime-claude" }
+  ]
+}

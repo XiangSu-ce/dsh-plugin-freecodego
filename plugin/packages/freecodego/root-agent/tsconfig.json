@@ -1,0 +1,16 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "lib/types" },
+  "include": ["src"],
+  "references": [
+    { "path": "../native-runtime-host" },
+    { "path": "../native-runtime-protocol" },
+    { "path": "../../core/agent" },
+    { "path": "../../llm/llm" },
+    { "path": "../../core/scope" },
+    { "path": "../../core/session" },
+    { "path": "../../session/session-persistence" }
+    ,{ "path": "../../interaction/user-approval" }
+    ,{ "path": "../../interaction/user-questions" }
+  ]
+}

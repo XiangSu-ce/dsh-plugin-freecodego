@@ -1,0 +1,12 @@
+# Normalize all text files in this tree to LF (both in the index and the worktree).
+#
+# Why this exists: several gates in this repository are byte-level rather than
+# semantic -- `verify-anchors.mjs` matches probe `from` snippets (written with
+# explicit "\n" escapes) against source read as UTF-8, coverage offsets and
+# package blob hashes are compared across hosts, and the guard-probe table is
+# parsed by anchoring on "\n]\n". If a Windows checkout turns those files into
+# CRLF, every one of those comparisons silently stops matching and the failures
+# look like anchor rot rather than a line-ending problem.
+#
+# Declaring `eol=lf` keeps every host looking at the same bytes.
+* text=auto eol=lf

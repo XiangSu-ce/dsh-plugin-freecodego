@@ -1,0 +1,27 @@
+{
+  "name": "@deepseek-ai/dsh-freecodego-native-runtime-host",
+  "description": "Managed child-process host for FreeCodeGo native agent workers",
+  "version": "0.1.6-alpha.2",
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XiangSu-ce/dsh-freecodego.git",
+    "directory": "packages/freecodego/native-runtime-host"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": ["lib/index.js", "lib/types/**/*.d.ts"],
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@deepseek-ai/dsh-freecodego-native-runtime-protocol": "workspace:^",
+    "tar": "7.5.2"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "workspace:^" },
+  "devDependencies": { "@deepseek-ai/cordis": "workspace:^", "@types/node": "^22.20.0" }
+}

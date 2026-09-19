@@ -1,0 +1,103 @@
+/**
+ * FreeCodeGo local design-token layer.
+ *
+ * Every token maps onto the host DeepSeek Harness design platform
+ * (packages/client/ui-theme/src/styles/design-platform.css), so light/dark
+ * switching happens automatically through the host's
+ * `body[data-ds-dark-theme]` remapping of the `--dsw-alias-*` and
+ * `--dsw-static-*` variables. FreeCodeGo defines no colors of its own — this
+ * file only adds the measurement scale (spacing / radius / type / elevation)
+ * the host platform does not provide, plus a handful of semantic aliases so
+ * the panels below can stop hardcoding hex fallbacks.
+ *
+ * @module @deepseek-ai/dsh-freecodego-harness-ui/theme
+ */
+
+body {
+  /* ── Spacing: strict 4/8 grid ─────────────────────────────────────── */
+  --fcg-space-1: 4px;
+  --fcg-space-2: 8px;
+  --fcg-space-3: 12px;
+  --fcg-space-4: 16px;
+  --fcg-space-5: 20px;
+  --fcg-space-6: 24px;
+  --fcg-space-8: 32px;
+
+  /* ── Radius: three tiers only ─────────────────────────────────────── */
+  --fcg-radius-sm: 6px;
+  --fcg-radius-md: 10px;
+  --fcg-radius-lg: 14px;
+  --fcg-radius-full: 999px;
+
+  /* ── Type scale (≥12px everywhere) ────────────────────────────────── */
+  --fcg-font-caption: 12px;
+  --fcg-font-body: 13px;
+  --fcg-font-body-lg: 14px;
+  --fcg-font-title: 15px;
+  --fcg-font-section: 20px;
+  --fcg-font-display: 28px;
+  /* Mono is reserved for hashes/ids/prices — never prose. */
+  --fcg-font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+
+  /* ── Elevation: two tiers ─────────────────────────────────────────── */
+  --fcg-shadow-1: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --fcg-shadow-2: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --fcg-shadow-pop: 0 12px 40px rgba(15, 23, 42, 0.2);
+
+  /* ── Surfaces & lines (host aliases, local names for brevity) ─────── */
+  --fcg-bg-base: var(--dsw-alias-bg-module-platform);
+  --fcg-bg-layer-1: var(--dsw-alias-bg-layer-1);
+  --fcg-bg-layer-2: var(--dsw-alias-bg-layer-2);
+  --fcg-bg-layer-3: var(--dsw-alias-bg-layer-3);
+  --fcg-bg-input: var(--dsw-specific-input-major);
+  --fcg-bg-hover: var(--dsw-alias-interactive-bg-hover);
+  --fcg-bg-active: var(--dsw-alias-interactive-bg-active);
+  --fcg-bg-tip: var(--dsw-specific-tip);
+
+  --fcg-line-subtle: var(--dsw-alias-border-l1);
+  --fcg-line: var(--dsw-alias-border-l2);
+  --fcg-line-strong: var(--dsw-alias-border-l4);
+
+  /* ── Text ─────────────────────────────────────────────────────────── */
+  --fcg-text-primary: var(--dsw-alias-label-primary);
+  --fcg-text-secondary: var(--dsw-alias-label-secondary);
+  --fcg-text-tertiary: var(--dsw-alias-label-tertiary);
+  --fcg-text-caption: var(--dsw-alias-label-caption);
+  --fcg-text-on-brand: var(--dsw-alias-label-primary-foreground);
+  /* White that stays white in both themes. `label-primary-foreground` above
+     flips to near-black under the dark theme because the host's own primary
+     fill flips light too; surfaces that keep the DeepSeek brand blue in both
+     themes (the account sign-in submit) need a foreground that does not. */
+  --fcg-text-on-brand-fixed: var(--dsw-static-neutral-bluish-00);
+
+  /* ── Brand & state (semantic, theme-following) ────────────────────── */
+  --fcg-brand: var(--dsw-static-deepseek-500);
+  --fcg-brand-strong: var(--dsw-static-deepseek-600);
+  --fcg-brand-subtle: var(--dsw-static-deepseek-100);
+  --fcg-success: var(--dsw-alias-state-success-primary);
+  --fcg-success-subtle: var(--dsw-alias-state-success-tertiary);
+  --fcg-warn: var(--dsw-alias-state-warn-primary);
+  --fcg-warn-label: var(--dsw-alias-state-warn-label);
+  --fcg-warn-subtle: var(--dsw-alias-state-warn-tertiary);
+  --fcg-danger: var(--dsw-alias-state-error-primary);
+  --fcg-danger-subtle: var(--dsw-static-red-50);
+
+  /* ── Buttons (host button aliases) ────────────────────────────────── */
+  --fcg-btn-primary-fill: var(--dsw-alias-button-info-fill);
+  --fcg-btn-primary-hover: var(--dsw-alias-button-info-hover);
+  --fcg-btn-ghost-hover: var(--dsw-alias-interactive-bg-hover-solid);
+  --fcg-btn-ghost-active: var(--dsw-alias-button-ghost-active-fill);
+
+  /* ── Motion ───────────────────────────────────────────────────────── */
+  --fcg-ease: cubic-bezier(0.2, 0, 0, 1);
+  --fcg-fast: 140ms;
+  --fcg-slow: 280ms;
+}
+
+body[data-ds-dark-theme] {
+  --fcg-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --fcg-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --fcg-shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.6);
+  --fcg-danger-subtle: var(--dsw-static-red-900);
+  --fcg-brand-subtle: var(--dsw-static-deepseek-800);
+}

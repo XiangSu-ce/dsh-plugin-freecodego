@@ -1,0 +1,4 @@
+# freecodego-agent-preset-v1 — owned by the FreeCodeGo plugin; local edits are preserved.
+name: Claude 模式
+description: 标准模式的全部工具，叠加蒸馏自 Claude Fable 的行为准则：先读后写、最小改动、验证驱动、简洁直接。
+order: 5

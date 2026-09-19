@@ -1,0 +1,269 @@
+.root {
+  margin: var(--fcg-space-3) 0;
+  border: 1px solid var(--fcg-line-subtle);
+  background: var(--fcg-bg-layer-1);
+  border-radius: var(--fcg-radius-md);
+  box-shadow: var(--fcg-shadow-1);
+  overflow: hidden;
+  font-size: var(--fcg-font-body);
+}
+
+/* ── Header: summary + overall progress ─────────────────────────────── */
+
+.header {
+  display: flex;
+  gap: var(--fcg-space-3);
+  align-items: center;
+  padding: var(--fcg-space-3) var(--fcg-space-4);
+  border-bottom: 1px solid var(--fcg-line-subtle);
+  background: var(--fcg-bg-layer-2);
+}
+
+.headerText { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.headerText strong {
+  font-size: var(--fcg-font-body-lg);
+  font-weight: 600;
+  color: var(--fcg-text-primary);
+  letter-spacing: -0.01em;
+}
+.headerMeta { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+
+.headerProgress {
+  flex: none;
+  width: 72px;
+  height: 4px;
+  border-radius: var(--fcg-radius-full);
+  background: var(--fcg-bg-tip);
+  overflow: hidden;
+}
+.headerProgressBar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--fcg-brand);
+  transition: width var(--fcg-slow) var(--fcg-ease);
+}
+.headerProgressDone { background: var(--fcg-success); }
+.headerProgressFailed { background: var(--fcg-danger); }
+
+/* ── Tree: indent rails express parent → child delegation ──────────── */
+
+.tree {
+  display: grid;
+  gap: 2px;
+  padding: var(--fcg-space-2) var(--fcg-space-2) var(--fcg-space-3);
+}
+
+/* ── Row ────────────────────────────────────────────────────────────── */
+
+.row {
+  display: flex;
+  gap: var(--fcg-space-2);
+  align-items: stretch;
+  min-height: 44px;
+  border-radius: var(--fcg-radius-sm);
+  transition: background var(--fcg-fast) var(--fcg-ease);
+}
+.row:hover { background: var(--fcg-bg-hover); }
+
+.stateCell {
+  flex: none;
+  width: 20px;
+  display: flex;
+  justify-content: center;
+  padding-top: 14px;
+}
+
+/* The status dot is the single source of truth for state semantics. */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  /* Every full-round radius pairs this, or the smoothing token squarcles it. */
+  corner-shape: round;
+  background: var(--fcg-text-dimmed, var(--fcg-text-tertiary));
+}
+.dotRunning {
+  background: var(--fcg-brand);
+  animation: fcg-agent-pulse 1.6s var(--fcg-ease) infinite;
+}
+.dotQueued { background: var(--fcg-text-tertiary); }
+.dotStalled { background: var(--fcg-warn); }
+.dotCompleted { background: var(--fcg-success); }
+.dotFailed { background: var(--fcg-danger); }
+
+@keyframes fcg-agent-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fcg-brand) 45%, transparent); }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.contentButton {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  padding: var(--fcg-space-2) var(--fcg-space-1);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.contentButton:disabled { cursor: default; }
+.contentButton:not(:disabled):hover .title strong { color: var(--fcg-link, var(--fcg-brand)); }
+
+.content { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.title { display: flex; gap: var(--fcg-space-2); align-items: center; min-width: 0; }
+.title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fcg-text-primary);
+  font-weight: 600;
+  transition: color var(--fcg-fast) var(--fcg-ease);
+}
+
+/* Status pill: quiet, same hue family as the dot. */
+.status {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--fcg-radius-full);
+  color: var(--fcg-text-tertiary);
+  background: var(--fcg-bg-tip);
+  font-size: var(--fcg-font-caption);
+  line-height: 17px;
+  letter-spacing: 0.01em;
+}
+.statusRunning { color: var(--fcg-brand); background: var(--fcg-brand-subtle); }
+.statusCompleted { color: var(--fcg-success); background: var(--fcg-success-subtle); }
+.statusFailed, .statusCancelled { color: var(--fcg-danger); background: var(--fcg-danger-subtle); }
+.statusStalled { color: var(--fcg-warn-label); background: var(--fcg-warn-subtle); }
+
+.detail {
+  display: flex;
+  gap: var(--fcg-space-2);
+  align-items: baseline;
+  color: var(--fcg-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fcg-font-caption);
+}
+.metrics { flex: none; color: var(--fcg-text-caption); font-variant-numeric: tabular-nums; }
+
+/* Live activity bar under running agents: quantifies progress. */
+.activity {
+  height: 3px;
+  border-radius: var(--fcg-radius-full);
+  background: var(--fcg-bg-tip);
+  overflow: hidden;
+}
+.activityBar {
+  height: 100%;
+  width: 40%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--fcg-brand), transparent);
+  animation: fcg-agent-indeterminate 1.4s var(--fcg-ease) infinite;
+}
+@keyframes fcg-agent-indeterminate {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(320%); }
+}
+
+.error {
+  color: var(--fcg-danger);
+  white-space: normal;
+  font-size: var(--fcg-font-caption);
+}
+
+/* ── Focus chain: plan survives context resets here ───────────────── */
+
+.todos {
+  display: grid;
+  gap: var(--fcg-space-2);
+  margin: var(--fcg-space-3) var(--fcg-space-4) 0;
+  padding: var(--fcg-space-2) var(--fcg-space-3);
+  border: 1px solid var(--fcg-line-subtle);
+  border-radius: var(--fcg-radius-sm);
+  background: var(--fcg-bg-tip);
+}
+.todosHeader {
+  display: flex;
+  gap: var(--fcg-space-2);
+  align-items: center;
+}
+.todosTitle {
+  flex: none;
+  color: var(--fcg-text-secondary);
+  font-size: var(--fcg-font-caption);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.todosBar {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--fcg-radius-full);
+  background: var(--fcg-bg-hover);
+  overflow: hidden;
+}
+.todosBarFill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--fcg-success);
+  transition: width var(--fcg-slow) var(--fcg-ease);
+}
+.todoList {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.todo {
+  display: flex;
+  gap: var(--fcg-space-2);
+  align-items: baseline;
+  color: var(--fcg-text-secondary);
+  font-size: var(--fcg-font-caption);
+  line-height: 1.45;
+}
+.todoMark {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  color: var(--fcg-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.todoText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.todoActive { color: var(--fcg-text-primary); }
+.todoActive .todoMark { color: var(--fcg-brand); font-weight: 700; }
+.todoCompleted { color: var(--fcg-text-tertiary); text-decoration: line-through; text-decoration-color: var(--fcg-line-subtle); }
+.todoCompleted .todoMark { color: var(--fcg-success); }
+
+/* ── Actions: quiet ghost icon-buttons ──────────────────────────────── */
+
+.actions {
+  flex: none;
+  align-self: center;
+  display: flex;
+  gap: var(--fcg-space-1);
+  padding-right: var(--fcg-space-2);
+}
+.actionButton {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: var(--fcg-radius-full);
+  color: var(--fcg-text-secondary);
+  background: transparent;
+  font-size: var(--fcg-font-caption);
+  line-height: 18px;
+  cursor: pointer;
+  transition: background var(--fcg-fast) var(--fcg-ease), color var(--fcg-fast) var(--fcg-ease);
+}
+.actionButton:hover:not(:disabled) { background: var(--fcg-bg-hover); color: var(--fcg-text-primary); }
+.actionButton:disabled { opacity: 0.5; cursor: default; }
+.actionStop:hover:not(:disabled) { color: var(--fcg-danger); background: var(--dsw-alias-interactive-bg-hover-danger); }
+.actionResume:hover:not(:disabled) { color: var(--fcg-brand); background: var(--fcg-bg-hover); }

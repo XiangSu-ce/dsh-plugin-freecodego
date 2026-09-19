@@ -1,0 +1,290 @@
+# This repository owns only the private FreeCodeGo extension. The official
+# DeepSeek Harness source is downloaded into .upstream-cache/ during assembly
+# and must never be added to this Git history.
+/*
+
+# Private workspace metadata and release documentation.
+!/.gitignore
+
+# The line-ending declaration this tree needs to keep its bytes stable across
+# hosts. It is untracked without this line, and the 2026-09-19 restore lost it
+# exactly that way: the worktree came back CRLF, and 13 load-bearing probe
+# anchors stopped matching at once.
+!/.gitattributes
+
+# The Agent-Note tree stays unpublished, including its notes about this plugin.
+# Exactly one note used to be whitelisted, which published a link target for
+# nothing while the other ~540 notes stayed local; development history belongs in
+# the review trail, not in the open-source repository's doc set.
+!/README.md
+# The front page ships as a pair: its language switcher points at the Chinese
+# counterpart, so an unpublished counterpart would make the switcher a dead
+# link on the repository's front page.
+!/README.zh.md
+# The consistency record ships with the pair, exactly as it does for every
+# published package README, so the recorded state is readable from the
+# repository instead of only from a maintainer's working copy.
+!/README.i18n.yaml
+!/COMPATIBILITY.md
+# License and legal documents must ship with the open-source repository.
+!/LICENSE
+!/TRADEMARK.md
+!/THIRD_PARTY_NOTICES.md
+!/harness.config.json
+!/harness.lock.json
+!/package.json
+!/pnpm-workspace.yaml
+!/pnpm-lock.yaml
+!/tsconfig.base.json
+!/tsconfig.base.client.json
+!/tsconfig.host.json
+!/tsconfig.client.json
+!/tsconfig.json
+!/tsdown.config.ts
+
+# The test and lint runners resolve their configuration from the working
+# directory, and every `package.json` entry point below is invoked with
+# `plugin/` as that directory, so these files have to be here or the entry
+# point runs on defaults. `sync-harness` mirrors seven directories and the
+# official packages; it does not restore root files, so a clone cannot get
+# them from the assembly either. They are byte-identical to the pinned
+# upstream commit, not local modifications.
+#
+# `vitest run` takes no `--config`, so without `vitest.config.ts` a clone runs
+# the built-in defaults: no workspace-alias resolution and none of the
+# `scripts/**/*.spec.ts` include this repository's own gate specs depend on --
+# the very include the `release/freecodego-family.spec.ts` note below cites.
+# Every other config here imports `vitest.shared.ts`, so that one is not
+# optional beside them.
+!/vitest.config.ts
+!/vitest.shared.ts
+!/vitest.e2e.config.ts
+!/vitest.bench.config.ts
+!/vitest.expected.config.ts
+!/vitest.snapshot.config.ts
+!/vitest.web.config.ts
+!/vitest.web.perf.config.ts
+!/vitest.web-stress.config.ts
+
+# `lint` is `run-oxlint.ts .` and `verify-lint-budget` compares against a
+# committed baseline; with no `.oxlintrc.json` a clone lints under oxlint's
+# defaults, so the budget's per-rule counts stop describing anything. The
+# staged variant is what the pre-commit entry point names.
+!/.oxlintrc.json
+!/.oxlintrc.staged.json
+
+# `duplication` is `jscpd --config .jscpd.json packages scripts`.
+!/.jscpd.json
+
+# Editor-side declaration of the text conventions, and the declared pair of
+# `.gitattributes` above: that file pins what git produces, this one what
+# editors write to disk, which is the path git's filters cannot reach. A clone
+# holding one without the other keeps half of the byte-stability story.
+!/.editorconfig
+
+# Deliberately not whitelisted, so a later reader does not re-add them by
+# pattern-matching on the block above:
+#
+#   `lefthook.yml` -- `postinstall` installs lefthook and this file declares
+#   the hooks, but lefthook resolves its configuration from the *Git root*,
+#   which in this checkout is one level above `plugin/`. `lefthook dump`
+#   returns `{}` from both directories, so the declared hooks are inert here
+#   and carrying the file would not change that. Repairing it means placing
+#   the configuration at the Git root, which is a decision about the outer
+#   worktree rather than a whitelist entry -- and the hooks it would activate
+#   run `run-oxlint.ts --fix` against staged files, which is not something to
+#   switch on inside a checkout two writers share.
+#
+#   `pytest.ini`, `.rgignore`, `.gitlab-ci.yml` -- no entry point in this
+#   repository consumes them: `run-gates.ts` declares no Python gate, no script
+#   passes `--ignore-file`, and the published CI is the GitHub workflow rather
+#   than the GitLab one.
+
+# The upstream Harness doc tree stays unpublished. Two FreeCodeGo-owned
+# documents used to be whitelisted here by name; both are gone from the tree, and
+# a whitelist entry that names nothing is how a deleted document keeps looking
+# published.
+!/docs/
+/docs/*
+
+# Private FreeCodeGo packages only; all other packages are Harness core.
+!/packages/
+/packages/*
+!/packages/freecodego/
+!/packages/freecodego/**
+
+# Dependency patches the ignored official Harness checkout declares in the
+# published `pnpm-workspace.yaml` `patchedDependencies`. An install resolves
+# those paths before anything is built, so a patch file left out of the
+# repository makes a fresh clone uninstallable; all three are byte-identical to
+# the pinned upstream commit rather than local modifications.
+!/patches/
+!/patches/*
+
+# The script that fetches and assembles the ignored official Harness checkout.
+!/scripts/
+/scripts/*
+!/scripts/sync-harness.mjs
+# `!/scripts/check-upstream.mjs` used to sit here. That file is gone from the tree,
+# so the entry named nothing — the same hazard the `docs/` block above describes.
+# It was not redundant while it existed: it resolved `harness.config.json`'s
+# `candidateRef` with `git ls-remote` and failed when the pinned candidate had
+# moved. Nothing in the tree does that now — `sync-harness.mjs` reads the config
+# only for `repository` — so recovering it is a decision, not a revert. Locate the
+# deleting commit with
+# `git log --diff-filter=D --format=%H -1 -- plugin/scripts/check-upstream.mjs`,
+# then read its last content from that commit's first parent with
+# `git show <that hash>^:plugin/scripts/check-upstream.mjs`. Re-add this entry
+# together with the file. (Named by command rather than by literal hash on
+# purpose: `verify-repository-references` rejects a maintained file that quotes a
+# commit the local object database can resolve.)
+
+# `pnpm run build:official` is the workflow's client-build step, and it is
+# `tsx scripts/build.ts`. `sync-harness` does not restore `scripts/` at all, so a
+# clone without this entry dies on a missing module at that step — the same
+# "an omitted helper fails the published pipeline on its own imports" shape the
+# helpers further down are whitelisted for. Its own imports
+# (`client-build-environment`, `pnpm-invocation`) are whitelisted there too.
+!/scripts/build.ts
+
+# The published FreeCodeGo bundle's `prepack` runs this assembly script, so a
+# clone that lacks it cannot build the public npm artifact.
+!/scripts/build-freecodego-bundle.mjs
+# License compliance gates must ship with the repository so CI can enforce them.
+# The in-package vendored-source spec ships with its gate: the disclosure table is
+# generated from provenance records on disk, so a clone without this spec has no
+# assertion that a copy cannot silently drop out of the notices.
+!/scripts/gen-third-party-notices.ts
+!/scripts/gen-third-party-notices.in-package-vendored.spec.ts
+# Every FreeCodeGo package carries two TypeScript projects (build face and
+# type-only test face), and `extends` does not inherit `references`, so the
+# reference list is written twice per package. This spec is the only thing that
+# notices when the copies drift; a clone without it silently loses the check, and
+# the drift's own symptom points at `vendor/**` rather than at the config at
+# fault.
+!/scripts/freecodego-tsconfig-families.spec.ts
+# The same reasoning applies to the two gates added beside it: a clone without
+# `freecodego-config-readers` loses the only check that a Config field has a
+# reader (the compiler cannot see it — the whole-object forward defeats the
+# excess-property check), and without `freecodego-sync-overlay` nothing notices
+# that the overlay below stopped shipping.
+!/scripts/freecodego-config-readers.spec.ts
+!/scripts/freecodego-sync-overlay.spec.ts
+# And to the encoding gate. Its subject is a file that tooling cannot decode at
+# all: oxlint answers such a file with `Failed to open file` instead of linting
+# it, and the repository lint entry point turns that into a formatter panic
+# (exit 127) when CI forces `--format=default`. One undecodable spec was the
+# sole cause of that panic, and nothing failed while it sat there.
+!/scripts/source-encoding.spec.ts
+# And to the lint-workflow gate. Upstream's own contract spec pins the
+# type-aware whole-tree `--fix`, which this fork cannot run — it deletes `!` and
+# `as` assertions `noUncheckedIndexedAccess` requires. That spec is ignored
+# (synced, not tracked), so the fork's divergence has to be pinned by a file a
+# clone receives.
+!/scripts/freecodego-lint-workflow.spec.ts
+# And to the lint budget ratchet: a budget nobody can read is not a budget. The
+# baseline is committed data, so it has to be tracked alongside the script that
+# compares against it and the spec that proves the comparison reports growth.
+!/scripts/lint-budget.ts
+!/scripts/lint-budget.spec.ts
+!/scripts/lint-budget.baseline.json
+# The generator the gate above compares against. Without it the gate has
+# nothing to compare to, and `build:freecodego`'s verify step cannot run.
+!/scripts/gen-freecodego-test-tsconfig.ts
+# The private sync overlay itself. `sync:harness` replaces whole upstream
+# package directories, tests included, so the specs covering the private seams
+# live here as `.tpl` and are copied back on every sync. They were previously
+# untracked — present only in one working copy — so a fresh clone could not run
+# the sync at all. The templates are `.tpl` because the workspace tsconfig
+# typechecks `scripts/**/*.ts` and their relative imports only resolve at the
+# destination.
+!/scripts/harness-overlay/
+!/scripts/harness-overlay/**
+!/scripts/verify-dsh-package-licenses.ts
+!/scripts/verify-dsh-package-licenses.spec.ts
+!/scripts/release/
+/scripts/release/*
+!/scripts/release/families.ts
+!/scripts/release/families.spec.ts
+# The fork's own release sequence, and the spec that pins its payload contract.
+# `families.ts` gains the `freecodego` family here, so the divergence lives in a
+# file a clone receives — but its spec did not, and neither did this one: the
+# spec existed only in one working copy while `vitest.config.ts`'s
+# `scripts/**/*.spec.ts` include kept collecting it there, so a clone ran one
+# spec file fewer and the fork's release contract went unchecked. That is the
+# same "present only in one working copy" defect `freecodego-sync-overlay.spec.ts`
+# guards for the sync overlay.
+!/scripts/release/freecodego-family.spec.ts
+!/scripts/release/bump.ts
+!/scripts/release/pack.ts
+!/scripts/release/publish.ts
+!/scripts/release/verify.ts
+!/scripts/release/verify-packed-install.ts
+!/scripts/release/process.ts
+!/scripts/release/tarball.ts
+# Helper modules the published scripts above import. The release workflow in
+# `.github/workflows/release-freecodego.yml` runs `release:verify`,
+# `release:pack`, and `release:verify-packed-install`, and the notices generator
+# resolves the browser-bundled inputs through `browser-bundled-externals`; an
+# omitted helper fails the published pipeline on its own imports.
+!/scripts/browser-bundled-externals.ts
+!/scripts/client-build-environment.ts
+!/scripts/pnpm-invocation.ts
+!/scripts/publication-payload.ts
+!/scripts/release/installed-product-isolation.ts
+# GitHub metadata ships only where this repository still has a consumer: the
+# release workflow, the localized issue and pull-request templates, and
+# Dependabot. The upstream tree's CI policy notes, pull-request approval policy,
+# preview sizing policy, and issue-management bot all document or drive
+# workflows this repository does not publish — and the issue bot's config names
+# the upstream organization's Projects board — so publishing them would ship
+# instructions for automation that is not here.
+!/.github/
+/.github/*
+!/.github/ISSUE_TEMPLATE/
+!/.github/ISSUE_TEMPLATE/*
+!/.github/dependabot.yml
+!/.github/pull_request_template.md
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/release-freecodego.yml
+
+# Generated output and installed dependencies remain excluded even inside the
+# explicitly included FreeCodeGo package tree. These rules follow the
+# allowlist so they cannot be re-included by the FreeCodeGo directory rule.
+**/node_modules/
+**/node_modules.stale-*/
+**/lib/
+**/dist/
+**/*.tsbuildinfo
+**/*.log
+
+# One-shot scratch files. A `.tmp-` name means throwaway, but the tree beneath
+# `packages/freecodego/` is included whole, so a scratch file that lands before
+# anyone looks is committed by whoever next runs `git add -A`. Three did
+# exactly that in the package root — a `harness-plugin/.tmp-r30-apply.py` patch
+# script, its `.tmp-r30-tests.py` companion, and the `.tmp-r30-t1.txt` snippet
+# they injected — all cited nowhere, none of them in the package's `files`
+# list, and the code the snippet carried already in
+# `src/media-utils.ts` under a test. The rule has to be written *here* rather
+# than in the root `.gitignore`, which carries a rule for
+# `harness-plugin/scripts/.tmp-*` written for the same defect one generation
+# earlier: a pattern in the outer file is decided against by line 114's
+# `!/packages/freecodego/**`, because a deeper `.gitignore` overrides a
+# shallower one. `git check-ignore -v <scratch path>` reports line 114 and never
+# the root rule, which is why that rule blocked none of the three.
+**/.tmp-*
+
+# Runtime payloads are verified release binaries. They are downloaded by the
+# native runtime host and belong in release storage, not source Git history.
+/packages/freecodego/runtime-*/artifacts/
+/packages/freecodego/**/.downloads/
+
+# The plugin's per-workspace data directory — `<workspace>/.freecodego/**` holds
+# the repo-map cache, hook chains and skill drafts written while the plugin runs
+# (`data-home.ts` keeps *machine* state under the harness home; this one is
+# keyed to the workspace). The repo-map cache alone is megabytes, so a checkout
+# that ran an eval with its cwd inside `packages/` would otherwise commit it —
+# and, because `pnpm-workspace.yaml` matches `packages/*/*`, the stray directory
+# also fails `check-workspace-constraints` with "expected a package here".
+**/.freecodego/

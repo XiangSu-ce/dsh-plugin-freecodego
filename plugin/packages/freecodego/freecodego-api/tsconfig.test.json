@@ -1,0 +1,19 @@
+{
+  // Type-only project for `tests/`, which the package project (`include: ["src"]`)
+  // never covered. `references` is NOT inherited through `extends`, so the list
+  // below mirrors `tsconfig.json`; `scripts/freecodego-tsconfig-families.spec.ts`
+  // fails the build when the two drift apart.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src", "tests"],
+  "references": [
+    { "path": "../../credentials/credentials" }
+  ]
+}

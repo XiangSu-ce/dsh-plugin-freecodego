@@ -1,0 +1,131 @@
+/**
+ * Provider account card.
+ *
+ * One shape for every provider section on the "Accounts and providers" page:
+ * identity and status on top, an optional live model cloud, then the controls.
+ * Everything reads from the FreeCodeGo token layer, so light/dark follow the
+ * host theme without a local branch.
+ */
+
+.card {
+  display: grid;
+  gap: var(--fcg-space-3);
+  padding: var(--fcg-space-4);
+  border: 1px solid var(--fcg-line-subtle);
+  border-radius: var(--fcg-radius-lg);
+  background: var(--fcg-bg-layer-1);
+  transition: border-color var(--fcg-fast) var(--fcg-ease);
+}
+
+.card:hover { border-color: var(--fcg-line); }
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--fcg-space-3);
+  min-width: 0;
+}
+
+.identity { display: flex; align-items: center; gap: var(--fcg-space-3); min-width: 0; }
+
+.mark {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: var(--fcg-radius-md);
+  background: var(--fcg-bg-layer-2);
+  color: var(--fcg-text-secondary);
+}
+
+.names { display: grid; gap: 2px; min-width: 0; }
+
+.name {
+  overflow: hidden;
+  color: var(--fcg-text-primary);
+  font-size: var(--fcg-font-body-lg);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
+  overflow: hidden;
+  color: var(--fcg-text-tertiary);
+  font-size: var(--fcg-font-caption);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status reads as a dot plus a word, not a filled pill: the pill competed with
+   the provider name for the same glance and said nothing the dot does not. */
+.status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--fcg-text-secondary);
+  font-size: var(--fcg-font-caption);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.statusDot { width: 6px; height: 6px; border-radius: 50%; corner-shape: round; background: currentColor; }
+.statusLive { color: var(--fcg-success); }
+.statusWarn { color: var(--fcg-warn-label); }
+.statusIdle { color: var(--fcg-text-tertiary); }
+
+.summary { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+
+.description { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+
+.cloud { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 3px 9px;
+  overflow: hidden;
+  border: 1px solid var(--fcg-line-subtle);
+  border-radius: var(--fcg-radius-full);
+  background: var(--fcg-bg-layer-2);
+  color: var(--fcg-text-secondary);
+  font-size: var(--fcg-font-caption);
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tagMono { font-family: var(--fcg-font-mono); font-size: 11px; }
+
+.more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fcg-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fcg-font-caption);
+  line-height: 18px;
+}
+
+.more:hover { color: var(--fcg-brand); }
+.more:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); border-radius: var(--fcg-radius-sm); }
+
+.actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--fcg-space-2); flex-wrap: wrap; }
+
+.body { display: grid; gap: var(--fcg-space-2); min-width: 0; }
+
+@media (max-width: 520px) {
+  .head { flex-direction: column; align-items: stretch; }
+  .status { align-self: flex-start; }
+}
+.notice { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid color-mix(in srgb, var(--fcg-success) 28%, var(--fcg-line-subtle)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-success) 8%, var(--fcg-bg-layer-1)); color: var(--fcg-success); font-size: var(--fcg-font-caption); font-weight: 600; line-height: 18px; }
+.noticeDot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; corner-shape: round; background: currentColor; }

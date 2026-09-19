@@ -1,0 +1,56 @@
+{
+  // The package project (`tsconfig.json`) includes only `src`, so nothing under
+  // `tests/` was ever type-checked — the same gap `harness-ui/tsconfig.test.json`
+  // closes for its own suite. Type-only: this never writes into `lib/`.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src", "tests"],
+  "references": [
+    // The two entries at the end are the only ones the package project does not
+    // carry, and they are not interchangeable with the rest: the suite appends
+    // those events through the typed `Session.append`, so their `SessionEventMap`
+    // merges have to be in the program, while the plugin's `src` reads them as raw
+    // data on purpose and must not depend on them.
+    // Derived by `scripts/gen-freecodego-test-tsconfig.ts`; edit that, not this list.
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../../vendor/loader" },
+    { "path": "../../../vendor/schemastery" },
+    { "path": "../../core/agent" },
+    { "path": "../../attachment/attachment" },
+    { "path": "../../llm/llm-deepseek" },
+    { "path": "../../llm/token-meter" },
+    { "path": "../../mcp/mcp-client" },
+    { "path": "../../credentials/credentials" },
+    { "path": "../../skill/skill" },
+    { "path": "../../skill/skill-filesystem" },
+    { "path": "../../settings/settings" },
+    { "path": "../../interaction/user-questions" },
+    { "path": "../../interaction/user-approval" },
+    { "path": "../../sandbox/sandbox-policy" },
+    { "path": "../../lsp/lsp" },
+    { "path": "../../lsp/lsp-stdio" },
+    { "path": "../../lsp/tool-lsp" },
+    { "path": "../../util/atomic-write" },
+    { "path": "../../util/home-paths" },
+    { "path": "../../fs/fs-local" },
+    { "path": "../../subprocess/subprocess-local" },
+    { "path": "../../core/session" },
+    { "path": "../../typert/protocol" },
+    { "path": "../freecodego-api" },
+    { "path": "../native-runtime-host" },
+    { "path": "../root-agent" },
+    { "path": "../runtime-claude" },
+    { "path": "../runtime-codex" },
+    // `subagent/descriptor`: the suite appends it through the typed `Session.append`.
+    { "path": "../../subagent/subagent" },
+    // `todo/write`: the suite appends it through the typed `Session.append`.
+    { "path": "../../todo/tool-todo" }
+  ]
+}

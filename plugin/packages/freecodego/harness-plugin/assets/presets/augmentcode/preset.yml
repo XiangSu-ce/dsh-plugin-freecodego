@@ -1,0 +1,4 @@
+# freecodego-agent-preset-v1 — owned by the FreeCodeGo plugin; local edits are preserved.
+name: Augment Code 模式
+description: 全套工具 + 蒸馏自 Augment Code 的编码 Agent 准则:先检索后规划、任务清单增量推进、小步编辑、验证即执行。
+order: 6

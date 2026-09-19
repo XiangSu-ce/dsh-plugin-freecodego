@@ -1,0 +1,96 @@
+# Publish the standalone FreeCodeGo composition bundle to npm.
+name: Release publish (FreeCodeGo)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  pack:
+    name: Pack and verify FreeCodeGo bundle
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+      - run: pnpm run sync:harness
+      - run: pnpm install --frozen-lockfile
+      - name: Verify FreeCodeGo release
+        env:
+          RELEASE_PUBLISH: 'true'
+        run: pnpm run release:verify --family freecodego
+      # `build:official` builds against the public client environment it records,
+      # and publication is allowed only from the family's tag: bind both to this
+      # run's ref, so the recorded client proves which release built it and a
+      # dispatch from a branch fails here instead of at the publication gate.
+      - name: Bind the client build to this release tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#freecodego-v}"
+          if [ "$version" = "$tag" ]; then
+            echo "::error::dispatch this workflow from a freecodego-v* tag, got ${tag}"
+            exit 1
+          fi
+          declared="$(node -p "require('./package.json').version")"
+          if [ "$version" != "$declared" ]; then
+            echo "::error::tag ${tag} names ${version}, but the workspace declares ${declared}"
+            exit 1
+          fi
+          echo "DSH_CLIENT_COMMIT_HASH=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "DSH_CLIENT_VERSION=${version}" >> "$GITHUB_ENV"
+      - run: pnpm run build:official
+      - run: pnpm run release:pack --family freecodego --out dist/npm-freecodego
+      # FreeCodeGo publishes libraries and a profile bundle, not an executable.
+      # OAuth authorization is verified by the Host/API tests; the generic
+      # executable consumer probe has no meaningful entry point for this family.
+      - name: Record FreeCodeGo consumer probe scope
+        run: pnpm run release:verify-packed-install --family freecodego --from dist/npm-freecodego
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freecodego-npm-tarballs
+          path: dist/npm-freecodego/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish FreeCodeGo bundle
+    needs: pack
+    runs-on: ubuntu-24.04
+    environment: npm-publish
+    concurrency:
+      group: freecodego-npm-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: freecodego-npm-tarballs
+          path: dist/npm-freecodego
+      - name: Publish with npm provenance
+        run: pnpm run release:publish --family freecodego --from dist/npm-freecodego
