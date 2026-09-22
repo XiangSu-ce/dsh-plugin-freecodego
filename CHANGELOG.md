@@ -13,6 +13,40 @@ is this bundle's own version, not the Harness line it mounts on. English only:
 the notes are the release's own text, and a paired translation of a published
 changelog would be a second thing to keep in step without a reader who needs it.
 
+## 0.1.6-alpha.2.4 — 2026-09-23
+
+Nothing in the bundle itself changes in this version either: it carries the
+release pipeline fixes the version before it exposed, so that a release which
+fails in the registry half can be retired or repaired instead of leaving a tag
+whose two halves disagree.
+
+### Fixed
+
+- A publish the registry acknowledges is no longer treated as a published
+  version. The registry accepts an upload before the version it accepted can be
+  installed, and npm reports that acceptance as success — in its own words,
+  "Your package is being processed and may take a few minutes to become
+  available" — so the publish step confirmed nothing, the release step built the
+  release on top of it, and the final step found no version to verify. The
+  publish step now waits until the registry carries this release's bytes, and
+  says what happened when it never does.
+- A release whose registry half failed can be repaired by re-running it. The
+  release step refused any tag that already carried a release, so a run that had
+  published its release asset while the registry half was still arriving could
+  not be retried at all — which is the one situation the step order (registry
+  first, release second) exists to make re-runnable. It now continues when the
+  existing release already carries this run's asset, and still refuses one
+  carrying anything else, because that is what a withdrawn release looks like.
+- The verification step reads the registry until it settles instead of once, so
+  a slow registry is no longer reported as a failed release.
+- A refused publish explains itself. npm answers every way the
+  trusted-publishing exchange can fail with one opaque `ENEEDAUTH`, and prints
+  its own reason only at a raised log level — which is what the previous
+  version's release spent its attempts discovering. The publish step now names
+  the trusted-publisher fields the run has to match, read from the run itself,
+  or the permission that never reached npm; and a manually dispatched run can
+  raise npm's log level to read the registry's own words.
+
 ## 0.1.6-alpha.2.3 — 2026-09-23
 
 Nothing in the bundle itself changes in this version: it is about being able to

@@ -57,7 +57,7 @@ category: model
 description:
   en: 'FreeCodeGo for DeepSeek Harness: a managed free-model gateway and provider catalogs, DeepSeek/Codex/Claude engine routing, an independent advisor reviewer, code review, code graphs, project memory, and an engineering team toolchain.'
   zh: '面向 DeepSeek Harness 的 FreeCodeGo：可托管的免费模型网关与供应商目录、DeepSeek/Codex/Claude 引擎路由、独立 Advisor 评审、代码审查、代码图谱、工程记忆与工程团队工具链。'
-tarball: https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.6-alpha.2/freecodego-0.1.6-alpha.2.tgz
+tarball: https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.6-alpha.2.4/freecodego-0.1.6-alpha.2.tgz
 ```
 
 Notes on the fields, each of which follows from a rule above:
@@ -90,6 +90,6 @@ The images are not part of the release tarball — the bundle's `files` field do
 
 ## Maintenance after listing
 
-- **A new Harness line** means a new release and a one-file pull request to refresh `tarball` (the entry is pinned; nothing follows `latest` automatically). This is ordinary maintenance, not a correction.
+- **A new Harness line** means a new release and a one-file pull request to refresh `tarball` (the entry is pinned; nothing follows `latest` automatically). This is ordinary maintenance, not a correction. The pin is not free to name whichever release is newest: `check-entry.mjs` refuses a tag that is not the version this bundle releases as, so the snippet above and the staged entry move together with every release.
 - **Moving the bundle** out of `plugin/packages/freecodego/bundle-latest` changes both the URL and the filename, so the entry has to be re-pointed in the same pull request that moves it.
 - **The listing is not permanent**: an entry whose repository goes away, is archived, or stops being maintained is collected and removed after review — and a fork that is better kept can take the slot. Nothing here is tenure.

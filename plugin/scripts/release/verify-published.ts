@@ -23,6 +23,7 @@ import { parseArgs } from 'node:util'
 import { releaseFamily } from './families.ts'
 import { npmInvocation } from '../pnpm-invocation.ts'
 import { attempt, isEntry } from './process.ts'
+import { awaitRegistryState, SETTLE_TIMEOUT_MS } from './registry.ts'
 import { integrityOf, packedIdentity, packedManifest } from './tarball.ts'
 
 /** npm's own channel name for a version a family publishes without a tag. */
@@ -58,7 +59,7 @@ function registryString(spec: string, field: string): string {
 }
 
 /** Verify the tarball named by `--tarball` against the family named by `--family`. */
-function main(): void {
+async function main(): Promise<void> {
   const { values } = parseArgs({
     options: { family: { type: 'string' }, tarball: { type: 'string' } },
     allowPositionals: false,
@@ -73,13 +74,26 @@ function main(): void {
   const spec = `${name}@${version}`
 
   // The bytes, not the claim: the registry's integrity for this version has to
-  // be the hash of the file this release uploaded and published.
+  // be the hash of the file this release uploaded and published. The registry is
+  // given time to settle first, because it acknowledges an upload before the
+  // version it carries can be read — a single read after the publish step says
+  // nothing about a version that is still arriving, and would fail a release
+  // whose two halves do agree.
   const packed = integrityOf(tarball)
-  const published = registryString(spec, 'dist.integrity')
-  if (published !== packed) {
+  const state = await awaitRegistryState(name, version)
+  if (state.kind === 'absent') {
+    throw new Error(
+      `${spec} is not on the registry, ${String(SETTLE_TIMEOUT_MS / 1000)}s after the publish step ran`
+      + '\nThe registry acknowledged the upload without publishing it (npm prints'
+      + '\n  "Your package is being processed and may take a few minutes to become available."'
+      + '\nand exits 0). Re-run the publish job: the registry skips a version it already'
+      + '\n  carries, so re-running is safe.',
+    )
+  }
+  if (state.integrity !== packed) {
     throw new Error(
       `${spec} is published with different content than the release packed`
-      + `\n  registry: ${published}\n  packed:   ${packed}`,
+      + `\n  registry: ${state.integrity}\n  packed:   ${packed}`,
     )
   }
 
@@ -119,4 +133,4 @@ function main(): void {
   )
 }
 
-if (isEntry(import.meta.url)) main()
+if (isEntry(import.meta.url)) await main()

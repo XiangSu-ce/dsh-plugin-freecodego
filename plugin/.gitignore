@@ -280,6 +280,23 @@
 # `0.1.6-alpha.2` from being answered with `0.1.6-alpha.2.1`'s section.
 !/scripts/release/notes.ts
 !/scripts/release/notes.spec.ts
+# The diagnosis a refused upload prints about itself. `publish.ts` reaches it
+# only on a failure, which is exactly when a module error would be worst: the
+# import is resolved before the registry's own refusal is echoed, so a clone
+# without this file would report a missing module instead of the reason the
+# release could not publish. Its spec ships with it, because its branches are
+# the difference between "the job never had an OIDC token" and "npm's side
+# names something else", and a check no clone can run is not a check.
+!/scripts/release/auth-diagnosis.ts
+!/scripts/release/auth-diagnosis.spec.ts
+# The registry reads the publish and verify steps share, including the wait for
+# a version the registry acknowledged to become readable. A clone without it
+# fails both steps on this module's import, which is the one failure the release
+# pipeline cannot diagnose for itself. Its spec ships with it: the wait is what
+# separates "the registry is slow" from "the publish never landed", and a wait
+# no clone can run is a wait nobody has checked.
+!/scripts/release/registry.ts
+!/scripts/release/registry.spec.ts
 # Helper modules the published scripts above import. The release workflow in
 # `../.github/workflows/release-freecodego.yml` runs `release:verify`,
 # `release:pack`, `release:verify-packed-install`, `release:publish`, and

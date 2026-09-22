@@ -17,8 +17,15 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { parseArgs } from 'node:util'
 import { releaseFamily } from './families.ts'
 import { npmInvocation } from '../pnpm-invocation.ts'
-import { attempt, attemptEchoed, isEntry } from './process.ts'
-import { integrityOf, packedIdentity, readPublishOrder } from './tarball.ts'
+import { registryAuthHint } from './auth-diagnosis.ts'
+import { attemptEchoed, isEntry } from './process.ts'
+import {
+  awaitRegistryState,
+  FAILED_UPLOAD_PROBE_MS,
+  registryState,
+  SETTLE_TIMEOUT_MS,
+} from './registry.ts'
+import { integrityOf, packedIdentity, packedManifest, readPublishOrder } from './tarball.ts'
 
 /**
  * Registry codes that answer a write which did not settle, rather than a
@@ -40,11 +47,6 @@ const PUBLISH_ATTEMPTS = 4
  */
 const PUBLISH_SPACING_MS = 2_000
 
-/** What the registry knows about one version. */
-type RegistryState =
-  | { readonly kind: 'absent' }
-  | { readonly kind: 'present'; readonly integrity: string }
-
 /**
  * Whether a failed publish is worth another attempt.
  * @param output - combined npm output.
@@ -52,27 +54,6 @@ type RegistryState =
  */
 function isTransientFailure(output: string): boolean {
   return TRANSIENT_PUBLISH_CODES.some(code => output.includes(`code ${code}`))
-}
-
-/**
- * Ask the registry whether a version exists, and with what integrity.
- * @param name - package name.
- * @param version - package version.
- * @returns The registry state for that version.
- */
-function registryState(name: string, version: string): RegistryState {
-  const view = npmInvocation(['view', `${name}@${version}`, 'dist.integrity', '--json'])
-  const result = attempt(view.command, view.args)
-  if (result.status !== 0) {
-    const output = `${result.stdout}${result.stderr}`
-    if (output.includes('E404') || output.includes('404 Not Found')) return { kind: 'absent' }
-    throw new Error(`npm view ${name}@${version} failed:\n${output}`)
-  }
-  const parsed: unknown = JSON.parse(result.stdout)
-  if (typeof parsed !== 'string' || parsed === '') {
-    throw new Error(`registry reported no dist.integrity for ${name}@${version}`)
-  }
-  return { kind: 'present', integrity: parsed }
 }
 
 /**
@@ -100,15 +81,47 @@ async function publishTarball(
     const publish = npmInvocation(['publish', tarball, ...tagArgs])
     const result = attemptEchoed(publish.command, publish.args)
     const output = `${result.stdout}${result.stderr}`
-    if (result.status === 0) return
+    const packed = integrityOf(tarball)
+    if (result.status === 0) {
+      // The exit status is not publication. The registry acknowledges an upload
+      // before the version it carries can be read, and npm reports that
+      // acknowledgement as success, so a version is only published once the
+      // registry says it carries these bytes. Confirming it here is what keeps
+      // one release's two halves from disagreeing: the release asset step runs
+      // next, and it cannot be undone once it has.
+      const settled = await awaitRegistryState(name, version)
+      if (settled.kind === 'absent') {
+        throw new Error(
+          `the registry accepted npm publish ${name}@${version} but does not carry it`
+          + `\n  after ${String(SETTLE_TIMEOUT_MS / 1000)}s it still answers 404, while npm reported`
+          + '\n  "Your package is being processed and may take a few minutes to become available."'
+          + '\nThe upload was acknowledged without being published. Re-run this step: the'
+          + '\n  registry skips a version it already carries, so re-running is safe.',
+        )
+      }
+      if (settled.integrity !== packed) {
+        throw new Error(
+          `${name}@${version} is on the registry with content this release did not upload`
+          + `\n  registry: ${settled.integrity}\n  packed:   ${packed}`,
+        )
+      }
+      return
+    }
 
-    const settled = registryState(name, version)
-    if (settled.kind === 'present' && settled.integrity === integrityOf(tarball)) {
+    // A failed write can still have landed, and the retry that follows would
+    // then be publishing a version the registry already holds, which fails
+    // permanently. The probe is short because every attempt pays it.
+    const settled = await awaitRegistryState(name, version, { timeoutMs: FAILED_UPLOAD_PROBE_MS })
+    if (settled.kind === 'present' && settled.integrity === packed) {
       console.log(`release publish: ${name}@${version} landed despite a reported failure, continuing`)
       return
     }
     if (tries === PUBLISH_ATTEMPTS || !isTransientFailure(output)) {
-      throw new Error(`npm publish ${name}@${version} failed:\n${output}`)
+      // The manifest is read here rather than up front because only this path
+      // has a use for it, and reading one is a `tar` per release member. The
+      // hint returns nothing for a failure that is not about credentials.
+      const hint = registryAuthHint({ output, environment: process.env, manifest: packedManifest(tarball) })
+      throw new Error(`npm publish ${name}@${version} failed:\n${output}${hint === undefined ? '' : `\n${hint}`}`)
     }
     const backoff = PUBLISH_SPACING_MS * 2 ** (tries - 1)
     console.log(
