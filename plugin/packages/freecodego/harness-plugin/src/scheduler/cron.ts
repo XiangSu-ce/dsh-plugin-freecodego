@@ -172,7 +172,10 @@ function parseField(text: string, spec: FieldSpec): { readonly values: readonly 
   return { values: [...values].sort((left, right) => left - right), restricted }
 }
 
-/** Parse a 5-field expression or a `@daily`-style alias. Throws on malformed input. */
+/** Parse a 5-field expression or a `@daily`-style alias. Throws on malformed input.
+ * @param source - the expression text to parse.
+ * @returns the cron Expression.
+ */
 export function parseCronExpression(source: string): CronExpression {
   const trimmed = source.trim()
   if (trimmed === '') throw new Error('cron: expression is empty')
@@ -257,6 +260,9 @@ function readsRequestedWallClock(atMs: number, year: number, monthIndex: number,
  * `undefined` means no occurrence exists inside the search horizon
  * ({@link CRON_SEARCH_HORIZON_YEARS} years), which only happens for a
  * self-contradictory expression such as `0 0 30 2 *`.
+ * @param expression - the parsed rule to advance.
+ * @param fromMs - the instant to search strictly after.
+ * @returns the next occurrence in epoch milliseconds, or `undefined` when none exists in the horizon.
  */
 export function computeNextCronRun(expression: CronExpression, fromMs: number): number | undefined {
   const start = new Date((Math.floor(fromMs / MINUTE) + 1) * MINUTE)
@@ -310,7 +316,9 @@ export interface CronOccurrence {
   readonly local: { readonly date: string; readonly time: string; readonly time_zone: string }
 }
 
-/** The IANA zone this process's local time is in, for the structured selector. */
+/** The IANA zone this process's local time is in, for the structured selector.
+ * @returns the process's IANA zone name, or `UTC` when none can be resolved.
+ */
 export function cronLocalTimeZone(): string {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
   // A runtime that resolves no zone cannot express a local target, and silently
@@ -319,7 +327,10 @@ export function cronLocalTimeZone(): string {
   return zone === undefined || zone === '' ? 'UTC' : zone
 }
 
-/** Render one instant in both selector forms. */
+/** Render one instant in both selector forms.
+ * @param atMs - the instant to render, in epoch milliseconds.
+ * @returns the cron Occurrence.
+ */
 export function cronOccurrence(atMs: number): CronOccurrence {
   const date = new Date(atMs)
   const pad = (value: number): string => String(value).padStart(2, '0')
@@ -342,6 +353,10 @@ export function cronOccurrence(atMs: number): CronOccurrence {
  * yields none. Returning what exists rather than throwing is deliberate: the
  * caller's job is to hand the Harness the occurrences it can, and an empty list
  * is a fact about the rule, not an error in the call.
+ * @param expression - the parsed rule to advance.
+ * @param fromMs - the instant to search strictly after.
+ * @param count - the maximum number of occurrences to return.
+ * @returns the cron Occurrence rows, in backend order.
  */
 export function nextCronOccurrences(expression: CronExpression, fromMs: number, count: number): readonly CronOccurrence[] {
   const occurrences: CronOccurrence[] = []
@@ -379,9 +394,59 @@ export function nextCronOccurrences(expression: CronExpression, fromMs: number, 
  * so the cadence is reported and the difference is recorded here rather than
  * hidden behind a claim of equivalence.
  */
+/**
+ * Whether the day fields name every calendar day.
+ *
+ * The day half of "fires at a fixed rate", and shared rather than written into
+ * each reader for the reason {@link evenStep} is: the interval answer and the
+ * human label are two readings of one rule, and a third reading is how they come
+ * to disagree. A fifteen-minute step restricted to Mondays fires ninety-six times
+ * on a Monday and then not again for six days — the interval answer refused it
+ * from the start, while the label called it "every 15 minutes", because the
+ * cadence branch checked the month and never the days.
+ *
+ * Both day fields are read as *sets*, not as their `restricted` switches, which
+ * is what makes this the honest test: `1-31` is written down as a restricted day
+ * of month and still names every day, and with both fields restricted the two
+ * combine with OR, so a full day-of-week set matches every day whatever the
+ * month asks for.
+ *
+ * @param expression - the parsed rule.
+ * @returns whether no day field narrows the rule.
+ */
+function namesEveryCalendarDay(expression: CronExpression): boolean {
+  return expression.dayOfMonth.length === 31 && expression.dayOfWeek.length === 7
+}
+
+/**
+ * The rule's interval in seconds when it fires at a genuinely fixed rate.
+ *
+ * This is the difference between one Harness schedule and many: `every_seconds`
+ * is a real fixed-rate reminder, while a rule that is not fixed-rate ("weekdays
+ * at 09:00") can only be delivered as a chain of one-shots, because the
+ * Harness's rule set is after/at/every and none of the three expresses a
+ * calendar day.
+ *
+ * Answers only for the shapes that are provably constant, which is why the day
+ * fields must name every day ({@link namesEveryCalendarDay}), the month must be
+ * unrestricted, and the minute set must divide the hour evenly.
+ * A seven-minute step is deliberately *not* fixed-rate: it fires at :00, :07, up
+ * to :56, and then at the next hour's :00, so one gap in every hour is four
+ * minutes. Returning `undefined` for it is the whole point — a caller that
+ * trusted a wrong interval would schedule a rule that drifts.
+ *
+ * The answer is a *duration*, while a cron rule is wall-clock: in a zone that
+ * shifts its clock, two consecutive local 09:00 firings are 23 and 25 hours apart
+ * once a year, so a fixed-rate reminder stays where it was put instead of
+ * following the rule. Whether that is acceptable is not this module's to decide —
+ * `every_seconds` is the only shape the Harness offers for a recurring reminder —
+ * so the cadence is reported and the difference is recorded here rather than
+ * hidden behind a claim of equivalence.
+ * @param expression - the parsed rule to measure.
+ * @returns the fixed interval in seconds, or `undefined` when the rule is not fixed-rate.
+ */
 export function cronFixedRateSeconds(expression: CronExpression): number | undefined {
-  const everyDay = expression.dayOfMonth.length === 31 && expression.month.length === 12 && expression.dayOfWeek.length === 7
-  if (!everyDay) return undefined
+  if (!namesEveryCalendarDay(expression) || expression.month.length !== 12) return undefined
   const minutes = expression.minute
   const hours = expression.hour
   // Minutes spread across every hour: `*/N * * * *`. One minute per firing.
@@ -458,6 +523,8 @@ function dayOfMonthIsUnreachable(expression: CronExpression): boolean {
  * Deliberately conservative: it only claims the shapes it can name exactly and
  * otherwise echoes the expression, rather than inventing a description for a
  * rule a reader would then not be able to compare against the file.
+ * @param expression - the parsed rule to describe.
+ * @returns the short human label.
  */
 export function describeCronExpression(expression: CronExpression): string {
   const minutes = expression.minute
@@ -506,12 +573,20 @@ export function describeCronExpression(expression: CronExpression): string {
     return `daily${monthQualifier} at ${time}`
   }
   if (minutes.length > 1 && hours.length === 24) {
-    // The same "every N" test the fixed-rate answer uses. A bare count was how
-    // `*/7 * * * *` came out as "every 7 minutes": that set closes at :56 and
-    // restarts at the next hour's :00, so one gap in every hour is four minutes,
-    // and the module's own fixed-rate rule already refuses it.
+    // The same "every N" test the fixed-rate answer uses, behind the same day
+    // predicate. A bare count was how `*/7 * * * *` came out as "every 7
+    // minutes": that set closes at :56 and restarts at the next hour's :00, so
+    // one gap in every hour is four minutes, and the module's own fixed-rate
+    // rule already refuses it. The day guard is the other half of that same
+    // defect, and the half that was still open: `*/15 * * * 1` fires ninety-six
+    // times on a Monday and then not again for six days, which the interval
+    // answer already refused while the label read "every 15 minutes" — a
+    // cadence the rule does not have, and the shape a reader would take for
+    // "runs all week". The day fields travel into no qualifier here; the
+    // expression is echoed, which is this function's answer for every shape it
+    // cannot name exactly.
     const step = evenStep(minutes, 60)
-    if (step !== undefined && step > 1) return `every ${step} minutes${monthQualifier}`
+    if (step !== undefined && step > 1 && namesEveryCalendarDay(expression)) return `every ${step} minutes${monthQualifier}`
   }
   return `cron ${expression.source}`
 }

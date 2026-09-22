@@ -7,7 +7,7 @@
  * ([rationale](../../.agents/notes/implemented/process/2026-08-10-npm-release-sequences.md)).
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { pnpmInvocation } from '../pnpm-invocation.ts'
@@ -29,9 +29,18 @@ async function packMember(family: ReleaseFamily, member: ReleaseMember, destinat
   const invocation = pnpmInvocation(['--dir', member.directory, 'pack', '--pack-destination', destination])
   await runConcurrent(invocation.command, invocation.args)
 
-  const filename = tarballName(member)
+  // `pnpm pack` names its output after the manifest version. A family that
+  // publishes under another name is renamed here, at the release boundary, so
+  // every step after this one — and the release asset a user downloads — reads
+  // the published name rather than the packed one.
+  const packed = join(destination, tarballName(member))
+  if (!existsSync(packed)) throw new Error(`${member.name} produced no tarball at ${packed}`)
+  const filename = family.assetNameFor(member)
   const tarball = join(destination, filename)
-  if (!existsSync(tarball)) throw new Error(`${member.name} produced no tarball at ${tarball}`)
+  if (tarball !== packed) {
+    if (existsSync(tarball)) throw new Error(`${filename} is already packed in ${destination}`)
+    renameSync(packed, tarball)
+  }
   family.validatePayload(member, tarballFiles(tarball))
   return filename
 }

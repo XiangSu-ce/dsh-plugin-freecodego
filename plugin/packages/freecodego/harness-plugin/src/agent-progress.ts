@@ -6,6 +6,9 @@ import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { FreeCodeGoFocusTodo } from './types.ts'
 import { stripMemoryContextSections } from './memory-context.ts'
 
+/**
+ * Lifecycle state of one child agent, as the progress surface reports it.
+ */
 export type FreeCodeGoAgentProgressState =
   | 'queued'
   | 'running'
@@ -15,6 +18,9 @@ export type FreeCodeGoAgentProgressState =
   | 'failed'
   | 'cancelled'
 
+/**
+ * One child agent inside a progress snapshot.
+ */
 export interface FreeCodeGoAgentProgressEntry {
   readonly id: string
   readonly label: string
@@ -29,6 +35,9 @@ export interface FreeCodeGoAgentProgressEntry {
   readonly error?: string | undefined
 }
 
+/**
+ * One whole progress snapshot, sent when a child agent starts or updates.
+ */
 export interface FreeCodeGoAgentProgressSnapshot {
   readonly version: 1
   readonly phase: 'start' | 'update'
@@ -107,6 +116,7 @@ export class FreeCodeGoAgentProgressRuntime {
     this.watchdog.unref?.()
   }
 
+  /** Stop the watchdog and drop every tracked parent/child relationship. */
   dispose(): void {
     this.disposed = true
     clearInterval(this.watchdog)

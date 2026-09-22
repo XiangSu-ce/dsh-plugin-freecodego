@@ -58,7 +58,9 @@ export interface AgentToolsDeps {
   readonly probeCommandPolicy?: (agent: unknown) => CompiledCommandPolicy | undefined
 }
 
-/** Expose the independent review loop to every Agent through Harness tools. */
+/** Expose the independent review loop to every Agent through Harness tools.
+ * @param deps - the services and providers the advisor tools are built from.
+ */
 export function registerAdvisorTools(deps: AgentToolsDeps): void {
   const tools = deps.ctx.get('tools') as { register: (tool: ToolDefinitionShape) => () => void } | undefined
   if (tools === undefined) return
@@ -287,7 +289,9 @@ export function registerAdvisorTools(deps: AgentToolsDeps): void {
   }, 'freecodego: Advisor and engineering council tools')
 }
 
-/** Model-facing media tools keep Agnes API keys and requests in the Host. */
+/** Model-facing media tools keep Agnes API keys and requests in the Host.
+ * @param deps - the services and providers the Agnes tools are built from.
+ */
 export function registerAgnesTools(deps: AgentToolsDeps): void {
   const client = deps.agnes
   const tools = deps.ctx.get('tools') as { register: (tool: ToolDefinitionShape) => () => void } | undefined

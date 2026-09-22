@@ -349,6 +349,11 @@ async function collectSources(ctx: { get(name: string): unknown }, selectedSessi
   return [...sources.values()]
 }
 
+/** Total this plugin's own session ledgers into one local usage snapshot.
+ * @param ctx - the context carrying the session storage this reads.
+ * @param query - the local window and grouping to total.
+ * @returns the local token-usage snapshot.
+ */
 export async function buildLocalTokenUsageSnapshot(ctx: { get(name: string): unknown }, query: LocalTokenUsageQuery = {}): Promise<LocalTokenUsageSnapshot> {
   const range = normalizeQuery(query)
   // This cache is a *fallback* store, not a hit path: `cached` is consulted only

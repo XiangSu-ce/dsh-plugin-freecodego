@@ -12,23 +12,47 @@
  * twice every turn. `companion-bar.client.spec.tsx` asserts this number against
  * the constant, so raising the character's ceiling without raising the lane is a
  * failing test rather than a jump nobody notices until it ships.
+ *
+ * **The strip rides the composer's width axis.** The dock a strip is registered in
+ * is full width, but the conversation inside it is not: the transcript and the input
+ * card share `--dsh-chat-content-width`, and upstream's own dock entries (the todo
+ * and queue strips) are centred on it and cut to the input card's width, with the
+ * shared side clearance taking their own edges back in. A row that stretched to the
+ * full dock instead would start at the conversation column's outer edge — a
+ * hundred-odd pixels left of the card it describes, hanging off the conversation
+ * rather than sitting on it — and would size its character for a column much wider
+ * than the one the reader is looking at. So the same recipe, over the same tokens:
+ * the card's width, centred, with the clearance as padding so the mark lines up with
+ * the message text rather than with the card's outer edge. Every value falls back to
+ * a plain 16px gutter, because this sheet is also read where the host's variables
+ * are absent (the unit lane, and any page without the tokens).
  */
 
 .root {
+  box-sizing: border-box;
+  /* `flex: none` and a fixed lane height, so the row is never stretched or squeezed
+     by the strip's own content: the lane is the row's, not the character's. */
+  flex: none;
+  width: calc(100% - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-side-clearance, 16px));
+  max-width: var(--dsh-composer-card-max-width, 100%);
+  margin: 0 auto;
+  padding: 0 var(--dsh-composer-side-clearance, 16px);
   display: flex;
   gap: var(--fcg-space-3);
   align-items: center;
   min-height: 72px;
-  padding: 0 var(--fcg-space-2);
-  /* Only the resting look changes between poses, and it fades rather than snaps. */
-  transition: opacity var(--fcg-slow) var(--fcg-ease);
 }
 
-/* The two quiet ends draw back: present, so nothing moves, but not competing with
-   the composer or with the todo, goal, and queue strips above it. */
-.root[data-fcg-companion-rest='true'] {
-  opacity: 0.4;
-}
+/* The row does not draw back at rest, and that is a decision rather than an
+   omission. It used to fade to 40% for the two quiet poses, which reads as a
+   grey character on a light surface and as a washed-out one on a dark surface —
+   while `idle` is the pose a session spends most of its time in, so the character
+   was at its least legible in its most common state. The pose itself already says
+   "nothing is happening" (the resting circle, and the label beside it), so the
+   draw-in was buying nothing a reader could not see and costing the one thing the
+   row exists for: telling at a glance what the agent is doing.
+   `data-fcg-companion-rest` stays where it is: it is the pose classification the
+   spec asserts and the hook a host can style against, not a look of its own. */
 
 .mark {
   flex: none;

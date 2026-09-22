@@ -2,6 +2,9 @@ import { createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-
 import { z } from 'zod'
 import { redactSecrets } from '@deepseek-ai/dsh-freecodego-native-runtime-protocol'
 
+/**
+ * One Host tool advertised to the Claude Code subprocess as a bridge call.
+ */
 export interface ClaudeBridgeTool {
   readonly name: string
   readonly description: string
@@ -17,9 +20,18 @@ export interface ClaudeHarnessCapabilities {
   readonly harnessTools: readonly ClaudeBridgeTool[]
 }
 
+/**
+ * Send one bridge call to the Host: `bridge` and `op` name the route, `input` carries its arguments.
+ */
 export type ClaudeBridgeCall = (bridge: string, op: string, input: Record<string, unknown>) => Promise<unknown>
+/**
+ * Put `questions` to the user through the Host, resolving with the Host's answer.
+ */
 export type ClaudeAskUser = (questions: readonly ClaudeQuestion[]) => Promise<unknown>
 
+/**
+ * One question the engine asked the Host to put to the user.
+ */
 export interface ClaudeQuestion {
   readonly id: string
   readonly question: string
@@ -191,6 +203,7 @@ function dedupeByAdvertisedName(declarations: readonly ClaudeToolDeclaration[]):
  * @param bridge - Host bridge transport for this transport (in-process or worker).
  * @param askUser - Host question transport.
  * @returns the SDK MCP server config to mount as `freecodego-host`.
+ * @param knownValues - credentials this session handed to the SDK subprocess, so no tool result echoes them back.
  */
 export function createHarnessMcpServer(
   workspaceRoot: string,

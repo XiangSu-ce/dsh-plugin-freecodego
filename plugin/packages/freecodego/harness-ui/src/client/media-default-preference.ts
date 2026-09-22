@@ -57,7 +57,10 @@ export function mediaDefaultRank(candidate: MediaDefaultCandidate): number {
   return index === -1 ? PROVIDER_PREFERENCE.length : index
 }
 
-/** Sort candidates by preference, then by display name for stability. */
+/** Sort candidates by preference, then by display name for stability. 
+ * @returns the media Default Candidate rows, in backend order.
+ * @param candidates - the available models to order.
+ */
 export function rankMediaDefaults(candidates: readonly MediaDefaultCandidate[]): readonly MediaDefaultCandidate[] {
   return [...candidates].sort((left, right) =>
     mediaDefaultRank(left) - mediaDefaultRank(right)
@@ -75,6 +78,12 @@ export function rankMediaDefaults(candidates: readonly MediaDefaultCandidate[]):
  *   available model, or undefined when the category has nothing at all.
  * - `unset` — nothing is stored and nothing is available; leave it empty rather
  *   than persisting a model that does not exist.
+ *
+ * A stored id that the catalog still lists but cannot use right now also keeps
+ * its value: the route exists, the generation path falls back to another route
+ * of the same category, and the alternative — rewriting a setting the user
+ * chose because of a provider status the panel re-derives on every render — is
+ * how a saved default disappeared on the next open.
  */
 export type MediaDefaultDecision =
   | { readonly action: 'keep' }
@@ -87,9 +96,14 @@ export type MediaDefaultDecision =
  *
  * @param stored - the currently persisted default, possibly empty or retired.
  * @param available - models the live catalog reports as usable for the category.
+ * @param known - every model the catalog lists for the category, whether it is
+ *   usable or not. Defaults to `available` for callers holding no wider view;
+ *   the settings panel passes the full list, which is what keeps a stored
+ *   default through a temporary outage (Logfare rows are marked unavailable
+ *   until its credentials are configured).
  * @returns the decision, plus the id to persist when one is needed.
  */
-export function decideMediaDefault(stored: string, available: readonly MediaDefaultCandidate[]): MediaDefaultDecision {
+export function decideMediaDefault(stored: string, available: readonly MediaDefaultCandidate[], known: readonly MediaDefaultCandidate[] = available): MediaDefaultDecision {
   const current = stored.trim()
   if (current === '') {
     // Nothing stored: adopt the preferred model rather than the first row, and
@@ -102,6 +116,8 @@ export function decideMediaDefault(stored: string, available: readonly MediaDefa
   // `logfare/gpt-image-2`); a single unambiguous match is that same route.
   const suffixMatches = available.filter(candidate => candidate.id.endsWith(`/${current}`))
   if (suffixMatches.length === 1) return { action: 'migrate', next: suffixMatches[0]!.id }
+  // Listed but not usable right now: a temporary outage is not a retirement.
+  if (known.some(candidate => candidate.id === current)) return { action: 'keep' }
   const preferred = rankMediaDefaults(available)[0]
   // A retired model is replaced, never kept: the previous behaviour left the
   // dead id in place, so the stored default pointed at a route that had been

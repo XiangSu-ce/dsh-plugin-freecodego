@@ -38,8 +38,10 @@ import type { EngineeringVerificationStage } from './engineering-quality.ts'
 // is how a tier could omit a stage the validator accepted.
 import { VERIFICATION_STAGES } from './engineering-remote-utils.ts'
 
+/** How much independent verification a change earns, from light to thorough. */
 export type VerificationTier = 'light' | 'standard' | 'thorough'
 
+/** The facts about a change that decide its verification tier. */
 export interface ChangeMetadata {
   readonly filesChanged: number
   readonly linesChanged: number
@@ -48,6 +50,7 @@ export interface ChangeMetadata {
   readonly testCoverage: 'none' | 'partial' | 'full'
 }
 
+/** The chosen tier, the stages it runs, and the reasons behind it. */
 export interface VerificationTierPlan {
   readonly tier: VerificationTier
   /** Stages this tier runs, in the order the runner should consider them. */
@@ -123,6 +126,8 @@ export const LIGHT_LINE_MAX = 100
  * Every downgrade to `light` requires *all* of its conditions: few files, few
  * lines, and full test coverage. Any one missing sends it to `standard`, so an
  * unknown shape is never quietly under-checked.
+ * @param metadata - the change facts to tier from.
+ * @returns the verification Tier Plan.
  */
 export function selectVerificationTier(metadata: ChangeMetadata): VerificationTierPlan {
   const reasons: string[] = []
@@ -163,6 +168,8 @@ export function selectVerificationTier(metadata: ChangeMetadata): VerificationTi
  * Kept separate from the tier decision so the decision stays a pure function of
  * facts, and so a caller that knows its metadata better can supply it directly
  * instead of parsing anything.
+ * @param input - the changed paths, line count, coverage, and path families.
+ * @returns the change Metadata.
  */
 export function changeMetadataFromDiff(input: {
   readonly changedPaths: readonly string[]
@@ -205,13 +212,18 @@ const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)\//u
  * exactly what the light-tier gate asks for. `partial` is never inferred — a
  * path list cannot tell a half-covered change from a covered one — so a caller
  * that knows real coverage should pass it directly rather than route it here.
+ * @param changedPaths - the paths the change touched.
+ * @returns the inferred coverage level.
  */
 export function testCoverageFromChangedPaths(changedPaths: readonly string[]): 'none' | 'partial' | 'full' {
   if (changedPaths.length === 0) return 'none'
   return changedPaths.some(path => isTestPath(path)) ? 'full' : 'none'
 }
 
-/** Whether one path is a test file by the path conventions above. */
+/** Whether one path is a test file by the path conventions above.
+ * @param path - path the operation acts on.
+ * @returns true when the path matches a test-file convention.
+ */
 export function isTestPath(path: string): boolean {
   return TEST_FILE_PATTERN.test(path)
     || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path)
@@ -219,7 +231,10 @@ export function isTestPath(path: string): boolean {
     || /_test\.go$/u.test(path)
 }
 
-/** One-line summary for the verification report. */
+/** One-line summary for the verification report.
+ * @param plan - the tier plan to summarize.
+ * @returns the one-line summary.
+ */
 export function describeVerificationTier(plan: VerificationTierPlan): string {
   const stages = plan.stages.join('+')
   const omitted = plan.omitted.length === 0 ? '' : `; omitted ${plan.omitted.join('+')}`

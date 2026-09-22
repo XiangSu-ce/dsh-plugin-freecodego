@@ -333,6 +333,20 @@ export abstract class ReleaseFamily {
   }
 
   /**
+   * The filename a packed member publishes as.
+   *
+   * Defaults to the name `pnpm pack` writes, which is the version the manifest
+   * declares. A family whose filename is a contract with something outside this
+   * repository overrides it; `tarballName` stays the name of the file `pnpm
+   * pack` *produced*, so the two are told apart at the one site that renames.
+   * @param member - the packed member.
+   * @returns The published filename, without a directory.
+   */
+  assetNameFor(member: ReleaseMember): string {
+    return tarballName(member)
+  }
+
+  /**
    * Check what a member's packed tarball carries.
    * @param member - the packed member.
    * @param files - every path inside its tarball.
@@ -411,7 +425,7 @@ class DshFamily extends ReleaseFamily {
 
 /**
  * The FreeCodeGo composition bundle: one published artifact, under this
- * repository's own unscoped npm name.
+ * repository's own unscoped name.
  *
  * It is a sequence rather than a `dsh` member for two reasons the upstream
  * families cannot express. The artifact is not the harness — it mounts on a
@@ -420,10 +434,12 @@ class DshFamily extends ReleaseFamily {
  *
  * Its version tracks the Harness release it targets, so one tag
  * (`freecodego-v<version>`) names it exactly as `dsh-v<version>` names the
- * harness, and a prerelease publishes under `next`, which is the channel the
- * install instructions name. It publishes no executable: a host that already has
- * one loads the bundle through this package's own `exports` subpaths, so the
- * consumer probe has nothing to drive (`.github/workflows/release-freecodego.yml`).
+ * harness, and it publishes as a GitHub release rather than to a registry: the
+ * `pack` job packs, and its `publish` job attaches the tarball to the release
+ * for that tag, named after the Harness line it mounts on. It publishes no
+ * executable: a host that already has one loads the bundle through this
+ * package's own `exports` subpaths, so the consumer probe has nothing to drive
+ * (`.github/workflows/release-freecodego.yml`, `packages/freecodego/AGENTS.md`).
  */
 class FreeCodeGoFamily extends ReleaseFamily {
   readonly id = 'freecodego'
@@ -477,6 +493,15 @@ class FreeCodeGoFamily extends ReleaseFamily {
    */
   tagPrefixFor(): string {
     return this.tagPrefix
+  }
+
+  /**
+   * Publish the bundle under the Harness version it mounts on.
+   * @param member - the packed member.
+   * @returns `<name>-<harnessBaseline>.tgz`.
+   */
+  override assetNameFor(member: ReleaseMember): string {
+    return harnessAssetName(member)
   }
 
   /**
@@ -612,6 +637,61 @@ export function releaseFamily(id: string): ReleaseFamily {
  * @returns The tarball filename.
  */
 export function tarballName(member: ReleaseMember): string {
-  const unscoped = member.name.startsWith('@') ? member.name.slice(1).replace('/', '-') : member.name
-  return `${unscoped}-${member.version}.tgz`
+  return `${flattenedPackageName(member.name)}-${member.version}.tgz`
+}
+
+/**
+ * The filename the FreeCodeGo bundle publishes as: one naming rule, shared with
+ * the update checker that has to find it.
+ *
+ * `<package name>-<Harness version>.tgz`, named after the Harness line the
+ * bundle mounts on rather than the version the bundle itself declares. Two
+ * releases can exist for one Harness line — the line's first release, and a
+ * hotfix that publishes a deeper version — and the line is what a user reading
+ * a release's assets needs to see, because it is the compatibility answer. The
+ * release tag still names the exact version, so the installed version never
+ * comes from the filename.
+ *
+ * The rule is implemented on both sides of a packaging boundary: here, and in
+ * `harness-plugin/src/plugin-update.ts`, which ships inside the published
+ * package and cannot import from `scripts/`. `freecodego-family.spec.ts`
+ * asserts the two agree instead of trusting that they do, and the checker
+ * accepts the bundle-version spelling as well, so a release published under
+ * either convention still updates.
+ * @param member - the packed bundle member.
+ * @returns The published asset filename.
+ */
+export function harnessAssetName(member: ReleaseMember): string {
+  return `${flattenedPackageName(member.name)}-${requireHarnessBaseline(member)}.tgz`
+}
+
+/**
+ * The name a package publishes under, with a scope flattened the way a packed
+ * tarball spells it: `@scope/name` is `scope-name`.
+ * @param name - package name.
+ * @returns The name without a scope separator.
+ */
+function flattenedPackageName(name: string): string {
+  return name.startsWith('@') ? name.slice(1).replace('/', '-') : name
+}
+
+/**
+ * The Harness version a bundle member declares it mounts on.
+ *
+ * Required rather than optional, because it is half of the name the asset
+ * publishes under: a bundle that cannot say which Harness line it belongs to has
+ * no published name, and failing here turns that into a release that stopped
+ * early rather than an asset nobody's update check can find.
+ * @param member - the packed bundle member.
+ * @returns The declared Harness version.
+ */
+function requireHarnessBaseline(member: ReleaseMember): string {
+  const metadata = member.manifest['freecodego']
+  const baseline = metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)['harnessBaseline']
+    : undefined
+  if (typeof baseline !== 'string' || baseline === '') {
+    throw new Error(`${member.directory} declares no freecodego.harnessBaseline, which names the asset it publishes as`)
+  }
+  return baseline
 }

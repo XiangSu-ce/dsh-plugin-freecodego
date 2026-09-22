@@ -13,6 +13,9 @@ import type {
 
 export type { AgentEngineAvailability, AgentEngineDefinition, AgentEngineId, AgentEnginePlan, AgentEnginePlanInput, AgentEngineSnapshot } from '@deepseek-ai/dsh-freecodego-root-agent'
 
+/**
+ * One session's reservation of an engine, which holds the runtime until it is released.
+ */
 export interface AgentEngineLease {
   readonly sessionId: SessionId
   readonly plan: AgentEnginePlan
@@ -61,6 +64,8 @@ export class FreeCodeGoAgentEngineRegistry {
    * the teardown promise, so the signature described something the function did
    * not return — `no-misused-promises` reported exactly that. Callers that drop
    * the return value are unaffected; a caller that awaits it now can.
+   * @param definition - the engine's id, availability, reasons, and plan factory.
+   * @returns the disposer that retires the engine once its last lease is released.
    */
   register(definition: AgentEngineDefinition): Disposable<Promise<void>> {
     return this.ctx.effect(() => {
@@ -73,7 +78,16 @@ export class FreeCodeGoAgentEngineRegistry {
     }, `freeCodeGoAgentEngines.register(${definition.id})`)
   }
 
-  async reserve(id: AgentEngineId, sessionId: SessionId, input: AgentEnginePlanInput): Promise<AgentEngineLease> {
+    /**
+   * Reserve an engine for a session that is about to start, planning it through the definition.
+   * The same session cannot hold two leases: the second attempt is refused rather than
+   * replacing the first, which would leave the earlier engine attached to nothing.
+   * @param id - the engine to reserve.
+   * @param sessionId - the session that will own the lease.
+   * @param input - the facts the engine plans the session from.
+   * @returns the reserved lease, which the caller publishes once the session is live.
+   */
+async reserve(id: AgentEngineId, sessionId: SessionId, input: AgentEnginePlanInput): Promise<AgentEngineLease> {
     const entry = this.requireAvailable(id)
     if (entry.leases.has(sessionId)) throw new Error(`session "${sessionId}" already has an engine lease`)
     const created = await entry.definition.createPlan(input)
@@ -92,7 +106,14 @@ export class FreeCodeGoAgentEngineRegistry {
     return lease
   }
 
-  async reserveExisting(plan: AgentEnginePlan, sessionId: SessionId): Promise<AgentEngineLease> {
+    /**
+   * Re-reserve the engine a durable plan was pinned to, admitting a draining entry so
+   * restoring a session outlives a retire.
+   * @param plan - the plan read back from the durable session.
+   * @param sessionId - the session that will own the lease.
+   * @returns the reserved lease, refusing a plan the installed runtime cannot reproduce.
+   */
+async reserveExisting(plan: AgentEnginePlan, sessionId: SessionId): Promise<AgentEngineLease> {
     const candidates = [this.entries.get(plan.engineId), ...this.retiring].filter((entry): entry is Entry => entry !== undefined)
     const entry = candidates.find(candidate => candidate.definition.id === plan.engineId && candidate.generation === plan.generation)
     if (entry === undefined) throw new Error(`agent engine "${plan.engineId}" generation ${String(plan.generation)} is not installed`)
@@ -127,14 +148,28 @@ export class FreeCodeGoAgentEngineRegistry {
     return lease
   }
 
-  beginDrain(id: AgentEngineId): { id: AgentEngineId; generation: number; activeLeaseCount: number } {
+    /**
+   * Stop admitting new sessions to an engine, releasing it once its last lease ends.
+   * @param id - the engine to retire.
+   * @returns the retired generation and how many leases are still active.
+   */
+beginDrain(id: AgentEngineId): { id: AgentEngineId; generation: number; activeLeaseCount: number } {
     const entry = this.requireEntry(id)
     this.retire(id, entry)
     this.removeWhenDrained(id, entry)
     return { id, generation: entry.generation, activeLeaseCount: entry.leases.size }
   }
-  setAvailability(id: AgentEngineId, availability: AgentEngineAvailability): void { this.requireEntry(id).availability = availability }
-  snapshot(): AgentEngineSnapshot[] { return [...this.entries.values(), ...this.retiring].map(entry => ({ id: entry.definition.id, generation: entry.generation, availability: entry.availability, reasons: entry.definition.reasons ?? [], draining: entry.draining, activeLeaseCount: entry.leases.size })) }
+    /**
+   * Publish an engine's current availability, which the admission checks read.
+   * @param id - the engine to update.
+   * @param availability - the state that engine is in now.
+   */
+setAvailability(id: AgentEngineId, availability: AgentEngineAvailability): void { this.requireEntry(id).availability = availability }
+    /**
+   * Every registered and retiring engine, with its availability and lease count.
+   * @returns one row per engine, as the engines surface reports it.
+   */
+snapshot(): AgentEngineSnapshot[] { return [...this.entries.values(), ...this.retiring].map(entry => ({ id: entry.definition.id, generation: entry.generation, availability: entry.availability, reasons: entry.definition.reasons ?? [], draining: entry.draining, activeLeaseCount: entry.leases.size })) }
   private requireEntry(id: AgentEngineId): Entry { const entry = this.entries.get(id); if (entry === undefined) throw new Error(`agent engine "${id}" is not registered`); return entry }
   /**
    * Refuse an engine that is not admitting sessions, naming the reasons it
@@ -165,7 +200,9 @@ export class FreeCodeGoAgentEngineRegistry {
   /** Snapshot of live (non-draining) entries only. Registration checks use
    * this: a draining entry left behind by HMR retire must not make the next
    * registration skip itself and later fail every reserve with "not
-   * registered". */
+   * registered". 
+   * @returns the ids of the engines that are not draining.
+   */
   liveIds(): readonly AgentEngineId[] {
     return [...this.entries.values()].filter(entry => !entry.draining).map(entry => entry.definition.id)
   }

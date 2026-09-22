@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { FreeCodeGoCapabilityRegistry, MCP_SECRET_REDACTED } from '../src/capabilities.ts'
 import type { FreeCodeGoCapabilitySettings, FreeCodeGoMcpServer, FreeCodeGoSkillRoot } from '../src/types.ts'
@@ -24,7 +24,7 @@ type MountedPluginDefinition = { readonly name: string }
 /** The one member the registry reads off a mounted plugin's returned handle. */
 type MountedPluginHandle = { dispose: () => Promise<void> }
 
-function bench(initial: FreeCodeGoCapabilitySettings = emptySettings(), schemas: (agent?: unknown) => readonly unknown[] = () => [], skills?: unknown, projectEntries?: () => Promise<{ readonly mcpServers: readonly FreeCodeGoMcpServer[]; readonly skillRoots: readonly FreeCodeGoSkillRoot[] }>, trust?: (directory: string) => Promise<{ readonly trusted: boolean; readonly reason: string }>) {
+function bench(initial: FreeCodeGoCapabilitySettings = emptySettings(), schemas: (agent?: unknown) => readonly unknown[] = () => [], skills?: unknown, projectEntries?: () => Promise<{ readonly mcpServers: readonly FreeCodeGoMcpServer[]; readonly skillRoots: readonly FreeCodeGoSkillRoot[] }>, trust?: (directory: string) => Promise<{ readonly trusted: boolean; readonly reason: string }>, fileSystem?: unknown) {
   let stored = initial
   const dispose = vi.fn(async () => undefined)
   // Declared with the parameters and the handle shape the registry really uses,
@@ -34,12 +34,25 @@ function bench(initial: FreeCodeGoCapabilitySettings = emptySettings(), schemas:
   const execute = vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }], isError: false }))
   const ctx = {
     plugin,
-    get: vi.fn((key: string) => key === 'skills' ? skills : undefined),
+    get: vi.fn((key: string) => key === 'skills' ? skills : key === 'fs' ? fileSystem : undefined),
     tools: { schemas, execute },
   }
   const settings = {
     get: () => stored,
-    update: vi.fn(async (value: FreeCodeGoCapabilitySettings) => { stored = value }),
+    // The real scope **merges** a patch into the document: plain objects merge recursively,
+    // every other value replaces, and `undefined` entries are stripped so a sparse patch
+    // cannot erase lower keys. Replacing the whole document here made a *clear* look like it
+    // worked while the live harness showed it did not — a fake has to be at least as lossy
+    // as the thing it stands in for, or the tests that hang on deletion pass for the wrong
+    // reason.
+    update: vi.fn(async (patch: FreeCodeGoCapabilitySettings) => {
+      const merged: Record<string, unknown> = { ...stored }
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) continue
+        merged[key] = value
+      }
+      stored = merged as unknown as FreeCodeGoCapabilitySettings
+    }),
   }
   const registry = new FreeCodeGoCapabilityRegistry(
     ctx as never,
@@ -58,10 +71,47 @@ interface SkillFixture {
   readonly userInvocable: boolean
   readonly path?: string
   readonly content?: string
+  /** The provider's own statement about its resources, as `ctx.skills.get()` returns it. */
+  readonly resourceBase?: { readonly kind: string; readonly [key: string]: unknown }
+}
+
+/**
+ * An in-memory filesystem service: a target is its own path, and a child is
+ * contained when its path descends from the parent's.
+ *
+ * It stands in for the composition this seam exists for — the Skill's files are
+ * in a filesystem the host process cannot read at all, so a listing that appears
+ * can only have come through the service.
+ */
+function memoryFileSystem(tree: ReadonlyMap<string, readonly { readonly name: string; readonly type: 'file' | 'directory'; readonly text?: string }[]>, escapes: readonly string[] = []): { readonly resolve: (path: string) => Promise<unknown>; readonly listDir: (target: unknown) => Promise<readonly { readonly name: string; readonly type: 'file' | 'directory' | 'other'; readonly target: unknown; readonly size?: number }[]>; readonly readText: (target: unknown) => Promise<string>; readonly contains: (parent: unknown, child: unknown) => boolean; readonly reads: string[] } {
+  const reads: string[] = []
+  const pathOf = (target: unknown): string => (target as { path: string }).path
+  const texts = new Map<string, string>()
+  for (const [directory, entries] of tree) {
+    for (const entry of entries) if (entry.text !== undefined) texts.set(resolve(directory, entry.name), entry.text)
+  }
+  return {
+    reads,
+    resolve: async (path: string) => ({ path: resolve(path) }),
+    listDir: async (target: unknown) => (tree.get(pathOf(target)) ?? []).map(entry => ({
+      name: entry.name,
+      type: entry.type,
+      target: { path: resolve(pathOf(target), entry.name) },
+      ...(entry.text === undefined ? {} : { size: Buffer.byteLength(entry.text, 'utf8') }),
+    })),
+    readText: async (target: unknown) => {
+      const path = pathOf(target)
+      reads.push(path)
+      const text = texts.get(path)
+      if (text === undefined) throw new Error(`no such file in this filesystem: ${path}`)
+      return text
+    },
+    contains: (parent: unknown, child: unknown) => !escapes.includes(pathOf(child)) && pathOf(child).startsWith(`${pathOf(parent)}${sep}`),
+  }
 }
 
 /** A bench whose Skill service answers with the supplied fixtures. */
-function skillBench(entries: readonly SkillFixture[], overrides: Partial<FreeCodeGoCapabilitySettings> = {}) {
+function skillBench(entries: readonly SkillFixture[], overrides: Partial<FreeCodeGoCapabilitySettings> = {}, fileSystem?: unknown) {
   const definitions = entries.map(entry => ({
     name: entry.name,
     description: entry.description ?? `${entry.name} description`,
@@ -69,13 +119,14 @@ function skillBench(entries: readonly SkillFixture[], overrides: Partial<FreeCod
     provider: 'test',
     content: entry.content ?? `# ${entry.name}`,
     ...entry.path === undefined ? {} : { path: entry.path },
+    ...entry.resourceBase === undefined ? {} : { resourceBase: entry.resourceBase },
     invocation: { modelInvocable: entry.modelInvocable, userInvocable: entry.userInvocable },
   }))
   const service = {
     snapshot: vi.fn(async () => ({ skills: definitions })),
     get: vi.fn(async (name: string) => definitions.find(definition => definition.name === name)),
   }
-  const b = bench({ ...emptySettings(), skillEnabled: true, ...overrides }, () => [], service)
+  const b = bench({ ...emptySettings(), skillEnabled: true, ...overrides }, () => [], service, undefined, undefined, fileSystem)
   return { ...b, service }
 }
 
@@ -293,6 +344,88 @@ describe('FreeCodeGoCapabilityRegistry Skill roots', () => {
     await b.registry.dispose()
   })
 
+  it('reads a virtual Skill\'s companion files from the base its provider declared', async () => {
+    // `dsh-badge` is the case this exists for: a bundled Skill whose provider
+    // declares a resource directory and reports **no** `SKILL.md` path. Deriving
+    // the directory from the path read every asset it advertises as absent.
+    const assets = await mkdtemp(join(tmpdir(), 'freecodego-skill-assets-'))
+    try {
+      await writeFile(join(assets, 'badge.svg'), '<svg/>')
+      await writeFile(join(assets, 'badge.json'), '{}')
+      const b = skillBench([
+        { name: 'dsh-badge', modelInvocable: true, userInvocable: true, content: '# dsh-badge', resourceBase: { kind: 'directory', path: assets } },
+      ])
+
+      const detail = await b.registry.readSkill('dsh-badge')
+      expect(detail.files).toEqual([{ path: 'badge.json', bytes: 2 }, { path: 'badge.svg', bytes: 6 }])
+      await expect(b.registry.readSkill('dsh-badge', 'badge.svg')).resolves
+        .toMatchObject({ file: { path: 'badge.svg', bytes: 6, content: '<svg/>' } })
+
+      await b.registry.dispose()
+    } finally {
+      await rm(assets, { recursive: true, force: true })
+    }
+  })
+
+  it('lists and reads a Skill through the Harness filesystem seam when the host cannot reach it', async () => {
+    // The whole point of the seam: this directory does not exist in the host
+    // process at all, so anything the dialog shows came through the service — the
+    // same one that delivered the Skill body the model sees.
+    const root = join(tmpdir(), 'freecodego-sandbox-skill')
+    const fileSystem = memoryFileSystem(new Map([
+      [root, [{ name: 'agents', type: 'directory' as const }, { name: 'DESIGN.md', type: 'file' as const, text: 'twice' }]],
+      [join(root, 'agents'), [{ name: 'brief.md', type: 'file' as const, text: 'brief' }]],
+    ]))
+    const b = skillBench([
+      { name: 'sandboxed', modelInvocable: true, userInvocable: true, resourceBase: { kind: 'directory', path: root } },
+    ], {}, fileSystem)
+
+    const detail = await b.registry.readSkill('sandboxed')
+    expect(detail.files).toEqual([{ path: 'agents/brief.md', bytes: 5 }, { path: 'DESIGN.md', bytes: 5 }])
+    await expect(b.registry.readSkill('sandboxed', 'agents/brief.md')).resolves
+      .toMatchObject({ file: { path: 'agents/brief.md', bytes: 5, content: 'brief' } })
+    expect(fileSystem.reads).toEqual([resolve(root, 'agents', 'brief.md')])
+
+    await b.registry.dispose()
+  })
+
+  it('asks the backend whether a listed file is inside the Skill directory', async () => {
+    const root = join(tmpdir(), 'freecodego-sandbox-escape')
+    const link = resolve(root, 'link.md')
+    // The listing carries `link.md`; the backend says that target is not inside
+    // the Skill directory. Only the containment answer can refuse it, which is
+    // the rule the host-filesystem path enforces with its symlink check.
+    const fileSystem = memoryFileSystem(new Map([
+      [root, [{ name: 'notes.md', type: 'file' as const, text: 'ordinary notes' }, { name: 'link.md', type: 'file' as const, text: 'PRIVATE KEY MATERIAL' }]],
+    ]), [link])
+    const b = skillBench([
+      { name: 'escaping', modelInvocable: true, userInvocable: true, resourceBase: { kind: 'directory', path: root } },
+    ], {}, fileSystem)
+
+    expect((await b.registry.readSkill('escaping')).files.map(file => file.path)).toEqual(['link.md', 'notes.md'])
+    await expect(b.registry.readSkill('escaping', 'link.md')).rejects.toThrow(/resolves outside this Skill directory/)
+    await expect(b.registry.readSkill('escaping', 'notes.md')).resolves.toMatchObject({ file: { content: 'ordinary notes' } })
+
+    await b.registry.dispose()
+  })
+
+  it('names the reason a Skill\'s resources cannot be listed instead of reading the local disk', async () => {
+    const b = skillBench([
+      { name: 'remote-skill', modelInvocable: true, userInvocable: true, resourceBase: { kind: 'url', url: 'https://skills.example.test/remote/' } },
+      { name: 'opaque-skill', modelInvocable: true, userInvocable: true, resourceBase: { kind: 'opaque', description: 'the provider resolves these itself' } },
+      { name: 'future-skill', modelInvocable: true, userInvocable: true, resourceBase: { kind: 'git-tree', ref: 'HEAD' } },
+    ])
+
+    expect((await b.registry.readSkill('remote-skill')).files).toEqual([])
+    await expect(b.registry.readSkill('remote-skill', 'badge.svg')).rejects.toThrow(/served from https:\/\/skills\.example\.test\/remote\//)
+    await expect(b.registry.readSkill('opaque-skill', 'badge.svg')).rejects.toThrow(/the provider resolves these itself/)
+    // A base this build does not know is refused rather than downgraded to the
+    // SKILL.md directory, which would be a different Skill's files at worst.
+    await expect(b.registry.readSkill('future-skill', 'badge.svg')).rejects.toThrow(/"git-tree" resource base/)
+
+    await b.registry.dispose()
+  })
+
   it('reads a Skill body with its companion files, including the entries the model cannot invoke', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'freecodego-skill-read-'))
     try {
@@ -499,6 +632,95 @@ describe('FreeCodeGoCapabilityRegistry project entries', () => {
     // `mcpEnabled` / `skillEnabled` are the user's answer about their machine, and
     // a repository's file is not a way around it.
     expect(mountedNames(b.plugin)).toEqual([])
+
+    await b.registry.dispose()
+  })
+})
+
+/**
+ * The remembered Skill destination, which is a preference and not a mount.
+ *
+ * Two claims are worth a gate here. First, what gets stored is the *choice* — two
+ * axes — rather than the directory they resolve to, because that directory is derived
+ * from the workspace, `$DSH_HOME` and the home directory, and a saved path would
+ * outlive all three. Second, remembering a destination must not remount anything: it
+ * changes where a future install lands, not which providers this process holds, and a
+ * write that quietly remounted the Skill fiber would tear down in-flight tool calls to
+ * change a dropdown.
+ */
+describe('FreeCodeGoCapabilityRegistry Skill destination preference', () => {
+  it('stores the two axes, and reports them in the snapshot', async () => {
+    const b = bench()
+
+    await b.registry.setPreferredSkillPlacement({ agent: 'harness', scope: 'user' })
+
+    expect(b.read().preferredSkillPlacement).toEqual({ agent: 'harness', scope: 'user' })
+    expect((await b.registry.snapshot()).preferredSkillPlacement).toEqual({ agent: 'harness', scope: 'user' })
+    // Nothing was mounted: a destination is not a root that already exists.
+    expect(b.plugin).not.toHaveBeenCalled()
+    await b.registry.dispose()
+  })
+
+  it('remembers a path-free choice, which is the whole point of storing axes', async () => {
+    const b = bench()
+
+    await b.registry.setPreferredSkillPlacement({ agent: 'agents', scope: 'project' })
+
+    const stored = b.read().preferredSkillPlacement
+    expect(Object.keys(stored ?? {}).sort()).toEqual(['agent', 'scope'])
+    // The member that would have carried a directory is absent. A stored root would
+    // name a folder this process happened to be in when the user clicked.
+    expect(JSON.stringify(stored)).not.toContain('/')
+  })
+
+  it('clears a stored preference by writing a value, because a settings write merges', async () => {
+    const b = bench()
+    await b.registry.setPreferredSkillPlacement({ agent: 'harness', scope: 'project' })
+
+    await b.registry.setPreferredSkillPlacement({})
+
+    // The document carries the explicit `null`, not an absent key. This is the assertion
+    // the live harness earned: `update` merges, so a patch that simply left the field out
+    // would keep the old destination, and the user asking for the default back would still
+    // be installing into their last choice.
+    expect(b.read().preferredSkillPlacement).toBeNull()
+    // Above that line, though, "no preference" is one fact: the snapshot a client reads
+    // reports the same absence it reports for a field that was never written.
+    expect((await b.registry.snapshot()).preferredSkillPlacement).toBeUndefined()
+    expect(b.registry.configuration().preferredSkillPlacement).toBeUndefined()
+    await b.registry.dispose()
+  })
+
+  it('refuses half a placement instead of guessing the other half', async () => {
+    const b = bench()
+
+    await expect(b.registry.setPreferredSkillPlacement({ agent: 'harness' })).rejects.toThrow(/both axes/u)
+    await expect(b.registry.setPreferredSkillPlacement({ scope: 'user' })).rejects.toThrow(/both axes/u)
+
+    expect(b.read().preferredSkillPlacement).toBeUndefined()
+    await b.registry.dispose()
+  })
+
+  it('refuses an agent or scope the matrix does not know', async () => {
+    const b = bench()
+
+    // The declared input type already refuses both of these — a TypeScript caller cannot
+    // write them — and the checks above still exist because the remote boundary is untyped
+    // at runtime: the browser reaches this method by string name with whatever the payload
+    // carries, and the settings document can be edited by hand.
+    await expect(b.registry.setPreferredSkillPlacement({ agent: 'custom', scope: 'user' } as never)).rejects.toThrow(/Skill placement agent/u)
+    await expect(b.registry.setPreferredSkillPlacement({ agent: 'harness', scope: 'machine' } as never)).rejects.toThrow(/Skill placement scope/u)
+
+    await b.registry.dispose()
+  })
+
+  it('refuses a record written by something that disagreed about the vocabulary', async () => {
+    // The settings file is editable by hand and readable by an older build. A spelling
+    // this table does not know would sit there looking like an applied preference while
+    // every install ignored it, so the write path refuses it rather than persisting it.
+    const b = bench({ ...emptySettings(), preferredSkillPlacement: { agent: 'codex', scope: 'user' } as never })
+
+    await expect(b.registry.setEnabled({ skillEnabled: true })).rejects.toThrow(/Skill placement agent/u)
 
     await b.registry.dispose()
   })

@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
-import { TeamWorktrees, WORKTREE_RELATIVE_DIRECTORY } from '../src/team/worktree.ts'
+import { WorktreeRegistry, WORKTREE_RELATIVE_DIRECTORY } from '../src/worktree/registry.ts'
 import { realCreatorDeps } from '../src/worktree/creator.ts'
 import {
   SessionWorktrees,
@@ -30,7 +30,7 @@ import {
   worktreeToolDefinitions,
   worktreeOwner,
   type SessionWorktreePorts,
-  type WorktreeRegistry,
+  type WorktreeRegistryPort,
 } from '../src/worktree/tools.ts'
 
 const run = promisify(execFile)
@@ -42,12 +42,12 @@ afterAll(() => {
 })
 
 /** An in-memory registry, so these tests are about the operations, not the file. */
-class MemoryRegistry implements WorktreeRegistry {
-  readonly entries: import('../src/team/worktree.ts').TeamWorktree[] = []
-  async list(): Promise<readonly import('../src/team/worktree.ts').TeamWorktree[]> {
+class MemoryRegistry implements WorktreeRegistryPort {
+  readonly entries: import('../src/worktree/registry.ts').WorktreeEntry[] = []
+  async list(): Promise<readonly import('../src/worktree/registry.ts').WorktreeEntry[]> {
     return [...this.entries]
   }
-  async register(entry: import('../src/team/worktree.ts').TeamWorktree): Promise<void> {
+  async register(entry: import('../src/worktree/registry.ts').WorktreeEntry): Promise<void> {
     const index = this.entries.findIndex(existing => existing.id === entry.id)
     if (index === -1) this.entries.push(entry)
     else this.entries[index] = entry
@@ -386,7 +386,7 @@ describe('the shared registry (real git)', () => {
       console.warn('[worktree-tools] git is unavailable; the shared-registry check did not run')
       return
     }
-    const registry = new TeamWorktrees(repo, join(repo, '.freecodego', 'worktrees.json'))
+    const registry = new WorktreeRegistry(repo, join(repo, '.freecodego', 'worktrees.json'))
     const runGit = async (args: readonly string[]): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> => {
       try {
         const result = await run('git', [...args], { cwd: repo })
@@ -418,9 +418,9 @@ describe('the shared registry (real git)', () => {
     expect(entered.strategy).toBe('git')
     expect(entered.worktree.branch).toBe(`freecodego/session/${sessionWorktreeSlug('git-session')}`)
     expect(entered.worktree.base).toBe(head)
-    // One registry: the entry the session wrote is the entry the team reads.
-    const asTeamSees = await registry.list()
-    expect(asTeamSees.map(entry => entry.id)).toContain(entered.worktree.id)
+    // One registry: the entry the session wrote is the entry the readout lists.
+    const persisted = await registry.list()
+    expect(persisted.map(entry => entry.id)).toContain(entered.worktree.id)
 
     // Invariant 1: the worktree directory never shows up as untracked noise.
     const status = await runGit(['-C', repo, 'status', '--porcelain'])

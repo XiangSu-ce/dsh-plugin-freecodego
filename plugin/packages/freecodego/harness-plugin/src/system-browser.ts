@@ -19,6 +19,8 @@ import { spawn, type ChildProcess } from 'node:child_process'
  * clickable link in Settings, so whatever produces a ticket has to apply the
  * same allow-list the opener applies. A URL this Host refuses to open must not
  * become clickable just because the user pressed the link instead.
+ * @param value - the URL to test.
+ * @returns true when the URL is http(s).
  */
 export function isHttpUrl(value: string): boolean {
   try {
@@ -43,6 +45,8 @@ export function isHttpUrl(value: string): boolean {
  * no listener is rethrown inside the Host process, which a caller's
  * `.catch(() => false)` cannot intercept because it is not a rejection. Every
  * other `spawn` in this plugin attaches an error handler for the same reason.
+ * @param url - absolute URL the request is sent to.
+ * @returns true when the platform opener really started.
  */
 export async function openUrlInSystemBrowser(url: string): Promise<boolean> {
   if (!isHttpUrl(url)) return false

@@ -12,7 +12,9 @@
  *   its scope. The rail mark has no session scope of its own, and the dock entry
  *   is handed the session it belongs to, but the *facts* behind the pose are the
  *   ones that need the jobs and the Session status snapshot — so both read them
- *   the same way, from one place.
+ *   the same way, from one place. The phases *inside* a turn are a third source,
+ *   the session's own event log (`./activity.ts`), which every reader here is
+ *   handed the same instance of.
  * - **The publication.** Signals are projected, the arbiter decides, and the frame
  *   is sampled on the shared clock's tick. A frozen companion skips ticks whose
  *   pose has not changed, and a state change resets rather than transitions, so a
@@ -21,24 +23,28 @@
  * What stays with a seat is what is genuinely the seat's own: how large it draws,
  * which slot it occupies, and whether it wants a label.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { UseSessionStatus, UseSessions } from '@deepseek-ai/dsh-client-ui-session/client'
-import type { JobView } from '@deepseek-ai/dsh-api-remotes/client'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { UseSessionStatus, UseSessions, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { BotEngine, type BotFrame } from './engine/engine.ts'
 import { RAYON } from './engine/repere.ts'
 import { STATE_BY_ID, type StateId } from './engine/states.ts'
+import type { CompanionActivity } from './activity.ts'
 import { CompanionArbiter } from './arbiter.ts'
 import { companionClock } from './driver.ts'
-import { emptyMemory, projectSignals, type CompanionObservation, type CompanionSignalMemory } from './signals.ts'
-
-/** Stable empty job list, so a selector never returns a fresh array. */
-const NO_JOBS: readonly JobView[] = []
-
-/** @returns whether a job is still open, following the jobs surface's own reading. */
-function isLiveJob(job: JobView): boolean {
-  return job.status === 'running' || job.status === 'stopping'
-}
+import {
+  awaitingInteraction,
+  emptyMemory,
+  liveJobCount,
+  mainViewSessionId,
+  newestFailedJobKey,
+  projectSignals,
+  sessionRunning,
+  type CompanionObservation,
+  type CompanionSignalMemory,
+} from './signals.ts'
 
 /** Mutable per-mount state, kept out of React so ticks never re-create it. */
 interface CompanionRuntime {
@@ -133,36 +139,86 @@ export interface CompanionFactHooks {
  * compared by value where it is consumed.
  * @param hooks - the seat's standard-prop hooks.
  * @param sessionId - the session to observe; absent means nothing is selected.
+ * @param activity - the session's own event log, read live; the phases the two
+ * stores above cannot separate never appear in their snapshots at all.
  * @returns what `projectSignals` consumes.
  */
 export function useCompanionObservation(
   hooks: CompanionFactHooks,
   sessionId: SessionId | undefined,
+  activity: HostObservable<CompanionActivity>,
 ): CompanionObservation {
-  const running = hooks.useSessions(state => sessionId !== undefined && state.byId[sessionId]?.running === true)
-  const liveJobs = hooks.useSessions(state =>
-    sessionId === undefined ? 0 : (state.jobsBySession[sessionId] ?? NO_JOBS).filter(isLiveJob).length)
-  // The newest failure, by identity rather than as a boolean: the host's list is
-  // append-ordered and drains nothing, so the last failed entry is the most
-  // recently started one, and its id is what changes when another job fails. A
-  // boolean here would pin the failure pose for the rest of the session — see
-  // `CompanionObservation.failedJobKey`.
-  const failedJobKey = hooks.useSessions((state) => {
-    if (sessionId === undefined) return undefined
-    let newest: string | undefined
-    for (const job of state.jobsBySession[sessionId] ?? NO_JOBS) {
-      if (job.status === 'failed') newest = job.id
-    }
-    return newest
-  })
+  // Every selector body is one question, asked in `./signals.ts` so the injected
+  // transcript row asks it the same way; see the note there. Each returns a
+  // primitive, which is also why no equality function is needed.
+  const running = hooks.useSessions(state => sessionRunning(state, sessionId))
+  const liveJobs = hooks.useSessions(state => liveJobCount(state, sessionId))
+  const failedJobKey = hooks.useSessions(state => newestFailedJobKey(state, sessionId))
   // The status snapshot is the successor of the pending-interaction map: the
   // request itself moved under `SessionStatus.pendingInteraction`, which is the
   // highest-precedence domain request for that session. Presence of the field is
   // the whole question here — a seat cares that *something* is being asked of the
   // user, not which domain asked.
-  const awaitingInteraction = hooks.useSessionStatus(statuses =>
-    sessionId !== undefined && statuses.get(sessionId)?.pendingInteraction !== undefined)
-  return { running, liveJobs, failedJob: failedJobKey !== undefined, failedJobKey, awaitingInteraction }
+  const asked = hooks.useSessionStatus(statuses => awaitingInteraction(statuses, sessionId))
+  // The activity's fields are named exactly as the observation spells them, so the
+  // reading is merged rather than mapped: one shared vocabulary, no second naming.
+  return {
+    running,
+    liveJobs,
+    failedJob: failedJobKey !== undefined,
+    failedJobKey,
+    awaitingInteraction: asked,
+    ...useObserved(activity, reading => reading),
+  }
+}
+
+/**
+ * Observe one snapshot source outside the slot system.
+ *
+ * The framework builds the Hooks a slot receives over exactly these sources (its
+ * `provideRoot` hands it `ctx.sessions.list` and `uiSession.sessionStatus`), so
+ * this is the same read with the same lifetime and the same selector shape — the
+ * only thing it adds is a subscription the framework would otherwise own.
+ * @param source - the observable snapshot to follow.
+ * @param select - primitive-valued selection; primitives compare by `Object.is`,
+ * which is what keeps a re-render loop impossible without an equality function.
+ * @returns the selected value, re-read when the source invalidates.
+ */
+function useObserved<T, S>(source: HostObservable<T>, select: (snapshot: T) => S): S {
+  const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source])
+  return useSyncExternalStore(subscribe, () => select(source.getSnapshot()))
+}
+
+/**
+ * The same observation, read off the stores themselves.
+ *
+ * For a companion outside the slot system — the injected running row in
+ * `./running-row.tsx`, which the host renders into the transcript rather than
+ * through a slot. Which Session it describes is the same question the rail mark
+ * asks (`mainViewSessionId`), so the two seats and this row follow one Session id
+ * and one set of facts.
+ * @param sessions - the Session list observable.
+ * @param statuses - the unified Session UI status observable.
+ * @returns what `projectSignals` consumes.
+ */
+export function useObservedCompanionObservation(
+  sessions: HostObservable<SessionListState>,
+  statuses: HostObservable<SessionStatusSnapshot>,
+  activity: HostObservable<CompanionActivity>,
+): CompanionObservation {
+  const sessionId = useObserved(sessions, mainViewSessionId)
+  const running = useObserved(sessions, state => sessionRunning(state, sessionId))
+  const liveJobs = useObserved(sessions, state => liveJobCount(state, sessionId))
+  const failedJobKey = useObserved(sessions, state => newestFailedJobKey(state, sessionId))
+  const asked = useObserved(statuses, snapshots => awaitingInteraction(snapshots, sessionId))
+  return {
+    running,
+    liveJobs,
+    failedJob: failedJobKey !== undefined,
+    failedJobKey,
+    awaitingInteraction: asked,
+    ...useObserved(activity, reading => reading),
+  }
 }
 
 /** The published pose: one frame, and the name of the state that produced it. */

@@ -1,23 +1,11 @@
 /** OpenAI-compatible request serialization and SSE translation owned by FreeCodeGo. */
 
-import { EMPTY_RESPONSE_CODE, LlmError } from '@deepseek-ai/dsh-llm'
+import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, FinishReason, GenerateOptions, Message, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
-import { EventSourceParserStream } from 'eventsource-parser/stream'
+import { callIdFor, closeStream, openBlock, DONE } from './wire-shared.ts'
+import type { OpenBlock } from './wire-shared.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
-
-const DONE = '[DONE]'
-function toolCallId(value: string): never { return value as never }
-
-export async function* parseSse(stream: ReadableStream<BufferSource>): AsyncGenerator<string> {
-  const events = stream.pipeThrough(new TextDecoderStream()).pipeThrough(new EventSourceParserStream())
-  for await (const event of events) {
-    yield event.data
-    if (event.data === DONE) return
-  }
-  // translate() tolerates a missing [DONE] when content was produced; an
-  // empty payload stream falls through to it as well and surfaces there.
-}
 
 type WireMessage = Record<string, unknown>
 
@@ -73,6 +61,11 @@ export function hasImageContent(options: GenerateOptions): boolean {
   return options.messages.some(message => message.role === 'user' && message.content.some(block => block.type === 'image'))
 }
 
+/** Serialize a chat-completions request body from the Harness's options.
+ * @param options - the request to serialize.
+ * @param defaults - the wire and usage defaults for this route.
+ * @returns the request body the provider receives.
+ */
 export function serializeRequest(options: GenerateOptions, defaults: { readonly reasoningWire?: 'gateway' | 'standard'; readonly includeUsage?: boolean } = {}): Record<string, unknown> {
   const messages: WireMessage[] = []
   if (options.system !== undefined) messages.push({ role: 'system', content: options.system })
@@ -92,7 +85,12 @@ export function serializeRequest(options: GenerateOptions, defaults: { readonly 
   return requestWithMessages(options, messages, defaults)
 }
 
-/** Serialize an OpenAI-compatible request with inline data-URL image parts. */
+/** Serialize an OpenAI-compatible request with inline data-URL image parts.
+ * @param options - the request to serialize.
+ * @param images - the resolver that turns image blocks into data URLs.
+ * @param defaults - the wire and usage defaults for this route.
+ * @returns the projected record the caller renders.
+ */
 export async function serializeRequestWithInlineImages(
   options: GenerateOptions,
   images: InlineImageSerialization,
@@ -166,8 +164,6 @@ function requestWithMessages(
   }
 }
 
-type OpenBlock = { readonly index: number; readonly kind: 'text' | 'reasoning' | 'tool-call'; text: string; callId?: string; name?: string }
-
 function finishReason(value: unknown): FinishReason {
   if (value === 'stop') return { kind: 'stop' }
   if (value === 'tool_calls' || value === 'function_call') return { kind: 'tool-calls' }
@@ -189,14 +185,6 @@ function usage(value: unknown): TokenUsage | undefined {
   const details = (value as Record<string, unknown>).prompt_tokens_details
   const cached = details !== null && typeof details === 'object' ? (details as Record<string, unknown>).cached_tokens : undefined
   return { inputTokens: input - (typeof cached === 'number' ? cached : 0), outputTokens: output, ...(typeof cached === 'number' ? { cacheReadTokens: cached } : {}) }
-}
-
-function close(block: OpenBlock): ContentBlock {
-  if (block.kind === 'text') return { type: 'text', text: block.text }
-  if (block.kind === 'reasoning') return { type: 'reasoning', text: block.text }
-  // A provider that omits tool_call ids still needs a stable, non-empty id
-  // for later tool-result correlation; the block index is unique per stream.
-  return { type: 'tool-call', id: toolCallId(block.callId ?? `call_${block.index}`), name: block.name ?? '', arguments: block.text }
 }
 
 /**
@@ -221,7 +209,10 @@ function contentText(value: unknown): string | undefined {
   }).join('')
 }
 
-/** Translate standard OpenAI chat-completions SSE chunks into Harness stream chunks. */
+/** Translate standard OpenAI chat-completions SSE chunks into Harness stream chunks.
+ * @param payloads - the SSE data payloads, in arrival order.
+ * @returns the assembled Harness stream chunks.
+ */
 export async function* translate(payloads: AsyncIterable<string>): AsyncGenerator<StreamChunk> {
   let nextIndex = 0
   const order: OpenBlock[] = []
@@ -230,12 +221,11 @@ export async function* translate(payloads: AsyncIterable<string>): AsyncGenerato
   let reasoningBlock: OpenBlock | undefined
   let pendingUsage: TokenUsage | undefined
   let pendingFinish: FinishReason | undefined
-  const open = (kind: OpenBlock['kind']): OpenBlock => { const block: OpenBlock = { index: nextIndex++, kind, text: '' }; order.push(block); return block }
-  const terminal = function* (): Generator<StreamChunk> {
-    for (const block of order) yield { type: 'block-end', index: block.index, block: close(block) }
-    if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
-    yield { type: 'finish', reason: pendingFinish ?? (order.length === 0 ? { kind: 'error', failure: { message: 'model returned no content', code: EMPTY_RESPONSE_CODE } } : { kind: 'stop' }) }
-  }
+  const open = (kind: OpenBlock['kind']): OpenBlock => openBlock(order, nextIndex++, kind)
+  // Shared with the Anthropic wire (see `wire-shared.ts`): every open block,
+  // then usage, then the terminal reason — a stream that produced no block is a
+  // failure rather than an empty successful turn.
+  const terminal = (): Generator<StreamChunk> => closeStream(order, pendingUsage, pendingFinish)
   for await (const payload of payloads) {
     if (payload === DONE) {
       yield* terminal()
@@ -316,7 +306,7 @@ export async function* translate(payloads: AsyncIterable<string>): AsyncGenerato
           // re-serialized value keeps the call intact and stays a string.
           : fn.arguments === undefined || fn.arguments === null ? '' : JSON.stringify(fn.arguments)
         block.text += fragment
-        yield { type: 'tool-call-delta', index: block.index, id: toolCallId(block.callId ?? `call_${block.index}`), ...(block.name === undefined ? {} : { name: block.name }), argumentsDelta: fragment }
+        yield { type: 'tool-call-delta', index: block.index, id: callIdFor(block), ...(block.name === undefined ? {} : { name: block.name }), argumentsDelta: fragment }
       }
       if (typeof row.finish_reason === 'string') pendingFinish = finishReason(row.finish_reason)
     }

@@ -114,7 +114,12 @@ export class FreeCodeGoEngineCouncil {
     private readonly defaultAgentOptions: () => DefaultAgentOptions,
   ) {}
 
-  /** Start a background council and return its durable-safe job projection. */
+  /** Start a background council and return its durable-safe job projection. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @param request - the request this call projects from.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the engineering Council Job.
+   */
   start(parent: Agent, request: FreeCodeGoEngineeringCouncilRequest, signal?: AbortSignal): FreeCodeGoEngineeringCouncilJob {
     const normalized = normalizeRequest(request)
     const policy = councilPolicy(this.settings?.get())
@@ -171,7 +176,12 @@ export class FreeCodeGoEngineCouncil {
     return job
   }
 
-  /** Run a council in the caller's turn and return the completed report. */
+  /** Run a council in the caller's turn and return the completed report. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @param request - the request this call projects from.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the engineering Council Report.
+   */
   async run(parent: Agent, request: FreeCodeGoEngineeringCouncilRequest, signal?: AbortSignal): Promise<FreeCodeGoEngineeringCouncilReport> {
     const job = this.start(parent, request, signal)
     const task = this.tasks.get(job.id)
@@ -179,7 +189,10 @@ export class FreeCodeGoEngineCouncil {
     return task.promise
   }
 
-  /** Cancel a queued or running council; child Agents are cancelled immediately. */
+  /** Cancel a queued or running council; child Agents are cancelled immediately. 
+   * @returns the engineering Council Job.
+   * @param id - id of the council job to cancel.
+   */
   cancel(id: string): FreeCodeGoEngineeringCouncilJob {
     const task = this.tasks.get(id)
     if (task === undefined) throw new Error(`engineering council job "${id}" was not found`)
@@ -188,26 +201,41 @@ export class FreeCodeGoEngineCouncil {
     return task.job
   }
 
-  /** Read one current or completed council job. */
+  /** Read one current or completed council job. 
+   * @returns the engineering Council Job.
+   * @param id - id of the council job to read.
+   */
   job(id: string): FreeCodeGoEngineeringCouncilJob {
     const task = this.tasks.get(id)
     if (task === undefined) throw new Error(`engineering council job "${id}" was not found`)
     return task.job
   }
 
-  /** Read recent durable reports from a live or restored parent Session. */
+  /** Read recent durable reports from a live or restored parent Session. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @returns the engineering Council Report rows, in backend order.
+   */
   reports(parent: Agent): readonly FreeCodeGoEngineeringCouncilReport[] {
     return councilReportsFromEvents(parent.session.snapshotEvents())
   }
 
-  /** Resolve one durable report for a live parent Agent. */
+  /** Resolve one durable report for a live parent Agent. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @returns the engineering Council Report.
+   * @param id - id of the council report to read.
+   */
   report(parent: Agent, id: string): FreeCodeGoEngineeringCouncilReport {
     const report = this.reports(parent).find(item => item.id === id)
     if (report === undefined) throw new Error(`engineering council report \"${id}\" was not found`)
     return report
   }
 
-  /** Record an explicit user decision after a quorum-reaching council. */
+  /** Record an explicit user decision after a quorum-reaching council. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @returns the engineering Council Decision.
+   * @param id - id of the council job the decision belongs to.
+   * @param state - the decision state to record.
+   */
   async recordDecision(
     parent: Agent,
     id: string,
@@ -251,7 +279,11 @@ export class FreeCodeGoEngineCouncil {
     return decision
   }
 
-  /** Record a declared verification result after user approval. */
+  /** Record a declared verification result after user approval. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @returns the engineering Council Report.
+   * @param id - id of the council job entering verification.
+   */
   async beginVerification(parent: Agent, id: string): Promise<FreeCodeGoEngineeringCouncilReport> {
     const report = this.report(parent, id)
     if (report.verification !== undefined) return report
@@ -266,7 +298,12 @@ export class FreeCodeGoEngineCouncil {
     return report
   }
 
-  /** Record an explicit implementation completion before verification. */
+  /** Record an explicit implementation completion before verification. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @returns the engineering Council Implementation.
+   * @param id - id of the council job the implementation belongs to.
+   * @param summary - the implementation summary to record.
+   */
   async recordImplementation(parent: Agent, id: string, summary: string): Promise<FreeCodeGoEngineeringCouncilImplementation> {
     const report = this.report(parent, id)
     if (report.decision?.state !== 'approved') throw new Error(`engineering council "${id}" requires approval before implementation`)
@@ -297,7 +334,12 @@ export class FreeCodeGoEngineCouncil {
     return implementation
   }
 
-  /** Record the terminal result of a verification that was explicitly started. */
+  /** Record the terminal result of a verification that was explicitly started. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @returns the engineering Council Verification.
+   * @param id - id of the council job the verification belongs to.
+   * @param result - the verification result to record.
+   */
   // The body is deliberately synchronous — the durable verification record and
   // the state transition are both local appends, and the workspace revision probe
   // belongs to the *start* of a run ({@link assertVerificationFresh}), not to its
@@ -329,7 +371,11 @@ export class FreeCodeGoEngineCouncil {
     return verification
   }
 
-  /** Mark a verification invocation that could not be started or completed. */
+  /** Mark a verification invocation that could not be started or completed. 
+   * @param parent - the parent agent whose route the child keeps.
+   * @param id - id of the council job whose verification failed.
+   * @param error - the failure the verification run reported.
+   */
   failVerification(parent: Agent, id: string, error: unknown): void {
     const message = safeError(error).slice(0, 1_000)
     setState(parent, id, 'failed', message)
@@ -801,6 +847,10 @@ function recommendationText(participants: readonly FreeCodeGoEngineeringCouncilP
   return 'Use the completed reports as independent evidence. Resolve any blocker or disagreement, update the plan, then ask for user confirmation before making changes.'
 }
 
+/** Parse the structured `FINDING:` lines each participant's output carries.
+ * @param participants - the council participants whose output to parse.
+ * @returns the parsed findings, in participant order.
+ */
 export function councilFindingsFromParticipants(participants: readonly FreeCodeGoEngineeringCouncilParticipant[]): readonly FreeCodeGoEngineeringCouncilFinding[] {
   const findings: FreeCodeGoEngineeringCouncilFinding[] = []
   for (const participant of participants) {
@@ -957,7 +1007,10 @@ function finalAssistantText(events: readonly SessionEvent[]): string {
   return message.content.map(block => block.type === 'text' || block.type === 'reasoning' ? block.text : '').join('\n').trim()
 }
 
-/** Extract durable council reports while ignoring live state and model transcript events. */
+/** Extract durable council reports while ignoring live state and model transcript events. 
+ * @param events - the session events to fold.
+ * @returns the engineering Council Report rows, in backend order.
+ */
 export function councilReportsFromEvents(events: readonly SessionEvent[]): readonly FreeCodeGoEngineeringCouncilReport[] {
   const reports = new Map<string, FreeCodeGoEngineeringCouncilReport>()
   for (const event of events) {
@@ -983,7 +1036,11 @@ export function councilReportsFromEvents(events: readonly SessionEvent[]): reado
   return [...reports.values()]
 }
 
-/** Reconstruct a task from durable task/state/report events after a Host restart. */
+/** Reconstruct a task from durable task/state/report events after a Host restart.
+ * @param events - the session events to reconstruct from.
+ * @param id - the council id to reconstruct.
+ * @returns the council job, or `undefined` when the id was never persisted.
+ */
 export function councilJobFromEvents(events: readonly SessionEvent[], id: string): FreeCodeGoEngineeringCouncilJob | undefined {
   const report = councilReportsFromEvents(events).find(item => item.id === id)
   const stateEvent = [...events].reverse().find(event => event.type === 'freecodego/council-state' && event.data.id === id) as Extract<SessionEvent, { type: 'freecodego/council-state' }> | undefined
@@ -1013,7 +1070,10 @@ export function councilJobFromEvents(events: readonly SessionEvent[], id: string
   }
 }
 
-/** Reconstruct a browser-safe job projection from a durable terminal report. */
+/** Reconstruct a browser-safe job projection from a durable terminal report. 
+ * @param report - the terminal report to project from.
+ * @returns the engineering Council Job.
+ */
 export function councilJobFromReport(report: FreeCodeGoEngineeringCouncilReport): FreeCodeGoEngineeringCouncilJob {
   const state: FreeCodeGoEngineeringCouncilState = report.decision?.expiresAt !== undefined && report.decision.expiresAt < Date.now()
     ? 'stale'

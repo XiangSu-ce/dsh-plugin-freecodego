@@ -16,6 +16,9 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
  */
 export const CODEX_WORKER_SUBPATH = 'packages/freecodego/runtime-codex/lib/worker.mjs'
 
+/** Resolve the Codex worker entry point, preferring the installed package and falling back to the packaged path.
+ * @returns the worker module path.
+ */
 export function requireRuntimeWorkerPath(): string {
   const require = createRequire(import.meta.url)
   try { return require.resolve('@deepseek-ai/dsh-freecodego-runtime-codex/worker') }
@@ -34,6 +37,7 @@ export function requireRuntimeWorkerPath(): string {
  * runtime's `artifactDigest`, so the digest changes when the driver SDK is
  * repinned — which is what makes a durable session plan reject a mismatched
  * runtime instead of resuming under it.
+ * @returns the Claude driver manifest path.
  */
 export function requireClaudeEngineManifestPath(): string {
   const require = createRequire(import.meta.url)
@@ -43,7 +47,10 @@ export function requireClaudeEngineManifestPath(): string {
   }
 }
 
-/** Resolve workers bundled beside the single public FreeCodeGo artifact. */
+/** Resolve workers bundled beside the single public FreeCodeGo artifact.
+ * @param file - the worker filename to look for.
+ * @returns the adjacent worker path, or `undefined` when none is bundled.
+ */
 export function packagedWorkerPath(file: string): string | undefined {
   const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
   const candidates = [
@@ -101,6 +108,7 @@ const publishedShimDirectories = new Set<string>()
  * own: in a checkout where `@deepseek-ai/dsh` is not installed the write below
  * throws before ever reaching this line, which is exactly the case where the
  * PATH contract still has to be provably right.
+ * @param shimDir - the shim directory to publish as the leading PATH entry.
  */
 export function publishDesktopShimOnPath(shimDir: string): void {
   const delimiter = pathDelimiter()
@@ -131,6 +139,8 @@ export function publishDesktopShimOnPath(shimDir: string): void {
  * created at all when the harness was launched from a read-only directory.
  * `data-home.ts` documents this same defect being removed from the plugin's
  * other paths; this was the one path that still had it.
+ * @param home - the configured `$DSH_HOME` value.
+ * @returns the resolved shim directory for that home.
  */
 export function desktopDshShimDirectory(home: string): string {
   return path.join(resolveDshHome(home), '.desktop-bin')

@@ -189,16 +189,25 @@
         backgroundMode: one-shot
         maxDepth: provider-managed
 
-    - id: workflow-worker-thread
-      name: '@deepseek-ai/dsh-workflow-worker-thread'
+    # This row used to name `@deepseek-ai/dsh-workflow-worker-thread`, which no
+    # Harness line installs: preset discovery resolves every enabled row against
+    # the installed harness and reports the whole preset broken (the roster card
+    # reads "Failed to load") before a session could start. `standard/agent.cordis.yml`
+    # names `workflow-ptc`, and a mirror has to name the same package.
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
       config:
         provider: spawn
 
     - id: tool-workflow
       name: '@deepseek-ai/dsh-tool-workflow'
 
+    # Disabled with the standard row this mirrors: the tool description restricts
+    # `ralph` to runs the human explicitly asked for, and completion is a worker
+    # self-report rather than an independent evaluation.
     - id: tool-ralph
       name: '@deepseek-ai/dsh-tool-ralph'
+      disabled: true
       config:
         subagentProvider: spawn
         maxRounds: 64
@@ -218,3 +227,10 @@
   config:
     fetch: true
     searchTimeoutMs: 60000
+
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+
+- id: tool-plugin-manager
+  name: '@deepseek-ai/dsh-plugin-manager/tools'
+  disabled: true

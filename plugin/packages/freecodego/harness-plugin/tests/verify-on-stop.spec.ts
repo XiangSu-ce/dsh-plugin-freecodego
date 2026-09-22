@@ -267,14 +267,14 @@ describe('verify-on-stop gate', () => {
     expect(harness.injected).toHaveLength(1)
   })
 
-  it('counts the plugin tools that write the shared tree as mutations', async () => {
-    // Both change tracked files through a path the harness's own write tools never
-    // see: a revert lands new bytes in the file it undoes, and a merge runs
-    // `git merge` at the workspace root. Absent from the set, a turn that did only
-    // that was filed as one that changed nothing, `onTurnStopping` returned before
-    // it read anything, and the change went unverified — the hole `multi_edit`
-    // already fell through once, in the same shape.
-    for (const tool of ['engineering_hunk_revert', 'engineering_team_merge']) {
+  it('counts the plugin tool that writes the shared tree as a mutation', async () => {
+    // It changes tracked files through a path the harness's own write tools never
+    // see: a revert lands new bytes in the file it undoes. Absent from the set, a
+    // turn that did only that was filed as one that changed nothing,
+    // `onTurnStopping` returned before it read anything, and the change went
+    // unverified — the hole `multi_edit` already fell through once, in the same
+    // shape.
+    for (const tool of ['engineering_hunk_revert']) {
       const harness = gate({ changedPaths: ['src/a.ts'] })
       harness.service.noteToolCall('agent-1', tool)
       await harness.service.onTurnStopping('agent-1')
@@ -283,13 +283,30 @@ describe('verify-on-stop gate', () => {
     }
   })
 
+  it('counts a turn whose only call started a persona child', async () => {
+    // The second hole in the same shape as the delegation names the set already
+    // carried (`subagent`, `spawn_teammate`): `engineering_subagent_start` was in
+    // no list, so a turn that only started a child was filed as one that changed
+    // nothing, `onTurnStopping` returned at its first line, and whatever the child
+    // wrote to this workspace went unverified. The plugin half of the set is read
+    // off the manifest's capability axis now, which is why this case exists rather
+    // than a fifth hand-written name.
+    const harness = gate({ changedPaths: ['src/child.ts'] })
+    harness.service.noteToolCall('agent-1', 'engineering_subagent_start')
+    await harness.service.onTurnStopping('agent-1')
+    expect(harness.reads()).toBe(1)
+    expect(harness.injected).toHaveLength(1)
+  })
+
   it('carries every name the sibling mutating-tool lists carry, since a missing name is the hole', () => {
     // Pinned literally, so extending the set is a visible edit rather than a
-    // comment that went stale. The set is a union rather than a derivation on
-    // purpose: `plan-mode.ts` and `team/roles.ts` answer narrower questions and
-    // are deliberately not equal to each other — `write_file` is refused in Plan
-    // Mode but allowed to a team writer — so deriving this list from either one
-    // would import a boundary that belongs to that caller.
+    // comment that went stale. The *harness* half is a union rather than a
+    // derivation on purpose: `plan-mode.ts` answers a narrower question — what a
+    // planning turn may call — and `write_file` is refused there while a shell may
+    // still write, so deriving these spellings from that list would import a
+    // boundary that belongs to that caller. The plugin half is
+    // derived from the manifest, and `tool-manifest.spec.ts` holds the other
+    // direction (nothing that needs authority may be absent here).
     expect([...WORKSPACE_MUTATING_TOOLS].sort()).toStrictEqual([
       'apply_patch',
       'create_file',
@@ -297,8 +314,13 @@ describe('verify-on-stop gate', () => {
       'edit',
       'edit_and_run',
       'engineering_checkpoint_restore',
+      'engineering_council_review',
       'engineering_hunk_revert',
-      'engineering_team_merge',
+      'engineering_subagent_start',
+      'engineering_team_start',
+      'engineering_team_verify',
+      'engineering_worktree_enter',
+      'engineering_worktree_exit',
       'fs_edit',
       'fs_write',
       'move_file',

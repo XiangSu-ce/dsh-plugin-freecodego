@@ -86,6 +86,7 @@ export const FreeCodeGoTrustSettingsSchema = z.object({
   folderTrustEnabled: z.boolean().default(true),
 })
 
+/** The folder-trust switches this plugin reads from settings. */
 export interface FreeCodeGoTrustSettings {
   readonly folderTrustEnabled: boolean
 }
@@ -349,6 +350,7 @@ export class FolderTrustStore {
    * store could not support. Required rather than defaulted, so a caller cannot
    * get a guess by omission.
    * @param enabled - whether the gate is active, as the caller resolved it.
+   * @returns the trust Status.
    */
   async status(enabled: boolean): Promise<FreeCodeGoTrustStatus> {
     const record = await this.read()
@@ -399,6 +401,7 @@ function emptyTrustRecord(): FreeCodeGoTrustRecord {
  * override; resolving this path by hand would have made the grant record the one
  * piece of plugin state a redirected build still wrote to the real user's home.
  * The default is unchanged: `~/.dsh/state/freecodego/trusted-folders.json`.
+ * @returns the default trust record path.
  */
 export function defaultTrustRecordPath(): string {
   return join(freeCodeGoDataHome(), 'state', 'freecodego', 'trusted-folders.json')

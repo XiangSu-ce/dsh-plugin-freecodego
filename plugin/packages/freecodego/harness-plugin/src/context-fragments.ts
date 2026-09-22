@@ -60,6 +60,7 @@ export type PreviousSectionState =
   | { readonly kind: 'absent' }
   | { readonly kind: 'unknown' }
 
+/** One labelled region of injected context, with the markers and notices it renders with. */
 export interface ContextSection<T> {
   /** Stable identity; also the rendering order key, so ordering is deterministic. */
   readonly id: string
@@ -89,8 +90,10 @@ export interface SectionInput<T> {
   readonly previous?: PreviousSectionState
 }
 
+/** How a fragment relates to what the model already holds. */
 export type FragmentKind = 'content' | 'replacement' | 'removal'
 
+/** One ready-to-append fragment and the state the log should record for it. */
 export interface RenderedContextFragment {
   readonly section: string
   readonly kind: FragmentKind
@@ -125,6 +128,10 @@ export interface RenderedContextFragment {
  */
 const INCOMPLETE_SNAPSHOT_SUFFIX = '\u0000incomplete'
 
+/** Digest of a fragment's exact text, so prefix stability can be asserted.
+ * @param value - the text to digest.
+ * @returns the hex SHA-256 digest.
+ */
 export function digestText(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -156,6 +163,9 @@ function dress(section: ContextSection<unknown>, body: string, incomplete: boole
  *
  * Exported because the three-case table is the whole point of this module and is
  * worth testing directly, without constructing an engine.
+ * @param input - the section's current value and any overrides.
+ * @param previous - what the model already holds for the section.
+ * @returns the fragment to append, or `undefined` when the section need not be sent.
  */
 export function planFragment(input: SectionInput<never> | SectionInput<unknown>, previous: PreviousSectionState): RenderedContextFragment | undefined {
   const { section, value, incomplete = false } = input as SectionInput<unknown>
@@ -202,11 +212,17 @@ export class ContextFragmentLog {
     for (const id of this.sent.keys()) this.unsure.add(id)
   }
 
-  /** Mark one section unknown, for a section whose source was rebuilt. */
+  /** Mark one section unknown, for a section whose source was rebuilt.
+   * @param id - the section id to mark unknown.
+   */
   markSectionUnknown(id: string): void {
     this.unsure.add(id)
   }
 
+  /** What the log believes the model holds for one section.
+   * @param id - the section id to look up.
+   * @returns `unknown` when unsure, `absent` when never sent, else the known value.
+   */
   previousFor(id: string): PreviousSectionState {
     if (this.unsure.has(id)) return { kind: 'unknown' }
     const value = this.sent.get(id)
@@ -216,6 +232,8 @@ export class ContextFragmentLog {
   /**
    * Fragment list for this turn, ordered by section id so the same inputs always
    * produce the same byte sequence — the property the cache depends on.
+   * @param inputs - this turn's section values.
+   * @returns the rendered Context Fragment rows, in backend order.
    */
   plan(inputs: readonly SectionInput<unknown>[]): readonly RenderedContextFragment[] {
     const ordered = [...inputs].sort((left, right) => left.section.id.localeCompare(right.section.id))
@@ -228,7 +246,9 @@ export class ContextFragmentLog {
     return fragments
   }
 
-  /** Record fragments as sent. Call only after they were actually appended. */
+  /** Record fragments as sent. Call only after they were actually appended.
+   * @param fragments - the fragments that were appended this turn.
+   */
   commit(fragments: readonly RenderedContextFragment[]): void {
     for (const fragment of fragments) {
       this.unsure.delete(fragment.section)
@@ -237,19 +257,26 @@ export class ContextFragmentLog {
     }
   }
 
-  /** Digest of everything this log currently believes the model holds. */
+  /** Digest of everything this log currently believes the model holds.
+   * @returns the combined digest of the held section state.
+   */
   prefixDigest(): string {
     const entries = [...this.sent.entries()].sort(([left], [right]) => left.localeCompare(right))
     return digestText(entries.map(([id, body]) => `${id}\u0000${body}`).join('\u0001'))
   }
 
-  /** Section ids the model currently holds, for diagnostics. */
+  /** Section ids the model currently holds, for diagnostics.
+   * @returns the held section ids, sorted.
+   */
   heldSections(): readonly string[] {
     return [...this.sent.keys()].sort()
   }
 }
 
-/** Join fragments into the single message body a caller appends to the turn. */
+/** Join fragments into the single message body a caller appends to the turn.
+ * @param fragments - the fragments to join, in send order.
+ * @returns the combined message body.
+ */
 export function renderFragments(fragments: readonly RenderedContextFragment[]): string {
   return fragments.map(fragment => fragment.text).join('\n\n')
 }

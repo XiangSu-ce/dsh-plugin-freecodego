@@ -18,9 +18,15 @@ import type { CcrStore } from './ccr.ts'
 import { computeKey } from './ccr.ts'
 import { computeOptimalK } from './adaptive-sizer.ts'
 
+/** Severity class of one log line; `unknown` means no level word matched. */
 export type LogLevel = 'error' | 'fail' | 'warn' | 'info' | 'debug' | 'trace' | 'unknown'
+/** Detected log producer; `generic` means no marker set scored a hit. */
 export type LogFormat = 'pytest' | 'npm' | 'cargo' | 'jest' | 'make' | 'generic'
 
+/**
+ * Tunables for log compaction: how many errors/warnings/traces survive, how
+ * much context each keeps, and when the dropped lines go to the CCR store.
+ */
 export interface LogCompressorConfig {
   maxErrors: number
   errorContextLines: number
@@ -39,6 +45,7 @@ export interface LogCompressorConfig {
   traceAppFrames: number
 }
 
+/** Default log-compressor tunables. */
 export const LOG_COMPRESSOR_DEFAULTS: LogCompressorConfig = {
   maxErrors: 10,
   errorContextLines: 3,
@@ -66,6 +73,10 @@ interface LogLine {
   score: number
 }
 
+/**
+ * Outcome of one log compaction: the rendering, both line counts, the detected
+ * format, the ratio, the CCR key when lines were stashed, and per-level counts.
+ */
 export interface LogCompressionResult {
   readonly compressed: string
   readonly originalLineCount: number
@@ -388,9 +399,21 @@ function normalizeForDedupe(content: string): string {
 
 // ─── Compressor ───────────────────────────────────────────────────────────
 
+/**
+ * Compacts test/build/run logs by keeping scored errors, warnings, stack
+ * traces and summaries, dropping the rest into an optional CCR stash.
+ */
 export class LogCompressor {
   constructor(private readonly config: LogCompressorConfig = LOG_COMPRESSOR_DEFAULTS) {}
 
+  /**
+   * Compact one log body: detect its format, parse and score its lines, select
+   * the survivors, then render them with an omitted-lines summary.
+   * @param content - the log text to compact.
+   * @param bias - multiplier on the adaptive line budget (>1 keeps more).
+   * @param store - the CCR store to stash dropped lines in, when mounted.
+   * @returns the compaction result, or the input verbatim when it is too short.
+   */
   compress(content: string, bias: number, store?: CcrStore  ): LogCompressionResult {
     const lines = content.split('\n')
     const originalLineCount = lines.length
@@ -419,7 +442,12 @@ export class LogCompressor {
     // ordinary test/build output, while every other branch held.
     if (this.config.enableCcr && compressed !== content && store !== undefined) {
       const key = computeKey(content)
-      store.put(key, content)
+      // Lines were dropped above, so this rendering ships only with its original
+      // stored. A refused write means no room in this attempt for it, and a lossy
+      // log with no `hash=` is unrecoverable — declined rather than shipped.
+      if (store.put(key, content) !== true) {
+        return { compressed: content, compressedLineCount: originalLineCount, cacheKey: undefined, formatDetected: format, compressionRatio: 1, originalLineCount, stats }
+      }
       compressed += `\n[${originalLineCount} lines compressed to ${selected.length}. Retrieve more: hash=${key}]`
       cacheKey = key
     }
@@ -429,6 +457,12 @@ export class LogCompressor {
     return { compressed, originalLineCount, compressedLineCount: compressed.split('\n').length, formatDetected: format, compressionRatio: ratio, cacheKey, stats }
   }
 
+  /**
+   * Classify every line's level, flag stack-trace members and summaries, and
+   * assign each one its selection score.
+   * @param lines - the raw log lines, in order.
+   * @returns the parsed entries, in line order.
+   */
   parseLines(lines: readonly string[]): LogLine[] {
     const out: LogLine[] = []
     let active: TraceFlavor | undefined
@@ -471,6 +505,14 @@ export class LogCompressor {
     return out
   }
 
+  /**
+   * Pick the lines that survive compaction: errors, fails, deduped warnings,
+   * bounded stack traces, summaries and their context, capped by the adaptive
+   * budget and re-sorted into line order.
+   * @param logLines - the parsed log entries.
+   * @param bias - multiplier on the adaptive line budget (>1 keeps more).
+   * @returns the selected entries, in line order.
+   */
   selectLines(logLines: readonly LogLine[], bias: number): LogLine[] {
     const allStrings = logLines.map(line => line.content)
     const adaptiveMax = computeOptimalK(allStrings, bias, 10, this.config.maxTotalLines)
@@ -540,6 +582,13 @@ export class LogCompressor {
     return ordered
   }
 
+  /**
+   * Take up to `maxCount` entries, always including the first and last when the
+   * config asks for them, then filling by descending score.
+   * @param lines - the candidate entries, in line order.
+   * @param maxCount - the most entries to return.
+   * @returns the selected entries.
+   */
   selectWithFirstLast(lines: readonly LogLine[], maxCount: number): LogLine[] {
     if (lines.length <= maxCount) return [...lines]
     const out: LogLine[] = []
@@ -562,6 +611,11 @@ export class LogCompressor {
     return out
   }
 
+  /**
+   * Drop warning lines whose normalized content was already seen.
+   * @param lines - the entries to dedupe, in order.
+   * @returns the first entry of each distinct normalized warning.
+   */
   dedupeSimilar(lines: readonly LogLine[]): LogLine[] {
     const seen = new Set<string>()
     const out: LogLine[] = []
@@ -575,6 +629,13 @@ export class LogCompressor {
     return out
   }
 
+  /**
+   * Render the selected entries and, when lines were dropped, append the
+   * `[N lines omitted: ...]` summary the model reads in their place.
+   * @param selected - the entries that survived selection.
+   * @param allLines - every parsed entry, used for the per-level counts.
+   * @returns the rendered body and its statistics.
+   */
   formatOutput(selected: readonly LogLine[], allLines: readonly LogLine[]): { body: string; stats: Record<string, number> } {
     const count = (level: LogLevel): number => allLines.filter(line => line.level === level).length
     const stats: Record<string, number> = {

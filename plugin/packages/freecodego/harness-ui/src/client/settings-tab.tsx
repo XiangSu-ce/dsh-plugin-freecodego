@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type FormEvent, type ReactNode 
 import { decideMediaDefault } from './media-default-preference.ts'
 import { formatAmountInCurrency, formatMoney, roundUpCurrency } from './money-format.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, TeamRuntimeStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, InjectFace, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
@@ -10,8 +10,9 @@ import css from './settings-tab.module.css'
 import { CapabilityDetailModal, SkillDetailModal } from './capability-detail.tsx'
 import { capabilityText, hasLocalizedSkillDescription, localizedSkillDescription, skillPageText, type SkillPageText } from './capability-locale.ts'
 import { CommunityPluginsPage } from './community-plugins.tsx'
-import { PaymentDialog, safeCheckoutUrl, type PaymentDialogOrder } from './payment-dialog.tsx'
+import { PaymentDialog, orderStateLabel, safeCheckoutUrl, type PaymentDialogOrder } from './payment-dialog.tsx'
 import { ProviderCard, ProviderGlyph } from './provider-card.tsx'
+import { ProviderModelVisibility, type ProviderPickerModel } from './provider-model-visibility.tsx'
 
 /**
  * The rejection arm for a remote read whose failure is already covered.
@@ -202,7 +203,17 @@ export function modelGroupRows(
   groups: ManagedCatalog['groups'] = [],
 ): readonly (readonly [string, readonly ModelPickerRow[]])[] {
   const buckets = new Map<string, ModelPickerRow[]>()
+  const seen = new Set<string>()
   const push = (label: string, row: ModelPickerRow): void => {
+    // One row per (model, group). The backend can list a group's option twice
+    // — one model arrived from `/models/options` as two byte-identical
+    // `group:2:gpt-5.6-terra` choices — and a catalog cached before that was
+    // collapsed still carries the repeat. Two rows with one key are one row:
+    // rendering both reads as a defect in the list rather than as a choice.
+    // Distinct groups keep distinct keys (`provider:id:groupId`), so a model
+    // sold through two groups still shows both rows and both rates.
+    if (seen.has(row.key)) return
+    seen.add(row.key)
     const rows = buckets.get(label) ?? []
     rows.push(row)
     buckets.set(label, rows)
@@ -249,24 +260,39 @@ function pickerRowRateLabel(row: ModelPickerRow, language: 'zh' | 'en'): string 
   return row.rateMultiplier === undefined ? '' : `×${row.rateMultiplier}`
 }
 
+/** How a persisted selection maps onto the rows the picker can offer today. */
+interface PickerSelection {
+  /** The value the `<select>` must carry: a matching row's value, or the stored id. */
+  readonly value: string
+  /** Whether that value belongs to a rendered option. */
+  readonly listed: boolean
+}
+
 /** Match a persisted selection to the option value it would be saved as today.
  *
  * Rows are keyed by (model, group) and their option value carries the group
  * pin (`id@group:N`). A default persisted by an older build holds the bare id,
  * and a select whose value matches no option renders blank — so the bare id
  * resolves to that model's first row (the unpinned id equals the bare value),
- * keeping the stored default visible instead of dropping the selection. */
-function resolveSelectedOptionValue(selected: string, groups: readonly (readonly [string, readonly ModelPickerRow[]])[]): string {
-  if (selected === '') return ''
+ * keeping the stored default visible instead of dropping the selection.
+ *
+ * `listed: false` is the third case, and it is the one the caller has to
+ * render: an HTML select whose value has no option shows its first option, so a
+ * stored model that the current catalog does not offer (retired, currently
+ * unavailable, or the provider is not configured in this install) used to be
+ * displayed as an *unrelated* model — the panel claiming a default the user
+ * never chose, and the next reopen showing that same stranger again. */
+function pickSelection(selected: string, groups: readonly (readonly [string, readonly ModelPickerRow[]])[]): PickerSelection {
+  if (selected === '') return { value: '', listed: true }
   for (const [, rows] of groups) {
-    if (rows.some(row => modelRowSelectionValue(row) === selected)) return selected
+    if (rows.some(row => modelRowSelectionValue(row) === selected)) return { value: selected, listed: true }
   }
   const bare = displayModelSelection(selected)
   for (const [, rows] of groups) {
     const match = rows.find(row => modelRowSelectionValue(row) === bare || row.model.id === bare)
-    if (match !== undefined) return modelRowSelectionValue(match)
+    if (match !== undefined) return { value: modelRowSelectionValue(match), listed: true }
   }
-  return selected
+  return { value: selected, listed: false }
 }
 
 /** Local UI floor: only the free Groq transcription row that the Host executes
@@ -323,7 +349,17 @@ function RuntimePackagePicker(input: {
 }
 
 interface AccountState {
-  readonly status: 'signed-out' | 'mfa-required' | 'authenticated' | 'reauth-required' | 'restoring' | 'backend-not-configured'
+  /**
+   * `loading` is the client's own pre-read state, and it is what the settings
+   * cache and the first mount seed.
+   *
+   * The cache carries no account data, and the Host answers `accountStatus` only
+   * after it has tried to restore the vault session — which is a network round
+   * trip. Seeding a signed-out state painted a login form over an account that
+   * was about to appear, so nothing renders the sign-in card until a read has
+   * actually settled on a signed-out status.
+   */
+  readonly status: 'signed-out' | 'mfa-required' | 'authenticated' | 'reauth-required' | 'restoring' | 'loading' | 'backend-not-configured'
   readonly emailMasked?: string
   readonly user?: { readonly username: string; readonly email: string; readonly avatarUrl?: string; readonly balance: number }
 }
@@ -335,7 +371,32 @@ interface PaymentConfigSnapshot { readonly paymentEnabled?: boolean; readonly mi
 export interface GatewayModelPrice { readonly modelId: string; readonly displayName: string; readonly provider: string;  readonly source: 'gateway' | 'vyce' | 'empero' | 'opencode' | 'openrouter' | 'logfare' | 'workbuddy' | 'agnes' | 'sensenova' | 'nvidia'; readonly groupName: string; readonly platform?: string; readonly rateMultiplier: number; readonly billingMode: 'token' | 'per-request' | 'image'; readonly currency: string; readonly description?: string; readonly originalInputPricePerMillion?: number; readonly originalOutputPricePerMillion?: number; readonly originalCacheReadPricePerMillion?: number; readonly originalCacheWritePricePerMillion?: number; readonly originalPerRequestPrice?: number; readonly originalImageOutputPricePerMillion?: number; readonly inputPricePerMillion?: number; readonly outputPricePerMillion?: number; readonly cacheReadPricePerMillion?: number; readonly cacheWritePricePerMillion?: number; readonly perRequestPrice?: number; readonly imageOutputPricePerMillion?: number; readonly imagePrices?: readonly GatewayImagePriceTier[] }
 /** One resolution tier of an image-billing row: the price of one generated picture. */
 export interface GatewayImagePriceTier { readonly label: string; readonly price: number; readonly originalPrice?: number }
-interface PaymentOrder { readonly orderId: string; readonly state: string; readonly amount: number; /** Settlement currency of `payAmount`; absent when the payment provider echoed none. */ readonly currency?: string; readonly checkoutUrl?: string; readonly qrCode?: string; readonly clientSecret?: string; readonly outTradeNo?: string; readonly payAmount?: number; readonly paymentType?: string; readonly expiresAt?: string; readonly createdAt?: string }
+interface PaymentOrder { readonly orderId: string; readonly state: string; readonly amount: number; /** Settlement currency of `payAmount`; absent when the payment provider echoed none. */ readonly currency?: string; readonly checkoutUrl?: string; readonly qrCode?: string; readonly clientSecret?: string; readonly outTradeNo?: string; readonly payAmount?: number; readonly paymentType?: string; readonly expiresAt?: string; readonly createdAt?: string; /**
+ * When the payment settled, as the backend stamped it.
+ *
+ * Kept apart from {@link createdAt} because a receipt row states the payment,
+ * not the order: an order opened at 23:59 and paid at 00:01 belongs to the
+ * second day, and a list that filed it under the first would be wrong about the
+ * one fact the reader is checking. Absent while an order is unpaid and on rows
+ * whose backend predates the field, which is what the fallback in
+ * {@link orderReceiptStamp} exists for.
+ */ readonly paidAt?: string; /**
+ * The backend's own answer to "can this order's receipt be downloaded".
+ *
+ * Carried rather than derived, because the backend is the one that decides it
+ * from the order status and it owns a wider vocabulary than this panel asks for.
+ * This product sells no refunds, so the refund family is never requested and
+ * never arrives — which is exactly why the list below cannot be treated as the
+ * authority: it describes the states this panel asks for, not every state the
+ * backend can answer with. Absent on a response that predates the field, which
+ * is what the state fallback in {@link orderReceiptAvailable} is for.
+ */ readonly receiptAvailable?: boolean; /**
+ * Whether Stripe holds a receipt for this order.
+ *
+ * Its own flag rather than a second meaning for the one above: a Stripe payment
+ * has two documents, and an order can carry the backend's receipt while Stripe
+ * has none of its own yet.
+ */ readonly stripeReceiptAvailable?: boolean }
 interface RuntimePackage { readonly id: string; readonly platform: string; readonly label: string; readonly runtimeVersion: string; readonly sourceRevision: string; readonly installDirectory: string; readonly compatible: boolean; readonly source: 'official'; readonly downloadURL: string }
 export interface CapabilityMcpServer { readonly id: string; readonly enabled: boolean; readonly transport: 'stdio' | 'streamable-http'; readonly serverName: string; readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>>; readonly cwd: string; readonly url: string; readonly headers: Readonly<Record<string, string>> }
 export interface CapabilitySkillRoot { readonly id: string; readonly enabled: boolean; readonly path: string }
@@ -440,8 +501,6 @@ export interface EngineeringSettings {
   readonly engineeringLoopAutoContinue: boolean
   readonly engineeringLoopMaxGoalRounds: number
   readonly engineeringQualityEnabled: boolean
-  /** Multi-member team runtime: task board, members, worktrees, context control. */
-  readonly engineeringTeamEnabled: boolean
   readonly engineeringMemoryEnabled: boolean
   readonly engineeringCouncilEnabled: boolean
   readonly engineeringCouncilDeepseekEnabled: boolean
@@ -784,7 +843,19 @@ interface Injected {
   readonly language: 'zh' | 'en'
   readonly catalog: () => Promise<RemoteResult<Catalog>>
   readonly accountStatus: () => Promise<RemoteResult<AccountState>>
-  readonly login: (email: string, password: string, remember?: boolean) => Promise<RemoteResult<AccountState>>
+  /**
+   * The password this machine remembers for the sign-in form, read once per
+   * mount. Optional because the Host owns the value: a build that predates it
+   * answers nothing, and the form behaves as if no password was ever kept.
+   */
+  readonly accountRememberedPassword?: () => Promise<RemoteResult<{ readonly password?: string }>>
+  /**
+   * `remember` keeps the issued session; `rememberPassword` keeps the password
+   * itself in the Host credential file so this form can prefill it next time.
+   * They are separate intents, and an explicit `false` on the second erases a
+   * password an earlier sign-in stored.
+   */
+  readonly login: (email: string, password: string, remember?: boolean, rememberPassword?: boolean) => Promise<RemoteResult<AccountState>>
   readonly register?: (input: FreeCodeGoRegistrationRequest) => Promise<RemoteResult<AccountState>>
   readonly sendVerifyCode?: (email: string) => Promise<RemoteResult<{ countdown: number }>>
   /**
@@ -811,6 +882,17 @@ interface Injected {
   readonly readMediaDefaults?: () => Promise<{ readonly image: string; readonly video: string; readonly audio: string }>
   /** Generic Harness directory, including user-configured third-party API routes. */
   readonly nativeModelCatalog?: () => Promise<RemoteResult<NativeModelCatalog>>
+  /**
+   * The rows the chat model picker is rendering right now, flattened.
+   *
+   * The per-provider visibility controls answer "what does the model list
+   * show", so their checklist has to be built from the list itself. This is the
+   * client's live session directory — the same snapshot the picker decorator
+   * reads — and it is preferred over {@link nativeModelCatalog}, which is the
+   * Host's projection and stays empty until a session binds, which is exactly
+   * the state a user is in when they open this page to tidy the list.
+   */
+  readonly pickerModelDirectory?: () => readonly { readonly provider: string; readonly id: string; readonly label: string; readonly description?: string }[]
   readonly vyceStatus?: () => Promise<RemoteResult<FreeCodeGoVyceStatus>>
   readonly vyceSetKey?: (value: string) => Promise<RemoteResult<FreeCodeGoVyceStatus>>
   readonly logfareStatus?: () => Promise<RemoteResult<FreeCodeGoLogfareStatus>>
@@ -833,7 +915,15 @@ interface Injected {
   readonly paymentCancel?: (orderId: string) => Promise<RemoteResult<{ readonly cancelled: boolean }>>
   readonly paymentReceiptEmail?: (orderId: string) => Promise<RemoteResult<{ readonly email: string; readonly message?: string }>>
   /** The backend's own receipt file for a paid order, saved as it was issued. */
-  readonly paymentReceiptDocument?: (orderId: string) => Promise<RemoteResult<{ readonly fileName: string; readonly contentType: string; readonly content: string }>>
+  readonly paymentReceiptDocument?: (orderId: string) => Promise<RemoteResult<ReceiptDocument>>
+  /**
+   * Stripe's own receipt for a paid Stripe order, a PDF.
+   *
+   * Separately declared because it is a different document from a different
+   * issuer, and optional like the removal remotes: a Host without it still lists
+   * payments and still downloads the receipt the backend draws itself.
+   */
+  readonly paymentStripeReceiptDocument?: (orderId: string) => Promise<RemoteResult<ReceiptDocument>>
   readonly agnesStatus?: () => Promise<RemoteResult<AgnesStatus>>
   readonly agnesSendVerification?: (email: string) => Promise<RemoteResult<{ readonly sent: boolean }>>
   readonly agnesSendPasswordReset?: (email: string) => Promise<RemoteResult<{ readonly sent: boolean }>>
@@ -859,6 +949,24 @@ interface Injected {
   readonly workbuddyRemoveAccount?: (accountId: string) => Promise<RemoteResult<WorkBuddyInternationalStatus>>
   readonly workbuddySetActiveAccount?: (accountId: string) => Promise<RemoteResult<WorkBuddyInternationalStatus>>
   readonly workbuddyRefreshCredits?: () => Promise<RemoteResult<WorkBuddyInternationalStatus>>
+  readonly qoderStatus?: () => Promise<RemoteResult<QoderStatus>>
+  readonly qoderStartBrowserLogin?: () => Promise<RemoteResult<QoderBrowserLogin>>
+  readonly qoderPollBrowserLogin?: (state: string) => Promise<RemoteResult<QoderLoginPoll>>
+  readonly qoderLogout?: () => Promise<RemoteResult<QoderStatus>>
+  readonly qoderRemoveAccount?: (accountId: string) => Promise<RemoteResult<QoderStatus>>
+  readonly qoderSetActiveAccount?: (accountId: string) => Promise<RemoteResult<QoderStatus>>
+  readonly qoderRefreshQuota?: () => Promise<RemoteResult<QoderStatus>>
+  readonly qoderCheckin?: () => Promise<RemoteResult<FreeCodeGoCheckinReport>>
+  readonly traeStatus?: () => Promise<RemoteResult<TraeStatus>>
+  readonly traeStartBrowserLogin?: (realm: 'cn' | 'sg') => Promise<RemoteResult<TraeStatus>>
+  readonly traePollBrowserLogin?: () => Promise<RemoteResult<TraeStatus>>
+  readonly traeSubmitCallback?: (url: string) => Promise<RemoteResult<TraeStatus>>
+  readonly traeCancelBrowserLogin?: () => Promise<RemoteResult<TraeStatus>>
+  readonly traeModels?: () => Promise<RemoteResult<readonly TraeModel[]>>
+  readonly traeLogout?: () => Promise<RemoteResult<TraeStatus>>
+  readonly traeRemoveAccount?: (accountId: string) => Promise<RemoteResult<TraeStatus>>
+  readonly traeSetActiveAccount?: (accountId: string) => Promise<RemoteResult<TraeStatus>>
+  readonly traeCheckin?: () => Promise<RemoteResult<FreeCodeGoCheckinReport>>
 
   readonly codexRuntimeStatus?: () => Promise<RemoteResult<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>>
   readonly codexRuntimePackages?: () => Promise<RemoteResult<readonly RuntimePackage[]>>
@@ -876,7 +984,12 @@ interface Injected {
   readonly communityUninstall?: (url: string) => Promise<RemoteResult<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }>>
   readonly capabilityMarketplace?: (input: { readonly kind: 'mcp' | 'skill'; readonly query?: string; readonly category?: string; readonly offset?: number; readonly limit?: number }) => Promise<RemoteResult<{ readonly kind: 'mcp' | 'skill'; readonly total: number; readonly offset: number; readonly limit: number; readonly query?: string; readonly categories: readonly { readonly id: string; readonly label: string; readonly count?: number }[]; readonly items: readonly { readonly id: string; readonly kind: 'mcp' | 'skill'; readonly title: string; readonly description: string; readonly category: string; readonly sourceUrl: string; readonly iconUrl?: string; readonly author?: string; readonly popularity: number; readonly installed: boolean; readonly installable: boolean; readonly requiresConfiguration?: boolean }[] }>>
   readonly mcpPresetInstall?: (id: string) => Promise<RemoteResult<CapabilitySnapshot>>
-  readonly skillPresetInstall?: (id: string) => Promise<RemoteResult<CapabilitySnapshot>>
+  readonly skillPresetInstall?: (id: string, placement?: FreeCodeGoSkillPlacement) => Promise<RemoteResult<CapabilitySnapshot>>
+  readonly skillPresetRemove?: (id: string) => Promise<RemoteResult<CapabilitySnapshot>>
+  /** The Skill placement matrix, optional: a Host without it installs to the community root. */
+  readonly skillPlacements?: () => Promise<RemoteResult<FreeCodeGoSkillPlacements>>
+  /** Remember the chosen Skill destination, or clear it when no axes are named. */
+  readonly skillPlacementPrefer?: (placement?: FreeCodeGoSkillPlacement) => Promise<RemoteResult<CapabilitySnapshot>>
   readonly capabilities?: () => Promise<RemoteResult<CapabilitySnapshot>>
   readonly readLocalCapabilities?: () => Promise<{ readonly voiceInputEnabled: boolean; readonly sessionDeleteEnabled: boolean }>
   readonly capabilitiesSetEnabled?: (input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }) => Promise<RemoteResult<CapabilitySnapshot>>
@@ -888,10 +1001,21 @@ interface Injected {
   readonly pluginConflictSetEnabled?: (enabled: boolean) => Promise<RemoteResult<FreeCodeGoPluginConflictStatus>>
   readonly headroomStatus?: () => Promise<RemoteResult<HeadroomStats>>
   readonly headroomSetEnabled?: (enabled: boolean) => Promise<RemoteResult<HeadroomStats>>
-  readonly headroomUpdate?: (patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean }) => Promise<RemoteResult<HeadroomStats>>
+  readonly headroomUpdate?: (patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean; readonly foldPolicy?: 'reversible' | 'max' }) => Promise<RemoteResult<HeadroomStats>>
   readonly deferredToolsStatus?: () => Promise<RemoteResult<DeferredToolStatus>>
   readonly deferredToolsSetEnabled?: (enabled: boolean) => Promise<RemoteResult<DeferredToolStatus>>
-  readonly teamStatus?: () => Promise<RemoteResult<TeamRuntimeStatus>>
+  /**
+   * The code review surface.
+   *
+   * The three calls take the session id because a review is about the workspace
+   * the user is in: the Host resolves the working directory from the session, so a
+   * panel cannot ask about a checkout the session never opened. `reviewStart` is
+   * fire-and-forget in the Host and returns the runs as they stand, which is why the
+   * panel polls `reviewStatus` while a run is in flight.
+   */
+  readonly reviewStatus?: (sessionId: string) => Promise<RemoteResult<FreeCodeGoReviewStatus>>
+  readonly reviewStart?: (sessionId: string, request: FreeCodeGoReviewStartRequest) => Promise<RemoteResult<FreeCodeGoReviewStatus>>
+  readonly reviewUpdate?: (sessionId: string, patch: FreeCodeGoReviewUpdate) => Promise<RemoteResult<FreeCodeGoReviewStatus>>
   readonly guardSettingsStatus?: () => Promise<RemoteResult<FreeCodeGoGuardSettingsStatus>>
   readonly guardSettingsUpdate?: (patch: FreeCodeGoGuardSettingsUpdate) => Promise<RemoteResult<FreeCodeGoGuardSettingsStatus>>
   readonly automationSettingsStatus?: () => Promise<RemoteResult<FreeCodeGoAutomationSettings>>
@@ -1266,6 +1390,26 @@ export function McpSettingsSection({ capabilities, mcpSave, mcpRemove, capabilit
 }
 
 /** Dedicated settings-sidebar page for enabled Skill management. */
+/** The publish pre-flight's report, as the draft result carries it. */
+type SkillPublishReport = FreeCodeGoEngineeringSkillDraftResult['drafts'][number]['preflight']
+
+/**
+ * What the publish pre-flight found, in the row's own words.
+ *
+ * Failures are named rather than counted: the draft is a file the user is about to
+ * move into a Skill root, so "3 problems" is not something they can act on, while
+ * the sentence the check wrote is. A draft the check refused says so in the same
+ * line, which is the point of running it while the user is still looking at the
+ * draft rather than at a publish button.
+ */
+function skillPublishNote(report: SkillPublishReport): string {
+  const failures = report.findings.filter(finding => finding.severity === 'error').length
+  const size = `约 ${String(report.tokens)} 标记，上限 ${String(report.limitTokens)}`
+  if (report.findings.length === 0) return `发布前检查通过（${size}）`
+  const parts = report.findings.map(finding => `${finding.severity === 'error' ? '必须修' : '建议修'}：${finding.message}`)
+  return `发布前检查发现 ${String(report.findings.length)} 项（${String(failures)} 项必须修；${size}）— ${parts.join('；')}`
+}
+
 export function SkillSettingsSection({ capabilities, skillRootSave, skillRootRemove, skillInvocationSet, skillDetail, engineeringStatus, engineeringSettingsUpdate, engineeringSkillDraft, currentSessionId, language }: CapabilitySectionProps): ReactNode {
   const state = useCapabilitySnapshot(capabilities)
   const [packs, setPacks] = useState<readonly FreeCodeGoSkillPackStatus[] | undefined>(undefined)
@@ -1326,7 +1470,7 @@ export function SkillSettingsSection({ capabilities, skillRootSave, skillRootRem
     <small className={css.sectionMeta}>把本会话里反复出现的做法整理成 Skill 草稿文件，写在项目目录下供你审阅。草稿不会自动挂载，也不会改变 AI 的行为。</small>
     {draft === undefined ? null : draft.drafts.length === 0
       ? <small className={css.sectionMeta} role="status">{draft.reason ?? '本次没有聚类出足够大的做法，未生成草稿。'}</small>
-      : <div className={css.extensionList}>{draft.drafts.map(item => <div className={css.extensionRow} key={item.name}><span><strong>{item.name}</strong><small>来自 {item.sources} 条会话证据</small></span></div>)}</div>}
+      : <div className={css.extensionList}>{draft.drafts.map(item => <div className={css.extensionRow} key={item.name}><span><strong>{item.name}</strong><small>来自 {item.sources} 条会话证据</small><small>{skillPublishNote(item.preflight)}</small></span></div>)}</div>}
     {draft?.directory === undefined ? null : <small className={css.sectionMeta}>草稿目录：{draft.directory}</small>}
   </section>}</>
 }
@@ -1784,6 +1928,18 @@ export function EngineeringCheckpointPanel(input: {
   }
   const current = checkpoints.find(item => item.id === selected)
   /**
+   * The Host refuses a checkpoint call it cannot place in a workspace, and that
+   * refusal is a precondition rather than a failure: `engineeringMemoryCwd`
+   * needs a conversation whose header carries a `cwd`, so a panel opened with no
+   * workspace-backed conversation gets the same sentence the memory, CodeGraph
+   * and canvas panels already recognize through `isWorkspaceContextError`. Those
+   * panels route it to their "open a workspace conversation" body; this one was
+   * the only surface that printed it as a red alert, which read as a broken
+   * feature instead of "nothing is open yet". Reopening or switching to a
+   * workspace conversation clears the state through `load()`.
+   */
+  const workspaceRefusal = isWorkspaceContextError(error)
+  /**
    * A diff can name thousands of files, so the chip list is capped — but the
    * summary line above it prints the full count, and a bare `slice` would make
    * the cap read as the whole list. Disclosing the cap keeps the two halves of
@@ -1799,11 +1955,11 @@ export function EngineeringCheckpointPanel(input: {
   }
   return <section className={css.memoryPanel}>
     <header className={css.engineeringHeader}><div><div className={css.engineeringKicker}>WORKSPACE CHECKPOINTS</div><strong>工作区检查点</strong><small>文件修改前的安全快照；恢复前先预览差异。</small></div><div className={css.memoryActions}><button className={css.button} type="button" onClick={load} disabled={!input.enabled || busy}>刷新</button></div></header>
-    {error === undefined ? null : <div className={css.alert} role="alert">检查点操作失败：{error}</div>}
+    {error === undefined || workspaceRefusal ? null : <div className={css.alert} role="alert">检查点操作失败：{error}</div>}
     {notice === undefined ? null : <small className={css.sectionMeta} role="status">{notice}</small>}
     {!wired ? <div className={css.emptyCapability}><strong>当前 Host 不支持工作区检查点</strong><small>该功能需要更新版本的 FreeCodeGo 插件；更新后重启 Harness 即可使用。</small></div>
       : !input.enabled ? <div className={css.emptyCapability}><strong>工作区检查点未启用</strong><small>{input.detail ?? '开启工程增强后，文件修改前的快照会自动保存。'}</small></div>
-        : workspaceUnavailable || input.currentSessionId() === undefined ? <div className={css.emptyCapability}><strong>打开工作区对话后查看检查点</strong><small>检查点按项目隔离；打开一个绑定工作区的对话后才能创建和恢复。</small></div>
+        : workspaceUnavailable || workspaceRefusal || input.currentSessionId() === undefined ? <div className={css.emptyCapability}><strong>打开工作区对话后查看检查点</strong><small>检查点按项目隔离；打开一个绑定工作区的对话后才能创建和恢复。</small></div>
           : <>
             <div className={css.engineeringComposer}><input className={css.input} value={label} placeholder="检查点名称（可选）" onChange={(event) => { setLabel(event.target.value) }} disabled={busy} aria-label="检查点名称" /><button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={capture} disabled={busy}>创建检查点</button></div>
             {checkpoints.length === 0 ? <div className={css.emptyCapability}><strong>还没有检查点</strong><small>修改任意文件后会自动生成，也可以上方手动创建。</small></div>
@@ -1894,7 +2050,7 @@ export function InspectPanel(input: {
           <small>{section.status === 'ok' ? inspectSectionSummary(section.data) : `不可读：${section.reason ?? '未给出原因'}`}</small>
           {section.status === 'ok' ? <details className={css.details}><summary className={css.detailsSummary}>原始数据</summary><pre className={css.diagnosticsDump}>{JSON.stringify(section.data, null, 2)}</pre></details> : null}
         </div>
-        <span className={`${css.badge} ${section.status === 'ok' ? '' : css.badgeDanger}`}>{section.status === 'ok' ? '已读取' : '不可读'}</span>
+        <span className={`${css.badge} ${css.inspectStatus} ${section.status === 'ok' ? '' : css.badgeDanger}`}>{section.status === 'ok' ? '已读取' : '不可读'}</span>
       </article>)}</div>
     </>}
   </section>
@@ -2473,7 +2629,6 @@ export function EngineeringSettingsSection({ engineeringStatus, engineeringSetEn
       <label className={css.extensionRow}><span><strong>代码结构图</strong><small>把文件、模块、函数和调用关系整理成可查询图谱，帮助 AI 定位影响范围。</small></span><input className={css.switch} aria-label="启用代码结构图" type="checkbox" checked={status?.engineeringCodeGraphEnabled === true} onChange={(event) => { update({ engineeringCodeGraphEnabled: event.target.checked }) }} disabled={busy || status?.engineeringEnabled !== true} /></label>
       {status?.engineeringCodeGraphEnabled !== true ? null : <label className={css.extensionRow}><span><strong>代码图引擎</strong><small>决定由哪个引擎提供 AI 的代码图工具：自动优先使用自包含的 CodeGraph（无需 Python），装不到时回退 Graphify。只有被选中的引擎会注册工具，因此不会重复占用上下文。</small></span><select className={`${css.select} ${css.engineSelect}`} aria-label="选择代码图引擎" value={status?.engineeringGraphEngine ?? 'auto'} onChange={(event) => { update({ engineeringGraphEngine: event.target.value as 'auto' | 'graphify' | 'codegraph' }) }} disabled={busy || ! status?.engineeringEnabled}><option value="auto">自动（优先 CodeGraph）</option><option value="graphify">Graphify（私有 Python）</option><option value="codegraph">CodeGraph（免 Python）</option></select></label>}
       <label className={css.extensionRow}><span><strong>实施后验证</strong><small>批准方案并完成实施后，允许主 Agent 运行项目声明的构建、类型、Lint 和测试脚本。通过项目声明的脚本不算验证完成：每个阶段都要带上真正执行的命令和退出码，且至少一条对抗性探针成立，才会被记为“已验证”。</small></span><input className={css.switch} aria-label="启用实施后验证" type="checkbox" checked={status?.engineeringQualityEnabled === true} onChange={(event) => { update({ engineeringQualityEnabled: event.target.checked }) }} disabled={busy || status?.engineeringEnabled !== true} /></label>
-      <label className={css.extensionRow}><span><strong>多成员协作团队</strong><small>开启后可认领的任务板、持久成员登记、每位写者一个独立 git worktree 与合并仲裁，以及手动上下文压缩/裁剪。关闭后所有 engineering_team_* 工具会直接拒绝运行，而不是在没有隔离的情况下启动团队。</small></span><input className={css.switch} aria-label="启用多成员协作团队" type="checkbox" checked={status?.engineeringTeamEnabled === true} onChange={(event) => { update({ engineeringTeamEnabled: event.target.checked }) }} disabled={busy || status?.engineeringEnabled !== true} /></label>
     </div>
     {status?.engineeringEnabled !== true ? null : <section className={css.graphPanel}>
       <header className={css.engineeringHeader}><div><div className={css.engineeringKicker}>自动化回路</div><strong>无人值守工程回路</strong><small>把「批准实施」之后的事情拆成三个独立开关，因为它们的风险不同：记录目标只是承诺把事做完，自动继续则让工作在没有你说话的情况下往下走。</small></div><span className={`${css.councilState} ${css.councilStateNowrap}`}>{status.engineeringLoopAutoContinue ? '自动继续已开' : '自动继续已关'}</span></header>
@@ -2524,7 +2679,7 @@ export function EngineeringSettingsSection({ engineeringStatus, engineeringSetEn
   </section>
 }
 
-type ReadyState = { status: 'ready'; catalog: Catalog; managedCatalog: ManagedCatalog; account: AccountState; paymentConfig?: PaymentConfigSnapshot; vyce?: FreeCodeGoVyceStatus; logfare?: FreeCodeGoLogfareStatus; logfareSupported?: boolean; sensenova?: FreeCodeGoSenseNovaStatus; nvidia?: FreeCodeGoNvidiaStatus; plans: readonly PaymentPlan[]; channels: readonly PaymentChannel[]; gatewayPrices: readonly GatewayModelPrice[]; gatewayPricingError?: string | undefined; order?: PaymentOrder; pendingOrders?: readonly PaymentOrder[]; agnes?: AgnesStatus; cline?: ClineStatus; workbuddy?: WorkBuddyInternationalStatus; actionError?: string; syncStatus?: 'refreshing' | 'offline'; syncError?: string }
+type ReadyState = { status: 'ready'; catalog: Catalog; managedCatalog: ManagedCatalog; account: AccountState; paymentConfig?: PaymentConfigSnapshot; vyce?: FreeCodeGoVyceStatus; logfare?: FreeCodeGoLogfareStatus; logfareSupported?: boolean; sensenova?: FreeCodeGoSenseNovaStatus; nvidia?: FreeCodeGoNvidiaStatus; plans: readonly PaymentPlan[]; channels: readonly PaymentChannel[]; gatewayPrices: readonly GatewayModelPrice[]; gatewayPricingError?: string | undefined; order?: PaymentOrder; pendingOrders?: readonly PaymentOrder[]; agnes?: AgnesStatus; cline?: ClineStatus; workbuddy?: WorkBuddyInternationalStatus; qoder?: QoderStatus; trae?: TraeStatus; actionError?: string; syncStatus?: 'refreshing' | 'offline'; syncError?: string }
 // One member, because one member is what every producer builds: the cache read and
 // the fallback are both `ReadyState`. A `loading` / `error` variant used to sit here
 // with two consumers in the render body and **no producer anywhere**, so the panel
@@ -2539,6 +2694,20 @@ const SETTINGS_CACHE_STORAGE_PREFIX = 'freecodego:settings-cache:v1:'
 // being re-attempted on every rerender caused by the error state itself. The
 // backoff is scoped to one mounted settings session and is dropped on unmount.
 const MEDIA_DEFAULT_RETRY_AFTER_MS = 5 * 60_000
+// The media defaults read is the only thing that can turn a cached value into
+// the document's value, and everything automatic below hangs off it. One
+// transient failure therefore must not be the answer for the whole panel.
+const MEDIA_DEFAULTS_READ_RETRIES = 2
+const MEDIA_DEFAULTS_READ_RETRY_MS = 1_500
+/**
+ * What the panel knows about the media defaults the settings document holds.
+ *
+ * `document` is a settled read; `pending` is a read in flight; `unavailable` is
+ * a read that failed after its retries. The automatic adoption below runs only
+ * on `document`: deciding from a cached or not-yet-read value is how a saved
+ * image/video/audio selection got overwritten by an automatic pick.
+ */
+type MediaDefaultsSource = 'pending' | 'document' | 'unavailable'
 const mediaDefaultRetryAfter = new Map<string, number>()
 type SettingsCache = { readonly language: 'zh' | 'en'; readonly catalog: Injected['catalog']; readonly savedAt: number; readonly state: ReadyState }
 let settingsCache: SettingsCache | undefined
@@ -2591,7 +2760,9 @@ function saveSettingsCache(language: 'zh' | 'en', catalog: Injected['catalog'], 
   // must not be persisted: a cached message re-rendered "pricing unavailable" on
   // the next visit long after the endpoint had recovered.
   const { account: _account, gatewayPricingError: _gatewayPricingError, ...rest } = state
-  const cachedState: ReadyState = { ...rest, account: { status: 'signed-out' } }
+  // The placeholder must not claim a sign-out either: the cached login form for
+  // an account that is merely about to load is the flash this block kept causing.
+  const cachedState: ReadyState = { ...rest, account: { status: 'loading' } }
   settingsCache = { language, catalog, savedAt: Date.now(), state: cachedState }
   const storage = settingsStorage()
   if (storage === undefined) return
@@ -2606,7 +2777,7 @@ function fallbackSettings(): ReadyState {
     status: 'ready',
     catalog: { defaultEngine: 'deepseek', engines: [] },
     managedCatalog: withAgnesModels(emptyManagedCatalog),
-    account: { status: 'signed-out' },
+    account: { status: 'loading' },
     plans: [],
     channels: [],
     gatewayPrices: [],
@@ -2644,6 +2815,77 @@ function describeWorkbuddyError(detail: string): string {
   if (/WORKBUDDY_LOGIN_FAILED|invalid.*credential|unauthorized/i.test(detail)) return `WorkBuddy 登录失败：${detail.replace(/^WORKBUDDY_LOGIN_FAILED:\s*/i, '')}`
   if (/WORKBUDDY_LOGIN_REQUIRED/i.test(detail)) return '尚未登录 WorkBuddy，请先登录账号。'
   return detail
+}
+
+/** Plain-language mapping for Qoder errors. */
+function describeQoderError(detail: string): string {
+  if (/QODER_LOGIN_FAILED/i.test(detail)) return `Qoder 登录失败：${detail.replace(/^QODER_LOGIN_FAILED:\s*/i, '')}`
+  if (/QODER_NOT_CONFIGURED/i.test(detail)) return 'Qoder 服务尚未就绪，请稍后重试或重启 Harness。'
+  if (/QODER_LOGIN_REQUIRED/i.test(detail)) return '尚未登录 Qoder，请先登录账号。'
+  return detail
+}
+
+/**
+ * Plain-language mapping for Trae errors.
+ *
+ * Trae's sign-in ends at a loopback redirect the user may have to paste by hand,
+ * so most of its failures are about the pasted link rather than the account; the
+ * Host names each one, and a raw code is not something to show a user.
+ */
+function describeTraeError(detail: string): string {
+  if (/TRAE_LOGIN_CALLBACK_EMPTY/i.test(detail)) return '回调链接为空，请粘贴浏览器地址栏中的完整链接。'
+  if (/TRAE_LOGIN_CALLBACK_UNPARSEABLE/i.test(detail)) return '无法解析这个回调链接，请确认它包含 Trae 的授权参数（code 或 token）。'
+  if (/TRAE_LOGIN_CALLBACK_WITHOUT_CREDENTIAL/i.test(detail)) return '这个回调链接里没有登录凭证，请完成登录后复制最终跳转的页面地址。'
+  if (/TRAE_TOKEN_EXCHANGE_RETURNED_NO_TOKEN/i.test(detail)) return 'Trae 未返回访问令牌，请重新发起一次登录。'
+  if (/TRAE_LOGIN_FAILED/i.test(detail)) return `Trae 登录失败：${detail.replace(/^TRAE_LOGIN_FAILED:\s*/i, '')}`
+  if (/TRAE_LOGIN_REQUIRED/i.test(detail)) return '尚未登录 Trae，请先登录账号。'
+  return detail
+}
+
+/**
+ * The name the panel uses for one Trae deployment.
+ *
+ * The two are separate services with almost disjoint model catalogs, so "Trae"
+ * alone stopped being a complete answer the moment the pool could hold both: a
+ * user picking a model has to know which deployment offers it.
+ * @param realm - the deployment from the Host's snapshot.
+ * @param language - the UI language.
+ * @returns the label to render.
+ */
+export function traeRealmName(realm: 'cn' | 'sg', language: 'zh' | 'en'): string {
+  if (realm === 'cn') return language === 'zh' ? '国内版' : 'China'
+  return language === 'zh' ? '国际版' : 'Global'
+}
+
+/**
+ * One line describing what a daily check-in run collected.
+ *
+ * The run is the unit the user acted on, but the *account* is the unit they care
+ * about: "+300 积分" on a two-account pool hides which account did not collect,
+ * and a pool is exactly the case where one account's campaign can be closed
+ * while another's is open. So the total leads and every account follows.
+ * @param report - the run's report.
+ * @param language - the UI language.
+ * @returns the summary line.
+ */
+export function checkinSummary(report: FreeCodeGoCheckinReport, language: 'zh' | 'en'): string {
+  const zh = language === 'zh'
+  if (report.accounts.length === 0) return zh ? '没有已登录的账号，无法签到。' : 'No signed-in accounts to check in.'
+  const lines = report.accounts.map((account) => {
+    if (account.outcome === 'claimed') {
+      // A claim and a refusal can happen in one run, and the collected amount is
+      // all a summary would otherwise show — so a partial collection names what it
+      // did not get.
+      const refused = account.refused === undefined || account.refused === '' ? '' : zh ? `（${account.refused}）` : ` (${account.refused})`
+      return zh ? `${account.label}：+${account.credits} 积分${refused}` : `${account.label}: +${account.credits} credits${refused}`
+    }
+    if (account.outcome === 'already') return zh ? `${account.label}：今日已签到` : `${account.label}: already checked in today`
+    if (account.outcome === 'unavailable') return zh ? `${account.label}：签到活动未开启` : `${account.label}: campaign not running`
+    const reason = account.message === undefined || account.message === '' ? '' : zh ? `（${account.message}）` : ` (${account.message})`
+    return zh ? `${account.label}：签到失败${reason}` : `${account.label}: failed${reason}`
+  })
+  const total = report.credits <= 0 ? '' : zh ? `本次共 +${report.credits} 积分 · ` : `+${report.credits} credits this run · `
+  return `${total}${lines.join(' · ')}`
 }
 
 /**
@@ -2885,6 +3127,47 @@ function parseOAuthRegistrationRequired(detail: string): OAuthPendingRegistratio
 }
 
 /**
+ * One receipt file, as it arrives over the Remote boundary.
+ *
+ * `content` is the document's own text unless `encoding` says base64, which is
+ * how a PDF travels: JSON cannot carry bytes, so the binary document is encoded
+ * on the Host side and decoded here.
+ */
+interface ReceiptDocument {
+  readonly fileName: string
+  readonly contentType: string
+  readonly content: string
+  readonly encoding?: 'text' | 'base64'
+}
+
+/**
+ * The document's bytes, decoded from however it travelled.
+ *
+ * A corrupt receipt must fail loudly rather than be saved as a file that looks
+ * valid and opens as nothing, and that needs two checks because the decoder only
+ * makes one of them: `atob` throws on a payload carrying characters outside the
+ * alphabet (an error body handed over as a PDF), but it accepts a **non-canonical**
+ * one — a trailing character whose low bits are dropped — and hands back bytes
+ * that are not what the payload encoded. So the bytes are re-encoded and compared
+ * with what arrived: what saves is the document the Host sent, or nothing.
+ * @param document - the fetched receipt.
+ * @returns the bytes to save.
+ */
+function receiptBytes(document: ReceiptDocument): Uint8Array<ArrayBuffer> {
+  if (document.encoding !== 'base64') return new TextEncoder().encode(document.content)
+  const binary = globalThis.atob(document.content)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  // Padding is dropped from both sides because `atob` accepts an unpadded
+  // encoding while `btoa` always pads: comparing them verbatim would reject a
+  // payload that decoded correctly.
+  const padding = /=+$/u
+  const arrived = document.content.replace(/\s+/gu, '').replace(padding, '')
+  if (globalThis.btoa(binary).replace(padding, '') !== arrived) throw new Error('receipt base64 does not decode back to itself')
+  return bytes
+}
+
+/**
  * Hand a fetched receipt to the browser as a file download.
  *
  * The bytes are the backend's own document and the filename is the backend's own
@@ -2892,15 +3175,148 @@ function parseOAuthRegistrationRequired(detail: string): OAuthPendingRegistratio
  * rather than a re-drawn copy. The object URL is revoked straight away: the
  * download has already started and holding the blob alive would leak it for the
  * life of the panel.
+ * @param document - the fetched receipt, in whichever encoding it arrived.
  */
-export function saveReceiptDocument(document: { readonly fileName: string; readonly contentType: string; readonly content: string }): void {
-  const blob = new Blob([document.content], { type: document.contentType })
+export function saveReceiptDocument(document: ReceiptDocument): void {
+  const blob = new Blob([receiptBytes(document)], { type: document.contentType })
   const url = URL.createObjectURL(blob)
   const anchor = globalThis.document.createElement('a')
   anchor.href = url
   anchor.download = document.fileName
   anchor.click()
   URL.revokeObjectURL(url)
+}
+
+/**
+ * One order row's date, as the receipt list prints it.
+ *
+ * An absent or unparseable stamp drops out of the row's line rather than being
+ * replaced by today's date: a payment dated as today when it was not is a wrong
+ * fact, where a missing date is only an incomplete one.
+ * @param order - the order row to date.
+ * @returns the formatted stamp, or undefined when the row carries none.
+ */
+/**
+ * The stamp one receipt row dates itself by.
+ *
+ * The payment's own time when the backend sent one, and the order's creation
+ * time only as a fallback. A receipt is evidence about a payment, so the row has
+ * to state when the money arrived: an order opened at 23:59 and paid at 00:01
+ * was filed under the wrong day, and the reader of this list is checking exactly
+ * that fact against their bank statement. The fallback stays because a row that
+ * carries only `created_at` — an older backup, or a provider that echoes one
+ * stamp — is still better dated than undated.
+ * @param order - the row to stamp.
+ * @returns the ISO stamp to render, or undefined when the row carries neither.
+ */
+export function orderReceiptStamp(order: Pick<PaymentOrder, 'paidAt' | 'createdAt'>): string | undefined {
+  return order.paidAt ?? order.createdAt
+}
+
+function orderDateLabel(order: PaymentOrder): string | undefined {
+  const stamp = orderReceiptStamp(order)
+  if (stamp === undefined) return undefined
+  const parsed = Date.parse(stamp)
+  return Number.isFinite(parsed) ? engineeringMemoryDate(parsed) : undefined
+}
+
+/**
+ * The account's paid payments, each with the receipt the backend issued.
+ *
+ * Opened rather than always shown, which is also how it reads its list: the
+ * mount is the gesture, so the read happens when a user asks for a receipt
+ * instead of on every settings render. The list is read fresh rather than taken
+ * from the panel's pending-order snapshot because the row a user wants is
+ * usually the payment they just made — and because the pending snapshot keeps
+ * only unpaid orders, which is the one set receipts are never in.
+ */
+export function PaymentReceiptManager(input: {
+  /** The account's orders, as the Host serves them. */
+  readonly orders: () => Promise<RemoteResult<unknown>>
+  /** The backend's own document for one order. */
+  readonly receiptDocument: (orderId: string) => Promise<RemoteResult<ReceiptDocument>>
+  /**
+   * Stripe's own document for one order, when the Host offers it. Separate from
+   * the receipt above because they are two issuers: a Stripe payment has both,
+   * and the row offers the second only where the backend says Stripe holds one.
+   */
+  readonly stripeReceiptDocument?: ((orderId: string) => Promise<RemoteResult<ReceiptDocument>>) | undefined
+  readonly language: 'zh' | 'en'
+}): ReactNode {
+  const zh = input.language === 'zh'
+  const [rows, setRows] = useState<readonly PaymentOrder[] | undefined>(undefined)
+  const [busy, setBusy] = useState<string | undefined>(undefined)
+  const [error, setError] = useState<string | undefined>(undefined)
+  const [notice, setNotice] = useState<string | undefined>(undefined)
+
+  const load = (): void => {
+    setBusy('load')
+    setError(undefined)
+    void input.orders().then((result) => {
+      if (!result.ok) { setError(result.error.message); return }
+      // A malformed row is a failed read, not an empty one: silently dropping it
+      // would report "no payments" for an account whose history we could not
+      // parse — and the user would conclude their payments are gone.
+      try { setRows(parseReceiptOrders(result.value)) } catch (failure: unknown) { setError(failure instanceof Error ? failure.message : String(failure)) }
+    }, (failure: unknown) => { setError(failure instanceof Error ? failure.message : String(failure)) }).finally(() => { setBusy(undefined) })
+  }
+
+  // Mount-only: the disclosure that renders this panel is the refresh gesture.
+  useEffect(() => { load() }, [])
+
+  const save = (kind: 'receipt' | 'stripe', orderId: string, fetch: (orderId: string) => Promise<RemoteResult<ReceiptDocument>>): void => {
+    setBusy(`${kind}:${orderId}`)
+    setError(undefined)
+    setNotice(undefined)
+    void fetch(orderId).then((result) => {
+      if (!result.ok) { setError(result.error.message); return }
+      try {
+        saveReceiptDocument(result.value)
+        setNotice(zh ? `已保存 ${result.value.fileName}。` : `Saved ${result.value.fileName}.`)
+      } catch (failure: unknown) {
+        // The document was fetched, so this is a decode failure rather than a
+        // network one. Saying which keeps a user from retrying a download that
+        // will fail the same way, and keeps a broken file off their disk.
+        const reason = failure instanceof Error ? failure.message : String(failure)
+        setError(zh ? `收据文件无法解读：${reason}` : `The receipt file could not be read: ${reason}`)
+      }
+    }, (failure: unknown) => { setError(failure instanceof Error ? failure.message : String(failure)) }).finally(() => { setBusy(undefined) })
+  }
+
+  return <div className={css.accountManager}>
+    <div className={css.accountActions}>
+      <button className={css.button} type="button" onClick={load} disabled={busy !== undefined}>{busy === 'load' ? (zh ? '读取中…' : 'Loading…') : (zh ? '刷新支付记录' : 'Refresh payments')}</button>
+    </div>
+    <small className={css.sectionMeta}>{zh ? '每一笔已支付的充值订单都可以下载收据；信用卡支付的订单还可以下载一份 PDF 付款凭证。' : 'Every paid recharge order offers a receipt; a payment taken by card also offers a PDF payment document.'}</small>
+    {error === undefined ? null : <small className={css.sectionMeta}>{error}</small>}
+    {notice === undefined ? null : <small className={css.sectionMeta}>{notice}</small>}
+    {busy === 'load' && rows === undefined ? <small className={css.sectionMeta}>{zh ? '正在读取支付记录…' : 'Loading payments…'}</small> : null}
+    {rows === undefined ? null : rows.length === 0
+      ? <small className={css.sectionMeta}>{zh ? '这个账户还没有可下载收据的支付记录。' : 'No payment on this account has a receipt yet.'}</small>
+      : <div className={css.accountList}>
+        {rows.map(order => <div className={css.accountRow} key={order.orderId}>
+          <div className={css.accountIdentity}>
+            {/* What the payer paid, in the currency they paid it in. `amount` is
+                the credit side and is always USD, so the two are never mixed: a
+                settle amount is only quoted in its own currency. */}
+            <strong className={css.accountName}>{order.payAmount === undefined ? formatMoney(order.amount, 'USD') : formatMoney(order.payAmount, orderSettlementCurrency(order) ?? 'USD')}</strong>
+            {/* The state is the backend's token said in the reader's language, through
+                the same table the payment dialog uses: the panel was printing `PAID`
+                beside a dialog saying `已支付` for the same order. A token the table
+                does not know still comes through as the backend spelled it. */}
+            <small className={css.accountEmail}>{[orderDateLabel(order), `#${order.orderId}`, orderStateLabel(order.state, zh), ...(order.paymentType === undefined ? [] : [paymentChannelLabel(order.paymentType, input.language)])].filter(part => part !== undefined).join(' · ')}</small>
+          </div>
+          <div className={css.accountActions}>
+            <button className={css.button} type="button" onClick={() => { save('receipt', order.orderId, input.receiptDocument) }} disabled={busy !== undefined}>{busy === `receipt:${order.orderId}` ? (zh ? '下载中…' : 'Downloading…') : (zh ? '下载收据' : 'Download receipt')}</button>
+            {/* Offered only where the backend says Stripe holds one: the row itself
+                knows, so a button that would answer "not available" is never drawn.
+                The rule is shared with the open order's card (`stripeReceiptOffered`),
+                so the two surfaces cannot offer different sets. */}
+            {!stripeReceiptOffered(order, input.stripeReceiptDocument) ? null : <button className={css.button} type="button" onClick={() => { save('stripe', order.orderId, input.stripeReceiptDocument!) }} disabled={busy !== undefined}>{busy === `stripe:${order.orderId}` ? (zh ? '下载中…' : 'Downloading…') : (zh ? '下载付款凭证' : 'Download payment document')}</button>}
+          </div>
+        </div>)}
+      </div>}
+  </div>
 }
 
 /**
@@ -2917,16 +3333,23 @@ interface OpenPaymentDialog {
   readonly payCurrency: string | undefined
 }
 
-export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register, sendVerifyCode, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, teamStatus, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, advisorStatus, advisorUpdate, engineeringStatus, engineeringSetEnabled, language, t }: Props): ReactNode {
+export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, reviewStatus, reviewStart, reviewUpdate, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, advisorStatus, advisorUpdate, engineeringStatus, engineeringSetEnabled, language, t }: Props): ReactNode {
   const [state, setState] = useState<State>(() => cachedSettings(language, catalog)?.state ?? { ...fallbackSettings(), syncStatus: 'refreshing' })
   // A fresh catalog render must not infer media defaults until the Host has
   // returned the durable values. Otherwise the first available model can race
   // the read and overwrite a user's saved image/video/audio selection.
-  const [mediaDefaultsLoaded, setMediaDefaultsLoaded] = useState(readMediaDefaults === undefined)
+  const [mediaDefaultsSource, setMediaDefaultsSource] = useState<MediaDefaultsSource>(readMediaDefaults === undefined ? 'document' : 'pending')
   const [pluginUpdateSnapshot, setPluginUpdateSnapshot] = useState<FreeCodeGoPluginUpdateStatus | undefined>(undefined)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [rememberLogin, setRememberLogin] = useState(false)
+  /** The password box: a user who cannot see what a hardened field accepts types
+   * it twice and guesses at the difference. The reveal is per mount and reset
+   * with the field, so a revealed password never outlives the sign-in attempt. */
+  const [passwordVisible, setPasswordVisible] = useState(false)
+  /** Mirrors what the Host credential file holds, not a wish: it is set from the
+   * remembered-password read and committed by the next sign-in. */
+  const [rememberPassword, setRememberPassword] = useState(false)
   const [verifyCode, setVerifyCode] = useState('')
   // The account card is a two-mode surface: sign in, or create the account
   // with an emailed code. Splitting them keeps the login form to the two
@@ -2983,6 +3406,9 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
   const [clineToken, setClineToken] = useState('')
   const [diagnostics, setDiagnostics] = useState<FreeCodeGoBackendSnapshot | undefined>(undefined)
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false)
+  /** The receipt list's disclosure. Closed on mount like every other panel here:
+   * the read it triggers is a request per order state, so it waits to be asked. */
+  const [receiptsOpen, setReceiptsOpen] = useState(false)
   const [sensenovaKey, setSensenovaKey] = useState('')
   const [sensenovaBusy, setSensenovaBusy] = useState(false)
   const [nvidiaKey, setNvidiaKey] = useState('')
@@ -3005,6 +3431,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
   const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(capabilities === undefined)
   const [nativeModels, setNativeModels] = useState<readonly NativeCatalogModel[]>([])
   const [nativeCatalogEpoch, setNativeCatalogEpoch] = useState(0)
+  const [pickerRows, setPickerRows] = useState<readonly { readonly provider: string; readonly id: string; readonly label: string; readonly description?: string }[]>([])
   const [advisorSnapshot, setAdvisorSnapshot] = useState<AdvisorSnapshot | undefined>(undefined)
   const [advisorToggleBusy, setAdvisorToggleBusy] = useState(false)
   const [engineeringSnapshot, setEngineeringSnapshot] = useState<EngineeringStatus | undefined>(undefined)
@@ -3075,6 +3502,27 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
     : language === 'zh'
       ? `已登录 ${workbuddyAccounts.length} 个账号 · 额度每 30 分钟自动刷新一次`
       : `${workbuddyAccounts.length} accounts · credits refresh every 30 min`
+  // Trae signs in through a browser round trip the Host owns, so the card reads
+  // the attempt out of the status rather than out of local ticket state: one
+  // `login-pending` value is both "accounts still show" and "keep polling".
+  const traeAccounts = state.status === 'ready' ? state.trae?.accounts ?? [] : []
+  const traeAuthenticated = state.status === 'ready' && (state.trae?.status === 'authenticated' || state.trae?.status === 'reauth-required')
+  const traeLoginPending = state.status === 'ready' && state.trae?.status === 'login-pending' ? state.trae : undefined
+  const traePending = traeLoginPending !== undefined
+  const traeCnCount = traeAccounts.filter(account => account.realm === 'cn').length
+  const traeGlobalCount = traeAccounts.length - traeCnCount
+  // Qoder serves a single free route from the Host account pool.
+  const qoderModelNames = (state.status === 'ready' ? state.qoder?.freeModels ?? [] : []).map(model => model.displayName)
+  const qoderAuthenticated = state.status === 'ready' && state.qoder?.configured === true && (state.qoder.accounts?.length ?? 0) > 0
+  const qoderAccounts = state.status === 'ready' ? state.qoder?.accounts ?? [] : []
+  const qoderQuotaLine = (quota: NonNullable<QoderStatus['accounts'][number]['quota']>): string => {
+    if (quota.error !== undefined) return language === 'zh' ? `额度读取失败：${quota.error}` : `Quota unavailable: ${quota.error}`
+    const bucket = quota.userQuota ?? quota.addonQuota
+    if (bucket === undefined) return language === 'zh' ? '暂无额度数据' : 'No quota data'
+    return language === 'zh'
+      ? `额度剩余 ${formatCredits(bucket.remaining)} / ${formatCredits(bucket.total)}`
+      : `${formatCredits(bucket.remaining)} / ${formatCredits(bucket.total)} left`
+  }
   // Under the native picker the text-model default can only be chosen from a
   // listed native model. Cline is not in that directory, so a blank default for
   // the text category is the honest binding; the pickable model list no longer
@@ -3084,12 +3532,40 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
   // Agnes media routes are excluded: they belong to the media-default picker,
   // not to the chat model list this card describes.
   const agnesModelNames = providerModelNames('agnes', 'text')
+  // The picker's own directory, grouped for the per-provider visibility controls.
+  // These are the rows the chat menu renders, not the card's hand-picked cloud:
+  // the question the panel answers is "what does the model list show", so it has
+  // to be built from the list itself. The id is carried beside the label because
+  // a decision is stored against the id — a label is display text and two
+  // providers may render one name twice.
+  const pickerModelsFor = (provider: string): readonly ProviderPickerModel[] =>
+    pickerRows.length === 0
+      // The live directory is the authority; the Host projection is the
+      // fallback for a client that has no session bound yet.
+      ? nativeModels.filter(model => model.provider.toLowerCase() === provider).map(model => ({ id: model.id, label: model.displayName }))
+      : pickerRows.filter(model => model.provider.toLowerCase() === provider).map(model => ({
+        id: model.id,
+        label: model.label,
+        ...(model.description === undefined ? {} : { description: model.description }),
+      }))
+  // One card per provider, one control per card. Built here rather than spelled
+  // out seven times so the cards cannot drift into seven slightly different
+  // controls, and so the call site stays short enough to read.
+  // A getter rather than an array: the panel re-reads it while the directory is
+  // still arriving, and the call site stays a one-liner.
+  const providerVisibility = (provider: string): ReactNode =>
+    <ProviderModelVisibility provider={provider} models={() => pickerModelsFor(provider)} language={language} />
   // The select binds to the stored default for the active category; an empty
   // binding means nothing is stored, which is the only case that needs a
   // placeholder option (a value not backed by an option renders blank).
   const selectedCategoryModel = state.status === 'ready'
     ? modelCategory === 'text' ? state.catalog.defaultModel ?? '' : state.catalog.mediaDefaults?.[modelCategory] ?? ''
     : ''
+  // A default the current catalog does not offer is still the stored default:
+  // the select renders it as its own row rather than falling back to the first
+  // option, which is what made the panel look like it had forgotten a choice it
+  // had in fact kept.
+  const categorySelection = pickSelection(selectedCategoryModel, categoryProviderGroups)
   const categoryMoveCandidates = (() => {
     const candidates = new Map<string, { readonly key: string; readonly providerName: string; readonly displayName: string; readonly category: ModelCategory }>()
     for (const model of nativeModels) {
@@ -3153,6 +3629,27 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
       }
     } catch (error) { setState(failed(error instanceof Error ? error.message : String(error))) }
   }, [])
+  /**
+   * Prefill the password the Host remembers for this machine.
+   *
+   * The Host is the only place it can live — the browser store holds the address
+   * and nothing else — so it is read once per mount. A failed or empty read is
+   * reported as nothing remembered, which is the same state as a machine nobody
+   * ever asked: the field stays empty and the box unticked, rather than a
+   * convenience turning into an error on the sign-in card.
+   */
+  useEffect(() => {
+    if (accountRememberedPassword === undefined) return
+    let active = true
+    void accountRememberedPassword().then((result) => {
+      if (!active || !result.ok) return
+      const remembered = result.value.password
+      if (remembered === undefined || remembered === '') return
+      setPassword(remembered)
+      setRememberPassword(true)
+    }, () => undefined)
+    return () => { active = false }
+  }, [accountRememberedPassword])
   useEffect(() => {
     if (agnesRegisterCooldown === 0 && agnesResetCooldown === 0 && verifyCooldown === 0 && oauthPendingVerifyCooldown === 0) return
     const timer = globalThis.setInterval(() => {
@@ -3185,10 +3682,15 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         load(true, true)
       }, delay)
     }
-    const commit = (next: State): void => {
+    // An updater is accepted because one commit has to read state that is newer
+    // than the snapshot this refresh started from — see the catalog merge below.
+    const commit = (next: State | ((previous: State) => State)): void => {
       if (generation !== loadGeneration.current) return
-      if (next.status === 'ready') saveSettingsCache(language, catalog, next)
-      setState(next)
+      setState((previous) => {
+        const value = typeof next === 'function' ? next(previous) : next
+        if (value.status === 'ready') saveSettingsCache(language, catalog, value)
+        return value
+      })
     }
     const cached = force ? undefined : cachedSettings(language, catalog)
     if (cached !== undefined) {
@@ -3247,25 +3749,30 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         ? accountResult.value
         : expiredCredential(accountResult.error.message)
           ? { status: 'reauth-required' as const }
-          : retained.account
+          // A first read that failed must not leave the panel parked on the
+          // pre-read placeholder: the sync error already reports the failure, and
+          // a state the user cannot act on is worse than the login form it
+          // replaced.
+          : retained.account.status === 'loading' ? { status: 'signed-out' as const } : retained.account
       const accountSyncError = accountResult.ok ? undefined : accountResult.error.message
       if (accountResult.ok) clearSyncRetry()
       else scheduleSyncRetry()
       const { syncStatus: _previousSyncStatus, syncError: _previousSyncError, actionError: _previousActionError, ...ready } = retained
-      commit({
-        ...ready,
-        // The Host catalog intentionally contains engine/model metadata only;
-        // keep a media default already read from the settings document while
-        // this refresh is committing, otherwise the concurrent catalog reply
-        // would erase it and the auto-default effect would overwrite it.
-        catalog: {
-          ...localCatalog,
-          ...(localCatalog.mediaDefaults === undefined && retained.catalog.mediaDefaults === undefined
-            ? {}
-            : { mediaDefaults: localCatalog.mediaDefaults ?? retained.catalog.mediaDefaults }),
-        },
-        account,
-        ...(accountSyncError === undefined ? {} : { syncStatus: 'offline' as const, syncError: accountSyncError }),
+      // The Host catalog intentionally contains engine/model metadata only, so
+      // this commit must not be the thing that decides which media default the
+      // panel shows. It carries the *live* one rather than the value this
+      // refresh started from: the settings-document read can land while the
+      // refresh is in flight, and restoring the snapshot then erased the read
+      // and left the panel showing the cached model — the same symptom as a
+      // selection that did not stick.
+      commit((previous) => {
+        const mediaDefaults = (previous.status === 'ready' ? previous.catalog.mediaDefaults : undefined) ?? localCatalog.mediaDefaults
+        return {
+          ...ready,
+          catalog: { ...localCatalog, ...(mediaDefaults === undefined ? {} : { mediaDefaults }) },
+          account,
+          ...(accountSyncError === undefined ? {} : { syncStatus: 'offline' as const, syncError: accountSyncError }),
+        }
       })
       refreshGatewayPrices()
       const patchReady = (patch: Partial<ReadyState>): void => {
@@ -3313,6 +3820,8 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
       refreshRemote(agnesStatus, (agnes) => { patchReady({ agnes }) })
       refreshRemote(clineStatus, (cline) => { patchReady({ cline }) })
       refreshRemote(workbuddyStatus, (workbuddy) => { patchReady({ workbuddy }) })
+      refreshRemote(qoderStatus, (qoder) => { patchReady({ qoder }) })
+      refreshRemote(traeStatus, (trae) => { patchReady({ trae }) })
       refreshRemote(vyceStatus, (vyce) => { patchReady({ vyce }) })
       refreshRemote(logfareStatus, (logfare) => {
         patchReady({ logfare })
@@ -3341,7 +3850,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         return
       }
       refreshRemote(backendCatalog, (managedCatalog) => { patchReady({ managedCatalog: withAgnesModels(managedCatalog) }) }, (error) => { patchReady({ actionError: error instanceof Error ? error.message : String(error) }) }, 2)
-      refreshRemote(paymentPlans, (plans) => { patchReady({ plans }) }, (error) => { patchReady({ actionError: describePaymentError(error instanceof Error ? error.message : String(error)) }) }, 5)
+      refreshRemote(paymentPlans, (plans) => { patchReady({ plans }) }, (error) => { patchReady({ actionError: describePaymentError(error instanceof Error ? error.message : String(error), language) }) }, 5)
       // Read beside the plans because the card form cannot be offered without
       // it: a missing publishable key is the difference between an in-panel
       // Stripe Element and a dialog that has to send the user elsewhere.
@@ -3349,7 +3858,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
       refreshRemote(paymentChannels, (channels) => {
         setPaymentType(previous => channels.some(channel => channel.paymentType === previous) ? previous : channels[0]?.paymentType ?? '')
         patchReady({ channels })
-      }, (error) => { patchReady({ actionError: describePaymentError(error instanceof Error ? error.message : String(error)) }) }, 5)
+      }, (error) => { patchReady({ actionError: describePaymentError(error instanceof Error ? error.message : String(error), language) }) }, 5)
       refreshRemote(paymentOrders, (value) => {
         const pendingOrders = parsePendingOrders(value)
         // An empty result must clear the stale banner: merging an empty patch
@@ -3374,7 +3883,13 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
       setState((previous) => {
         if (previous.status !== 'ready') return previous
         const { actionError: _actionError, ...ready } = previous
-        return { ...ready, catalog: { ...previous.catalog, defaultModel: result.value.model } }
+        // The cache is what the next open paints while the document read is in
+        // flight. Without this write it kept the model the user had *before*
+        // this gesture, so a reopen showed the old selection for a moment — and
+        // when that read failed, for good.
+        const next: ReadyState = { ...ready, catalog: { ...previous.catalog, defaultModel: result.value.model } }
+        saveSettingsCache(language, catalog, next)
+        return next
       })
     }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) })
   }
@@ -3389,7 +3904,11 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
       setState((previous) => {
         if (previous.status !== 'ready') return previous
         const { actionError: _actionError, ...ready } = previous
-        return { ...ready, catalog: { ...previous.catalog, mediaDefaults: { ...(previous.catalog.mediaDefaults ?? { image: '', video: '', audio: '' }), [category]: result.value.model } } }
+        const next: ReadyState = { ...ready, catalog: { ...previous.catalog, mediaDefaults: { ...(previous.catalog.mediaDefaults ?? { image: '', video: '', audio: '' }), [category]: result.value.model } } }
+        // Same as the text default: paint the user's own choice on the next
+        // open instead of the value this panel happened to sync last.
+        saveSettingsCache(language, catalog, next)
+        return next
       })
       return true
     }, (error: unknown) => {
@@ -3410,32 +3929,51 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
     const reader = readMediaDefaults
     const generation = ++mediaDefaultsReadGeneration.current
     let active = true
-    setMediaDefaultsLoaded(false)
+    let retry: ReturnType<typeof globalThis.setTimeout> | undefined
     if (reader === undefined) {
-      setMediaDefaultsLoaded(true)
+      setMediaDefaultsSource('document')
       return () => { active = false }
     }
-    void reader().then((defaults) => {
-      if (!active || generation !== mediaDefaultsReadGeneration.current) return
-      setState((previous) => {
-        if (previous.status !== 'ready') return previous
-        const current = previous.catalog.mediaDefaults
-        if (current?.image === defaults.image && current.video === defaults.video && current.audio === defaults.audio) return previous
-        const next = { ...previous, catalog: { ...previous.catalog, mediaDefaults: defaults } }
-        saveSettingsCache(language, catalog, next)
-        return next
+    // Read once the panel can hold the answer: a result applied to a not-ready
+    // state is dropped, and a dropped read used to leave the cached value as
+    // the panel's permanent truth without ever re-reading the document.
+    if (state.status !== 'ready') return () => { active = false }
+    setMediaDefaultsSource('pending')
+    const attempt = (remaining: number): void => {
+      void reader().then((defaults) => {
+        if (!active || generation !== mediaDefaultsReadGeneration.current) return
+        setState((previous) => {
+          if (previous.status !== 'ready') return previous
+          const current = previous.catalog.mediaDefaults
+          if (current?.image === defaults.image && current.video === defaults.video && current.audio === defaults.audio) return previous
+          const next = { ...previous, catalog: { ...previous.catalog, mediaDefaults: defaults } }
+          saveSettingsCache(language, catalog, next)
+          return next
+        })
+        if (active && generation === mediaDefaultsReadGeneration.current) setMediaDefaultsSource('document')
+      }, () => {
+        if (!active || generation !== mediaDefaultsReadGeneration.current) return
+        if (remaining > 0) { retry = globalThis.setTimeout(() => { attempt(remaining - 1) }, MEDIA_DEFAULTS_READ_RETRY_MS); return }
+        // Giving up means "unknown", not "empty": the panel keeps showing what
+        // it has and adopts nothing, so a read that never landed cannot rewrite
+        // a default the document still holds.
+        setMediaDefaultsSource('unavailable')
       })
-      if (active && generation === mediaDefaultsReadGeneration.current) setMediaDefaultsLoaded(true)
-    }, () => {
-      if (active && generation === mediaDefaultsReadGeneration.current) setMediaDefaultsLoaded(true)
-    })
-    return () => { active = false }
-  }, [readMediaDefaults, connectionEpoch, language, catalog])
+    }
+    attempt(MEDIA_DEFAULTS_READ_RETRIES)
+    return () => { active = false; if (retry !== undefined) globalThis.clearTimeout(retry) }
+  }, [readMediaDefaults, connectionEpoch, language, catalog, state.status])
   useEffect(() => {
-    if (state.status !== 'ready' || setDefaultModel === undefined || !capabilitiesLoaded || !mediaDefaultsLoaded) return
+    if (state.status !== 'ready' || setDefaultModel === undefined || !capabilitiesLoaded || mediaDefaultsSource !== 'document') return
+    // An empty catalog is the state before the Host catalog lands, not evidence
+    // that a stored model was retired; deciding from it is how a saved
+    // image/video/audio choice got replaced by the first row of the local floor.
+    if (effectiveCatalog.models.length === 0) return
     const defaults = state.catalog.mediaDefaults ?? { image: '', video: '', audio: '' }
+    const candidate = (model: ManagedCatalog['models'][number]): { readonly id: string; readonly provider: string; readonly displayName: string } => ({ id: model.id, provider: model.provider, displayName: model.displayName })
     for (const category of ['image', 'video', 'audio'] as const) {
-      const available = effectiveCatalog.models.filter(model => model.availability === 'available' && modelCategoryOf(model, capabilitySnapshot?.modelCategories) === category).map(model => ({ id: model.id, provider: model.provider, displayName: model.displayName }))
+      const listed = effectiveCatalog.models.filter(model => modelCategoryOf(model, capabilitySnapshot?.modelCategories) === category)
+      const available = listed.filter(model => model.availability === 'available').map(candidate)
       if (mediaDefaultsInitialized.current.has(category) || mediaDefaultsPending.current.has(category)) continue
       const retryAt = mediaDefaultRetryAfter.get(category)
       if (retryAt !== undefined) {
@@ -3446,8 +3984,14 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
       // migrated across a provider-prefix change, or retired. The previous
       // inline branch handled only the first two, so a model withdrawn from the
       // live directory stayed in the settings document forever and every
-      // generation kept failing against a route that no longer existed.
-      const decision = decideMediaDefault(defaults[category], available)
+      // generation kept failing against a route that no longer existed. A model
+      // that is merely unusable *right now* keeps its value — see
+      // `decideMediaDefault`.
+      // The stored value is compared without its group pin: a row the user
+      // picked from a named group persists as `id@group:N` while the catalog
+      // lists the bare id, and reading that as "not listed" replaced a choice
+      // the user made from a group with an automatic pick from another one.
+      const decision = decideMediaDefault(displayModelSelection(defaults[category]), available, listed.map(candidate))
       if (decision.action === 'keep') {
         mediaDefaultsInitialized.current.add(category)
         continue
@@ -3463,7 +4007,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         else mediaDefaultRetryAfter.set(category, Date.now() + MEDIA_DEFAULT_RETRY_AFTER_MS)
       }, () => { mediaDefaultRetryAfter.set(category, Date.now() + MEDIA_DEFAULT_RETRY_AFTER_MS) }).finally(() => { mediaDefaultsPending.current.delete(category) })
     }
-  }, [state, nativeModels, effectiveCatalog, capabilitiesLoaded, mediaDefaultsLoaded, capabilitySnapshot?.modelCategories, setDefaultModel])
+  }, [state, nativeModels, effectiveCatalog, capabilitiesLoaded, mediaDefaultsSource, capabilitySnapshot?.modelCategories, setDefaultModel])
   const chooseEngine = (engine: 'deepseek' | 'codex' | 'claude'): void => {
     if (setDefaultEngine === undefined || state.status !== 'ready') return
     void setDefaultEngine(engine).then((result) => {
@@ -3641,6 +4185,11 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
     return () => { active = false }
   }, [capabilities, readLocalCapabilities, connectionEpoch])
   useEffect(() => {
+    // Read the picker's own directory first: it is the list these controls
+    // filter, and it exists whenever a session is bound.
+    if (pickerModelDirectory !== undefined) {
+      try { setPickerRows(pickerModelDirectory()) } catch { setPickerRows([]) }
+    }
     if (nativeModelCatalog === undefined) return
     let active = true
     try {
@@ -3652,7 +4201,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
       // make the entire FreeCodeGo settings page fail to render.
     }
     return () => { active = false }
-  }, [nativeModelCatalog, connectionEpoch, nativeModelSessionId, nativeCatalogEpoch])
+  }, [nativeModelCatalog, pickerModelDirectory, connectionEpoch, nativeModelSessionId, nativeCatalogEpoch])
   useEffect(() => {
     if (pluginUpdateStatus === undefined) return
     let active = true
@@ -3733,7 +4282,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
   }
   const submitLogin = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    void login(email, password, rememberLogin).then((result) => {
+    void login(email, password, rememberLogin, rememberPassword).then((result) => {
       if (!result.ok) {
         // A rejected credential may have changed, but a transient server
         // error must not erase the remembered email; the network-failure
@@ -3741,9 +4290,9 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         setState(failed(result.error.message)); return
       }
       try {
-        // The password is never persisted; the checkbox decides whether the
-        // issued session itself may survive restarts (uncheck = sign out on
-        // exit, which the Host coordinator implements at the token layer).
+        // Browser storage keeps the address and the session intent, never the
+        // password: the ticked box is what asks the Host to keep that, and this
+        // very call is where the credential file was written or erased.
         if (rememberLogin) globalThis.localStorage?.setItem('freecodego.login.remember', JSON.stringify({ email, keepSignedIn: true }))
         else globalThis.localStorage?.setItem('freecodego.login.remember', JSON.stringify({ email, keepSignedIn: false }))
       } catch (error) {
@@ -3912,7 +4461,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
     setCheckoutError(undefined)
     let paymentAmount: number
     try { paymentAmount = paymentAmountForCredit(plan.price, channel) } catch (error) {
-      setCheckoutError(describePaymentError(error instanceof Error ? error.message : String(error)))
+      setCheckoutError(describePaymentError(error instanceof Error ? error.message : String(error), language))
       return
     }
     checkoutLock.current = true
@@ -3929,7 +4478,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
     // balance-order path while `amount` carries the selected credit amount.
     void paymentCheckout(0, selectedPaymentType, returnUrl, paymentAmount).then((result) => {
       if (!result.ok) {
-        setCheckoutError(describePaymentError(result.error.message))
+        setCheckoutError(describePaymentError(result.error.message, language))
         // Both failures leave the account holding an order the click cannot
         // show: a rejected order because of the pending-order limit, and a
         // timed-out one because the reply that carried the order id never
@@ -3959,7 +4508,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
       })
       setState(previous => previous.status === 'ready' ? { ...previous, order: result.value } : previous)
     }, (error: unknown) => {
-      setCheckoutError(describePaymentError(error instanceof Error ? error.message : String(error)))
+      setCheckoutError(describePaymentError(error instanceof Error ? error.message : String(error), language))
     }).finally(() => {
       checkoutLock.current = false
       setCheckoutPending(false)
@@ -3973,7 +4522,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
   const cancelPendingOrder = (order: PaymentOrder): void => {
     if (paymentCancel === undefined || !canCancelPaymentOrder(order)) return
     void paymentCancel(order.orderId).then((result) => {
-      if (!result.ok) {  setState(previous => previous.status === 'ready' ? { ...previous, actionError: describePaymentError(result.error.message) } : previous); return }
+      if (!result.ok) {  setState(previous => previous.status === 'ready' ? { ...previous, actionError: describePaymentError(result.error.message, language) } : previous); return }
       setState((previous) => {
         if (previous.status !== 'ready') return previous
         const { actionError: _actionError, pendingOrders, ...rest } = previous
@@ -3982,14 +4531,14 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         const next = currentOrder === undefined ? rest : { ...rest, order: currentOrder }
         return remaining === undefined || remaining.length === 0 ? next : { ...next, pendingOrders: remaining }
       })
-    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: describePaymentError(error instanceof Error ? error.message : String(error)) } : previous) })
+    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: describePaymentError(error instanceof Error ? error.message : String(error), language) } : previous) })
   }
   const refreshOrder = (): void => {
     if (paymentOrder === undefined || state.status !== 'ready' || state.order === undefined) return
     void paymentOrder(state.order.orderId).then((result) => {
-      if (!result.ok) {  setState(failed(describePaymentError(result.error.message))); return }
+      if (!result.ok) {  setState(failed(describePaymentError(result.error.message, language))); return }
       setState(previous => previous.status === 'ready' ? { ...previous, order: result.value } : previous)
-    }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error)))) })
+    }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error), language))) })
   }
   /** Re-read one order for the payment dialog's poll; `undefined` means the read failed. */
   const loadDialogOrder = (orderId: string): Promise<PaymentDialogOrder | undefined> => {
@@ -4006,7 +4555,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
     const order = paymentDialog?.order
     if (order === undefined || paymentCancel === undefined) return
     void paymentCancel(order.orderId).then((result) => {
-      if (!result.ok) { setCheckoutError(describePaymentError(result.error.message)); return }
+      if (!result.ok) { setCheckoutError(describePaymentError(result.error.message, language)); return }
       setPaymentDialog(previous => previous === undefined ? previous : { ...previous, order: { ...previous.order, state: 'cancelled' } })
       setState((previous) => {
         if (previous.status !== 'ready') return previous
@@ -4017,21 +4566,21 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
           ...(previous.order === undefined ? {} : { order: { ...previous.order, state: 'cancelled' } }),
         }
       })
-    }, (error: unknown) => { setCheckoutError(describePaymentError(error instanceof Error ? error.message : String(error))) })
+    }, (error: unknown) => { setCheckoutError(describePaymentError(error instanceof Error ? error.message : String(error), language)) })
   }
   const verifyOrder = (): void => {
     if (paymentVerify === undefined || state.status !== 'ready' || state.order?.outTradeNo === undefined) return
-    void paymentVerify(state.order.outTradeNo).then((result) => { if (!result.ok) setState(failed(describePaymentError(result.error.message))); else setState(previous => previous.status === 'ready' ? { ...previous, order: result.value } : previous) }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error)))) })
+    void paymentVerify(state.order.outTradeNo).then((result) => { if (!result.ok) setState(failed(describePaymentError(result.error.message, language))); else setState(previous => previous.status === 'ready' ? { ...previous, order: result.value } : previous) }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error), language))) })
   }
   const cancelOrder = (): void => {
     if (paymentCancel === undefined || state.status !== 'ready' || state.order === undefined || !canCancelPaymentOrder(state.order)) return
-    void paymentCancel(state.order.orderId).then((result) => { if (!result.ok) setState(failed(describePaymentError(result.error.message))); else setState(previous => previous.status === 'ready' && previous.order !== undefined ? { ...previous, order: { ...previous.order, state: 'cancelled' } } : previous) }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error)))) })
+    void paymentCancel(state.order.orderId).then((result) => { if (!result.ok) setState(failed(describePaymentError(result.error.message, language))); else setState(previous => previous.status === 'ready' && previous.order !== undefined ? { ...previous, order: { ...previous.order, state: 'cancelled' } } : previous) }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error), language))) })
   }
   const emailReceipt = (): void => {
     if (paymentReceiptEmail === undefined || state.status !== 'ready' || state.order === undefined) return
     void paymentReceiptEmail(state.order.orderId).then((result) => {
-      if (!result.ok) {  setState(failed(describePaymentError(result.error.message))); return }
-    }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error)))) })
+      if (!result.ok) {  setState(failed(describePaymentError(result.error.message, language))); return }
+    }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error), language))) })
   }
   /**
    * Save an order's receipt without waiting on email delivery.
@@ -4044,14 +4593,34 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
   const downloadReceipt = (orderId: string): void => {
     if (paymentReceiptDocument === undefined) return
     void paymentReceiptDocument(orderId).then((result) => {
-      if (!result.ok) {  setState(failed(describePaymentError(result.error.message))); return }
+      if (!result.ok) {  setState(failed(describePaymentError(result.error.message, language))); return }
       saveReceiptDocument(result.value)
-    }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error)))) })
+    }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error), language))) })
+  }
+  /**
+   * Save Stripe's own receipt for an order.
+   *
+   * A separate read from `downloadReceipt` because these are two documents from
+   * two issuers, and the Host exposes the second only where the backend says
+   * Stripe holds one. The bytes are decoded the same way (base64), so the reason
+   * it cannot replace the first is provenance, not transport.
+   */
+  const downloadStripeReceipt = (orderId: string): void => {
+    if (paymentStripeReceiptDocument === undefined) return
+    void paymentStripeReceiptDocument(orderId).then((result) => {
+      if (!result.ok) {  setState(failed(describePaymentError(result.error.message, language))); return }
+      saveReceiptDocument(result.value)
+    }, (error: unknown) => { setState(failed(describePaymentError(error instanceof Error ? error.message : String(error), language))) })
   }
   /** The order card's own download button: same read, current order. */
   const downloadCurrentOrderReceipt = (): void => {
     if (state.status !== 'ready' || state.order === undefined) return
     downloadReceipt(state.order.orderId)
+  }
+  /** The card's Stripe download: the list row's read, for the order it shows. */
+  const downloadCurrentOrderStripeReceipt = (): void => {
+    if (state.status !== 'ready' || state.order === undefined) return
+    downloadStripeReceipt(state.order.orderId)
   }
   const submitLogout = (): void => {
     void logout().then((result) => {
@@ -4272,6 +4841,209 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
     if (workbuddyLogout === undefined) return
     void workbuddyLogout().then((result) => { if (!result.ok) setState(failed(describeWorkbuddyError(result.error.message))); else load(true) }, (error: unknown) => { setState(failed(describeWorkbuddyError(error instanceof Error ? error.message : String(error)))) })
   }
+
+  // Qoder mirrors the WorkBuddy browser flow: the Host mints a PKCE ticket,
+  // opens the Qoder login page, and the page polls until the token is issued.
+  const [qoderPanelOpen, setQoderPanelOpen] = useState(false)
+  const [qoderTicket, setQoderTicket] = useState<QoderBrowserLogin | undefined>(undefined)
+  const [qoderBusy, setQoderBusy] = useState(false)
+  useEffect(() => {
+    if (qoderTicket === undefined || qoderPollBrowserLogin === undefined) return
+    let cancelled = false
+    // One poll at a time. A ticket is exchanged once at the Host, and the page's
+    // 3-second timer used to stack a second call on top of an exchange that was
+    // still running (it reads the token, the identity, the plan, the vault, and
+    // the model directory, so seconds is normal). The Host now joins such a call
+    // instead of exchanging the spent nonce again; keeping one call in flight
+    // here is what makes that join the normal path rather than a rescue.
+    let inFlight = false
+    const poll = (): void => {
+      if (inFlight) return
+      if (Date.now() > qoderTicket.expiresAt) {
+        setQoderTicket(undefined)
+        setState(failed(language === 'zh' ? '授权已超时，请重新点击「使用 Qoder 账号登录」。' : 'Authorization timed out. Click Sign in again.'))
+        return
+      }
+      inFlight = true
+      void qoderPollBrowserLogin(qoderTicket.state).then((result) => {
+        inFlight = false
+        if (cancelled) return
+        if (!result.ok) {
+          setQoderTicket(undefined)
+          // The Host answers a finished sign-in with the account state, so this
+          // is a ticket it no longer holds (a restart, an expired window). Say
+          // so — the page owes the user a reason, not a silent signed-out card.
+          setState(failed(describeQoderError(result.error.message)))
+          return
+        }
+        if (result.value.pending) return
+        setQoderTicket(undefined)
+        load(true)
+      }, (error: unknown) => {
+        inFlight = false
+        if (cancelled) return
+        setQoderTicket(undefined)
+        setState(failed(describeQoderError(error instanceof Error ? error.message : String(error))))
+      })
+    }
+    const timer = globalThis.setInterval(poll, 3_000)
+    return () => { cancelled = true; globalThis.clearInterval(timer) }
+  }, [qoderTicket, qoderPollBrowserLogin, language])
+  const startQoderLogin = (): void => {
+    if (qoderStartBrowserLogin === undefined || qoderBusy) return
+    setQoderBusy(true)
+    void qoderStartBrowserLogin().then((result) => {
+      if (!result.ok) setState(failed(describeQoderError(result.error.message)))
+      else setQoderTicket(result.value)
+    }, (error: unknown) => { setState(failed(describeQoderError(error instanceof Error ? error.message : String(error)))) }).finally(() => { setQoderBusy(false) })
+  }
+  const runQoderAction = (action: (() => Promise<RemoteResult<QoderStatus>>) | undefined): void => {
+    if (action === undefined || qoderBusy) return
+    setQoderBusy(true)
+    void action().then((result) => {
+      if (!result.ok) setState(failed(describeQoderError(result.error.message)))
+      else load(true)
+    }, (error: unknown) => { setState(failed(describeQoderError(error instanceof Error ? error.message : String(error)))) }).finally(() => { setQoderBusy(false) })
+  }
+  const refreshQoderQuota = (): void => { runQoderAction(qoderRefreshQuota) }
+  const useQoderAccount = (accountId: string): void => {
+    if (qoderSetActiveAccount === undefined || qoderBusy) return
+    setQoderBusy(true)
+    void qoderSetActiveAccount(accountId).then((result) => {
+      if (!result.ok) setState(failed(describeQoderError(result.error.message)))
+      else load(true)
+    }, (error: unknown) => { setState(failed(describeQoderError(error instanceof Error ? error.message : String(error)))) }).finally(() => { setQoderBusy(false) })
+  }
+  const removeQoderAccount = (accountId: string): void => {
+    if (qoderRemoveAccount === undefined) return
+    void qoderRemoveAccount(accountId).then((result) => { if (!result.ok) setState(failed(describeQoderError(result.error.message))); else load(true) }, (error: unknown) => { setState(failed(describeQoderError(error instanceof Error ? error.message : String(error)))) })
+  }
+  const logoutQoder = (): void => {
+    if (qoderLogout === undefined) return
+    void qoderLogout().then((result) => { if (!result.ok) setState(failed(describeQoderError(result.error.message))); else load(true) }, (error: unknown) => { setState(failed(describeQoderError(error instanceof Error ? error.message : String(error)))) })
+  }
+
+  // How often the card asks whether the authorization landed. Short, because the
+  // answer changes exactly once, the exchange behind it is one round trip, and the
+  // user is looking at the card waiting for it.
+  const TRAE_LOGIN_POLL_MS = 1_500
+  // Trae signs in the same way Qoder does — a Host-owned PKCE round trip — but
+  // the loopback redirect is not guaranteed to reach this Host (a remote desktop,
+  // a firewall), so the card also accepts the callback the user pastes back.
+  const [traePanelOpen, setTraePanelOpen] = useState(false)
+  const [traeBusy, setTraeBusy] = useState(false)
+  const [traeCallback, setTraeCallback] = useState('')
+  const [traeModels, setTraeModels] = useState<readonly TraeModel[]>([])
+  const traeCatalogSignedIn = state.status === 'ready' && state.trae?.status === 'authenticated'
+  useEffect(() => {
+    if (!traeCatalogSignedIn || traeModels === undefined || loadTraeModels === undefined) return
+    let cancelled = false
+    // The directory is a convenience for the card's model tags; a failure leaves
+    // the account section intact rather than raising an alert over a decoration.
+    void loadTraeModels().then((result) => { if (!cancelled && result.ok) setTraeModels(result.value) }, () => {})
+    return () => { cancelled = true }
+  }, [traeCatalogSignedIn, loadTraeModels])
+  // The injected props are rebuilt on every render of this section, so the poll
+  // callback has to be read through a ref. Keyed on directly, it would make this
+  // effect tear its own timer down and re-arm it on every render — and the panel
+  // re-renders more often than the interval, so the timer never reached its first
+  // tick and an authorization that had already finished sat unclaimed until the
+  // user pasted the callback by hand.
+  const traePollRef = useRef(traePollBrowserLogin)
+  traePollRef.current = traePollBrowserLogin
+  useEffect(() => {
+    if (!traePending) return
+    let cancelled = false
+    let inFlight = false
+    const poll = (): void => {
+      const call = traePollRef.current
+      if (inFlight || call === undefined) return
+      inFlight = true
+      void call().then((result) => {
+        inFlight = false
+        if (cancelled) return
+        if (!result.ok) { setState(failed(describeTraeError(result.error.message))); return }
+        if (result.value.status !== 'login-pending') load(true)
+      }, (error: unknown) => {
+        inFlight = false
+        if (cancelled) return
+        setState(failed(describeTraeError(error instanceof Error ? error.message : String(error))))
+      })
+    }
+    // Once immediately: the Host completes the exchange the moment the redirect
+    // lands, so the first ask is usually already the answer, and making the card
+    // wait a whole interval for it is the dead time between authorizing and seeing
+    // the account. Then on the interval, for the slower paths (a browser that has
+    // not redirected yet, an exchange still in flight).
+    poll()
+    const timer = globalThis.setInterval(poll, TRAE_LOGIN_POLL_MS)
+    return () => { cancelled = true; globalThis.clearInterval(timer) }
+  }, [traePending, language])
+  const applyTraeStatus = (trae: TraeStatus): void => {
+    setState((previous) => previous.status === 'ready' ? { ...previous, trae } : previous)
+  }
+  const runTraeAction = (action: (() => Promise<RemoteResult<TraeStatus>>) | undefined): void => {
+    if (action === undefined || traeBusy) return
+    setTraeBusy(true)
+    void action().then((result) => {
+      if (!result.ok) { setState(failed(describeTraeError(result.error.message))); return }
+      // The answered status is the Host's own view, so it is painted as given.
+      // Refreshing instead of painting would round-trip a value the Host just
+      // handed back, and an in-flight authorization is the case that cannot
+      // tolerate it: the attempt lives in the Host, so a refresh racing it can
+      // put a stale snapshot where the pending banner belongs.
+      applyTraeStatus(result.value)
+      if (result.value.status !== 'login-pending') load(true)
+    }, (error: unknown) => { setState(failed(describeTraeError(error instanceof Error ? error.message : String(error)))) }).finally(() => { setTraeBusy(false) })
+  }
+  const startTraeLogin = (realm: 'cn' | 'sg'): void => {
+    if (traeStartBrowserLogin === undefined || traeBusy) return
+    setTraeBusy(true)
+    void traeStartBrowserLogin(realm).then((result) => {
+      if (!result.ok) setState(failed(describeTraeError(result.error.message)))
+      // Painting the answered status is what puts the card into `登录中` for the
+      // realm that was just authorized, without a second round trip.
+      else applyTraeStatus(result.value)
+    }, (error: unknown) => { setState(failed(describeTraeError(error instanceof Error ? error.message : String(error)))) }).finally(() => { setTraeBusy(false) })
+  }
+  const cancelTraeLogin = (): void => { runTraeAction(traeCancelBrowserLogin) }
+  const logoutTrae = (): void => { runTraeAction(traeLogout) }
+  const submitTraeCallback = (): void => {
+    if (traeSubmitCallback === undefined || traeBusy) return
+    setTraeBusy(true)
+    void traeSubmitCallback(traeCallback.trim()).then((result) => {
+      if (!result.ok) { setState(failed(describeTraeError(result.error.message))); return }
+      setTraeCallback('')
+      applyTraeStatus(result.value)
+      if (result.value.status !== 'login-pending') load(true)
+    }, (error: unknown) => { setState(failed(describeTraeError(error instanceof Error ? error.message : String(error)))) }).finally(() => { setTraeBusy(false) })
+  }
+
+  // A check-in is a run over the whole pool, not a property of one account: the
+  // gesture is "collect today's credits", and the report is what says which
+  // account could not. The last report is kept so its line survives a re-render.
+  const [qoderCheckinReport, setQoderCheckinReport] = useState<FreeCodeGoCheckinReport | undefined>(undefined)
+  const [traeCheckinReport, setTraeCheckinReport] = useState<FreeCodeGoCheckinReport | undefined>(undefined)
+  const [qoderCheckinBusy, setQoderCheckinBusy] = useState(false)
+  const [traeCheckinBusy, setTraeCheckinBusy] = useState(false)
+  const runCheckin = (
+    remote: (() => Promise<RemoteResult<FreeCodeGoCheckinReport>>) | undefined,
+    busy: boolean,
+    setReport: (report: FreeCodeGoCheckinReport) => void,
+    setBusy: (busy: boolean) => void,
+    describe: (detail: string) => string,
+  ): void => {
+    if (remote === undefined || busy) return
+    setBusy(true)
+    void remote().then((result) => {
+      // A refusal from the run as a whole (the pool missing, the vault gone) is an
+      // error; a refusal from one account is a line inside the report.
+      if (!result.ok) setState(failed(describe(result.error.message)))
+      else setReport(result.value)
+    }, (error: unknown) => { setState(failed(describe(error instanceof Error ? error.message : String(error)))) }).finally(() => { setBusy(false) })
+  }
+  const claimQoderCredits = (): void => { runCheckin(runQoderCheckin, qoderCheckinBusy, setQoderCheckinReport, setQoderCheckinBusy, describeQoderError) }
+  const claimTraeCredits = (): void => { runCheckin(runTraeCheckin, traeCheckinBusy, setTraeCheckinReport, setTraeCheckinBusy, describeTraeError) }
   return (
     <section className={css.root} aria-busy={state.syncStatus === 'refreshing'}>
       <header className={css.toolbar}>
@@ -4289,9 +5061,9 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
           <button className={`${css.pageTab} ${settingsPage === 'community' ? css.pageTabActive : ''}`} type="button" onClick={() => { setSettingsPage('community') }}>{language === 'zh' ? '社区精选' : 'Community'}</button>
           <button className={`${css.pageTab} ${settingsPage === 'settings' ? css.pageTabActive : ''}`} type="button" onClick={() => { setSettingsPage('settings') }}>{language === 'zh' ? '设置' : 'Settings'}</button>
         </nav>
-        {settingsPage === 'community' && capabilityMarketplace !== undefined && mcpPresetInstall !== undefined && skillPresetInstall !== undefined ? <CommunityPluginsPage communityCatalog={communityCatalog} communityCatalogIcons={communityCatalogIcons} communityEnvironment={communityEnvironment} communityInstalled={communityInstalled} communityInstall={communityInstall} communityUninstall={communityUninstall} capabilityMarketplace={capabilityMarketplace} mcpPresetInstall={mcpPresetInstall} skillPresetInstall={skillPresetInstall} language={language} /> : null}
+        {settingsPage === 'community' && capabilityMarketplace !== undefined && mcpPresetInstall !== undefined && skillPresetInstall !== undefined ? <CommunityPluginsPage communityCatalog={communityCatalog} communityCatalogIcons={communityCatalogIcons} communityEnvironment={communityEnvironment} communityInstalled={communityInstalled} communityInstall={communityInstall} communityUninstall={communityUninstall} capabilityMarketplace={capabilityMarketplace} mcpPresetInstall={mcpPresetInstall} skillPresetInstall={skillPresetInstall} skillPresetRemove={skillPresetRemove} skillPlacements={skillPlacements} skillPlacementPrefer={skillPlacementPrefer} language={language} /> : null}
         {settingsPage === 'settings' ? <ModelCategorySettingsPage models={nativeModels} categories={capabilitySnapshot?.modelCategories ?? {}} setCategory={modelCategorySet} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: message } : previous) }} /> : null}
-        {settingsPage === 'settings' ? <><PluginConflictProtection status={pluginConflictStatus} setEnabled={pluginConflictSetEnabled} /><HeadroomPanel status={headroomStatus} setEnabled={headroomSetEnabled} update={headroomUpdate} language={language} /><DeferredToolsPanel status={deferredToolsStatus} setEnabled={deferredToolsSetEnabled} language={language} /><TeamPanel status={teamStatus} language={language} /><GuardSettingsPanel status={guardSettingsStatus} update={guardSettingsUpdate} language={language} /><SandboxModePanel sessionId={currentSessionId?.()} status={sandboxModeStatus} setMode={sandboxModeSet} language={language} /><TrustPanel status={trustFolderStatus} grant={trustFolderGrant} revoke={trustFolderRevoke} projectConfig={projectConfigReport} language={language} /><AutomationSettingsPanel status={automationSettingsStatus} update={automationSettingsUpdate} language={language} /><PluginUpdateSettings status={pluginUpdateSnapshot} check={pluginUpdateCheck} setEnabled={pluginUpdateSetEnabled} install={pluginUpdateInstall} rollback={pluginUpdateRollback} language={language} /><CapabilitySettingsPage snapshot={capabilitySnapshot} setEnabled={capabilitiesSetEnabled} setLocalCapability={setLocalCapability} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? message === undefined ? previous : { ...previous, actionError: message } : previous) }} /><section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>Advisor</div><strong className={css.sectionName}>Advisor 监督</strong></div><span className={`${css.badge} ${advisorSnapshot?.enabled ? css.badgeLive : ''}`}>{advisorSnapshot?.enabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>仅在这里控制 Advisor 总开关。模型、审查模式和介入策略请从左侧 Advisor 页面配置。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用 Advisor</strong><small>开启后，Host 会在主 Agent 回合完成后执行独立复核。</small></span><input className={css.switch} aria-label="启用 Advisor" type="checkbox" checked={advisorSnapshot?.enabled === true} onChange={(event) => { toggleAdvisor(event.target.checked) }} disabled={advisorUpdate === undefined || advisorToggleBusy} /></label>{advisorSnapshot?.sideChannelWarnings?.map(warning => <div className={css.accountRow} key={warning}><div className={css.accountIdentity}><strong className={css.accountName}>{language === 'zh' ? '侧信道预算' : 'Side-channel budget'}</strong><small>{warning}</small></div></div>)}</div></section></> : null}
+        {settingsPage === 'settings' ? <><PluginConflictProtection status={pluginConflictStatus} setEnabled={pluginConflictSetEnabled} /><HeadroomPanel status={headroomStatus} setEnabled={headroomSetEnabled} update={headroomUpdate} language={language} /><DeferredToolsPanel status={deferredToolsStatus} setEnabled={deferredToolsSetEnabled} language={language} /><ReviewPanel sessionId={currentSessionId?.()} status={reviewStatus} start={reviewStart} update={reviewUpdate} language={language} /><GuardSettingsPanel status={guardSettingsStatus} update={guardSettingsUpdate} language={language} /><SandboxModePanel sessionId={currentSessionId?.()} status={sandboxModeStatus} setMode={sandboxModeSet} language={language} /><TrustPanel status={trustFolderStatus} grant={trustFolderGrant} revoke={trustFolderRevoke} projectConfig={projectConfigReport} language={language} /><AutomationSettingsPanel status={automationSettingsStatus} update={automationSettingsUpdate} language={language} /><PluginUpdateSettings status={pluginUpdateSnapshot} check={pluginUpdateCheck} setEnabled={pluginUpdateSetEnabled} install={pluginUpdateInstall} rollback={pluginUpdateRollback} language={language} /><CapabilitySettingsPage snapshot={capabilitySnapshot} setEnabled={capabilitiesSetEnabled} setLocalCapability={setLocalCapability} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? message === undefined ? previous : { ...previous, actionError: message } : previous) }} /><section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>Advisor</div><strong className={css.sectionName}>Advisor 监督</strong></div><span className={`${css.badge} ${advisorSnapshot?.enabled ? css.badgeLive : ''}`}>{advisorSnapshot?.enabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>仅在这里控制 Advisor 总开关。模型、审查模式和介入策略请从左侧 Advisor 页面配置。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用 Advisor</strong><small>开启后，Host 会在主 Agent 回合完成后执行独立复核。</small></span><input className={css.switch} aria-label="启用 Advisor" type="checkbox" checked={advisorSnapshot?.enabled === true} onChange={(event) => { toggleAdvisor(event.target.checked) }} disabled={advisorUpdate === undefined || advisorToggleBusy} /></label>{advisorSnapshot?.sideChannelWarnings?.map(warning => <div className={css.accountRow} key={warning}><div className={css.accountIdentity}><strong className={css.accountName}>{language === 'zh' ? '侧信道预算' : 'Side-channel budget'}</strong><small>{warning}</small></div></div>)}</div></section></> : null}
         {settingsPage === 'settings' ? <section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>ENGINEERING</div><strong className={css.sectionName}>工程增强包</strong></div><span className={`${css.badge} ${engineeringSnapshot?.engineeringEnabled ? css.badgeLive : ''}`}>{engineeringSnapshot?.engineeringEnabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>这里只控制总开关。开启后，工程 Skills、项目长期记忆和代码结构图会在左侧工程页面中管理。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用工程增强包</strong><small>开启后 AI 会持续理解当前项目，并在不同 Agent 之间共享上下文。</small></span><input className={css.switch} aria-label="启用工程增强包" type="checkbox" checked={engineeringSnapshot?.engineeringEnabled === true} onChange={(event) => { toggleEngineering(event.target.checked) }} disabled={engineeringSetEnabled === undefined || engineeringToggleBusy} /></label></div></section> : null}
         {settingsPage === 'overview' ? <section className={css.section}>
           <div className={css.sectionHeader}><div><div className={css.kicker}>{t('runtime')}</div><strong className={css.sectionName}>{t('modelRouting')}</strong></div><span className={`${css.badge} ${css.badgeLive}`}>{t('live')}</span></div>
@@ -4307,8 +5079,9 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
               <div className={css.pageTabs} role="tablist" aria-label={language === 'zh' ? '模型分类' : 'Model categories'}>
                 {(['text', 'image', 'video', 'audio'] as const).map(category => <button className={`${css.pageTab} ${modelCategory === category ? css.pageTabActive : ''}`} type="button" key={category} onClick={() => { setModelCategory(category) }}>{categoryLabel(category, language)}</button>)}
               </div>
-              <select className={css.select} value={resolveSelectedOptionValue(selectedCategoryModel, categoryProviderGroups)} onChange={(event) => { if (modelCategory === 'text') chooseModel(event.target.value); else void chooseMediaModel(modelCategory, event.target.value) }}>
+              <select className={css.select} value={categorySelection.value} onChange={(event) => { if (modelCategory === 'text') chooseModel(event.target.value); else void chooseMediaModel(modelCategory, event.target.value) }}>
                 {selectedCategoryModel === '' ? <option value="">{textModelEmptyLabel(modelCategory, language)}</option> : null}
+                {categorySelection.listed ? null : <option value={selectedCategoryModel}>{`${displayModelSelection(selectedCategoryModel)}${language === 'zh' ? '（当前不可用）' : ' (currently unavailable)'}`}</option>}
                 {categoryProviderGroups.map(([groupLabel, rows]) => <optgroup key={groupLabel} label={groupLabel}>{rows.map(row => <option key={row.key} value={modelRowSelectionValue(row)}>{[cleanModelDisplayName(row.model.displayName, visibleModelId(row.model.provider, row.model.id)), pickerRowRateLabel(row, language)].filter(Boolean).join(' ')}</option>)}</optgroup>)}
               </select>
               <div className={css.modelCategoryActions}>
@@ -4336,7 +5109,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         </section> : null}
         {settingsPage === 'providers' && vyceStatus !== undefined ? <ProviderCard
           language={language}
-          name="VyceAI"
+          name="VyceAI" visibility={providerVisibility('vyce')}
           title={language === 'zh' ? '每日签到免费额度 · 推荐' : 'Daily check-in credit · Recommended'}
           icon={<ProviderGlyph kind="vyce" />}
           status={{ label: state.vyce?.configured ? (language === 'zh' ? '已配置' : 'Configured') : (language === 'zh' ? '未配置' : 'Not configured'), tone: state.vyce?.configured ? 'live' : 'idle' }}
@@ -4355,7 +5128,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         </ProviderCard> : null}
         {settingsPage === 'providers' && logfareStatus !== undefined && state.logfareSupported !== false ? <ProviderCard
           language={language}
-          name="logfare"
+          name="logfare" visibility={providerVisibility('logfare')}
           title={language === 'zh' ? '免费基础与高级模型' : 'Free standard and premium models'}
           icon={<ProviderGlyph kind="logfare" />}
           status={{
@@ -4385,7 +5158,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         /> : null}
         {settingsPage === 'providers' && sensenovaStatus !== undefined ? <ProviderCard
           language={language}
-          name="SenseNova"
+          name="SenseNova" visibility={providerVisibility('sensenova')}
           title={language === 'zh' ? '公测免费模型' : 'Public beta free models'}
           icon={<ProviderGlyph kind="sensenova" />}
           status={{ label: state.sensenova?.configured ? (language === 'zh' ? '已配置' : 'Configured') : (language === 'zh' ? '未配置' : 'Not configured'), tone: state.sensenova?.configured ? 'live' : 'idle' }}
@@ -4403,7 +5176,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         </ProviderCard> : null}
         {settingsPage === 'providers' && nvidiaStatus !== undefined ? <ProviderCard
           language={language}
-          name="NVIDIA NIM"
+          name="NVIDIA NIM" visibility={providerVisibility('nvidia')}
           title={language === 'zh' ? '高级免费模型' : 'Free premium models'}
           icon={<ProviderGlyph kind="nvidia" />}
           status={{ label: state.nvidia?.configured ? (language === 'zh' ? '已配置' : 'Configured') : (language === 'zh' ? '未配置' : 'Not configured'), tone: state.nvidia?.configured ? 'live' : 'idle' }}
@@ -4421,7 +5194,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         </ProviderCard> : null}
         {settingsPage === 'providers' && agnesStatus !== undefined ? <ProviderCard
           language={language}
-          name="Agnes AI"
+          name="Agnes AI" visibility={providerVisibility('agnes')}
           title={language === 'zh' ? '文本模型与账号' : 'Text models and accounts'}
           icon={<ProviderGlyph kind="agnes" />}
           status={{ label: state.agnes?.status === 'authenticated' ? (language === 'zh' ? '已登录' : 'Signed in') : (language === 'zh' ? '未登录' : 'Signed out'), tone: state.agnes?.status === 'authenticated' ? 'live' : 'idle' }}
@@ -4444,7 +5217,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         </ProviderCard> : null}
         {settingsPage === 'providers' && clineStatus !== undefined ? <ProviderCard
           language={language}
-          name="Cline"
+          name="Cline" visibility={providerVisibility('cline')}
           title={language === 'zh' ? '官方免费模型与多账号轮询' : 'Official free models with account rotation'}
           icon={<ProviderGlyph kind="cline" />}
           status={{ label: state.cline?.status === 'authenticated' ? (language === 'zh' ? '已登录' : 'Signed in') : (language === 'zh' ? '未登录' : 'Signed out'), tone: state.cline?.status === 'authenticated' ? 'live' : 'idle' }}
@@ -4503,7 +5276,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
         </ProviderCard> : null}
         {settingsPage === 'providers' && workbuddyStatus !== undefined ? <ProviderCard
           language={language}
-          name="WorkBuddy"
+          name="WorkBuddy" visibility={providerVisibility('workbuddy')}
           title={language === 'zh' ? 'WorkBuddy 国际版免费模型与多账号' : 'WorkBuddy International free models with accounts'}
           icon={<ProviderGlyph kind="workbuddy" />}
           status={{ label: workbuddyAuthenticated ? (language === 'zh' ? '已登录' : 'Signed in') : (language === 'zh' ? '未登录' : 'Signed out'), tone: workbuddyAuthenticated ? 'live' : 'idle' }}
@@ -4574,11 +5347,146 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
             </div>
           </div> : null}
         </ProviderCard> : null}
+        {settingsPage === 'providers' && qoderStatus !== undefined ? <ProviderCard
+          language={language}
+          name="Qoder" visibility={providerVisibility('qoder')}
+          title={language === 'zh' ? 'Qoder 免费模型与账号额度' : 'Qoder free model with account quota'}
+          icon={<ProviderGlyph kind="qoder" />}
+          status={{ label: qoderAuthenticated ? (language === 'zh' ? '已登录' : 'Signed in') : (language === 'zh' ? '未登录' : 'Signed out'), tone: qoderAuthenticated ? 'live' : 'idle' }}
+          summary={qoderAuthenticated
+            ? [language === 'zh'
+              ? `已登录 ${qoderAccounts.length} 个账号 · ${qoderModelNames.length} 个免费模型`
+              : `${qoderAccounts.length} accounts · ${qoderModelNames.length} free models`,
+            qoderAccounts[0]?.quota === undefined ? undefined : qoderQuotaLine(qoderAccounts[0].quota)]
+              .filter((part): part is string => part !== undefined)
+              .join(' · ')
+            : undefined}
+          models={qoderModelNames}
+          description={qoderAuthenticated
+            ? language === 'zh' ? '凭证仅保存在 Harness Host；只展示免费的 Qwen 3.8 Flash 模型，额度按账号单独计算。' : 'Credentials stay in the Harness Host. Only the free Qwen 3.8 Flash route is shown, and quota is tracked per account.'
+            : language === 'zh' ? '使用 Qoder 账号登录，即可调用其免费模型（Qwen 3.8 Flash）。' : 'Sign in with a Qoder account to use its free model (Qwen 3.8 Flash).'}
+          actions={<>
+            {qoderTicket === undefined ? <button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={startQoderLogin} disabled={qoderBusy}>{qoderBusy ? (language === 'zh' ? '正在打开浏览器…' : 'Opening browser…') : (language === 'zh' ? '使用 Qoder 账号登录' : 'Sign in with Qoder')}</button> : null}
+            {qoderAuthenticated && runQoderCheckin !== undefined ? <button className={css.button} type="button" onClick={claimQoderCredits} disabled={qoderCheckinBusy}>{qoderCheckinBusy ? (language === 'zh' ? '签到中…' : 'Checking in…') : (language === 'zh' ? '签到领积分' : 'Claim daily credits')}</button> : null}
+            {qoderAuthenticated ? <button className={css.button} type="button" onClick={() => { setQoderPanelOpen(open => !open) }} aria-expanded={qoderPanelOpen}>{language === 'zh' ? `账号管理（${qoderAccounts.length}）` : `Manage accounts (${qoderAccounts.length})`}</button> : null}
+            {qoderAuthenticated ? <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={logoutQoder}>{language === 'zh' ? '退出全部' : 'Sign out all'}</button> : null}
+          </>}
+        >
+          {qoderCheckinReport === undefined ? null : <div className={css.poolToolbarNote} role="status">{checkinSummary(qoderCheckinReport, language)}</div>}
+          {qoderTicket !== undefined ? <div className={css.authForm}>
+            <small className={`${css.sectionMeta} ${css.authFull}`}>{qoderTicket.note === 'BROWSER_OPEN_FAILED'
+              ? language === 'zh' ? '未能自动打开浏览器，请手动点击下方链接完成 Qoder 登录；本页会自动检测并添加账号：' : 'The browser could not be opened automatically. Use the link below to sign in to Qoder; this page detects the account and adds it automatically:'
+              : language === 'zh' ? '已打开浏览器授权页面，请登录 Qoder 账号；登录完成后本页会自动检测并添加账号：' : 'Your browser opened the authorization page. Sign in to your Qoder account; this page detects it and adds the account automatically.'}</small>
+            <a className={css.button} href={safeAuthorizationUrl(qoderTicket.loginUrl)} target="_blank" rel="noopener noreferrer">{language === 'zh' ? '打开授权页面' : 'Open authorization page'}</a>
+            <button className={css.button} type="button" onClick={() => { setQoderTicket(undefined) }}>{language === 'zh' ? '取消' : 'Cancel'}</button>
+          </div> : null}
+          {qoderPanelOpen ? <div className={css.poolManager}>
+            <div className={css.poolToolbar}>
+              <small className={css.poolToolbarNote}>{language === 'zh' ? `已登录 ${qoderAccounts.length} 个账号 · 额度手动刷新` : `${qoderAccounts.length} accounts · refresh quota manually`}</small>
+              <div className={css.poolToolbarActions}>
+                <button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={refreshQoderQuota} disabled={qoderBusy || qoderRefreshQuota === undefined}>{language === 'zh' ? '刷新额度' : 'Refresh quota'}</button>
+              </div>
+            </div>
+            {qoderAuthenticated ? <div className={css.poolList}>{qoderAccounts.map((account) => {
+              const label = account.name ?? account.email ?? account.id
+              const active = state.qoder?.activeAccountId === account.id
+              const regionChip = { label: account.region === 'cn' ? (language === 'zh' ? '国内版' : 'China') : (language === 'zh' ? '国际版' : 'Global'), tone: 'idle' as const }
+              return <PoolAccountCard
+                key={account.id}
+                monogram={poolMonogram(label)}
+                name={label}
+                note={account.quota === undefined ? (language === 'zh' ? '暂无额度数据' : 'No quota data') : qoderQuotaLine(account.quota)}
+                chips={active ? [{ label: language === 'zh' ? '当前使用' : 'in use', tone: 'live' as const }, regionChip] : [regionChip]}
+              >
+                {active || qoderSetActiveAccount === undefined ? null : <button className={css.button} type="button" onClick={() => { useQoderAccount(account.id) }} disabled={qoderBusy}>{language === 'zh' ? '设为当前' : 'Use this account'}</button>}
+                <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={() => { removeQoderAccount(account.id) }}>{language === 'zh' ? '移除' : 'Remove'}</button>
+              </PoolAccountCard>
+            })}</div> : null}
+          </div> : null}
+        </ProviderCard> : null}
+        {settingsPage === 'providers' && traeStatus !== undefined ? <ProviderCard
+          language={language}
+          name="Trae" visibility={providerVisibility('trae')}
+          title={language === 'zh' ? 'Trae 账号与模型' : 'Trae account and models'}
+          icon={<ProviderGlyph kind="trae" />}
+          status={{
+            label: traePending ? (language === 'zh' ? '授权中' : 'Authorizing') : traeAuthenticated ? (language === 'zh' ? '已登录' : 'Signed in') : (language === 'zh' ? '未登录' : 'Signed out'),
+            tone: traePending ? 'warn' : traeAuthenticated ? 'live' : 'idle' }}
+          summary={traeAuthenticated
+            ? [language === 'zh'
+              // Both realms are named once the pool holds one of each: "3 accounts"
+              // on a mixed pool hides the fact that a model belongs to only one of
+              // them, which is the thing the user has to know to pick a model.
+              ? (traeCnCount > 0 && traeGlobalCount > 0
+                ? `已登录 ${traeAccounts.length} 个账号（国内 ${traeCnCount} · 国际 ${traeGlobalCount}）`
+                : `已登录 ${traeAccounts.length} 个账号`)
+              : `${traeAccounts.length} accounts`,
+            traeModels.length === 0 ? undefined : language === 'zh' ? `${traeModels.length} 个可用模型` : `${traeModels.length} models`]
+              .filter((part): part is string => part !== undefined)
+              .join(' · ')
+            : undefined}
+          models={traeModels.map(model => model.name)}
+          description={traeAuthenticated
+            ? language === 'zh' ? '凭证仅保存在 Harness Host，转换为 Harness 可直接调用的 API；会话过期时重新登录即可。' : 'Credentials stay in the Harness Host and are exposed as an API the Harness can call directly. Sign in again when a session expires.'
+            : language === 'zh' ? '使用 Trae 账号登录，即可在 Harness 中调用 Trae 模型。' : 'Sign in with a Trae account to call Trae models from the Harness.'}
+          actions={<>
+            {traePending ? null : <button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={() => { startTraeLogin('cn') }} disabled={traeBusy || traeStartBrowserLogin === undefined}>{traeBusy ? (language === 'zh' ? '正在打开浏览器…' : 'Opening browser…') : (language === 'zh' ? '登录国内版账号' : 'Sign in (China)')}</button>}
+            {traePending ? null : <button className={css.button} type="button" onClick={() => { startTraeLogin('sg') }} disabled={traeBusy || traeStartBrowserLogin === undefined}>{language === 'zh' ? '登录国际版账号' : 'Sign in (Global)'}</button>}
+            {traePending ? <button className={css.button} type="button" onClick={cancelTraeLogin} disabled={traeBusy}>{language === 'zh' ? '取消授权' : 'Cancel'}</button> : null}
+            {traeAuthenticated && runTraeCheckin !== undefined ? <button className={css.button} type="button" onClick={claimTraeCredits} disabled={traeCheckinBusy}>{traeCheckinBusy ? (language === 'zh' ? '签到中…' : 'Checking in…') : (language === 'zh' ? '签到领积分' : 'Claim daily credits')}</button> : null}
+            {traeAuthenticated ? <button className={css.button} type="button" onClick={() => { setTraePanelOpen(open => !open) }} aria-expanded={traePanelOpen}>{language === 'zh' ? `账号管理（${traeAccounts.length}）` : `Manage accounts (${traeAccounts.length})`}</button> : null}
+            {traeAuthenticated ? <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={logoutTrae}>{language === 'zh' ? '退出全部' : 'Sign out all'}</button> : null}
+          </>}
+        >
+          {traeCheckinReport === undefined ? null : <div className={css.poolToolbarNote} role="status">{checkinSummary(traeCheckinReport, language)}</div>}
+          {traePending ? <div className={css.authForm}>
+            <small className={`${css.sectionMeta} ${css.authFull}`}>{traeLoginPending?.note === 'BROWSER_OPEN_FAILED'
+              ? language === 'zh' ? `未能自动打开浏览器，请手动打开授权页面完成${traeRealmName(traeLoginPending.realm, language)} Trae 登录。` : `The browser could not be opened automatically. Open the authorization page yourself to sign in to ${traeRealmName(traeLoginPending.realm, language)} Trae.`
+              : language === 'zh' ? `已打开浏览器授权页面，请登录${traeRealmName(traeLoginPending.realm, language)} Trae 账号；登录完成后本页会自动检测并添加账号。` : `Your browser opened the authorization page. Sign in to ${traeRealmName(traeLoginPending.realm, language)} Trae; this page detects the account and adds it automatically.`}</small>
+            {traeLoginPending?.loginUrl === undefined ? null : <a className={css.button} href={safeAuthorizationUrl(traeLoginPending.loginUrl)} target="_blank" rel="noopener noreferrer">{language === 'zh' ? '打开授权页面' : 'Open authorization page'}</a>}
+            <label className={`${css.selectCell} ${css.authFull}`}>
+              <small className={css.cellLabel}>{language === 'zh' ? '若浏览器没有自动跳回本机，请把登录后最终跳转的地址粘贴到这里（回调链接也可以）' : 'If the browser does not return to this machine, paste the final address it landed on (a callback URL works too)'}</small>
+              <input className={css.input} value={traeCallback} onChange={(event) => { setTraeCallback(event.target.value) }} placeholder="http://127.0.0.1:port/callback?code=…" aria-label={language === 'zh' ? 'Trae 回调链接' : 'Trae callback URL'} spellCheck={false} />
+            </label>
+            <button className={css.button} type="button" onClick={submitTraeCallback} disabled={traeBusy || traeCallback.trim() === ''}>{language === 'zh' ? '提交回调链接' : 'Submit callback URL'}</button>
+          </div> : null}
+          {traePanelOpen ? <div className={css.poolManager}>
+            <div className={css.poolToolbar}>
+              <small className={css.poolToolbarNote}>{language === 'zh' ? `已登录 ${traeAccounts.length} 个账号 · 应用内选择当前使用账号` : `${traeAccounts.length} accounts · choose the account in use here`}</small>
+            </div>
+            {traeAuthenticated ? <div className={css.poolList}>{traeAccounts.map((account) => {
+              const active = state.trae?.status === 'authenticated' && state.trae.accountId === account.id
+              const needsLogin = account.status === 'reauth-required'
+              const expiry = account.expiresAt === undefined ? undefined : `${language === 'zh' ? '有效期至' : 'Expires'} ${new Date(account.expiresAt).toISOString().slice(0, 10)}`
+              return <PoolAccountCard
+                key={account.id}
+                monogram={poolMonogram(account.label)}
+                name={account.label}
+                note={needsLogin
+                  ? language === 'zh' ? '会话已过期，请重新登录' : 'Session expired — sign in again'
+                  : expiry ?? (language === 'zh' ? '会话有效' : 'Session active')}
+                chips={[
+                  { label: traeRealmName(account.realm, language), tone: 'idle' as const },
+                  ...(active ? [{ label: language === 'zh' ? '当前使用' : 'in use', tone: 'live' as const }] : []),
+                  ...(needsLogin ? [{ label: language === 'zh' ? '需重新登录' : 'reauth', tone: 'warn' as const }] : []),
+                ]}
+              >
+                {active || traeSetActiveAccount === undefined || needsLogin ? null : <button className={css.button} type="button" onClick={() => { runTraeAction(() => traeSetActiveAccount(account.id)) }} disabled={traeBusy}>{language === 'zh' ? '设为当前' : 'Use this account'}</button>}
+                <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={() => { if (traeRemoveAccount !== undefined) runTraeAction(() => traeRemoveAccount(account.id)) }}>{language === 'zh' ? '移除' : 'Remove'}</button>
+              </PoolAccountCard>
+            })}</div> : null}
+          </div> : null}
+        </ProviderCard> : null}
         {settingsPage === 'overview' ? <section className={css.section}>
-          <div className={css.sectionHeader}><div><div className={css.kicker}>{t('account')}</div><strong className={css.sectionName}>{state.account.status === 'authenticated' ? t('connectedAccount') : t('notSignedIn')}</strong></div><span className={`${css.badge} ${state.account.status === 'authenticated' ? css.badgeLive : ''}`}>{state.account.status === 'authenticated' ? t('live') : t('signedOut')}</span></div>
+          <div className={css.sectionHeader}><div><div className={css.kicker}>{t('account')}</div><strong className={css.sectionName}>{state.account.status === 'loading' ? (language === 'zh' ? '正在读取账户状态' : 'Reading account state') : state.account.status === 'authenticated' ? t('connectedAccount') : t('notSignedIn')}</strong></div><span className={`${css.badge} ${state.account.status === 'authenticated' ? css.badgeLive : ''}`}>{state.account.status === 'loading' ? (language === 'zh' ? '读取中' : 'Reading') : state.account.status === 'authenticated' ? t('live') : t('signedOut')}</span></div>
           {state.account.status === 'backend-not-configured' ? <small className={css.sectionMeta}>{t('backendNotConfigured')}</small> : null}
-          {state.account.status === 'restoring' ? <div className={css.infoCell}><strong>正在恢复本机登录</strong><small>已找到加密保存的会话凭证，正在后台恢复账户信息。网络恢复后会自动完成，不需要重新输入密码。</small></div> : null}
-          {state.account.status === 'authenticated' ? <><div className={css.accountRow}><div className={css.accountIdentityWithAvatar}><AccountAvatar email={state.account.user?.email ?? ''} {...state.account.user?.avatarUrl === undefined ? {} : { avatarUrl: state.account.user.avatarUrl }} language={language} /><div className={css.accountText}><strong className={css.accountName}>{state.account.user?.email}</strong><small className={css.accountEmail}>{accountProviderLabel(state.account.user?.email ?? '', language)}</small></div></div><div className={css.accountActions}><span className={css.balance}><small className={css.balanceLabel}>{t('balance')}</small>{formatMoney(state.account.user?.balance, 'USD')}</span><button className={css.button} type="button" onClick={submitLogout}>{t('logout')}</button></div></div>{accountDetail === undefined ? null : <details className={css.advisorManual}><summary>{language === 'zh' ? '账户数据诊断' : 'Account data diagnostics'}</summary><small>{language === 'zh' ? '读取后端返回的原始账户快照；当这里的余额/套餐与网页端不一致时用它对照。' : 'Reads the raw account snapshot the backend returns, for when the balance or plan here disagrees with the website.'}</small><div className={css.accountActions}><button className={css.button} type="button" onClick={showDiagnostics} disabled={diagnosticsBusy}>{diagnosticsBusy ? (language === 'zh' ? '读取中…' : 'Reading…') : (language === 'zh' ? '读取原始数据' : 'Read raw data')}</button></div>{diagnostics === undefined ? null : <pre className={css.diagnosticsDump}>{JSON.stringify(diagnostics, null, 2)}</pre>}</details>}<DeviceSessionManager {...deviceSessions === undefined ? {} : { load: deviceSessions }} {...revokeDeviceSession === undefined ? {} : { revoke: revokeDeviceSession }} {...revokeAllSessions === undefined ? {} : { revokeAll: revokeAllSessions }} language={language} /></> : state.account.status === 'restoring' ? null :          <div className={css.authLayout}>
+          {state.account.status === 'restoring' || state.account.status === 'loading' ? <div className={css.infoCell}><strong>{state.account.status === 'loading' ? '正在读取账户状态' : '正在恢复本机登录'}</strong><small>{state.account.status === 'loading' ? 'Host 正在读取本机保存的登录凭证与账户信息；读取完成后这里会直接显示账号，不需要重新输入密码。' : '已找到本机保存的会话凭证，正在后台恢复账户信息。网络恢复后会自动完成，不需要重新输入密码。'}</small></div> : null}
+          {state.account.status === 'authenticated' ? <><div className={css.accountRow}><div className={css.accountIdentityWithAvatar}><AccountAvatar email={state.account.user?.email ?? ''} {...state.account.user?.avatarUrl === undefined ? {} : { avatarUrl: state.account.user.avatarUrl }} language={language} /><div className={css.accountText}><strong className={css.accountName}>{state.account.user?.email}</strong><small className={css.accountEmail}>{accountProviderLabel(state.account.user?.email ?? '', language)}</small></div></div><div className={css.accountActions}><span className={css.balance}><small className={css.balanceLabel}>{t('balance')}</small>{formatMoney(state.account.user?.balance, 'USD')}</span><button className={css.button} type="button" onClick={submitLogout}>{t('logout')}</button></div></div><DeviceSessionManager {...deviceSessions === undefined ? {} : { load: deviceSessions }} {...revokeDeviceSession === undefined ? {} : { revoke: revokeDeviceSession }} {...revokeAllSessions === undefined ? {} : { revokeAll: revokeAllSessions }} language={language} {...accountDetail === undefined ? {} : { extraActions: <>
+            {/* Beside the raw-account read, and named for what it produces: this
+                downloads documents, where that button dumps the account payload. */}
+            {paymentOrders === undefined || paymentReceiptDocument === undefined ? null : <button className={css.button} type="button" aria-expanded={receiptsOpen} onClick={() => { setReceiptsOpen(previous => !previous) }}>{receiptsOpen ? (language === 'zh' ? '收起收据' : 'Hide receipts') : (language === 'zh' ? '下载收据' : 'Download receipts')}</button>}
+            <button className={css.button} type="button" onClick={showDiagnostics} disabled={diagnosticsBusy}>{diagnosticsBusy ? (language === 'zh' ? '读取中…' : 'Reading…') : (language === 'zh' ? '读取原始数据' : 'Read raw data')}</button>
+          </> }} />{receiptsOpen && paymentOrders !== undefined && paymentReceiptDocument !== undefined ? <PaymentReceiptManager orders={paymentOrders} receiptDocument={paymentReceiptDocument} {...paymentStripeReceiptDocument === undefined ? {} : { stripeReceiptDocument: paymentStripeReceiptDocument }} language={language} /> : null}{diagnostics === undefined ? null : <pre className={css.diagnosticsDump}>{JSON.stringify(diagnostics, null, 2)}</pre>}</> : state.account.status === 'restoring' || state.account.status === 'loading' ? null :          <div className={css.authLayout}>
             {/* One card across the whole row. A second column of marketing copy used
               to sit beside the form; it left the sign-in half empty on wide panels
               and said nothing the form itself does not. The card now fills the
@@ -4633,19 +5541,32 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
                 <small className={`${css.authNote} ${css.authFull}`}>{language === 'zh' ? '注册成功后本机自动登录，免费账号即可调度全部免费模型。' : 'A free account signs in automatically and can run every free model.'}</small>
               </form> : <form className={css.authForm} onSubmit={submitLogin}>
                 <input className={css.input} type="email" required value={email} onChange={(event) => { setEmail(event.target.value) }} placeholder={t('email')} autoComplete="email" />
-                <input className={css.input} type="password" required value={password} onChange={(event) => { setPassword(event.target.value) }} placeholder={t('password')} autoComplete="current-password" />
-                <label className={`${css.remember} ${css.authFull}`}><input type="checkbox" checked={rememberLogin} onChange={(event) => { setRememberLogin(event.target.checked) }} />{t('rememberLogin')}</label>
+                {/* The wrapper is the grid item, so the reveal control lives inside
+                    the field instead of adding a third column to the row. */}
+                <div className={css.passwordField}>
+                  <input className={css.input} type={passwordVisible ? 'text' : 'password'} required value={password} onChange={(event) => { setPassword(event.target.value) }} placeholder={t('password')} autoComplete="current-password" />
+                  <button className={css.passwordToggle} type="button" aria-pressed={passwordVisible} aria-label={language === 'zh' ? (passwordVisible ? '隐藏密码' : '显示密码') : (passwordVisible ? 'Hide password' : 'Show password')} onClick={() => { setPasswordVisible(visible => !visible) }}>{language === 'zh' ? (passwordVisible ? '隐藏' : '显示') : (passwordVisible ? 'Hide' : 'Show')}</button>
+                </div>
+                <div className={`${css.rememberRow} ${css.authFull}`}>
+                  <label className={css.remember}><input type="checkbox" checked={rememberLogin} onChange={(event) => { setRememberLogin(event.target.checked) }} />{t('rememberLogin')}</label>
+                  <label className={css.remember}><input type="checkbox" checked={rememberPassword} onChange={(event) => { setRememberPassword(event.target.checked) }} />{language === 'zh' ? '记住密码（下次自动填写）' : 'Remember the password (fill it in next time)'}</label>
+                </div>
                 <button className={`${css.authSubmit} ${css.authFull}`} type="submit">{t('login')}</button>
-                <small className={`${css.authNote} ${css.authFull}`}>{language === 'zh' ? '勾选后登录会话保存在本机，重启后自动恢复；取消勾选则退出程序即登出。密码不会被保存。' : 'When checked, the session is stored on this machine and restored after a restart. Unchecked, closing the app signs you out. The password is never stored.'}</small>
+                <small className={`${css.authNote} ${css.authFull}`}>{language === 'zh' ? '勾选「保持登录状态」：登录会话保存在本机，重启后自动恢复；取消则退出程序即登出。勾选「记住密码」：密码存进本机凭据文件（仅当前系统用户可读，不加密），下次自动填写；取消勾选并登录、或退出登录，都会删掉它。' : 'Checked "Keep me signed in" stores the session on this machine and restores it after a restart; unchecked, closing the app signs you out. Checked "Remember the password" stores the password in the local credential file (readable by the current OS user only, not encrypted) and fills it in next time; signing in with it unchecked, or signing out, deletes it.'}</small>
               </form>}
             </div>
           </div>}
         </section> : null}
         {settingsPage === 'overview' ? <section className={css.section}>
-          <div className={css.sectionHeader}><div><div className={css.kicker}>{t('plans')}</div><strong className={css.sectionName}>{t('subscriptionTitle')}</strong></div><span className={css.sectionMeta}>{state.account.user === undefined ? t('backendRequired') : `${t('balance')}: ${formatMoney(state.account.user.balance, 'USD')}`}</span></div>
-          <div className={css.paymentBar}><div><strong className={css.paymentHeading}>{language === 'zh' ? '充值额度' : 'Add credit'}</strong><small className={css.sectionMeta}>{language === 'zh' ? '额度长期有效，按实际使用量扣除。' : 'Credit stays valid and is charged by actual usage.'}</small></div>{state.channels.length > 0 ? <label className={css.paymentMethod}><span>{t('paymentMethod')}</span><select className={css.select} value={selectedPaymentType} onChange={(event) => { setPaymentType(event.target.value) }}>{state.channels.map(channel => <option key={channel.paymentType} value={channel.paymentType}>{paymentChannelLabel(channel.paymentType, language)}{channel.currency === undefined ? '' : ` (${channel.currency})`}</option>)}</select><small>{selectedChannelDescription(state.channels.find(channel => channel.paymentType === selectedPaymentType), language, state.paymentConfig)}</small>{isCardChannel(selectedPaymentType) ? <div className={css.paymentMethods} aria-label={language === 'zh' ? '该支付方式支持' : 'Accepted by this method'}>{CARD_CHANNEL_METHODS.map(method => <span className={css.paymentMethodChip} key={method}>{method}</span>)}</div> : null}</label> : null}</div>
+          <div className={css.sectionHeader}><div><div className={css.kicker}>{t('plans')}</div><strong className={css.sectionName}>{t('subscriptionTitle')}</strong></div><span className={css.sectionMeta}>{state.account.status === 'loading' ? (language === 'zh' ? '正在读取账户状态…' : 'Reading account state…') : state.account.user === undefined ? t('backendRequired') : `${t('balance')}: ${formatMoney(state.account.user.balance, 'USD')}`}</span></div>
+          <div className={css.paymentBar}><div><strong className={css.paymentHeading}>{language === 'zh' ? '充值额度' : 'Add credit'}</strong><small className={css.sectionMeta}>{language === 'zh' ? '额度长期有效，按实际使用量扣除。' : 'Credit stays valid and is charged by actual usage.'}</small></div>{/* The picker and the method chips are what the payer chooses with, so they are one
+            right-aligned column; the channel's own sentence — limits, fees, rate and the
+            receipt promise — is a full-width line under both. It used to be a third item
+            in that row, which is what deformed the bar: sharing the row pushed the select
+            down to its minimum width and clipped the selected option, and left the
+            two-character label with nothing to do but wrap one character per line. */}{state.channels.length > 0 ? <div className={css.paymentPicker}><label className={css.paymentMethod}><span>{t('paymentMethod')}</span><select className={css.select} value={selectedPaymentType} onChange={(event) => { setPaymentType(event.target.value) }}>{state.channels.map(channel => <option key={channel.paymentType} value={channel.paymentType}>{paymentChannelLabel(channel.paymentType, language)}{channel.currency === undefined ? '' : ` (${channel.currency})`}</option>)}</select></label>{isCardChannel(selectedPaymentType) ? <div className={css.paymentMethods} aria-label={language === 'zh' ? '该支付方式支持' : 'Accepted by this method'}>{CARD_CHANNEL_METHODS.map(method => <span className={css.paymentMethodChip} key={method}>{method}</span>)}</div> : null}</div> : null}{state.channels.length > 0 ? <small className={css.paymentBarDetail}>{selectedChannelDescription(state.channels.find(channel => channel.paymentType === selectedPaymentType), language, state.paymentConfig)}</small> : null}</div>
           {state.pendingOrders !== undefined && state.pendingOrders.length > 0 ? <div className={css.pending}><strong className={css.pendingTitle}>{t('pendingOrders')}</strong><small className={css.pendingHint}>{t('pendingOrdersHint')}</small>{state.pendingOrders.map(order => <div className={css.pendingRow} key={order.orderId}><span className={css.pendingText}>{order.orderId} · 到账 {formatMoney(order.amount, 'USD')} · 支付 {formatMoney(order.payAmount ?? order.amount, orderSettlementCurrency(order, state.channels))} · {order.state}</span><button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={() => { cancelPendingOrder(order) }} disabled={paymentCancel === undefined || !canCancelPaymentOrder(order)}>{t('cancelOrder')}</button></div>)}</div> : null}
-          {state.account.status === 'restoring' ? <div className={css.sectionMeta} role="status">{language === 'zh' ? '正在恢复登录…' : 'Recovering session…'}</div> : state.plans.length === 0 ? <div className={css.sectionMeta}>{t('noPlans')}</div> : <>
+          {state.account.status === 'restoring' || state.account.status === 'loading' ? <div className={css.sectionMeta} role="status">{state.account.status === 'loading' ? (language === 'zh' ? '正在读取账户状态…' : 'Reading account state…') : (language === 'zh' ? '正在恢复登录…' : 'Recovering session…')}</div> : state.plans.length === 0 ? <div className={css.sectionMeta}>{t('noPlans')}</div> : <>
             <div className={css.plans}>{saleablePlans.map((plan, index) => {
             // The second tier is the panel's recommendation. The backend sends
             // no "recommended" flag of its own, so this positional rule is the
@@ -4731,7 +5652,16 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, login, register,
             {planNotes.shared.length === 0 ? null : <div className={css.planShared}><small>{language === 'zh' ? '所有套餐' : 'Every tier'}</small>{planNotes.shared.map(note => <span key={note}><span className={css.planCheck} aria-hidden="true" />{note}</span>)}</div>}
           </>}
           {checkoutError === undefined ? null : <div className={css.paymentNotice} role="alert"><span>{checkoutError}</span><button className={css.button} type="button" onClick={() => { setCheckoutError(undefined) }}>{language === 'zh' ? '知道了' : 'Dismiss'}</button></div>}
-          {state.order === undefined ? null : <div className={css.order}><strong className={css.orderTitle}>{t('order')}: {state.order.orderId} · {state.order.state}</strong><small className={css.sectionMeta}>到账 {formatMoney(state.order.amount, 'USD')} · 支付 {formatMoney(state.order.payAmount ?? state.order.amount, orderSettlementCurrency(state.order, state.channels))}</small><div className={css.orderActions}><button className={css.button} type="button" onClick={refreshOrder}>{t('refreshOrder')}</button><button className={css.button} type="button" onClick={verifyOrder} disabled={state.order.outTradeNo === undefined}>{t('verifyOrder')}</button>{canCancelPaymentOrder(state.order) ? <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={cancelOrder}>{t('cancelOrder')}</button> : null}<button className={css.button} type="button" onClick={downloadCurrentOrderReceipt} disabled={paymentReceiptDocument === undefined || (state.order.state !== 'paid' && state.order.state !== 'completed')}>{language === 'zh' ? '下载收据' : 'Download receipt'}</button><button className={css.button} type="button" onClick={emailReceipt} disabled={paymentReceiptEmail === undefined || (state.order.state !== 'paid' && state.order.state !== 'completed')}>{t('emailReceipt')}</button></div><PaymentCheckoutLink value={state.order.checkoutUrl} label={t('openCheckout')} />{state.order.qrCode === undefined ? null : state.order.qrCode.startsWith('data:image/') ? <img className={css.qr} src={state.order.qrCode} alt={t('paymentQr')} /> : <PaymentQrCode value={state.order.qrCode} label={t('paymentQr')} />}{state.order.clientSecret === undefined ? null : <small className={css.sectionMeta}>{t('stripeSessionReady')}</small>}</div>}
+          {state.order === undefined ? null : <div className={css.order}><strong className={css.orderTitle}>{t('order')}: {state.order.orderId} · {orderStateLabel(state.order.state, language === 'zh')}</strong><small className={css.sectionMeta}>到账 {formatMoney(state.order.amount, 'USD')} · 支付 {formatMoney(state.order.payAmount ?? state.order.amount, orderSettlementCurrency(state.order, state.channels))}</small><div className={css.orderActions}><button className={css.button} type="button" onClick={refreshOrder}>{t('refreshOrder')}</button><button className={css.button} type="button" onClick={verifyOrder} disabled={state.order.outTradeNo === undefined}>{t('verifyOrder')}</button>{canCancelPaymentOrder(state.order) ? <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={cancelOrder}>{t('cancelOrder')}</button> : null}{/* One predicate for both actions, and the same one the receipt list uses: the
+                backend serves the document and the mail from one availability rule, so a
+                button that refused while its neighbour offered the same document was the
+                panel disagreeing with the backend — and with `recharging`, which is what an
+                order settles into while its credits are still being applied, it refused for
+                every order between paying and being credited. */}
+                <button className={css.button} type="button" onClick={downloadCurrentOrderReceipt} disabled={paymentReceiptDocument === undefined || !orderReceiptAvailable(state.order)}>{language === 'zh' ? '下载收据' : 'Download receipt'}</button><button className={css.button} type="button" onClick={emailReceipt} disabled={paymentReceiptEmail === undefined || !orderReceiptAvailable(state.order)}>{t('emailReceipt')}</button>{/* Stripe's own document, on the same two conditions the receipt list uses:
+                  only where the backend says Stripe holds one. It is drawn only then, so
+                  there is nothing to disable — a button that could only report "not
+                  available" is the panel inventing an option the payer does not have. */}{stripeReceiptOffered(state.order, paymentStripeReceiptDocument) ? <button className={css.button} type="button" onClick={downloadCurrentOrderStripeReceipt}>{language === 'zh' ? '下载付款凭证' : 'Download payment document'}</button> : null}</div><PaymentCheckoutLink value={state.order.checkoutUrl} label={t('openCheckout')} />{state.order.qrCode === undefined ? null : state.order.qrCode.startsWith('data:image/') ? <img className={css.qr} src={state.order.qrCode} alt={t('paymentQr')} /> : <PaymentQrCode value={state.order.qrCode} label={t('paymentQr')} language={language} />}{state.order.clientSecret === undefined ? null : <small className={css.sectionMeta}>{t('stripeSessionReady')}</small>}</div>}
           <GatewayPricingTable prices={state.gatewayPrices} error={state.gatewayPricingError} query={priceQuery} onQuery={setPriceQuery} language={language} />
         </section> : null}
       </div> : null}
@@ -4789,12 +5719,19 @@ function PluginConflictProtection(input: {
     }).catch(() => { refresh() })
   }
   const records = snapshot?.pluginConflictRecords ?? []
+  // The Host reports which stored records the running tree still matches. History
+  // is not a repair: a record written before a later change can describe a plugin
+  // this Harness is currently running as the one it stopped, and presenting that
+  // as current is what makes the panel read as if the official plugin lost.
+  const active = new Set(snapshot?.pluginConflictActiveRecords ?? [])
+  const activeCount = records.filter(record => active.has(record.id)).length
   return <section className={css.section}>
     <div className={css.sectionHeader}><div><div className={css.kicker}>Plugin Safety</div><strong className={css.sectionName}>插件冲突防护</strong></div><span className={`${css.badge} ${snapshot?.pluginConflictProtectionEnabled ? css.badgeLive : ''}`}>{snapshot === undefined ? (loadError === undefined ? '读取中' : '状态未知') : snapshot.pluginConflictProtectionEnabled ? '已开启' : '已关闭'}</span></div>
-    <small className={css.sectionMeta}>默认开启。安装或加载第三方 DSH 插件时，系统会在启动前检查重复 Tool、命令、设置 namespace、HTTP 路由、模型 Provider 和界面 Slot；冲突时保留先启用的插件，并自动停用后加载的冲突条目。</small>
+    <small className={css.sectionMeta}>默认关闭。安装或加载第三方 DSH 插件时，系统会在启动前检查重复 Tool、命令、设置 namespace、HTTP 路由、模型 Provider 和界面 Slot。冲突时以官方本体的插件优先：本插件自带的同名实现会让位；其余情况保留先启用的插件，并自动停用后加载的冲突条目。</small>
     {loadError === undefined ? null : <div className={css.alert} role="alert">冲突防护状态读取失败：{loadError}</div>}
-    <label className={css.extensionRow}><span><strong>自动修复冲突</strong><small>关闭后不拦截加载；重复注册仍可能导致第三方插件启动失败。</small></span><input className={css.switch} aria-label="自动修复插件冲突" type="checkbox" checked={snapshot?.pluginConflictProtectionEnabled === true} onChange={(event) => { update(event.target.checked) }} disabled={input.setEnabled === undefined || snapshot === undefined} /></label>
-    {records.length > 0 ? <div className={css.accountList}>{records.slice(-5).reverse().map(record => <div className={css.accountRow} key={record.id}><div className={css.accountIdentity}><strong className={css.accountName}>已自动停用 {record.disabledModuleName}</strong><small className={css.accountEmail}>{record.resource}：{record.resourceName} 已由 {record.keptModuleName} 占用</small></div><span className={css.badge}>已修复</span></div>)}</div> : <small className={css.sectionMeta}>尚未发现可识别的插件资源冲突。</small>}
+    <label className={css.extensionRow}><span><strong>自动修复冲突</strong><small>默认关闭：重复注册由本体自己的注册校验报告，冲突的第三方插件可能因此启动失败。开启后本插件会在冲突插件启动前停用它。</small></span><input className={css.switch} aria-label="自动修复插件冲突" type="checkbox" checked={snapshot?.pluginConflictProtectionEnabled === true} onChange={(event) => { update(event.target.checked) }} disabled={input.setEnabled === undefined || snapshot === undefined} /></label>
+    {records.length > 0 ? <div className={css.accountList}>{records.slice(-5).reverse().map(record => <div className={css.accountRow} key={record.id}><div className={css.accountIdentity}><strong className={css.accountName}>{record.yieldedToOfficial === true ? `已让位给官方 ${record.keptModuleName}` : `已自动停用 ${record.disabledModuleName}`}</strong><small className={css.accountEmail}>{record.resource}：{record.resourceName} 由 {record.keptModuleName} 提供</small></div><span className={css.badge}>{active.has(record.id) ? '生效中' : '已失效'}</span></div>)}</div> : <small className={css.sectionMeta}>尚未发现可识别的插件资源冲突。</small>}
+    {records.length === 0 ? null : <small className={css.sectionMeta}>{activeCount === 0 ? '以上记录均为历史：当前运行树中已无生效的冲突。' : `${activeCount} 条记录在当前运行树中仍然生效。`}</small>}
   </section>
 }
 
@@ -4853,7 +5790,7 @@ function CouncilFindingRow(input: {
 function HeadroomPanel(input: {
   readonly status?: (() => Promise<RemoteResult<HeadroomStats>>) | undefined
   readonly setEnabled?: ((enabled: boolean) => Promise<RemoteResult<HeadroomStats>>) | undefined
-  readonly update?: ((patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean }) => Promise<RemoteResult<HeadroomStats>>) | undefined
+  readonly update?: ((patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean; readonly foldPolicy?: 'reversible' | 'max' }) => Promise<RemoteResult<HeadroomStats>>) | undefined
   readonly language: 'zh' | 'en'
 }): ReactNode {
   const isZh = input.language === 'zh'
@@ -4923,6 +5860,7 @@ function HeadroomPanel(input: {
     <label className={css.extensionRow}><span><strong>{isZh ? '跨回合去重' : 'Cross-turn dedup'}</strong><small>{isZh ? '后面回合重复出现的工具输出折叠为一行指针，原始内容仍在上文可见。' : 'Tool output repeated from an earlier turn folds into a one-line pointer; the original stays visible in context.'}</small></span><input className={css.switch} aria-label={isZh ? '跨回合去重' : 'Cross-turn dedup'} type="checkbox" checked={snapshot?.dedupEnabled === true} onChange={(event) => { updateKnob({ dedupEnabled: event.target.checked }) }} disabled={input.update === undefined || busy} /></label>
     <label className={css.extensionRow}><span><strong>{isZh ? '文件读取无损折叠' : 'Fold file reads losslessly'}</strong><small>{isZh ? '默认关闭：文件读取保持字节级精确（Edit 匹配依赖原文）。开启后仅做可逆折叠（如 rg --heading 归并），仍不做有损压缩。' : 'Off by default: file reads stay byte-exact (Edit matching depends on the original bytes). When on, only reversible folds (e.g. ripgrep --heading grouping) apply — never lossy compression.'}</small></span><input className={css.switch} aria-label={isZh ? '文件读取无损折叠' : 'Fold file reads losslessly'} type="checkbox" checked={snapshot?.foldReads === true} onChange={(event) => { updateKnob({ foldReads: event.target.checked }) }} disabled={input.update === undefined || busy} /></label>
     <label className={css.extensionRow}><span><strong>{isZh ? '代码文件骨架化（收益最大）' : 'Skeletonize code files (biggest win)'}</strong><small>{isZh ? '默认开启。只作用于大源码文件的读取结果：保留的每一行都是逐字节原文（含行号），仅把连续的函数／方法正文折叠成一行标记并注明行号区间。省下的是正文，不是接口——导入、类型、签名、装饰器、文档注释全部保留。需要正文时，模型可自行用 headroom_retrieve 取回原文，或用 read 带 offset 重读该区间。实测：读文件类输出占工具输出的 85%，而 Harness 每一步都会重发整段历史，压缩它等于把它按 ~10 倍退还给你。' : 'On by default, and applied only to large source-file reads: every retained line is byte-exact (line numbers included); only contiguous runs of function/method bodies fold into a single marker naming its line range. What is dropped is implementation, never interface — imports, types, signatures, decorators, and doc comments all survive. When the model needs a body it calls headroom_retrieve for the original or re-reads that range with offset. Measured: read output is 85% of all tool bytes, and the Harness re-sends the whole transcript every step — compressing it refunds that ~10x.'}</small></span><input className={css.switch} aria-label={isZh ? '代码文件骨架化' : 'Skeletonize code files'} type="checkbox" checked={snapshot?.codeSkeletonEnabled === true} onChange={(event) => { updateKnob({ codeSkeletonEnabled: event.target.checked }) }} disabled={input.update === undefined || busy} /></label>
+    <label className={css.extensionRow}><span><strong>{isZh ? '无损折叠优先（可关：改为最大压缩）' : 'Prefer lossless folds (off = maximum compression)'}</strong><small>{isZh ? '默认开启：一个可逆折叠只要收益足够（省 ≥40%）就直接交付，零精度损失，后面的压缩器不再为它重做一遍。关掉后每个可逆渲染都必须先被类型压缩器比一遍，谁更小用谁；折叠仍然兜底，类型化渲染仍然带可检索标记。分段拼接、以及跨回合去重指针（重复片段折成「同上一条结果」）同样适用。实测同一份重复行日志：开启时无损折叠到 5.1%，关闭时有损压缩到 3.2%。' : 'On by default: a reversible fold that saves enough (≥40%) is delivered as is, at zero accuracy cost, and no later compressor re-decides it — a mixed-content section splice follows the same rule. Turned off, every one of them has to be beaten by the compressor for its own shape first — whoever is smaller wins, while the fold still ships as the fallback and every lossy rendering keeps a resolvable marker. The same applies to a mixed-content section splice and to the cross-turn pointer over a repeated run ("same as earlier tool result"). Measured on one repeated-run log: 5.1% lossless with it on, 3.2% lossy with it off.'}</small></span><input className={css.switch} aria-label={isZh ? '无损折叠优先' : 'Prefer lossless folds'} type="checkbox" checked={snapshot?.foldPolicy !== 'max'} onChange={(event) => { updateKnob({ foldPolicy: event.target.checked ? 'reversible' : 'max' }) }} disabled={input.update === undefined || busy} /></label>
     {snapshot === undefined ? null : <div className={css.statGrid}>
       {headline.map(([label, value]) => <div className={css.statCell} key={label}>
         <small className={css.statLabel}>{label}</small>
@@ -4951,6 +5889,10 @@ function HeadroomPanel(input: {
         <span className={css.statChip}>{isZh ? '压缩后' : 'Compressed'}<b>{formatBytes(snapshot.compressedBytes)}</b></span>
         <span className={css.statChip}>{isZh ? '可取回条目' : 'Recoverable'}<b>{snapshot.ccrEntries}</b></span>
         <span className={css.statChip}>{isZh ? '取回失败' : 'Retrieve misses'}<b>{snapshot.retrieveMisses}</b></span>
+        <span className={snapshot.ccrWriteRefusals > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '仓储拒写' : 'Writes refused'}<b>{snapshot.ccrWriteRefusals}</b></span>
+        <span className={snapshot.foldDeferred > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '折叠/拼接/指针进入竞争' : 'Folds/splices/pointers contested'}<b>{snapshot.foldDeferred}</b></span>
+        <span className={snapshot.foldSuperseded > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '折叠/拼接/指针被取代' : 'Folds/splices/pointers superseded'}<b>{snapshot.foldSuperseded}</b></span>
+        <span className={snapshot.foldSettled > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '折叠/拼接/指针兜底交付' : 'Folds/splices/pointers settled'}<b>{snapshot.foldSettled}</b></span>
       </div>
     </details>}
     <details className={css.sectionMeta}>
@@ -4971,71 +5913,221 @@ function HeadroomPanel(input: {
         <p><strong>{isZh ? '5. 会话记录不受影响' : '5. Session records are untouched'}</strong><br />{isZh
           ? '压缩只替换模型「看到」的内容投影；会话的持久日志仍写入完整的工具输出。历史回放、压缩汇总和取回都不丢信息。开关只影响之后的新工具输出。'
           : 'Compression replaces only the content projection the model sees; the durable session log still records the full tool output. History replay, compaction, and retrieval lose nothing. The switch affects only future tool results.'}</p>
-        <p style={{ opacity: 0.75 }}>{isZh
-          ? '算法移植自开源项目 Headroom（github.com/headroomlabs-ai/headroom），遵循 Apache License 2.0。Copyright © Headroom Maintainers. 本面板中的统计数字为本地计数，不会上报。'
-          : 'The algorithms are ported from the open-source Headroom project (github.com/headroomlabs-ai/headroom), Apache License 2.0. Copyright © Headroom Maintainers. The counters above are local only and never reported anywhere.'}</p>
+        {snapshot === undefined ? null : <p style={{ opacity: 0.75 }}>{isZh
+          ? `算法移植自开源项目 Headroom（github.com/headroomlabs-ai/headroom），遵循 Apache License 2.0。Copyright © Headroom Maintainers. 本次构建对齐：${snapshot.provenance}。本面板中的统计数字为本地计数，不会上报。`
+          : `The algorithms are ported from the open-source Headroom project (github.com/headroomlabs-ai/headroom), Apache License 2.0. Copyright © Headroom Maintainers. This build tracks: ${snapshot.provenance}. The counters above are local only and never reported anywhere.`}</p>}
       </div>
     </details>
   </section>
 }
 
+
 /**
- * The multi-member team runtime: what it is, who is on it, and what each role
- * is forbidden to do.
+ * The code review surface.
  *
- * The role table is the point of the panel. A team whose duties are implicit is
- * a team where the implementer verifies its own work, and that is the failure
- * the reader has to be able to check for themselves.
+ * Two things this panel must not do. It must not present a review as a verdict:
+ * the run reports what it reviewed, what it refused, and what it never reached, and
+ * a panel that showed only the findings would make "three findings" mean the same
+ * thing whether three files were read or thirty were skipped. So the coverage
+ * counts and the skip reasons are part of the panel, not a detail behind a toggle.
+ *
+ * And it must not invent progress. A review started from here runs in the Host and
+ * answers immediately, so the only way to know whether it finished is to ask again —
+ * hence the poll while a run is in flight, and the refusal to show a percentage the
+ * Host has not reported.
  */
-function TeamPanel(input: {
-  readonly status?: (() => Promise<RemoteResult<TeamRuntimeStatus>>) | undefined
+/**
+ * How often a running review is re-read.
+ *
+ * Long enough to be cheap, short enough that a finished review appears while the
+ * user is still looking at the panel. The read returns the last report with the
+ * runs, so this is the panel's whole refresh cost.
+ */
+const POLL_INTERVAL_MS = 3_000
+
+/** A select's value as the mode it names; an unrecognized value is the shipped default rather than a write. */
+const reviewModeValue = (value: string): NonNullable<FreeCodeGoReviewUpdate['reviewMode']> => value === 'record' || value === 'gate' ? value : 'off'
+
+/** A select's value as the severity it names; anything else is the least severe option shown. */
+const reviewThresholdValue = (value: string): NonNullable<FreeCodeGoReviewUpdate['reviewThreshold']> =>
+  value === 'critical' || value === 'high' || value === 'medium' ? value : 'low'
+
+function ReviewPanel(input: {
+  readonly sessionId?: string | undefined
+  readonly status?: ((sessionId: string) => Promise<RemoteResult<FreeCodeGoReviewStatus>>) | undefined
+  readonly start?: ((sessionId: string, request: FreeCodeGoReviewStartRequest) => Promise<RemoteResult<FreeCodeGoReviewStatus>>) | undefined
+  readonly update?: ((sessionId: string, patch: FreeCodeGoReviewUpdate) => Promise<RemoteResult<FreeCodeGoReviewStatus>>) | undefined
   readonly language: 'zh' | 'en'
 }): ReactNode {
   const isZh = input.language === 'zh'
-  const [snapshot, setSnapshot] = useState<TeamRuntimeStatus | undefined>(undefined)
+  const [snapshot, setSnapshot] = useState<FreeCodeGoReviewStatus | undefined>(undefined)
+  /**
+   * Why the panel is showing an error, and which action produced it.
+   *
+   * The kind is carried because the three failures need three different sentences:
+   * a status read that failed, a setting that was not saved, and a review that would
+   * not start are not the same problem, and one label over all three tells the user
+   * to go and look at the wrong thing.
+   */
+  const [error, setError] = useState<{ readonly kind: 'read' | 'write' | 'start'; readonly message: string } | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const sessionId = input.sessionId
+  const load = input.status
+  /**
+   * Read the surface, reporting why it could not be read.
+   *
+   * A failed read used to leave the panel showing a dash forever, which is the one
+   * outcome a user cannot act on: assembly reads the workspace's rule files, and a
+   * failure there is precisely the thing to be told about. The interval's repeated
+   * failures collapse to one message because each write replaces the last.
+   */
+  const read = (id: string): void => {
+    if (load === undefined) return
+    void load(id).then((result) => {
+      if (result.ok) { setSnapshot(result.value); setError(undefined) }
+      else setError({ kind: 'read', message: result.error.message })
+    }).catch((reason: unknown) => { setError({ kind: 'read', message: reason instanceof Error ? reason.message : String(reason) }) })
+  }
   useEffect(() => {
-    if (input.status === undefined) return
-    void input.status().then((result) => { if (result.ok) setSnapshot(result.value) }).catch(() => undefined)
-  }, [input.status])
-  const roles = snapshot?.roles ?? []
+    if (sessionId === undefined) return
+    read(sessionId)
+  }, [sessionId, load])
+  const running = snapshot?.runs.some(run => run.phase !== 'done') === true
+  useEffect(() => {
+    if (!running || sessionId === undefined || load === undefined) return
+    // A review started from this panel is fire-and-forget in the Host, so the run's
+    // completion is only knowable by asking again. Polling stops the moment no run
+    // is in flight, which is also the reason the interval is not a subscription.
+    const timer = setInterval(() => { read(sessionId) }, POLL_INTERVAL_MS)
+    return () => { clearInterval(timer) }
+  }, [running, sessionId, load])
+
+  const apply = (
+    patch: FreeCodeGoReviewUpdate,
+    run: ((sessionId: string, patch: FreeCodeGoReviewUpdate) => Promise<RemoteResult<FreeCodeGoReviewStatus>>) | undefined,
+  ): void => {
+    if (sessionId === undefined || run === undefined) return
+    setBusy(true)
+    setError(undefined)
+    void run(sessionId, patch).then((result) => {
+      if (result.ok) setSnapshot(result.value)
+      // A refused write leaves the old value in force, so the control must not be
+      // left showing the new one: report it and re-read the authoritative state.
+      else setError({ kind: 'write', message: result.error.message })
+    }).catch((reason: unknown) => { setError({ kind: 'write', message: reason instanceof Error ? reason.message : String(reason) }) })
+      .finally(() => { setBusy(false) })
+  }
+
+  const latest = snapshot?.runs.find(run => run.id === snapshot.report?.id) ?? snapshot?.runs[0]
+  const report = snapshot?.report
+  const findings = report?.comments.filter(comment => comment.state !== 'filtered') ?? []
+  const filtered = report?.comments.filter(comment => comment.state === 'filtered') ?? []
+  const blockers = snapshot?.runs.flatMap(run => run.error === undefined ? [] : [run]) ?? []
+
   return <section className={css.section}>
-    <div className={css.sectionHeader}><div><div className={css.kicker}>TEAM</div><strong className={css.sectionName}>{isZh ? '多成员协作团队' : 'Multi-member team'}</strong></div><span className={`${css.badge} ${snapshot?.enabled ? css.badgeLive : ''}`}>{snapshot?.enabled ? (isZh ? '已开启' : 'On') : (isZh ? '已关闭' : 'Off')}</span></div>
+    <div className={css.sectionHeader}><div><div className={css.kicker}>REVIEW</div><strong className={css.sectionName}>{isZh ? '代码审查' : 'Code review'}</strong></div><span className={`${css.badge} ${snapshot === undefined || snapshot.mode === 'off' ? '' : css.badgeLive}`}>{snapshot === undefined ? '—' : snapshot.mode === 'off' ? (isZh ? '已关闭' : 'Off') : snapshot.mode === 'record' ? (isZh ? '记录' : 'Record') : (isZh ? '收尾门禁' : 'Gate')}</span></div>
     <small className={css.sectionMeta}>{isZh
-      ? '团队不是“多开几个 AI”：它是一份可认领的任务板、一套按角色收窄的工具权限、每位写者一个独立工作区，以及一套经过验证才允许合并的流程。成员身份与任务板都落在磁盘上，所以重启后仍然能追到「谁拿了哪件事」。'
-      : 'A team is not “a few more agents”: it is a claimable task board, a tool scope narrowed per role, one isolated workspace per writer, and a merge that only happens after verification. Membership and the board are on disk, so even after a restart every claim is still traceable to the member that took it.'}</small>
-    {snapshot === undefined ? null : <div className={css.statGrid}>
-      <div className={css.statCell}><small className={css.statLabel}>{isZh ? '已开启团队' : 'Teams open'}</small><strong className={css.statValue}>{snapshot.teams}</strong></div>
-      <div className={css.statCell}><small className={css.statLabel}>{isZh ? '活跃成员' : 'Live members'}</small><strong className={css.statValue}>{snapshot.members}</strong></div>
-      <div className={css.statCell}><small className={css.statLabel}>{isZh ? '手动上下文控制' : 'Manual context control'}</small><strong className={css.statValue}>{snapshot.contextControl ? (isZh ? '可用' : 'yes') : (isZh ? '不可用' : 'no')}</strong></div>
+      ? '审查每个改动文件，并按行给出发现与建议。分为两半：一半是完全确定性的（选目标、解析规则、算覆盖率、定位评论行号），另一半是模型读代码。覆盖率会对账：每个进入审查的文件都必须带着状态离开，被跳过或失败的文件必须说出原因。'
+      : 'Reviews every changed file and reports findings with a line, a severity and a suggested fix where one exists. Half of it is deterministic — target selection, rule resolution, coverage accounting, comment relocation — and half is a model reading code. Coverage is reconciled: every file that entered leaves with a state, and a file that was skipped or failed says why.'}</small>
+    {sessionId === undefined
+      ? <div className={css.sectionMeta}>{isZh ? '打开一个工作区会话后即可在这里运行审查。' : 'Open a workspace conversation to run a review from here.'}</div>
+      : null}
+    {error === undefined ? null : <div className={css.alert} role="alert">{error.kind === 'read'
+      ? (isZh ? `无法读取审查状态：${error.message}` : `The review status could not be read: ${error.message}`)
+      : error.kind === 'start'
+        ? (isZh ? `无法启动审查：${error.message}` : `The review could not be started: ${error.message}`)
+        : (isZh ? `设置未保存：${error.message}` : `The setting was not saved: ${error.message}`)}</div>}
+    {snapshot === undefined || sessionId === undefined ? null : <>
+      <div className={css.extensionList}>
+        <label className={css.extensionRow}><span><strong>{isZh ? '收尾审查模式' : 'Stop-time review'}</strong><small>{isZh
+          ? '关闭：不做任何事，也不花钱。记录：每轮结束时审查一次并写入会话（可随时用 engineering_review_report 取回）。收尾门禁：同一个审查结果在达到阈值时注入一条消息，Agent 必须先回应它才能结束回合。工具 engineering_code_review 在任何模式下都能手动调用。'
+          : 'Off: nothing runs and nothing is spent. Record: one pass per turn, written to the session and re-readable through engineering_review_report. Gate: the same pass injects a message when a finding reaches the threshold, so the agent has to answer it before the turn can end. The engineering_code_review tool works in every mode.'}</small></span>            <select className={css.select} aria-label={isZh ? '收尾审查模式' : 'Stop-time review mode'} value={snapshot.mode} disabled={busy || input.update === undefined} onChange={(event) => { apply({ reviewMode: reviewModeValue(event.target.value) }, input.update) }}>
+            <option value="off">{isZh ? '关闭' : 'Off'}</option>
+            <option value="record">{isZh ? '记录' : 'Record'}</option>
+            <option value="gate">{isZh ? '收尾门禁' : 'Gate'}</option>
+          </select></label>
+        <label className={css.extensionRow}><span><strong>{isZh ? '交付阈值' : 'Delivery threshold'}</strong><small>{isZh ? '只有达到该严重度的发现才会被注入；更轻的发现仍会记录在报告里。' : 'Only findings at or above this severity are injected; lighter ones are still recorded in the report.'}</small></span>            <select className={css.select} aria-label={isZh ? '交付阈值' : 'Delivery threshold'} value={snapshot.threshold} disabled={busy || input.update === undefined} onChange={(event) => { apply({ reviewThreshold: reviewThresholdValue(event.target.value) }, input.update) }}>
+            <option value="critical">critical</option>
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+          </select></label>
+        <label className={css.extensionRow}><span><strong>{isZh ? '逐文件子 Agent 深审' : 'Per-file subagent review'}</strong><small>{isZh
+          ? '开启后每个文件由一个独立的只读子 Agent 审查：它能读整份文件、搜索调用方、打开测试覆盖的实现，因此「接口改了但没有改调用方」这类发现是被查证的，而不是猜的。代价是每个文件开一个子 Agent，所以默认关闭。'
+          : 'When on, each file is reviewed by its own read-only child agent, which can read the whole file, search for callers, and open the implementation a test covers — so a finding like “the interface changed and no caller was updated” is checked rather than inferred. It opens one child per file, which is why it is off by default.'}</small></span>
+          <input className={css.switch} aria-label={isZh ? '逐文件子 Agent 深审' : 'Per-file subagent review'} type="checkbox" checked={snapshot.deep} disabled={busy || input.update === undefined} onChange={(event) => { apply({ reviewDeep: event.target.checked }, input.update) }} /></label>
+        <label className={css.extensionRow}><span><strong>{isZh ? '高危发现对抗复核' : 'Adversarial re-check'}</strong><small>{isZh
+          ? '对 critical / high 发现再问一次「这条能否被 diff 推翻」。结论只有三种：有证据反驳且确认数不足则降级（仍保留在报告中），无结论则原样发布，出错则原样发布并记录原因。默认关闭，因为它为每条高危发现多花一次调用。'
+          : 'Asks once more whether a critical or high finding can be disproved by the diff. There are three outcomes: refuted with evidence and short of quorum means it is downgraded (and kept in the report), no verdict means it is published unchanged, and a failure means it is published unchanged with the reason recorded. Off by default because it spends a call per escalated finding.'}</small></span>
+          <input className={css.switch} aria-label={isZh ? '高危发现对抗复核' : 'Adversarial re-check'} type="checkbox" checked={snapshot.escalation} disabled={busy || input.update === undefined} onChange={(event) => { apply({ reviewEscalation: event.target.checked }, input.update) }} /></label>
+      </div>
+      <div className={css.poolToolbar}>
+        <span className={css.poolToolbarNote}>{snapshot.workspace}</span>
+        <div className={css.poolToolbarActions}>
+          <button className={css.button} type="button" disabled={busy || running || input.start === undefined} onClick={() => {
+            if (input.start === undefined) return
+            setBusy(true)
+            setError(undefined)
+            void input.start(sessionId, { mode: 'workspace' }).then((result) => {
+              if (result.ok) setSnapshot(result.value)
+              else setError({ kind: 'start', message: result.error.message })
+            }).catch((reason: unknown) => { setError({ kind: 'start', message: reason instanceof Error ? reason.message : String(reason) }) }).finally(() => { setBusy(false) })
+          }}>{running ? (isZh ? '审查进行中…' : 'Review running…') : (isZh ? '审查当前改动' : 'Review current changes')}</button>
+        </div>
+      </div>
+      {latest === undefined ? <div className={css.sectionMeta}>{isZh ? '还没有在本工作区运行过审查。' : 'No review has run in this workspace yet.'}</div> : null}
+      {latest === undefined ? null : <div className={css.statGrid}>
+        <div className={css.statCell}><small className={css.statLabel}>{isZh ? '状态' : 'State'}</small><strong className={css.statValue}>{latest.state ?? latest.phase}</strong></div>
+        <div className={css.statCell}><small className={css.statLabel}>{isZh ? '已审查/总数' : 'Reviewed / total'}</small><strong className={css.statValue}>{latest.reviewed}/{latest.files}</strong></div>
+        <div className={css.statCell}><small className={css.statLabel}>{isZh ? '发现' : 'Findings'}</small><strong className={css.statValue}>{latest.findings}</strong></div>
+        <div className={css.statCell}><small className={css.statLabel}>{isZh ? '跳过/失败' : 'Skipped / failed'}</small><strong className={css.statValue}>{latest.skipped}/{latest.failed}</strong></div>
+      </div>}
+    </>}
+    {blockers.length === 0 ? null : <div className={css.poolFootnote}>
+      {blockers.map(run => <div key={run.id}>{isZh ? '审查未完成' : 'The review did not finish'}（{run.id}）：{run.error}</div>)}
     </div>}
-    {roles.length === 0 ? null : <details className={css.details}>
-      <summary className={css.detailsSummary}>{isZh ? `角色库（${roles.length} 个，可用 .freecodego/team-roles.json 覆盖）` : `Role library (${roles.length}; override with .freecodego/team-roles.json)`}</summary>
-      <div className={css.memoryList}>
-        {roles.map(role => <article className={css.memoryRecord} key={role.id}>
-          <div className={css.councilReport}>
-            <div className={css.councilJobHead}><strong className={css.councilReportTurn}>{role.title}</strong><small className={css.councilJobId}>{role.id} · {role.sandbox} · ≤{role.maxTurns} {isZh ? '回合' : 'turns'}</small></div>
-            <p className={css.findingEvidence}>{role.purpose}</p>
-            <p className={css.findingEvidence}>{isZh ? '不负责：' : 'Not responsible for: '}{role.notResponsibleFor}</p>
-            <div className={css.chipGrid}>{role.capabilities.map(capability => <span className={css.statChip} key={capability}>{capability}</span>)}</div>
+    {report === undefined ? null : <details className={css.details}>
+      <summary className={css.detailsSummary}>{isZh
+        ? `发现明细（${findings.length} 条${filtered.length === 0 ? '' : `，另有 ${filtered.length} 条被事实核查过滤`}）`
+        : `Findings (${findings.length}${filtered.length === 0 ? '' : `, plus ${filtered.length} removed by the fact-check`})`}</summary>
+      <div className={css.findingList}>
+        {findings.map(comment => <article className={css.findingRow} key={comment.id}>
+          <div className={css.councilJobHead}>
+            <span className={css.findingSeverity}>{comment.severity}</span>
+            <strong className={css.findingTitle}>{comment.path}{comment.startLine === 0 ? '' : `:${comment.startLine}`}</strong>
+            <small className={css.councilJobId}>{comment.category}{comment.reviewer === undefined ? '' : ` · ${comment.reviewer}`}</small>
           </div>
+          <p className={css.findingBody}>{comment.content}</p>
+          {comment.suggestionCode === undefined ? null : <pre className={css.findingEvidence}>{comment.suggestionCode}</pre>}
+          {comment.ruleSource === undefined ? null : <small className={css.poolSub}>{isZh ? '规则来源：' : 'Rule: '}{comment.ruleSource}</small>}
         </article>)}
+      </div>
+      <div className={css.chipGrid}>
+        {report.files.map(file => <span className={`${css.poolChip} ${file.state === 'reviewed' ? '' : file.state === 'failed' ? css.poolChipDanger : css.poolChipWarn}`} key={`${file.state}:${file.path}`} title={file.reason ?? ''}>
+          {file.path} · {file.state}{file.reason === undefined ? '' : ` · ${file.reason}`}
+        </span>)}
+      </div>
+      <div className={css.poolFootnote}>
+        {isZh
+          ? `覆盖率 ${Math.round(report.coverage.coverageRate * 100)}%（${report.coverage.reviewedFiles}/${report.coverage.totalFiles}）· 审查者 ${report.reviewers.join(', ') || '—'} · 模型 ${report.model ?? '—'}`
+          : `Coverage ${Math.round(report.coverage.coverageRate * 100)}% (${report.coverage.reviewedFiles}/${report.coverage.totalFiles}) · reviewers ${report.reviewers.join(', ') || '—'} · model ${report.model ?? '—'}`}
       </div>
     </details>}
     <details className={css.sectionMeta}>
-      <summary style={{ cursor: 'pointer', margin: '8px 0' }}>{isZh ? '团队是怎么保证不出错的？（四条硬规则）' : 'How does the team stay correct? (four hard rules)'}</summary>
+      <summary style={{ cursor: 'pointer', margin: '8px 0' }}>{isZh ? '这个审查为什么可信？（四条约束）' : 'Why is this review trustworthy? (four constraints)'}</summary>
       <div style={{ display: 'grid', gap: 8, padding: '8px 0' }}>
-        <p><strong>{isZh ? '1. 任务只能被一个人认领' : '1. A task has exactly one owner'}</strong><br />{isZh
-          ? '任务板按 ID 升序分配，依赖未完成的任务不会被分配，也不会被抢走——被拒绝时会告诉你「谁拿着」和「在等谁」，因为这两种情况的处理方式完全不同；只有当前负责人能关闭任务，所以任务板可以直接当审计记录看。'
-          : 'Tasks are handed out in id order, a task whose dependencies are unfinished is never offered, and a claim cannot be stolen — a refusal names who holds it or what it is waiting for, because those need different fixes. Only the current owner can close a task, which is what makes the board auditable.'}</p>
-        <p><strong>{isZh ? '2. 写者之间物理隔离' : '2. Writers are physically isolated'}</strong><br />{isZh
-          ? '每个会写文件的角色都会先切出自己的 git worktree 和分支，工作区只在显式调用合并时才变化。合并若冲突会在报告前被 abort，因此工作区永远不会停在半合并状态；报告里会点名是哪些文件冲突。'
-          : 'Every role that writes gets its own git worktree and branch; the shared tree changes only on an explicit merge. A conflicting merge is aborted before it is reported, so the workspace is never left half-merged, and the report names exactly which paths conflicted.'}</p>
-        <p><strong>{isZh ? '3. 职责分离是结构性的，不是口号' : '3. Separation of duties is structural'}</strong><br />{isZh
-          ? '只读角色拿不到写和 Shell 工具：允许列表会与角色的能力集合求交，因此在角色文件里写一个 write 也不会生效。验证者（verifier）永远只读，验证结果也不是合并许可证。'
-          : 'A read-only role cannot receive write or shell tools: the allow list is intersected with the role\'s capabilities, so naming a write tool in a role file does not grant it. The verifier is always read-only, and its verdict is not a merge ticket.'}</p>
-        <p><strong>{isZh ? '4. 身份是持久的，存活状态是现读的' : '4. Identity is durable; liveness is read live'}</strong><br />{isZh
-          ? '任务板用成员 ID 记录负责人，写者的工作区也挂在某个成员名下，这两件事都落在磁盘上。而成员是否还在运行，永远从活的子 Agent 读取，不写一份镜像副本——副本只会是过期的。因此重启后能算出「谁停下了、拿着哪个任务、哪个 worktree 还留着未合并的工作」。'
-          : 'The board records an owner by member id and a writer\'s worktree is registered against one, and both live on disk. Whether a member is still running is always read from the live child Agent rather than written into a mirrored copy, which can only ever be stale. After a restart the team can therefore say who stopped, which task they held, and which worktree still holds unmerged work.'}</p>
+        <p><strong>{isZh ? '1. 覆盖对账，不留无声的缺口' : '1. Coverage is reconciled'}</strong><br />{isZh
+          ? '每个进入审查的文件都必须以「已审查 / 已跳过 / 失败」三者之一离开，且跳过与失败必须带原因（规则排除、二进制、超大、不可读、文件数上限、预算拒绝）。少一个文件就会在报告的 notes 里点名，而不是从分母里悄悄消失。'
+          : 'Every file that enters leaves as reviewed, skipped or failed, and the last two must carry a reason (a rule excluded it, it is binary, oversized, unreadable, past the file limit, or refused by the budget). A file that goes missing is named in the report’s notes rather than quietly dropping out of the denominator.'}</p>
+        <p><strong>{isZh ? '2. 行号必须有证据' : '2. A line number needs evidence'}</strong><br />{isZh
+          ? '评论落行只有四种合法路径：落在 diff 的 hunk 里、引文在文件中唯一匹配、旧侧行号经 hunk 映射到新侧、或者干脆不给行号（0,0）。映射到一个被删掉的行会被拒绝。宁可说「不知道在哪一行」，也不给一个看起来精确的错行号。'
+          : 'A comment lands on a line by one of four routes: inside a diff hunk, a unique quotation match, an old-side line translated through the hunks, or no line at all (0,0). A mapped line that was deleted is refused. Saying “I do not know which line” beats a precise-looking wrong one.'}</p>
+        <p><strong>{isZh ? '3. 事实核查只删能被证明错的' : '3. The fact-check only removes what it can disprove'}</strong><br />{isZh
+          ? '后置过滤是 fail-open 的：调用失败、响应读不出来、没有这条发现的判定、判定缺少 id，一律保留。想删除必须给出理由，否则视为批准。宁可留下一条可疑的发现，也不隐藏一条真的。'
+          : 'The post-filter fails open: a failed call, an unreadable response, no verdict for that finding, or a verdict without an id all keep the finding. A removal must state a reason; a removal without one counts as approval. Keeping a doubtful finding beats hiding a real one.'}</p>
+        <p><strong>{isZh ? '4. 花掉的每一分钱都记账' : '4. Every token is metered'}</strong><br />{isZh
+          ? '分组、计划、逐文件审查、事实核查、复核的用量都会在下一次决策之前计入预算；超预算的组会跑完「最后一轮」并把结论交出来，而不是把半成品丢掉。没有哪个阶段可以偷偷花钱。'
+          : 'Grouping, planning, per-file review, fact-checking and adjudication are all folded into the budget before the next decision. A group over its budget runs one final round and still produces a verdict instead of discarding half-finished work. No stage may spend without being metered.'}</p>
       </div>
     </details>
   </section>
@@ -5148,7 +6240,7 @@ export function GuardSettingsPanel(input: {
       : 'Host-level safety and quality toggles: applied to Host tool dispatch for every engine. Most are on by default; a few are opt-in enhancements.'}</small>
     <div className={css.extensionList}>
       {row('envReadGuardEnabled', isZh ? '凭证文件读取保护' : 'Credential-file read protection', isZh ? '拒绝读取 .env、SSH 密钥、云凭证等机密文件；模型会被引导向用户索要所需值。' : 'Denies reads of .env, SSH keys, cloud credentials, and similar secrets; the model is told to ask you for values instead.')}
-      {row('doomLoopGuardEnabled', isZh ? '死循环守卫' : 'Doom-loop guard', isZh ? '同一工具调用 10 分钟内完全相同地重复 3 次即阻断并冷却 2 分钟，防止失控引擎烧 token。' : 'Blocks the 3rd identical tool call within 10 minutes (2-minute cooldown), stopping runaway engines from burning tokens.')}
+      {row('doomLoopGuardEnabled', isZh ? '死循环守卫' : 'Doom-loop guard', isZh ? '同一工具调用 10 分钟内完全相同地重复 3 次即阻断并冷却 2 分钟，防止失控引擎烧 token。只针对 Codex/Claude 等原生引擎自己的工具：经 Host 分发的工具调用由 Harness 自带的重复提醒负责，本守卫不再重复裁决。' : 'Blocks the 3rd identical tool call within 10 minutes (2-minute cooldown), stopping runaway engines from burning tokens. Native engines\' own tools only: calls the Host dispatches are the Harness\'s own repeat-reminder to judge, which this guard no longer second-guesses.')}
       {row('assistantLoopGuardEnabled', isZh ? '助手输出循环守卫' : 'Assistant-output loop guard', isZh ? '在回答流式生成时就检测模型陷在自己的文字里打转——同一行、同一列表格行或同一段落一直重复到窗口耗尽。第一次检测注入提醒并让本回合继续，再次检测即取消本回合，因为被提醒后仍重复的输出不会自行收敛，而每个多余 token 都要付两次账。工具调用的重复由「死循环守卫」负责，不是这里。' : 'Watches the answer while it is still streaming and acts on the model looping inside its own prose — the same line, table row, or paragraph until the window is gone. The first detection injects a reminder and lets the turn continue; a second one cancels it, because text repeated after a warning will not converge on its own and every further token is paid for twice. Repetition across tool calls belongs to the doom-loop guard, not here.')}
       {row('lspEnabled', isZh ? 'LSP 语言服务' : 'LSP language services', isZh ? '探测到 TypeScript/Python/Go 语言服务器时自动挂载精准跳转/引用工具。' : 'Mounts precise definition/reference tools when TypeScript/Python/Go language servers are detected on PATH.')}
       {row('rehydrationEnabled', isZh ? '压缩后再水化' : 'Post-compaction rehydration', isZh ? '上下文压缩完成后自动重新注入任务计划与长期记忆，会话不“失忆”。' : 'After compaction, re-injects the task plan and durable memory so the session keeps its plan.')}
@@ -5432,7 +6524,11 @@ export function PluginConflictNotice(input: {
           if (record.detectedAt < cutoff) seen.current.add(record.id)
         }
         const latest = result.value.pluginConflictRecords
-          .filter(record => record.detectedAt >= cutoff && !seen.current.has(record.id))
+          .filter(record => record.detectedAt >= cutoff && !seen.current.has(record.id)
+            // A record the running tree no longer matches describes a state the
+            // Harness has since left: announcing it as a fresh repair would be a
+            // notification about a plugin that is running right now.
+            && (result.value.pluginConflictActiveRecords ?? []).includes(record.id))
           .at(-1)
         if (latest === undefined) return
         seen.current.add(latest.id)
@@ -5548,6 +6644,12 @@ export function DeviceSessionManager(input: {
   readonly load?: () => Promise<RemoteResult<FreeCodeGoDeviceSessions>>
   readonly revoke?: (deviceId: string) => Promise<RemoteResult<FreeCodeGoDeviceSessions>>
   readonly revokeAll?: () => Promise<RemoteResult<number>>
+  /**
+   * Buttons that belong on the same row as the device-session disclosure. The
+   * raw-account read used to sit under a disclosure of its own, which cost a row
+   * of chrome for a button that only ever needed to be beside this one.
+   */
+  readonly extraActions?: ReactNode
   readonly language: 'zh' | 'en'
 }): ReactNode {
   const zh = input.language === 'zh'
@@ -5600,6 +6702,7 @@ export function DeviceSessionManager(input: {
   const rows = (sessions?.sessions ?? []).filter(session => !session.revoked)
   return <div className={css.accountManager}>
     <div className={css.accountActions}>
+      {input.extraActions}
       {/* The list is a disclosure: the same button opens it and folds it away,
           instead of offering an open action with no visible close. */}
       <button className={css.button} type="button" aria-expanded={open} onClick={() => { setOpen(previous => !previous); if (!open) refresh() }} disabled={busy !== undefined}>{open ? (zh ? '收起设备列表' : 'Hide device list') : (zh ? '管理设备会话' : 'Manage device sessions')}</button>
@@ -6134,7 +7237,7 @@ export function selectedChannelDescription(channel: PaymentChannel | undefined, 
   // Checkout Sessions and Payment Links — and a promise the channel cannot keep
   // is worse than the honest one.
   const receipt = isCardChannel(channel.paymentType)
-    ? language === 'zh' ? ' · 支付后可下载收据，Stripe 会邮件发送付款凭证' : ' · downloadable receipt after payment'
+    ? language === 'zh' ? ' · 支付后可下载收据，付款凭证会发送至账户邮箱' : ' · downloadable receipt after payment'
     : ''
   return `${limits}${fee}${fixed}${multiplier}${receipt}`.trim()
 }
@@ -6454,8 +7557,16 @@ function PaymentCheckoutLink({ value, label }: { readonly value: string | undefi
   return <a href={url} target="_blank" rel="noreferrer">{label}</a>
 }
 
-function PaymentQrCode({ value, label }: { readonly value: string; readonly label: string }): ReactNode {
-  return <div className={css.qrWrap}><code className={css.qrText}>{value}</code><button className={css.button} type="button" onClick={() => { void globalThis.navigator?.clipboard?.writeText(value) }}>{label} · 复制内容 / Copy</button></div>
+/**
+ * The payload shown when a QR code arrives as text rather than as an image.
+ *
+ * The button carries one language, and it names the action rather than repeating
+ * the payload's label: it used to read "支付二维码 · 复制内容 / Copy" to everybody,
+ * which is a bilingual control in a panel that already knows which language it is
+ * drawing in.
+ */
+function PaymentQrCode({ value, label, language }: { readonly value: string; readonly label: string; readonly language: 'zh' | 'en' }): ReactNode {
+  return <div className={css.qrWrap}><code className={css.qrText}>{value}</code><button className={css.button} type="button" title={label} onClick={() => { void globalThis.navigator?.clipboard?.writeText(value) }}>{language === 'zh' ? '复制二维码内容' : 'Copy the QR contents'}</button></div>
 }
 
 /**
@@ -6480,9 +7591,14 @@ function PaymentQrCode({ value, label }: { readonly value: string; readonly labe
  */
 const CLIENT_ABORT_PATTERN = /aborted due to timeout|the operation was aborted|AbortError/u
 
-export function describePaymentError(detail: string): string {
+export function describePaymentError(detail: string, language: 'zh' | 'en'): string {
+  // One sentence, in the language this panel is drawing in. It used to return a
+  // "中文 / English" pair, which handed every reader a sentence in a language
+  // they did not pick — and made the line twice as long as the fact it carried.
+  // The caller's own language is already known here, so the choice is made once.
+  const zh = language === 'zh'
   const value = detail.trim()
-  if (value === '') return '订单请求失败，请稍后重试。 / The order request failed; try again later.'
+  if (value === '') return zh ? '订单请求失败，请稍后重试。' : 'The order request failed; try again later.'
   // A timeout on a money path is a *different* fact from "the service is down",
   // and it must not be answered with a blind retry: the request timed out
   // waiting for the provider, so the backend may already hold an order this
@@ -6490,11 +7606,11 @@ export function describePaymentError(detail: string): string {
   // pending orders pile up until the account hits its pending-order limit — so
   // this branch names the pending list instead, and it is checked before the
   // generic 5xx/network branch below, which would swallow it.
-  if (CLIENT_ABORT_PATTERN.test(value)) return '等待支付服务返回结果超时。订单可能已经在服务端创建但未拿到支付链接：请先在上方「待支付订单」里确认（可继续支付或取消），再决定是否重试，不要直接重复下单。 / The payment service did not answer in time. An order may already exist without a return URL: check the pending orders list above first (pay or cancel it), then retry — do not simply resubmit.'
-  if (/INVALID_STATUS|cannot be cancelled in current status/i.test(value)) return '订单状态已变化，只有“待支付（pending）”订单可以取消。请刷新订单状态。 / The order status has changed. Only pending orders can be cancelled; refresh the order status.'
-  if (/too_many_pending|TOO_MANY_PENDING|429/i.test(value)) return '待支付订单已达到账户上限，请先取消遗留订单后重试。 / Pending payment limit reached; cancel an unfinished order and try again.'
-  if (/INVALID_RETURN_URL|return_url/i.test(value)) return '支付回跳地址无效，请刷新插件后重试。 / The payment return URL is invalid; refresh the plugin and try again.'
-  if (/PAYMENT_DISABLED|payment system is disabled/i.test(value)) return '支付服务当前未启用。 / Payment service is currently disabled.'
+  if (CLIENT_ABORT_PATTERN.test(value)) return zh ? '支付服务超时未返回结果。这笔订单可能已经创建但还没有支付链接，请先在上方「待支付订单」里确认（继续支付或取消），再决定是否重新下单。' : 'The payment service did not answer in time. This order may already exist without a payment link — check the pending orders above first (pay it or cancel it) before ordering again.'
+  if (/INVALID_STATUS|cannot be cancelled in current status/i.test(value)) return zh ? '订单状态已变化，只有待支付的订单可以取消。请重新打开设置面板查看最新状态。' : 'This order has already changed state; only a pending order can be cancelled. Reopen the settings panel to see its current state.'
+  if (/too_many_pending|TOO_MANY_PENDING|429/i.test(value)) return zh ? '待支付订单数量已达上限，请先取消一笔未完成的订单。' : 'Too many orders are still awaiting payment; cancel one of them first.'
+  if (/INVALID_RETURN_URL|return_url/i.test(value)) return zh ? '支付没能开始，请稍后重试或改用其他支付方式。' : 'The payment could not start; try again in a moment, or use another payment method.'
+  if (/PAYMENT_DISABLED|payment system is disabled/i.test(value)) return zh ? '支付服务当前未启用。' : 'Payments are currently unavailable.'
   // `NO_AVAILABLE_INSTANCE` (nothing is configured for this type) and
   // `PAYMENT_GATEWAY_ERROR` (an instance exists and the upstream provider did not
   // answer) are different backend conditions, but they meet in the same place
@@ -6504,17 +7620,17 @@ export function describePaymentError(detail: string): string {
   // advice here is about the *network*, not about the button the user just
   // pressed. The card channel has no such restriction, so it is offered as the
   // way through.
-  if (/NO_AVAILABLE_INSTANCE|no available instance|no available gateway/i.test(value)) return '当前支付方式暂时无法下单：支付宝/微信通道只支持中国大陆网络，请关闭代理或 VPN 后重试，也可以改用 Stripe 信用卡支付。 / This method cannot be used right now. The Alipay/WeChat channel only serves mainland China networks — turn off any proxy or VPN and try again, or pay by card with Stripe.'
-  if (/PAYMENT_GATEWAY_ERROR|payment gateway error/i.test(value)) return '支付通道暂时没有响应，通常是网络环境或通道维护导致的（不是账户问题）。支付宝/微信请先关闭代理或 VPN 后重试；也可以改用 Stripe 信用卡支付，或稍后再试。 / The payment channel is not responding — usually the network path or provider maintenance, not your account. For Alipay/WeChat, turn off any proxy or VPN and retry; you can also pay by card with Stripe, or try again later.'
-  if (/INVALID_AMOUNT|amount out of range/i.test(value)) return '充值金额不在支付服务允许范围内。 / The recharge amount is outside the payment service limits.'
-  if (/HTTP\s+401|unauthori[sz]ed|token.*expir/i.test(value)) return '登录状态已失效，请重新登录后重试。 / Your sign-in has expired; sign in again and retry.'
-  if (/HTTP\s+403|forbidden|permission|not allowed/i.test(value)) return '当前账户没有创建订单的权限。 / This account is not allowed to create payment orders.'
-  if (/HTTP\s+404|not found/i.test(value)) return '支付订单接口不存在或已更新，请刷新插件。 / The payment order endpoint was not found or has changed; refresh the plugin.'
-  if (/HTTP\s+400|bad request|invalid/i.test(value)) return '订单参数被支付服务拒绝，请检查支付方式后重试。 / The payment service rejected the order parameters; check the payment method and retry.'
-  if (/HTTP\s+409|conflict|duplicate/i.test(value)) return '订单状态发生冲突，请刷新订单后重试。 / The order is in a conflicting state; refresh it and retry.'
-  if (/HTTP\s+5\d\d|timeout|timed out|network/i.test(value)) return '支付服务暂时不可用，请稍后重试。 / The payment service is temporarily unavailable; try again later.'
-  if (/no checkout URL|no payment URL|QR code/i.test(value)) return '支付服务没有返回可用的支付链接或二维码，请换一种支付方式或稍后重试。 / The payment service returned no usable checkout URL or QR code; try another payment method or retry later.'
-  return '订单操作失败，请稍后重试。 / The order operation failed; try again later.'
+  if (/NO_AVAILABLE_INSTANCE|no available instance|no available gateway/i.test(value)) return zh ? '这种支付方式暂时无法下单。支付宝与微信支付只支持中国大陆网络，请关闭代理或 VPN 后重试；也可以改用银行卡或信用卡支付。' : 'This payment method cannot be used right now. Alipay and WeChat Pay only work on mainland China networks — turn off any proxy or VPN and try again, or pay by bank card or credit card.'
+  if (/PAYMENT_GATEWAY_ERROR|payment gateway error/i.test(value)) return zh ? '支付通道暂时没有响应，通常是网络环境或通道维护导致的，与你的账户无关。支付宝与微信支付请先关闭代理或 VPN 后重试；也可以改用银行卡或信用卡支付，或稍后再试。' : 'The payment channel is not responding — usually the network path or provider maintenance, not your account. For Alipay and WeChat Pay, turn off any proxy or VPN and retry; you can also pay by bank card or credit card, or try again later.'
+  if (/INVALID_AMOUNT|amount out of range/i.test(value)) return zh ? '充值金额不在允许范围内。' : 'That recharge amount is outside the allowed range.'
+  if (/HTTP\s+401|unauthori[sz]ed|token.*expir/i.test(value)) return zh ? '登录状态已失效，请重新登录后重试。' : 'Your sign-in has expired; sign in again and retry.'
+  if (/HTTP\s+403|forbidden|permission|not allowed/i.test(value)) return zh ? '当前账户不能创建充值订单。' : 'This account cannot create orders.'
+  if (/HTTP\s+404|not found/i.test(value)) return zh ? '订单服务暂时不可用，请稍后重试。' : 'The order service is unavailable right now; try again later.'
+  if (/HTTP\s+400|bad request|invalid/i.test(value)) return zh ? '支付方式或订单信息未被接受，请换一种支付方式后重试。' : 'The payment method or the order details were not accepted; try another payment method.'
+  if (/HTTP\s+409|conflict|duplicate/i.test(value)) return zh ? '订单状态发生冲突，请重新打开设置面板后再试。' : 'The order is in a conflicting state; reopen the settings panel and retry.'
+  if (/HTTP\s+5\d\d|timeout|timed out|network/i.test(value)) return zh ? '支付服务暂时不可用，请稍后重试。' : 'The payment service is temporarily unavailable; try again later.'
+  if (/no checkout URL|no payment URL|QR code/i.test(value)) return zh ? '支付服务没有返回可用的支付链接或二维码，请换一种支付方式或稍后重试。' : 'The payment service returned no usable payment link or QR code; try another payment method or try again later.'
+  return zh ? '订单操作失败，请稍后重试。' : 'The order operation failed; try again later.'
 }
 
 /**
@@ -6546,17 +7662,80 @@ function parsePaymentOrders(value: unknown): readonly PaymentOrder[] {
     if ((typeof id !== 'number' && typeof id !== 'string') || typeof state !== 'string' || !Number.isFinite(amount)) throw new Error('FreeCodeGo payment order id, state, and amount are required')
     const currency = row.currency
     if (typeof currency !== 'string' || currency.trim() === '') throw new Error(`FreeCodeGo payment order ${String(id)} currency is required`)
-    // `created_at` is the primary stamp and `paid_at` is the fallback: a row that
-    // carries only the second one is still dateable, and a row carrying neither
-    // simply renders without a date rather than with today's.
-    const createdAt = row.created_at ?? row.paid_at
-    return { orderId: String(id), state, amount, currency, ...(typeof row.pay_amount === 'number' ? { payAmount: row.pay_amount } : typeof row.pay_amount === 'string' && Number.isFinite(Number(row.pay_amount)) ? { payAmount: Number(row.pay_amount) } : {}), ...(typeof row.out_trade_no === 'string' ? { outTradeNo: row.out_trade_no } : {}), ...(typeof row.payment_type === 'string' ? { paymentType: row.payment_type } : {}), ...(typeof row.expires_at === 'string' ? { expiresAt: row.expires_at } : {}), ...(typeof createdAt === 'string' && createdAt.trim() !== '' ? { createdAt } : {}) }
+    // The two stamps are carried apart rather than collapsed into one, because
+    // they answer different questions and one of them is the one a payment list is
+    // read for. Each is set only when the backend sent it: a row carrying neither
+    // renders without a date rather than with today's. `orderReceiptStamp` decides
+    // which one a receipt row states.
+    const createdAt = typeof row.created_at === 'string' && row.created_at.trim() !== '' ? row.created_at : undefined
+    const paidAt = typeof row.paid_at === 'string' && row.paid_at.trim() !== '' ? row.paid_at : undefined
+    return { orderId: String(id), state, amount, currency, ...(typeof row.pay_amount === 'number' ? { payAmount: row.pay_amount } : typeof row.pay_amount === 'string' && Number.isFinite(Number(row.pay_amount)) ? { payAmount: Number(row.pay_amount) } : {}), ...(typeof row.out_trade_no === 'string' ? { outTradeNo: row.out_trade_no } : {}), ...(typeof row.payment_type === 'string' ? { paymentType: row.payment_type } : {}), ...(typeof row.expires_at === 'string' ? { expiresAt: row.expires_at } : {}),    ...(createdAt === undefined ? {} : { createdAt }), ...(paidAt === undefined ? {} : { paidAt }), ...(typeof row.receipt_available === 'boolean' ? { receiptAvailable: row.receipt_available } : {}), ...(typeof row.stripe_receipt_available === 'boolean' ? { stripeReceiptAvailable: row.stripe_receipt_available } : {}) }
   })
   return parsed
 }
 
 function parsePendingOrders(value: unknown): readonly PaymentOrder[] {
   return parsePaymentOrders(value).filter(order => canCancelPaymentOrder(order))
+}
+
+/**
+ * Every order in the response whose receipt the backend will serve.
+ *
+ * The list is the account's payment history, so it is filtered by what the
+ * backend will actually hand back rather than by a state list kept here: an
+ * offered row that then fails on click is worse than an absent one, and the
+ * backend answers a state this module does not track — its vocabulary is wider
+ * than the four states the panel requests, because this product sells no refunds
+ * and never asks for the refund family that would be the live example.
+ */
+function parseReceiptOrders(value: unknown): readonly PaymentOrder[] {
+  return parsePaymentOrders(value).filter(order => orderReceiptAvailable(order))
+}
+
+/**
+ * The states a payment settles into when the response carries no receipt flag.
+ *
+ * `recharging` belongs with the other two rather than with the pending ones: the
+ * backend only enters it after the money arrived, while credits are being
+ * applied.
+ */
+const RECEIPT_ORDER_STATES: ReadonlySet<string> = new Set(['paid', 'recharging', 'completed'])
+
+/**
+ * Whether this order has a receipt to download.
+ *
+ * The backend's flag when it sent one, because it is the authority on which
+ * orders have a document; the settled-state fallback is for a Host whose list
+ * rows predate the flag and would otherwise offer nothing at all.
+ * @param order - the order row to judge.
+ * @returns true when a receipt download should be offered.
+ */
+export function orderReceiptAvailable(order: Pick<PaymentOrder, 'state' | 'receiptAvailable'> | undefined): boolean {
+  if (order === undefined) return false
+  return order.receiptAvailable ?? RECEIPT_ORDER_STATES.has(order.state.trim().toLowerCase())
+}
+
+/**
+ * Whether to draw the Stripe download for one order, on either surface.
+ *
+ * The rule is deliberately the backend's alone. It knows which payments Stripe
+ * took, and it is what issues the document, so a guess here from `paymentType`
+ * would be a second authority that can disagree about whether a file exists. An
+ * **absent** flag is not a yes: the create-order response carries no receipt
+ * flags for an order nobody has paid, and drawing the button there would offer a
+ * download the backend would refuse.
+ *
+ * Both the receipt list's rows and the open order's card ask this one question,
+ * so the two cannot drift into offering different sets.
+ * @param order - the order row or the current order, whichever surface is asking.
+ * @param fetch - the Host's Stripe read, when this deployment registered one.
+ * @returns true when the Stripe download should be offered.
+ */
+export function stripeReceiptOffered(
+  order: Pick<PaymentOrder, 'stripeReceiptAvailable'> | undefined,
+  fetch: ((orderId: string) => Promise<RemoteResult<ReceiptDocument>>) | undefined,
+): boolean {
+  return fetch !== undefined && order?.stripeReceiptAvailable === true
 }
 
 

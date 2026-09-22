@@ -111,7 +111,10 @@ export function clusterMemoriesForSkills(memories: readonly SkillDraftSource[]):
     .slice(0, MAX_CLUSTERS)
 }
 
-/** Turn a cluster key into a candidate Skill name, or undefined when it cannot. */
+/** Turn a cluster key into a candidate Skill name, or undefined when it cannot.
+ * @param key - the cluster key to name.
+ * @returns the candidate Skill name, or `undefined` when none can be formed.
+ */
 export function skillNameForCluster(key: string): string | undefined {
   const base = key.replace(/^kind:/u, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '').toLowerCase()
   if (base === '') return undefined
@@ -167,7 +170,10 @@ export function renderSkillDraft(cluster: FreeCodeGoEngineeringSkillDraftCluster
   }
 }
 
-/** Resolve and confine the draft directory for one project's workspace. */
+/** Resolve and confine the draft directory for one project's workspace. 
+ * @param workspaceRoot - the workspace root this operation is scoped to.
+ * @returns the draft directory, or `undefined` when the root is unusable.
+ */
 export function skillDraftDirectory(workspaceRoot: string): string | undefined {
   const root = resolve(workspaceRoot)
   if (root === '') return undefined
@@ -183,6 +189,9 @@ export function skillDraftDirectory(workspaceRoot: string): string | undefined {
  * gap between "a file exists" and "every engine now follows it" is exactly the
  * boundary a human should cross deliberately.
  *
+ * @param workspaceRoot - the workspace root this operation is scoped to.
+ * @param memories - the memory records to cluster into drafts.
+ * @param bodies - the rendered body text for each memory id.
  * @returns one entry per draft actually written.
  */
 export async function writeSkillDrafts(workspaceRoot: string, memories: readonly SkillDraftSource[], bodies: ReadonlyMap<string, string>): Promise<readonly FreeCodeGoEngineeringSkillDraft[]> {

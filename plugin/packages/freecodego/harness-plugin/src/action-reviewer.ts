@@ -109,6 +109,7 @@ export interface ActionReviewSessionLike {
   readonly snapshotEvents: (fromSeq?: number) => readonly ActionReviewEventLike[]
 }
 
+/** The agent view the reviewer needs: its identity and the session to read. */
 export interface ActionReviewAgentLike {
   readonly id?: unknown
   readonly session: ActionReviewSessionLike
@@ -236,6 +237,9 @@ function parseVerdict(blocks: readonly ContentBlock[]): ReviewOutcome {
  * `index` is the event's position in the session snapshot, which is what the
  * policy module's cursor records and compares — a position rather than a count so
  * a cursor cannot survive a transcript that changed length underneath it.
+ * @param events - the session snapshot to render.
+ * @param maxEntries - the maximum number of trailing entries to keep.
+ * @returns the action Review Transcript Entry rows, in backend order.
  */
 export function renderTranscriptEntries(
   events: readonly ActionReviewEventLike[],
@@ -312,6 +316,8 @@ function messageText(message: unknown): string {
  * longer exist. Counting is deliberately coarse — over-invalidating costs a full
  * read, while under-invalidating costs a review of the wrong slice, and the module
  * is explicit that the second is worse.
+ * @param events - the session snapshot to generation-count.
+ * @returns the history generation number.
  */
 export function historyVersionOf(events: readonly ActionReviewEventLike[]): number {
   let version = 0
@@ -325,6 +331,9 @@ export function historyVersionOf(events: readonly ActionReviewEventLike[]): numb
  * `undefined` when the call id is absent or does not match a `tool/call` the
  * session still holds. The caller treats that as "cannot review", because the
  * alternative is a verdict on a tool name alone.
+ * @param events - the session snapshot to look the call up in.
+ * @param request - the pending approval, naming the tool and call id.
+ * @returns the resolved action, or `undefined` when the call cannot be identified.
  */
 export function resolveAction(
   events: readonly ActionReviewEventLike[],
@@ -358,6 +367,7 @@ function sessionOf(agent: ActionReviewAgentLike | undefined): ReviewedSession | 
   }
 }
 
+/** What the reviewer listener needs from the Host to be installed. */
 export interface ActionReviewInstallDeps {
   /** Whether the user enabled automated action review. */
   readonly enabled: () => boolean

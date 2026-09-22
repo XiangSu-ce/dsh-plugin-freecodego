@@ -13,12 +13,14 @@ import {
   GROUP_LOCKED_REASON,
   GROUP_PIN_PARAM,
   GROUP_UNAVAILABLE_REASON,
+  enrichCatalogChoices,
   expandGroupPinnedModels,
   isGroupRowSelectable,
   modelRowGroupBlock,
   parseGroupPin,
   withGroupPin,
 } from '../src/model-catalog.ts'
+import { WIRE_FOR_PROTOCOL, wireForProtocol } from '../src/openai-compatible-adapter.ts'
 import { routeForModelDetail, selectModelOptionChoice } from '../src/engine-remotes.ts'
 import type { EngineRemotesHost } from '../src/engine-remotes.ts'
 
@@ -188,6 +190,73 @@ describe('isGroupRowSelectable', () => {
     expect(isGroupRowSelectable({ enabled: false })).toBe(false)
     expect(isGroupRowSelectable({ locked: true })).toBe(false)
     expect(isGroupRowSelectable({ protocol: 'gemini' })).toBe(false)
+  })
+
+  it('offers every wire the transport can send, and only those', () => {
+    // Bound to the adapter's live key set rather than a restated list: the day a
+    // fourth wire lands, a picker that still names three must fail here instead
+    // of hiding a group the account can actually use, or offering one the router
+    // then refuses with "no enabled route".
+    const spellings: readonly (string | undefined)[] = [
+      ...WIRE_FOR_PROTOCOL.keys(), 'openai', 'responses', 'chat', 'chat_completions', 'Chat-Completions', ' ANTHROPIC ', 'gemini', undefined,
+    ]
+    for (const protocol of spellings) {
+      if (wireForProtocol(protocol) === undefined) continue
+      // `undefined` here means the row carries no protocol field at all, which is
+      // the shape the asymmetry below is about.
+      expect(isGroupRowSelectable(protocol === undefined ? {} : { protocol }), String(protocol)).toBe(true)
+    }
+    // The one asymmetry, spelled out rather than left implicit: a row that
+    // declares no protocol is offerable because routing sends it as the OpenAI
+    // default, not because a wire was found for it.
+    expect(isGroupRowSelectable({})).toBe(true)
+    expect(wireForProtocol(undefined)).toBeUndefined()
+  })
+})
+
+describe('enrichCatalogChoices duplicate routes', () => {
+  const bootstrapModel = {
+    id: 'gpt-5.6-terra',
+    displayName: 'gpt 5.6 terra',
+    provider: 'freecodego-cloud',
+    availability: 'available' as const,
+    compatibleEngines: ['deepseek'],
+    choices: [{ routeKey: 'model:openai_responses:gpt-5.6-terra', label: 'gpt 5.6 terra', availability: 'available' as const, compatibleEngines: ['deepseek'] }],
+  }
+  /** One `/models/options` route exactly as the backend lists it. */
+  const route = (over: Record<string, unknown> = {}) => ({
+    routeKey: 'group:2:gpt-5.6-terra', label: 'OpenAi GPT', availability: 'available',
+    compatibleEngines: [], groupId: 2, groupName: 'OpenAi GPT', rateMultiplier: 0.1, ...over,
+  })
+
+  it('collapses byte-identical group options into one choice', () => {
+    // The account's `/models/options` listed one group route twice; the picker
+    // rendered two identical `gpt 5.6 terra ×0.1` rows, which reads as a defect
+    // in the model list. Both choices named the same route, so one row is the
+    // honest answer.
+    const [model] = enrichCatalogChoices([bootstrapModel as never], [{ model: 'gpt-5.6-terra', options: [route(), route()] } as never])
+    expect(model!.choices).toHaveLength(1)
+    expect(model!.choices[0]!.routeKey).toBe('group:2:gpt-5.6-terra')
+  })
+
+  it('keeps one choice per group when the routes really differ', () => {
+    const [model] = enrichCatalogChoices([bootstrapModel as never], [{
+      model: 'gpt-5.6-terra',
+      options: [route(), route({ routeKey: 'group:12:gpt-5.6-terra', groupId: 12, groupName: 'Anthropic Claude', rateMultiplier: 0.2 })],
+    } as never])
+    expect(model!.choices.map(choice => choice.routeKey)).toEqual(['group:2:gpt-5.6-terra', 'group:12:gpt-5.6-terra'])
+  })
+
+  it('keeps both rows for two same-named groups at different rates', () => {
+    // The collapse is keyed on the route, never on the visible text: a second
+    // group a deployment happens to name the same way still has to stay
+    // selectable, because choosing it is choosing a different bill.
+    const [model] = enrichCatalogChoices([bootstrapModel as never], [{
+      model: 'gpt-5.6-terra',
+      options: [route(), route({ routeKey: 'group:9:gpt-5.6-terra', groupId: 9, rateMultiplier: 0.5 })],
+    } as never])
+    expect(model!.choices).toHaveLength(2)
+    expect(model!.choices.map(choice => choice.rateMultiplier)).toEqual([0.1, 0.5])
   })
 })
 

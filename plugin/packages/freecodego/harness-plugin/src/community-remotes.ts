@@ -15,11 +15,14 @@ import { redactCredentialShapes } from './secret-scan.ts'
 import type { FreeCodeGoCapabilityRegistry } from './capabilities.ts'
 import type { FreeCodeGoManagedCatalogs } from './managed-catalogs.ts'
 import { assertExternalEngineeringAssetSafe } from './engineering.ts'
-import { record } from './media-generation.ts'
+import { asRecord as record } from './untrusted-json.ts'
 import { communityInstallationLedgerPath, communitySourceKey, installedCommunityPackageNames, readCommunityInstallationLedger, readCommunityRestartMarker, readJsonFile, removeCommunityInstallationLedgerEntry, stringArray, writeCommunityInstallationLedger, writeJsonFile } from './community-storage.ts'
-import { commandAvailable, communityInstallTarget, fetchCommunityCatalog, importGithubSkill, readCommunityCatalogCache, readCommunityIconCache, resolveCommunityRepositoryIcon, runPnpm } from './community-catalog-utils.ts'
-import { fetchMarketplaceJson, marketplaceMcpDefinition, marketplaceMcpSummary, marketplaceNumber, marketplacePathSegment, marketplaceSkillSummary, marketplaceText, mcpDefinitionRequiresConfiguration, normalizeMarketplaceRequest, parseMarketplaceId } from './marketplace-utils.ts'
-import type { CommunityCatalogPayload, CommunityCatalogPlugin, FreeCodeGoCapabilityMarketplaceItem, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoCapabilitySettings, FreeCodeGoCapabilitySnapshot } from './types.ts'
+import { commandAvailable, communityInstallTarget, fetchCommunityCatalog, readCommunityCatalogCache, readCommunityIconCache, resolveCommunityRepositoryIcon } from './community-catalog-utils.ts'
+import { installSkillFromMarketplace, installedSkillNames, removeSkillFromMarketplace } from './skills/marketplace-install.ts'
+import { placementRootId, resolveSkillPlacements, type PlacementContext } from './skills/placement.ts'
+import { runDsh } from './plugin-update.ts'
+import { fetchMarketplaceJson, marketplaceMcpDefinition, marketplaceMcpSummary, marketplaceNumber, marketplaceSkillSummary, marketplaceText, mcpDefinitionRequiresConfiguration, normalizeMarketplaceRequest, parseMarketplaceId } from './marketplace-utils.ts'
+import type { CommunityCatalogPayload, CommunityCatalogPlugin, FreeCodeGoCapabilityMarketplaceItem, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoCapabilitySettings, FreeCodeGoCapabilitySnapshot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements } from './types.ts'
 
 const COMMUNITY_REGISTRY_URL = 'https://awesome-dsh-plugin.com/plugins.json'
 // The canonical catalog is GitHub Pages-backed. Keep npm CDN copies as
@@ -31,6 +34,18 @@ const COMMUNITY_REGISTRY_FALLBACK_URLS = [
 ] as const
 const COMMUNITY_ICON_CACHE_TTL_MS = 7 * 24 * 60 * 60_000
 const COMMUNITY_ICON_REQUEST_LIMIT = 24
+
+/**
+ * The managed-root id the community Skill root is mounted under.
+ *
+ * Named rather than spelled at each use because it is an identity, not a path: the
+ * capability registry keys a root by id as well as by path, so the id an install
+ * mounts has to be the id the page's own list and the removal path look under. It is
+ * the id every install before placements used, which is exactly why a placement gets
+ * its own id (`placementRootId`) instead of reusing this one — re-enabling this id
+ * against another directory unmounts the community root.
+ */
+export const COMMUNITY_SKILL_ROOT_ID = 'freecodego-community'
 
 /**
  * How many Skill/MCP assets one package may carry before the install scan
@@ -116,9 +131,22 @@ export interface CommunityRemotesHost {
   readonly communityProfileDirectory: () => string
   readonly communitySkillDirectory: () => string
   readonly communityRuntimeStartTime: () => number
+  /**
+   * The roots and the folder trust the placement matrix resolves against.
+   *
+   * Read through the Host rather than here, because the Host is what knows `$DSH_HOME`,
+   * the home directory, and — through the same trust record every other workspace
+   * check reads — whether the folder this process runs in has been trusted. A second
+   * reader of those facts is a second answer to "is this folder trusted".
+   */
+  readonly skillPlacementContext: () => Promise<PlacementContext>
 }
 
-/** Read one bounded page from the public MCP.so or skills.sh directory. */
+/** Read one bounded page from the public MCP.so or skills.sh directory. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param input - the caller's kind, query, category, and paging.
+ * @returns the capability Marketplace Page.
+ */
 export async function capabilityMarketplace(host: CommunityRemotesHost, input: FreeCodeGoCapabilityMarketplaceRequest): Promise<FreeCodeGoCapabilityMarketplacePage> {
   const request = normalizeMarketplaceRequest(input)
   const configuration = host.capabilities.configuration()
@@ -159,8 +187,11 @@ export async function capabilityMarketplace(host: CommunityRemotesHost, input: F
   const response = record(await marketplaceJson(host, url))
   const skills = Array.isArray(response.skills) ? response.skills : []
   const total = marketplaceNumber(response.count) || skills.length
+  // Read once per page rather than per row: whether a Skill is installed is the
+  // record beside the root, and every row asks the same question of the same file.
+  const installed = await installedSkillNamesAcrossRoots(host)
   const items = skills
-    .flatMap(value => marketplaceSkillSummary(value, host.communitySkillDirectory()))
+    .flatMap(value => marketplaceSkillSummary(value, host.communitySkillDirectory(), installed))
     .sort((left, right) => right.popularity - left.popularity)
     .slice(request.offset, request.offset + request.limit)
   return {
@@ -170,7 +201,11 @@ export async function capabilityMarketplace(host: CommunityRemotesHost, input: F
   }
 }
 
-/** Add a public MCP.so entry when its published configuration can be represented by the shared runtime. */
+/** Add a public MCP.so entry when its published configuration can be represented by the shared runtime. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param id - the `mcp:`-prefixed marketplace id to install.
+ * @returns the capability snapshot the Host reports.
+ */
 export async function mcpPresetInstall(host: CommunityRemotesHost, id: string): Promise<FreeCodeGoCapabilitySnapshot> {
   const slug = parseMarketplaceId(id, 'mcp')
   const detail = record(record(await marketplaceJson(host, new URL(`${MCP_SO_SERVERS_URL}/${encodeURIComponent(slug)}`))).data)
@@ -184,20 +219,175 @@ export async function mcpPresetInstall(host: CommunityRemotesHost, id: string): 
   return host.capabilities.setEnabled({ mcpEnabled: true })
 }
 
-/** Import one skills.sh entry from its verified GitHub source repository. */
-export async function skillPresetInstall(host: CommunityRemotesHost, id: string): Promise<FreeCodeGoCapabilitySnapshot> {
-  const identity = parseMarketplaceId(id, 'skill')
-  const parts = identity.split('/').filter(Boolean)
-  if (parts.length < 3 || parts.some(part => !/^[A-Za-z0-9_.-]{1,128}$/.test(part))) throw new Error('invalid skills.sh identifier')
-  const source = parts.slice(0, -1).join('/')
-  const skillName = parts.at(-1)!
-  const root = host.communitySkillDirectory()
-  const directory = path.join(root, marketplacePathSegment(identity))
-  await importGithubSkill({ source, skillName, destination: directory })
-  return host.capabilities.enableManagedSkillRoot('freecodego-community', root)
+/**
+ * Every managed root a Skill from this Marketplace could be sitting in.
+ *
+ * The community root first — it is what every install before placements used, and
+ * what the page's own list is built from — then the roots the placement matrix
+ * resolves to. The placement rows are recomputed with `projectTrusted: true` on
+ * purpose: trust gates *computing a destination from a repository's own
+ * configuration*, while this list asks where an install could already be, and a
+ * folder that lost its trust after an install must not make that install
+ * unremovable.
+ *
+ * `custom` rows are left out because a custom root is a path the caller supplies,
+ * and nothing supplies one through these remotes.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the roots, deduplicated by path, in the order they should be read.
+ */
+async function skillManagedRoots(host: CommunityRemotesHost): Promise<readonly { readonly root: string; readonly id: string; readonly provenance: string }[]> {
+  const community = { root: host.communitySkillDirectory(), id: COMMUNITY_SKILL_ROOT_ID, provenance: 'the community marketplace root' }
+  const rows = resolveSkillPlacements({ ...(await host.skillPlacementContext()), projectTrusted: true })
+  const roots = [community]
+  for (const row of rows) {
+    if (!row.ok || row.agent === 'custom') continue
+    if (roots.some(candidate => candidate.root === row.root)) continue
+    roots.push({ root: row.root, id: placementRootId(row.agent, row.scope), provenance: row.provenance })
+  }
+  return roots
 }
 
-/** Public, credential-free community catalog used by the embedded settings page. */
+/** Names the catalog should mark as installed, across every root one could be in. */
+async function installedSkillNamesAcrossRoots(host: CommunityRemotesHost): Promise<ReadonlySet<string>> {
+  const names = new Set<string>()
+  for (const target of await skillManagedRoots(host)) {
+    for (const name of await installedSkillNames(target.root)) names.add(name)
+  }
+  return names
+}
+
+/**
+ * Resolve where one install should land, and the id its root is mounted under.
+ *
+ * Absent a placement this is the community root under its original id, which is
+ * what every earlier install did: a placement moves the *file*, and re-mounting the
+ * list the page reads would be a different change than the one the user asked for.
+ * A named placement is resolved through the same matrix the page renders, so an
+ * unavailable destination is refused with the matrix's own reason rather than with a
+ * path that would have been wrong.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param placement - the chosen axes, or absent for the community root.
+ * @returns the root, the managed-root id, and how to describe the destination.
+ */
+async function resolveInstallTarget(host: CommunityRemotesHost, placement: FreeCodeGoSkillPlacement | undefined): Promise<{ readonly root: string; readonly id: string; readonly provenance: string }> {
+  if (placement === undefined) {
+    return { root: host.communitySkillDirectory(), id: COMMUNITY_SKILL_ROOT_ID, provenance: 'the community marketplace root' }
+  }
+  const context = await host.skillPlacementContext()
+  const row = resolveSkillPlacements(context).find(candidate => candidate.agent === placement.agent && candidate.scope === placement.scope)
+  if (row === undefined) throw new Error(`unknown Skill placement ${placement.agent}/${placement.scope}`)
+  if (!row.ok) throw new Error(row.reason)
+  return { root: row.root, id: placementRootId(placement.agent, placement.scope), provenance: row.provenance }
+}
+
+/**
+ * The placement matrix, as the settings page shows it.
+ *
+ * Exposed as its own remote rather than folded into the catalog response, because
+ * the rows depend on the *folder* — its trust, and where it is — and a page that read
+ * them out of a cached catalog would keep offering a project install after the
+ * folder stopped being trusted.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the resolved rows and the folder they were resolved against.
+ */
+export async function skillPlacements(host: CommunityRemotesHost): Promise<FreeCodeGoSkillPlacements> {
+  const context = await host.skillPlacementContext()
+  // The remembered choice is read from the same configuration the install path reads,
+  // on the same call that resolves the rows: a page whose selected option came from a
+  // second read could show one destination and install into another. The document's
+  // explicit `null` (a clear) is not a choice, and `configuration()` has already folded
+  // it away — this is the same fold, said once more at the boundary that serializes it.
+  const preferred = host.capabilities.configuration().preferredSkillPlacement ?? undefined
+  return {
+    workspace: context.workspace,
+    projectTrusted: context.projectTrusted,
+    defaultRoot: host.communitySkillDirectory(),
+    ...(preferred === undefined ? {} : { preferred }),
+    rows: resolveSkillPlacements(context).map(row => row.ok
+      ? { agent: row.agent, scope: row.scope, ok: true, root: row.root, provenance: row.provenance }
+      : { agent: row.agent, scope: row.scope, ok: false, reason: row.reason }),
+  }
+}
+
+/**
+ * Install one Skill from a source specifier or a skills.sh marketplace id.
+ *
+ * The identity is read by `skills/source.ts` first, so a tag, a subdirectory, an
+ * npm name or a directory on this machine is a spelling this accepts — the
+ * `owner/repo/skill-name` shape the catalog produces is the fallback. The install
+ * itself goes through `skills/marketplace-install.ts`, which is where the atomic
+ * install, the lockfile pin and the collision refusal live: this function decides
+ * what to install, not how it lands.
+ *
+ * A named placement picks the destination and mounts that root; the file moves, the
+ * community list does not. The two axes are resolved against the same matrix the page
+ * renders, so a destination the folder cannot support fails here with the reason the
+ * page already showed for it.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param id - the `skill:`-prefixed marketplace id, or a bare source specifier.
+ * @param placement - the destination axes, or absent for the community root.
+ * @returns the capability snapshot the Host reports, carrying what the install recorded.
+ */
+export async function skillPresetInstall(host: CommunityRemotesHost, id: string, placement?: FreeCodeGoSkillPlacement): Promise<FreeCodeGoCapabilitySnapshot> {
+  const identity = parseMarketplaceId(id, 'skill')
+  const target = await resolveInstallTarget(host, placement)
+  const report = await installSkillFromMarketplace({
+    identity,
+    root: target.root,
+    ...(placement === undefined ? {} : { placement: { root: target.root, provenance: target.provenance } }),
+  })
+  if ('refused' in report) throw new Error(report.refused)
+  const snapshot = await host.capabilities.enableManagedSkillRoot(target.id, target.root)
+  // Logged as well as returned: a Skill that landed unrecorded is a state the
+  // operator has to be able to see in the Host log, not only in one settings page.
+  host.ctx.logger.info?.(`freecodego: installed Skill "${report.name}" from ${report.source} (${report.resolvedCommit}) into ${target.provenance}${report.locked ? '' : ' — NOT recorded in the lockfile'}`)
+  return { ...snapshot, skillInstall: report }
+}
+
+/**
+ * Remove one Skill an earlier Marketplace install put in the managed root.
+ *
+ * The identity is the same one the install took, so the page can offer removal on
+ * the card it offered the install on. Which directory that is, is decided by
+ * `skills/marketplace-install.ts` — including the flattened directory the previous
+ * installer created — because the browser would have to re-derive the sanitizer to
+ * name it, and a second copy of that rule is a copy that drifts.
+ *
+ * The snapshot is **read**, not re-enabled: the root stays mounted, and re-enabling
+ * it to refresh a list would be an install-shaped write to answer a question about
+ * what the root now holds.
+ *
+ * Every managed root is searched, because an install that named a placement landed
+ * in a different one and the page offers removal on the same card it offered the
+ * install on. The first root that holds the Skill is the one it is removed from.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param id - the `skill:`-prefixed marketplace id, or a bare source specifier.
+ * @returns the capability snapshot, carrying what was removed.
+ */
+export async function skillPresetRemove(host: CommunityRemotesHost, id: string): Promise<FreeCodeGoCapabilitySnapshot> {
+  const identity = parseMarketplaceId(id, 'skill')
+  const roots = await skillManagedRoots(host)
+  const refusals: string[] = []
+  for (const [index, target] of roots.entries()) {
+    // The flattened-directory fallback belongs to the community root alone: it is the
+    // only root the installer that created those directories ever wrote to, and
+    // elsewhere a name must not be enough to authorize deleting a directory.
+    const report = await removeSkillFromMarketplace({ identity, root: target.root, ...(index === 0 ? {} : { recordedOnly: true }) })
+    if ('refused' in report) { refusals.push(report.refused); continue }
+    host.ctx.logger.info?.(`freecodego: removed Skill "${report.name}"${report.source === undefined ? '' : ` from ${report.source}`} out of ${target.provenance} — ${report.detail}`)
+    return { ...(await host.capabilities.snapshot()), skillRemove: report }
+  }
+  // Every root refused. A root that names this Skill under a *different* source has
+  // told the user something a plain absence has not, and the page renders one
+  // message: the substantive refusal wins over "not installed here".
+  const notHere = /is not installed in this managed root/u
+  throw new Error(refusals.find(reason => !notHere.test(reason)) ?? refusals[0] ?? `"${identity}" is not installed in any managed Skill root`)
+}
+
+/** Public, credential-free community catalog used by the embedded settings page. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the community Catalog Payload.
+ */
 export async function communityCatalog(host: CommunityRemotesHost): Promise<CommunityCatalogPayload> {
   if (host.state.communityCatalogPromise !== undefined) return host.state.communityCatalogPromise
   const operation = loadCommunityCatalog(host)
@@ -207,7 +397,11 @@ export async function communityCatalog(host: CommunityRemotesHost): Promise<Comm
   }
 }
 
-/** Resolve only verified repository artwork; never synthesize a plugin identity. */
+/** Resolve only verified repository artwork; never synthesize a plugin identity.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param urls - the catalog source URLs to resolve icons for.
+ * @returns each resolvable URL mapped to its icon URL.
+ */
 export async function communityCatalogIcons(host: CommunityRemotesHost, urls: readonly string[]): Promise<Record<string, string>> {
   // Serialize icon batches: concurrent read-modify-write on the shared cache
   // file lets the later writer drop entries resolved by the earlier one.
@@ -277,11 +471,19 @@ async function resolveCommunityIcons(host: CommunityRemotesHost, urls: readonly 
   return resolved
 }
 
+/** Report whether the community install prerequisites are present, plus the runtime identity.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns whether the environment is ready and the platform/node/profile details.
+ */
 export async function communityEnvironment(host: CommunityRemotesHost): Promise<{ readonly ready: boolean; readonly platform: string; readonly node: string; readonly profile: string }> {
   const ready = await commandAvailable('pnpm')
   return { ready, platform: `${process.platform}-${process.arch}`, node: process.version, profile: host.communityProfileDirectory() }
 }
 
+/** List the community plugins installed in the profile and their activation state.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the installed packages, activation states, sources, and restart flag.
+ */
 export async function communityInstalled(host: CommunityRemotesHost): Promise<{ readonly installed: Record<string, string>; readonly activation: Record<string, { readonly state: string }>; readonly sources: Record<string, readonly string[]>; readonly restartRequired: boolean }> {
   const directory = host.communityProfileDirectory()
   const manifest = await readJsonFile(path.join(directory, 'package.json'))
@@ -307,6 +509,11 @@ export async function communityInstalled(host: CommunityRemotesHost): Promise<{ 
   return { installed, activation, sources, restartRequired: pending.size > 0 }
 }
 
+/** Install one community plugin into the profile, serialized against other mutations.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param url - the plugin source URL to install.
+ * @returns the installed package names and the restart requirement.
+ */
 export async function communityInstall(host: CommunityRemotesHost, url: string): Promise<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }> {
   if (host.state.communityMutationTask !== undefined) throw new Error('another community plugin operation is already running')
   const task = installCommunityPlugin(host, url)
@@ -314,7 +521,11 @@ export async function communityInstall(host: CommunityRemotesHost, url: string):
   try { return await task } finally { host.state.communityMutationTask = undefined }
 }
 
-/** Remove an installed community plugin from the running profile and its next boot. */
+/** Remove an installed community plugin from the running profile and its next boot. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param url - absolute URL the request is sent to.
+ * @returns the removed package names and the restart requirement.
+ */
 export async function communityUninstall(host: CommunityRemotesHost, url: string): Promise<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }> {
   if (host.state.communityMutationTask !== undefined) throw new Error('another community plugin operation is already running')
   const task = uninstallCommunityPlugin(host, url)
@@ -367,6 +578,39 @@ async function refreshCommunityCatalog(cachePath: string): Promise<CommunityCata
   throw new Error(`插件市场服务暂时不可用，请检查网络后重试${detail}`)
 }
 
+/**
+ * The profile name a profile directory belongs to, as `dsh plugin --profile`
+ * wants it.
+ *
+ * The CLI reconciles the manifest of the profile it is *named*, while this
+ * module inspects the directory it *resolved*; deriving the name from that same
+ * directory is what keeps the two the same profile instead of two writers
+ * editing different files. A directory that yields no usable name is a refusal
+ * rather than a guess.
+ * @param directory - the profile directory this module resolved.
+ * @returns the profile name to hand the CLI.
+ */
+function profileNameFor(directory: string): string {
+  const name = path.basename(path.resolve(directory))
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) throw new Error(`community profile directory has no usable profile name: ${directory}`)
+  return name
+}
+
+/**
+ * Run one community package operation through the Harness CLI.
+ *
+ * Every profile manifest edit — the dependency and the `dsh.profile.bundles`
+ * entry that activates it — belongs to `dsh plugin`, so this is the only place
+ * the community marketplace touches a profile's packages.
+ * @param directory - the profile directory the operation targets.
+ * @param args - the pnpm arguments after `plugin`.
+ * @throws when the CLI exits non-zero, with its output masked.
+ */
+async function runProfilePluginCommand(directory: string, args: readonly string[]): Promise<void> {
+  const result = await runDsh(profileNameFor(directory), args)
+  if (result.code !== 0) throw new Error(redactCredentialShapes(result.detail) || `dsh plugin exited with code ${String(result.code)}`)
+}
+
 async function installCommunityPlugin(host: CommunityRemotesHost, url: string): Promise<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }> {
   const catalog = await host.communityCatalog()
   const entry = catalog.plugins.find(item => item.url.toLowerCase() === url.trim().toLowerCase())
@@ -376,8 +620,10 @@ async function installCommunityPlugin(host: CommunityRemotesHost, url: string): 
   const directory = host.communityProfileDirectory()
   const before = await readJsonFile(path.join(directory, 'package.json'))
   const beforeDeps = new Set(Object.keys(record(before.dependencies)))
-  const result = await runPnpm(directory, ['add', target])
-  if (result.code !== 0) throw new Error(redactCredentialShapes(result.stderr.trim().slice(-2000)) || `pnpm exited with code ${result.code}`)
+  // The install, the dependency entry, and the `dsh.profile.bundles` line that
+  // activates the bundle are one operation owned by the CLI. Editing any of them
+  // here would make this module a second writer of the same manifest.
+  await runProfilePluginCommand(directory, ['add', target])
   const after = await readJsonFile(path.join(directory, 'package.json'))
   const dependencies = record(after.dependencies)
   const added = Object.keys(dependencies).filter(name => !beforeDeps.has(name))
@@ -390,17 +636,18 @@ async function installCommunityPlugin(host: CommunityRemotesHost, url: string): 
   // would leave the plugin stuck at "installed" without a live bundle.
   // Re-install = update: the freshly downloaded package must pass the same
   // external-asset scan as its first install, since upstream content changed
-  // under a known name. This runs *before* the bundle list and the
-  // restart-pending marker are written — otherwise a hostile file threw after
-  // activation state was already on disk, and the next start activated it.
-  await rescanUpdatedCommunityAssets(directory, packageNames)
-  const bundles = [...stringArray(record(record(after.dsh).profile).bundles)]
-  for (const name of packageNames) {
-    const installed = await readJsonFile(path.join(directory, 'node_modules', name, 'package.json'))
-    if (record(installed.dsh).bundle !== undefined && !bundles.includes(name)) bundles.push(name)
+  // under a known name. The CLI activates as it installs, so a package this
+  // scan refuses has already been named as a profile layer by the time the scan
+  // can read it — the rejection therefore has to *take that back* before it is
+  // returned, or the next start mounts the hostile package anyway.
+  try {
+    await rescanUpdatedCommunityAssets(directory, packageNames)
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : String(error)
+    const rollback = await undoFailedActivation(host, directory, packageNames, added)
+      .then(() => undefined, (cause: unknown) => redactCredentialShapes(cause instanceof Error ? cause.message : String(cause)))
+    throw new Error(rollback === undefined ? failure : `${failure}; undoing the activation also failed: ${rollback}`)
   }
-  after.dsh = { ...record(after.dsh), profile: { ...record(record(after.dsh).profile), bundles } }
-  await writeJsonFile(path.join(directory, 'package.json'), after)
   if (packageNames.length > 0) {
     await writeCommunityInstallationLedger(communityInstallationLedgerPath(directory), entry.url, packageNames)
     const markerPath = path.join(directory, '.dsh-market', 'restart-pending.json')
@@ -408,6 +655,31 @@ async function installCommunityPlugin(host: CommunityRemotesHost, url: string): 
     await writeJsonFile(markerPath, { version: 1, processId: process.pid, runtimeStartTime: host.communityRuntimeStartTime(), packageNames })
   }
   return { ok: true, packageNames, restartRequired: true as const }
+}
+
+/**
+ * Take back the activation a rejected install already performed.
+ *
+ * A package this install newly added is removed through the same CLI, which
+ * restores both the dependency and the bundle list to what they were: the next
+ * start loads exactly what it loaded before. A name that was already a dependency
+ * is the update case, and there is no previous version here to restore to (the
+ * release flow is what retains one), so its loader entries are disabled instead —
+ * the copy stays on disk but cannot be loaded, and the caller still receives the
+ * scan's rejection.
+ * @param host - the Host surface used to reach the loader.
+ * @param directory - the profile directory the install targeted.
+ * @param packageNames - every package this install touched.
+ * @param added - the subset of those it newly added.
+ * @returns nothing; a failed undo rejects, and the caller reports it alongside
+ * the scan's own verdict rather than replacing it.
+ */
+async function undoFailedActivation(host: CommunityRemotesHost, directory: string, packageNames: readonly string[], added: readonly string[]): Promise<void> {
+  const fresh = packageNames.filter(name => added.includes(name))
+  const retained = packageNames.filter(name => !added.includes(name))
+  if (retained.length > 0) await disableCommunityEntries(host, retained)
+  if (fresh.length === 0) return
+  await runProfilePluginCommand(directory, ['remove', ...fresh])
 }
 
 /** Re-scan installed Skill/MCP assets of updated community packages (best-effort:
@@ -498,14 +770,11 @@ async function uninstallCommunityPlugin(host: CommunityRemotesHost, url: string)
   const packageNames = installedCommunityPackageNames(entry, dependencies, ledger)
   if (packageNames.length === 0) throw new Error('community plugin is not installed in this profile')
   // Remove first, disable after: disabling before the removal would leave the
-  // loader entries disabled in the profile when pnpm itself fails.
-  const result = await runPnpm(directory, ['remove', ...packageNames])
-  if (result.code !== 0) throw new Error(redactCredentialShapes(result.stderr.trim().slice(-2000)) || `pnpm exited with code ${result.code}`)
+  // loader entries disabled in the profile when the removal itself fails. The
+  // CLI drops each removed name from `dsh.profile.bundles` in the same
+  // operation, so the manifest is not edited here.
+  await runProfilePluginCommand(directory, ['remove', ...packageNames])
   await disableCommunityEntries(host, packageNames)
-  const after = await readJsonFile(path.join(directory, 'package.json'))
-  const bundles = stringArray(record(record(after.dsh).profile).bundles).filter(name => !packageNames.includes(name))
-  after.dsh = { ...record(after.dsh), profile: { ...record(record(after.dsh).profile), bundles } }
-  await writeJsonFile(path.join(directory, 'package.json'), after)
   await removeCommunityInstallationLedgerEntry(ledgerPath, entry.url)
   const markerPath = path.join(directory, '.dsh-market', 'restart-pending.json')
   await fs.mkdir(path.dirname(markerPath), { recursive: true })

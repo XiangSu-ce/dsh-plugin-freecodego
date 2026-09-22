@@ -29,6 +29,7 @@
 /** The five section headings, in the order a plan should read. */
 export const PLAN_SECTIONS = ['Context', 'Approach', 'Files', 'Reuse', 'Verification'] as const
 
+/** One plan section heading, drawn from {@link PLAN_SECTIONS}. */
 export type PlanSectionName = (typeof PLAN_SECTIONS)[number]
 
 /** What one inspection found. */

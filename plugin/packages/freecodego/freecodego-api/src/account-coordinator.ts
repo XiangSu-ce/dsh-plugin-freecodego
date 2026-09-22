@@ -48,10 +48,18 @@ export type FreeCodeGoAccountState =
 /** Stores one origin-scoped token pair as one atomic credential value. */
 export class HarnessFreeCodeGoCredentialVault implements FreeCodeGoCredentialVault {
   private readonly ref
+  /**
+   * The remembered password lives under its own reference, beside the session
+   * rather than inside it. The pair is rewritten by every login and by every
+   * background rotation, while this value changes only when the user asks for
+   * it — and erasing the session must not erase what the sign-in form prefills.
+   */
+  private readonly passwordRef
 
   constructor(private readonly credentials: CredentialProvider, origin: string) {
     const digest = createHash('sha256').update(origin).digest('hex').slice(0, 24).toUpperCase()
     this.ref = credentialRef(`FREECODEGO_SESSION_${digest}`)
+    this.passwordRef = credentialRef(`FREECODEGO_PASSWORD_${digest}`)
   }
 
   async load(_origin: string): Promise<FreeCodeGoTokenPair | undefined> {
@@ -66,6 +74,23 @@ export class HarnessFreeCodeGoCredentialVault implements FreeCodeGoCredentialVau
 
   async delete(_origin: string): Promise<void> {
     await this.credentials.unset(this.ref)
+  }
+
+  /**
+   * Read the remembered password, treating an empty entry as no entry.
+   * @returns the stored password, or undefined when the user never asked.
+   */
+  async loadPassword(_origin: string): Promise<string | undefined> {
+    const resolved = await this.credentials.resolve(this.passwordRef)
+    return resolved === undefined || resolved.value === '' ? undefined : resolved.value
+  }
+
+  async savePassword(_origin: string, password: string): Promise<void> {
+    await this.credentials.set(this.passwordRef, password)
+  }
+
+  async deletePassword(_origin: string): Promise<void> {
+    await this.credentials.unset(this.passwordRef)
   }
 }
 
@@ -111,13 +136,26 @@ export class FreeCodeGoAccountCoordinator {
    * not silently reverse the choice made at the password.
    */
   private pendingRemember: boolean | undefined
+  /**
+   * What this attempt asked to do with the remembered password.
+   *
+   * It is a third state rather than a boolean because "no password was
+   * mentioned" (a bare `login2FA`, a registration form with no such box) must
+   * leave the vault alone, while an explicit untick has to erase: those are two
+   * different answers and one of them is destructive. It survives the MFA step
+   * for the same reason as {@link pendingRemember} — the second factor completes
+   * the attempt that made the choice.
+   */
+  private pendingPassword: { readonly keep: string } | { readonly forget: true } | undefined
 
   constructor(
     private readonly auth: FreeCodeGoMobileAuthClient,
     private readonly vault: FreeCodeGoCredentialVault,
   ) {}
 
-  /** Return the latest browser-safe account state. */
+  /** Return the latest browser-safe account state. 
+   * @returns the latest account state, flagged when the vault write failed.
+   */
   snapshot(): FreeCodeGoAccountState {
     if (this.persistenceFailed && this.state.status === 'authenticated') return { ...this.state, persistence: 'failed' }
     return this.state
@@ -138,6 +176,7 @@ export class FreeCodeGoAccountCoordinator {
    * entry answers `false` rather than taking those surfaces down with a
    * thrown decoder error. `refresh()` still erases the unreadable entry when it
    * reaches it, and the next successful login overwrites it.
+   * @returns true when a usable vault session is present.
    */
   async hasStoredSession(): Promise<boolean> {
     try {
@@ -147,13 +186,49 @@ export class FreeCodeGoAccountCoordinator {
     }
   }
 
-  /** Rehydrate the redacted identity after loading a vault session. */
+  /**
+   * The password this machine remembers for the sign-in form.
+   *
+   * An unreadable entry is reported as no entry: the form starts empty, which is
+   * what a machine that was never asked looks like, instead of turning a
+   * convenience into a sign-in error.
+   * @returns the stored password, or undefined when there is none.
+   */
+  async rememberedPassword(): Promise<string | undefined> {
+    try {
+      return await this.vault.loadPassword?.(this.auth.origin)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Keep the password a sign-in asked to remember; failure is not a login failure. */
+  private async writeRememberedPassword(password: string): Promise<void> {
+    try {
+      await this.vault.savePassword?.(this.auth.origin, password)
+    } catch { /* The next sign-in that asks again retries the write. */ }
+  }
+
+  /** Forget the remembered password after a sign-in that unticked the box. */
+  private async eraseRememberedPassword(): Promise<void> {
+    try {
+      await this.vault.deletePassword?.(this.auth.origin)
+    } catch { /* Erasing is best-effort: a sign-in does not fail over a convenience. */ }
+  }
+
+  /** Rehydrate the redacted identity after loading a vault session. 
+   * @param user - the redacted identity to publish as authenticated.
+   */
   setAuthenticated(user: FreeCodeGoAccountIdentity): void {
     this.pendingMfaToken = undefined
     this.state = { status: 'authenticated', user }
   }
 
-  /** Send a registration verification code through the existing public auth route. */
+  /** Send a registration verification code through the existing public auth route. 
+   * @param email - the address the verification code is sent to.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the countdown a resend control waits for.
+   */
   async sendVerifyCode(email: string, signal?: AbortSignal): Promise<{ readonly countdown: number }> {
     return this.auth.sendVerifyCode(email, signal)
   }
@@ -168,22 +243,33 @@ export class FreeCodeGoAccountCoordinator {
    * reported the user signed out, and `withAccessToken` refused every call with
    * "authentication is required" — while the durable session sat in the vault,
    * unreachable until the next successful login.
+   * @param input - credentials and the remember-me intent of this attempt.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the account state after the issued tokens were stored.
    */
   async login(input: FreeCodeGoLoginInput, signal?: AbortSignal): Promise<FreeCodeGoAccountState> {
     // Every entry point states its own persistence intent, so an unremembered
     // login cannot inherit the flag from an earlier remembered one (or the
     // reverse) for the rest of the process.
     this.pendingRemember = input.remember
+    if (input.rememberPassword === undefined) this.pendingPassword = undefined
+    else if (input.rememberPassword) this.pendingPassword = { keep: input.password }
+    else this.pendingPassword = { forget: true }
     try {
       return await this.consumeLoginResult(await this.auth.login(input, signal))
     } catch (error) {
       // No pair was issued, so this attempt has no intent left to carry.
       this.pendingRemember = undefined
+      this.pendingPassword = undefined
       throw error
     }
   }
 
-  /** Register through the public flow while retaining returned tokens in the Host vault only. */
+  /** Register through the public flow while retaining returned tokens in the Host vault only. 
+   * @param input - registration details and the remember-me intent of this attempt.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the account state after the issued tokens were stored.
+   */
   async register(input: FreeCodeGoRegisterInput, signal?: AbortSignal): Promise<FreeCodeGoAccountState> {
     this.pendingRemember = input.remember
     try {
@@ -194,12 +280,23 @@ export class FreeCodeGoAccountCoordinator {
     }
   }
 
-  /** Complete MFA and store credentials only after the second factor succeeds. */
+  /** Complete MFA and store credentials only after the second factor succeeds. 
+   * @param tempToken - the MFA challenge token the first factor issued.
+   * @param totpCode - the code the user's authenticator produced.
+   * @param deviceId - device identifier recorded with the session.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the account state after the second factor succeeded.
+   */
   async login2FA(tempToken: string, totpCode: string, deviceId?: string, signal?: AbortSignal): Promise<FreeCodeGoAccountState> {
     return this.consumeLoginResult(await this.auth.login2FA(tempToken, totpCode, deviceId, signal))
   }
 
-  /** Complete the pending Host-owned MFA challenge without exposing its temp token. */
+  /** Complete the pending Host-owned MFA challenge without exposing its temp token. 
+   * @param totpCode - the code the user's authenticator produced.
+   * @param deviceId - device identifier recorded with the session.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the account state after the second factor succeeded.
+   */
   async completeMfa(totpCode: string, deviceId?: string, signal?: AbortSignal): Promise<FreeCodeGoAccountState> {
     if (this.pendingMfaToken === undefined) throw new Error('no FreeCodeGo MFA challenge is pending')
     // The token stays pending until the second factor succeeds (consumeLoginResult
@@ -279,7 +376,10 @@ export class FreeCodeGoAccountCoordinator {
     return { ok: false, error: lastError ?? new Error('the session token could not be rotated'), kinds }
   }
 
-  /** Rotate the stored session token; callers reauthenticate after any failure. */
+  /** Rotate the stored session token; callers reauthenticate after any failure. 
+   * @param deviceId - device identifier recorded with the rotated session.
+   * @param signal - bounds this caller's wait; the shared rotation keeps running.
+   */
   async refresh(deviceId?: string, signal?: AbortSignal): Promise<void> {
     if (this.refreshInFlight !== undefined) {
       // The shared refresh runs on its own bounded signal (below), so a
@@ -351,12 +451,15 @@ export class FreeCodeGoAccountCoordinator {
     return this.refreshInFlight
   }
 
-  /** Revoke the remote session best-effort, then erase the local vault entry. */
+  /** Revoke the remote session best-effort, then erase the local vault entry. 
+   * @param signal - aborts the best-effort revocation when the caller cancels.
+   */
   async logout(signal?: AbortSignal): Promise<void> {
     this.signingOut = true
     // The attempt is over either way, so a pending intent cannot outlive it and
     // later speak for a login the user has not started.
     this.pendingRemember = undefined
+    this.pendingPassword = undefined
     // An in-flight refresh must not write the rotated pair back after the
     // vault erase below: the refresh loop observes signingOut before its
     // settlement save, and this await keeps ordering deterministic.
@@ -372,6 +475,10 @@ export class FreeCodeGoAccountCoordinator {
         // Local sign-out is authoritative; remote revocation is best-effort.
       } finally {
         await this.deleteTokens()
+        // Signing out forgets what this machine remembered, exactly as the
+        // surface forgets the address it prefilled: a password left behind would
+        // prefill the form of the account the user just signed out of.
+        await this.eraseRememberedPassword()
         this.state = { status: 'signed-out' }
       }
     } finally {
@@ -388,6 +495,10 @@ export class FreeCodeGoAccountCoordinator {
    * receipt email) must pass `{ replayOnUnauthorized: false }`: the gateway can
    * reject a request after already having observed it, so a blind replay would
    * duplicate the effect and can double-charge.
+   * @param operation - runs with the current access token and an abort signal of its own.
+   * @param signal - aborts the wait for credentials and the operation with it.
+   * @param options - whether an unauthorized answer may replay the operation once.
+   * @returns whatever the operation returned, behind a token refresh when the stored one was stale.
    */
   async withAccessToken<T>(
     operation: (accessToken: string, signal?: AbortSignal) => Promise<T>,
@@ -432,6 +543,10 @@ export class FreeCodeGoAccountCoordinator {
    * The pair is proven, not trusted: the coordinator reads `/auth/me` through
    * it before reporting `authenticated`, so a malformed or rejected pair
    * surfaces as an error instead of a half-signed-in state.
+   * @param tokens - the pair a federated sign-in already obtained.
+   * @param hydrateIdentity - reads the redacted identity those tokens belong to.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the account state after the pair was verified and persisted.
    */
   async adoptExternalSession(
     tokens: FreeCodeGoTokenPair,
@@ -477,6 +592,16 @@ export class FreeCodeGoAccountCoordinator {
     // mode as it is.
     if (this.pendingRemember !== undefined) this.ephemeral = !this.pendingRemember
     this.pendingRemember = undefined
+    // The remembered password is committed here for the same reason, and a vault
+    // that refuses the write is not worth failing a sign-in over: the password is
+    // a convenience the form can ask for again, while the session is the thing
+    // this call exists to establish.
+    const passwordIntent = this.pendingPassword
+    this.pendingPassword = undefined
+    if (passwordIntent !== undefined) {
+      if ('keep' in passwordIntent) await this.writeRememberedPassword(passwordIntent.keep)
+      else await this.eraseRememberedPassword()
+    }
     // A failed vault write must not leave the UI authenticated with no
     // durable session: surface the failure so the user can retry the login
     // instead of discovering the missing credentials on the next launch.

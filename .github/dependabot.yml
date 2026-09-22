@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  # `directory` is resolved against the repository root. This repository keeps
+  # its workspace in `plugin/` and has no root manifest, so `/` named nothing —
+  # a question the file could not raise while it sat unmounted under
+  # `plugin/.github/`.
+  - package-ecosystem: "npm"
+    directory: "/plugin"
+    exclude-paths:
+      # Vendored Cordis sources follow vendor/README.md instead of registry updates.
+      - "vendor/**"
+    schedule:
+      interval: "cron"
+      cronjob: "0 4 * * *"
+      timezone: "Asia/Shanghai"
+    cooldown:
+      default-days: 30
+    labels:
+      - "kind/dependency"
+      - "area/infra"
+
+  # The upstream `uv` entry named `/python/sdk`, which this repository does not
+  # publish (the allowlist carries no `python/`). Dependabot reports a missing
+  # directory as a config error, so an entry that was inert here would become a
+  # recurring failure now that the file is actually read. Removed rather than
+  # re-pointed, because there is no Python tree to update.
+
+  # Workflows live at the repository root, which is what `/` means here.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "cron"
+      cronjob: "0 4 * * *"
+      timezone: "Asia/Shanghai"
+    cooldown:
+      default-days: 30
+    labels:
+      - "kind/dependency"
+      - "area/infra"

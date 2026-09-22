@@ -58,8 +58,10 @@ export interface CacheTurnObservation {
   readonly cacheReadCostUsd?: number
 }
 
+/** Why the provider did not read a prompt prefix from cache. */
 export type CacheMissCause = 'idle-gap' | 'model-changed' | 'prefix-changed'
 
+/** One turn's unattributed cache-miss, with its cause and cost. */
 export interface CacheMiss {
   readonly sessionId: string
   readonly at: number
@@ -73,6 +75,7 @@ export interface CacheMiss {
   readonly cause: CacheMissCause
 }
 
+/** Aggregate cache-miss figures over the scanned range. */
 export interface CacheAttributionTotals {
   readonly missedTokens: number
   readonly missedCostUsd: number
@@ -114,11 +117,13 @@ function bySeverity(left: CacheMiss, right: CacheMiss): number {
   return right.missedTokens - left.missedTokens || left.at - right.at
 }
 
+/** The scanned misses plus their totals. */
 export interface CacheAttribution {
   readonly misses: readonly CacheMiss[]
   readonly totals: CacheAttributionTotals
 }
 
+/** Tunables for one cache-attribution scan. */
 export interface CacheAttributionOptions {
   /** Provider cache TTL used by the idle-gap label (default {@link CACHE_TTL_MS}). */
   readonly ttlMs?: number
@@ -147,6 +152,9 @@ function perToken(total: number | undefined, tokens: number): number {
  * Turns are grouped by session and walked in time order; each session's first
  * turn can never be attributed (there is nothing to compare it to) and is
  * reported in `unattributableTurns` rather than silently dropped.
+ * @param turns - the ledger turns to attribute.
+ * @param options - the TTL, noise floor, and caps for the scan.
+ * @returns the cache Attribution.
  */
 export function attributeCacheMisses(
   turns: readonly CacheTurnObservation[],

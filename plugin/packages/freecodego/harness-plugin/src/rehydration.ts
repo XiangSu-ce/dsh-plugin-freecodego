@@ -13,6 +13,7 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
 import { conversationArcText, foldConversationArc, type ConversationArcEvent, type ConversationArcMemory } from './memory/memory-facts.ts'
+import { describeMemoryAge, memoryFreshnessNote } from './memory/memory-age.ts'
 import type { FreeCodeGoEngineeringMemoryRecall } from './types.ts'
 import { neutralizeFenceTags } from './fence-text.ts'
 import { cutAtCodePointBoundary } from './memory/memory-security.ts'
@@ -30,7 +31,10 @@ type RehydrationAgent = {
   inject(message: unknown): void
 }
 
-/** Latest whole-list `todo/write` todos, or undefined when the session never wrote one. */
+/** Latest whole-list `todo/write` todos, or undefined when the session never wrote one.
+ * @param events - the session events to scan for the latest list.
+ * @returns the latest todo items, or `undefined` when none were written.
+ */
 export function latestTodos(events: readonly { readonly type: string; readonly data: unknown }[]): readonly { readonly content: string; readonly status: string }[] | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
@@ -73,10 +77,11 @@ const MAX_TODO_CHARS = 160
  * rather than a consequence of it.
  */
 const MAX_TODO_ITEMS = 64
-/** Memory records older than this get an explicit freshness caveat. */
-const STALE_MEMORY_DAYS = 7
 
-/** Build the rehydration text; empty when there is nothing durable to restore. */
+/** Build the rehydration text; empty when there is nothing durable to restore.
+ * @param input - the todos, memory recall, and pre-folded arc to render.
+ * @returns the rehydration text, or `''` when nothing is durable.
+ */
 export function rehydrationText(input: {
   readonly todos?: readonly { readonly content: string; readonly status: string }[]
   readonly memory?: FreeCodeGoEngineeringMemoryRecall
@@ -115,8 +120,17 @@ export function rehydrationText(input: {
       // Age annotation: an old record may be superseded by what the fresh
       // (post-compaction) conversation already established — the model should
       // weigh recent messages over stale memory when they conflict.
-      const ageDays = Math.max(0, Math.floor((now - record.createdAt) / 86_400_000))
-      const freshness = ageDays >= STALE_MEMORY_DAYS ? ` [recorded ${ageDays} days ago — may be outdated; recent conversation takes precedence on conflict]` : ''
+      //
+      // The bands and the sentence come from `memory/memory-age.ts`, the plugin's
+      // one freshness vocabulary. This file used to carry its own seven-day
+      // threshold and its own wording, which made the same record read two ways
+      // depending on the surface: a three-day-old note was unflagged here and
+      // labelled "re-check anything that may have changed since" by
+      // `engineering_memory_search` and the memory document, and the sentences for
+      // an old record did not match either. The precedence instruction is the one
+      // thing this caller adds, because it is about this prompt rather than age.
+      const note = memoryFreshnessNote(describeMemoryAge(record.createdAt, now))
+      const freshness = note === undefined ? '' : ` [${note} Recent conversation takes precedence over a conflicting memory.]`
       lines.push(`- ${neutralizeFenceTags(record.title, TAG)} [${record.kind}]${neutralizeFenceTags(excerpt, TAG)}${freshness}`)
     }
     lines.push('')
@@ -153,6 +167,8 @@ function memoryForRehydration(deps: {
  * Listen for completed compactions and rehydrate standing context into the
  * owning agent. Memory lookups and injection are best-effort: rehydration
  * must never turn a successful compaction into a session error.
+ * @param ctx - context carrying the services this call reads.
+ * @param deps - the enabled, recall, and body resolvers the listener needs.
  */
 export function installRehydration(ctx: Context, deps: {
   readonly enabled: () => boolean

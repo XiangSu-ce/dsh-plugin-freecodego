@@ -14,7 +14,13 @@ declare module '@deepseek-ai/dsh-session/types' {
   }
 }
 
-/** Read the most recent native runtime identity compatible with the selected engine plan. */
+/** Read the most recent native runtime identity compatible with the selected engine plan. 
+ * @param session - the durable Harness session the binding is read from.
+ * @param engine - the engine the binding must have been minted by.
+ * @param artifactDigest - the runtime artifact the binding must match.
+ * @param protocolAbi - the protocol ABI the binding must match.
+ * @returns the runtime session id to resume, or `undefined` when the session carries no binding.
+ */
 export function nativeSessionBinding(
   session: Session,
   engine: 'codex' | 'claude',
@@ -29,7 +35,10 @@ export function nativeSessionBinding(
   return event.data.runtimeSessionId
 }
 
-/** Persist a non-secret native runtime identity after the native session opened successfully. */
+/** Persist a non-secret native runtime identity after the native session opened successfully. 
+ * @param session - the durable Harness session to append to.
+ * @param binding - the non-secret identity recorded after the runtime opened.
+ */
 export function appendNativeSessionBinding(
   session: Session,
   binding: { readonly engine: 'codex' | 'claude'; readonly runtimeSessionId: string; readonly artifactDigest: string; readonly protocolAbi: string },
@@ -42,7 +51,10 @@ export function appendNativeSessionBinding(
   if (existing !== binding.runtimeSessionId) throw new Error(`session "${session.id}" native runtime session id changed during restore`)
 }
 
-/** Persist a replacement identity after a crashed native process is reopened. */
+/** Persist a replacement identity after a crashed native process is reopened. 
+ * @param session - the durable Harness session to append to.
+ * @param binding - the replacement identity; its engine and artifact must still match the session's.
+ */
 export function replaceNativeSessionBinding(
   session: Session,
   binding: { readonly engine: 'codex' | 'claude'; readonly runtimeSessionId: string; readonly artifactDigest: string; readonly protocolAbi: string },

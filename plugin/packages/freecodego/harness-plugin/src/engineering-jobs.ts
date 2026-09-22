@@ -127,6 +127,7 @@ export class EngineeringVerificationJobs {
     this.databasePath = resolve(rootDirectory, 'engineering-jobs.sqlite')
   }
 
+  /** Open the job store: create its directory and database, and mark stale runs interrupted. */
   async open(): Promise<void> {
     const root = dirname(this.databasePath)
     await mkdir(root, { recursive: true, mode: 0o700 })
@@ -184,6 +185,7 @@ export class EngineeringVerificationJobs {
     database.prepare('DELETE FROM engineering_jobs WHERE id IN (SELECT id FROM engineering_jobs ORDER BY created_at DESC LIMIT -1 OFFSET ?)').run(MAX_RETAINED_JOBS)
   }
 
+  /** Abort every active run and close the job store. */
   close(): void {
     this.closing = true
     for (const controller of this.active.values()) controller.abort('engineering jobs closed')
@@ -192,7 +194,12 @@ export class EngineeringVerificationJobs {
     this.database = undefined
   }
 
-  /** Start a durable audit row and begin executing the verification. */
+  /** Start a durable audit row and begin executing the verification. 
+   * @param cwd - working directory the command runs in.
+   * @param stages - the stages to run, or `undefined` to let the tier choose.
+   * @param probes - the independent probes the run requires.
+   * @returns the engineering Job.
+   */
   start(cwd: string, stages: readonly FreeCodeGoEngineeringVerificationStage[] | undefined, probes: readonly EngineeringVerificationProbe[] = []): FreeCodeGoEngineeringJob {
     const database = this.requireDatabase()
     const id = `job_${randomUUID().replaceAll('-', '')}`
@@ -216,6 +223,12 @@ export class EngineeringVerificationJobs {
    * is what makes it visible to `job_list` and cancellable through `job_kill`.
    * The native id is only an execution handle — every durable read below still
    * goes through this store's own id.
+   * @param cwd - working directory the command runs in.
+   * @param stages - the stages to run, or `undefined` to let the tier choose.
+   * @param externalSignal - the caller's cancellation signal, when it has one.
+   * @param owner - the agent that owns the run, for the native registry.
+   * @param probes - the independent probes the run requires.
+   * @returns the engineering Verification Result.
    */
   async run(
     cwd: string,
@@ -335,6 +348,10 @@ export class EngineeringVerificationJobs {
     }
   }
 
+  /** Cancel one run, aborting it when live or marking a queued row cancelled.
+   * @param id - the job id to cancel.
+   * @returns the job's current row.
+   */
   cancel(id: string): FreeCodeGoEngineeringJob {
     const controller = this.active.get(id)
     controller?.abort('cancelled by user')
@@ -345,6 +362,10 @@ export class EngineeringVerificationJobs {
     return this.get(id)
   }
 
+  /** Read one job's durable row.
+   * @param id - the job id to read.
+   * @returns the job row.
+   */
   get(id: string): FreeCodeGoEngineeringJob {
     if (!/^job_[a-f0-9]{32}$/i.test(id)) throw new Error('engineering job id is invalid')
     const row = this.requireDatabase().prepare('SELECT id, project_id, kind, state, created_at, started_at, finished_at, summary, verification_json FROM engineering_jobs WHERE id = ?').get(id) as JobRow | undefined

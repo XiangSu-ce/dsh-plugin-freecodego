@@ -40,12 +40,18 @@ type SdkMessage = { readonly type: string; readonly subtype?: string; readonly s
 type Pending = { resolve(value: unknown): void; reject(error: Error): void }
 type ClaudeReasoningEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
+/**
+ * The provider route one Claude turn must prompt through.
+ */
 export interface ClaudePromptRoute {
   readonly modelId: string
   readonly provider: string
   readonly reasoningEffort?: string
 }
 
+/**
+ * Gateway the plugin exposes to the subprocess as `ANTHROPIC_BASE_URL` plus its short-lived token.
+ */
 export interface ClaudeGateway {
   readonly baseURL: string
   readonly apiKey: string
@@ -407,7 +413,11 @@ function saveSdkSessionMap(stateDirectory: string, runtimeSessionId: string, sdk
   return write
 }
 
-/** Open one Claude Agent SDK session directly in the Harness Host process. */
+/** Open one Claude Agent SDK session directly in the Harness Host process. 
+ * @param runtime - launch options: executable, state directory, and environment overlay.
+ * @param options - the Host's root-agent create options, minus the engine it fixes here.
+ * @returns the opened native agent session.
+ */
 export async function openClaudeRootRuntime(runtime: ClaudeRuntimeLaunchOptions, options: Omit<NativeRootAgentCreateOptions, 'engine'>): Promise<NativeAgentSession> {
   return await DirectClaudeSdkSession.open(runtime, options)
 }
@@ -477,6 +487,12 @@ function abortReason(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error(typeof reason === 'string' && reason !== '' ? reason : 'native Claude turn interrupted')
 }
 
+/**
+ * The process environment for the SDK subprocess: passthrough keys, the plugin-owned home, and the supplied overlay.
+ * @param stateDirectory - the plugin-owned Claude home for this session.
+ * @param environment - SDK-owned variables to layer over the passthrough keys.
+ * @returns the environment to start the subprocess with.
+ */
 export function claudeRuntimeEnvironment(stateDirectory: string, environment?: Readonly<Record<string, string>>): Record<string, string> {
   return claudeSdkProcessEnvironment(stateDirectory, environment) as Record<string, string>
 }

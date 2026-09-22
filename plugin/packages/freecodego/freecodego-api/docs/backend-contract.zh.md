@@ -10,6 +10,7 @@
 
 - 凡是**影响模型绑定、计费、协议选择**的字段，规则只有一处实现，且有测试。
 - 凡是**影响用户可见信息**的字段，明确“显示 / 不显示”。
+- 凡是**面向用户的文案**，一律由插件按当前语言生成：后端返回的 `error.message`、路由名、provider 主机名与解析错误**只进日志，不进界面**。后端的错误串是给运维看的，改它不会改变用户读到的话——要改用户读到的话，改的是插件里对应的分支。
 - 未接入的 endpoint 明确标注“不接入”或“待确认”，不留隐式依赖。
 - 目录（picker）里能看到的每一个分组，其 `routeKey` 必须能被 Host 的路由选择逻辑命中。
 
@@ -39,7 +40,8 @@
 | `POST /api/v1/freecodego/payment/orders/verify` | 是 | `payment-remotes.paymentVerify` | `FreeCodeGoCheckoutOrder` | 校验支付 | 保持（非幂等） |
 | `POST /api/v1/freecodego/payment/orders/:id/cancel` | 是 | `payment-remotes.paymentCancel` | — | 取消订单 | 保持（非幂等） |
 | `POST /api/v1/freecodego/payment/orders/:id/receipt/email` | 是 | `payment-remotes.paymentReceiptEmail` | `FreeCodeGoReceiptEmailResult` | 邮件回执 | 保持（非幂等） |
-| `GET /api/v1/freecodego/payment/orders/:id/receipt` | **否** | — | — | 回执下载 | 不接入：回执文件不进入 Harness |
+| `GET /api/v1/freecodego/payment/orders/:id/receipt` | 是 | `payment-remotes.paymentReceiptDocument` | `FreeCodeGoReceiptDocument`（文本 HTML） | 商业收据（后端自绘） | 接入；`receipt_available` 决定是否提供（`GET /orders/:id`、`POST /orders/verify`、订单列表三处都带，**创建响应没有**），**状态不以本地名单推导** |
+| `GET /api/v1/freecodego/payment/orders/:id/stripe-receipt` | 是 | `payment-remotes.paymentStripeReceiptDocument` | `FreeCodeGoReceiptDocument`（`encoding: 'base64'`） | Stripe 自己开具的 PDF 收据 | 接入；只在 Stripe 支付且 `stripe_receipt_available` 为真时提供——收据列表与“当前订单”卡片共用同一条判据（`stripeReceiptOffered`），且**标志缺失不等于可用**（创建响应不带它）；**必须按字节读**（`text()` 会改写非 UTF-8 字节） |
 | `GET /api/v1/public/model-pricing/landing` | 是 | `payment-remotes.localGatewayModelPrices` 路径（公开定价） | `FreeCodeGoGatewayModelPrice[]` | 公开定价 | 保持 |
 | `POST /api/v1/public/model-pricing/lookup` | 是 | `payment-remotes.accountGatewayModelPrices` | 匿名价格行 | 补齐目录缺失价格 | 保持 |
 | `POST /api/v1/freecodego/mobile/auth/*` | 是 | `FreeCodeGoMobileAuthClient` | 各自类型 | 登录/刷新/登出/2FA | 保持 |
@@ -58,10 +60,12 @@
 
 ### 本轮结论（可直接作为后续动作的边界）
 
-1. **不新增**的接口已经在上表标注“不接入/待确认”，不要再为了“覆盖度”加 Remote：`models/catalog`、`redeem`、`subscriptions`、`payment/config`、`payment/limits`、`api-keys-usage`、`receipt` 下载、`attestation/*`、`rvenc/*`、`mailbox/inbound`。
-2. 删除死接口：`FreeCodeGoApiClient.getPaymentPlans()`、`getPaymentChannels()` 已删除（只有测试在用）。
-2.1. 分组 pin 归**选择器**所有（不是 Host 的自动挑）：模型列表为后端每一个 `(模型, 分组)` 出一行，选择值携带 `id@group:<n>`；路由读到 pin 就只服务该分组，只有未带 pin 的旧值/默认值才走自动挑。**不要**再删这条链路——设置页那个独立的“模型分组路由”面板（`modelRouteSelections`）是另一条路线，与选择器里的分组行无关。
-3. 新增：`getDeviceSessions()`、`revokeDeviceSession()`、`revokeAllSessions()` + Host Remote `accountDeviceSessions`/`accountRevokeDeviceSession`/`accountRevokeAllSessions` + 设置页“设备会话”面板。
+1. **退款族状态不请求**（产品不销售退款）：`refund-request`（用户侧）、`admin/orders/:id/refund`（运营侧）都不接入，`ORDER_LIST_STATES` 只列**可能带单据**的四个状态（`pending`/`paid`/`recharging`/`completed`）。后端状态机确实有 `REFUND_REQUESTED`/`REFUNDING`/`PARTIALLY_REFUNDED`/`REFUNDED`/`REFUND_FAILED`，且运营侧退款路由仍在；但本产品禁止退款，所以订单到不了这些状态，把它们加进请求只会变成每状态一次 HTTP 调用。页面仍保留 `已退款` 这类文案映射——它映的是**后端词表**，不是本产品的售卖项，运营侧退款出来的历史订单不至于显示成原始 `REFUNDED`。
+2. **不新增**的接口已经在上表标注“不接入/待确认”，不要再为了“覆盖度”加 Remote：`models/catalog`、`redeem`、`subscriptions`、`payment/config`、`payment/limits`、`api-keys-usage`、`attestation/*`、`rvenc/*`、`mailbox/inbound`。两处 `receipt` 下载**已接入**（上表），此前写在这里的“回执文件不进入 Harness”已不成立：收据是用户要的东西，且订单行本来就带 `receipt_available`/`stripe_receipt_available` 两个开关。
+3. 删除死接口：`FreeCodeGoApiClient.getPaymentPlans()`、`getPaymentChannels()` 已删除（只有测试在用）。
+4. 分组 pin 归**选择器**所有（不是 Host 的自动挑）：模型列表为后端每一个 `(模型, 分组)` 出一行，选择值携带 `id@group:<n>`；路由读到 pin 就只服务该分组，只有未带 pin 的旧值/默认值才走自动挑。**不要**再删这条链路——设置页那个独立的“模型分组路由”面板（`modelRouteSelections`）是另一条路线，与选择器里的分组行无关。
+5. 新增：`getDeviceSessions()`、`revokeDeviceSession()`、`revokeAllSessions()` + Host Remote `accountDeviceSessions`/`accountRevokeDeviceSession`/`accountRevokeAllSessions` + 设置页“设备会话”面板。
+6. **用户可见文案的边界（本轮收紧）**：支付相关的每一句错误都由插件按 `language` 单语生成，旧的「中文 / English」拼接写法已全部移除（`describePaymentError` 现在收 `language`）；后端的 `error.message`、渠道厂商名、以及支付 SDK 的内部报错都不再出现在界面上，只写进控制台（`[freecodego] …`）。区分只剩一处：卡被拒时展示支付服务**写给人看**的那句（`type` 为 `card_error`/`validation_error`），其余请求级失败一律用插件自己的文案。因此后端**不需要**为了让文案好看而改错误串——它只影响插件的分类匹配。
 
 ---
 

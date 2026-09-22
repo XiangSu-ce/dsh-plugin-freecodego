@@ -43,6 +43,7 @@
 
 import { createHash } from 'node:crypto'
 import { deferredToolFetchHint } from './deferred-tools.ts'
+import { pluginToolsNeedingAuthority } from './tool-manifest.ts'
 
 /**
  * Tools whose success means the workspace content changed.
@@ -55,20 +56,29 @@ import { deferredToolFetchHint } from './deferred-tools.ts'
  * nudge never fires, and a real edit goes unverified — the single outcome this
  * module exists to prevent.
  *
- * That is why this is a union rather than a derivation. Two sibling lists
- * answer parts of the same question, `plan-mode.ts`'s
- * `PLAN_MODE_MUTATING_TOOLS` and `team/roles.ts`'s `WRITE_TOOL_NAMES`, and a
- * derivation would import a boundary that belongs to one caller — so this holds
- * their union, plus the plugin's own mutating tools, which neither sibling list
- * knows about. The two siblings were once unequal, over `write_file`: it was
- * absent from the Plan Mode list on the stated grounds that naming it there would
- * fold MCP's `mcp__filesystem__write_file` into a planning session. Both lists
- * compare a whole name, so that fold was never possible, and the absence was a
- * hole in the fence rather than a boundary between callers; `plan-mode.ts` carries
- * the name now. The union shape stays regardless, because the next divergence may
- * be a real one. `verify-on-stop.spec.ts` pins the literal contents and asserts
- * the sibling names are all present, so extending this list is a visible edit
- * rather than a comment that went stale.
+ * That is why the harness half is a union rather than a derivation. A sibling
+ * list answers part of the same question, `plan-mode.ts`'s
+ * `PLAN_MODE_MUTATING_TOOLS`, and a derivation would import a boundary that
+ * belongs to one caller — so the harness spellings are held here. They were once unequal, over `write_file`: it
+ * was absent from the Plan Mode list on the stated grounds that naming it there
+ * would fold MCP's `mcp__filesystem__write_file` into a planning session. Both
+ * lists compare a whole name, so that fold was never possible, and the absence
+ * was a hole in the fence rather than a boundary between callers; `plan-mode.ts`
+ * carries the name now. The union shape stays regardless, because the next
+ * divergence may be a real one.
+ *
+ * The plugin half **is** derived — from the manifest, as every name whose row is
+ * not `read`. This module used to spell four of them out, and
+ * the fifth was missing: `engineering_subagent_start` was in no list here, so a
+ * turn whose only call was starting a persona child was filed as one that changed
+ * nothing, `onTurnStopping` returned at its first line, and the child's writes to
+ * *this* workspace went unverified — the same shape as the delegation names this
+ * set already carried (`subagent`, `spawn_teammate`). The manifest's capability
+ * axis answers that question without a second list to keep: a tool a role has to
+ * be granted authority for is a tool a turn can have moved the tree through.
+ * `verify-on-stop.spec.ts` still pins the literal contents, and asserts the
+ * sibling names are all present, so extending this list is a visible edit rather
+ * than a comment that went stale.
  */
 export const WORKSPACE_MUTATING_TOOLS: ReadonlySet<string> = new Set([
   'edit',
@@ -85,20 +95,13 @@ export const WORKSPACE_MUTATING_TOOLS: ReadonlySet<string> = new Set([
   'notebook_write',
   'fs_write',
   'fs_edit',
-  // Plugin tools, which neither sibling list above knows about.
-  'edit_and_run',
-  // Restoring a checkpoint rewrites files, so it is a mutation like any other.
-  'engineering_checkpoint_restore',
-  // A revert rewrites the file it undoes — the same edit run backwards, through
-  // the plugin rather than through the harness's `edit`. Its success is exactly
-  // `hunkWriteText` landing new bytes in a tracked file.
-  'engineering_hunk_revert',
-  // The one team operation that changes the shared tree, in the words of its own
-  // description: it runs a real `git merge --no-ff` at the workspace root, so a
-  // turn that only merged still changed tracked files. The other team tools
-  // write worktrees under `.freecodego/`, which is gitignored and therefore
-  // invisible to the change reader — this one is not.
-  'engineering_team_merge',
+  // This plugin's own tools: every name whose manifest row is not `read`, read off
+  // `tool-manifest.ts`. Absent from the set, such a turn was filed as one that
+  // changed nothing and the nudge never fired; the specific holes are
+  // `engineering_hunk_revert` in the shared tree, `engineering_checkpoint_restore`
+  // rolling it back, `edit_and_run` editing and running, and
+  // `engineering_subagent_start` in the paragraph above.
+  ...pluginToolsNeedingAuthority(),
   // Delegation, for the reason `plan-mode.ts` refuses it: the turn itself ran no
   // writer, but it started an agent that will, and that agent writes *this*
   // workspace. A turn that only delegated was otherwise filed as one that changed
@@ -171,7 +174,10 @@ export interface VerifyOnStopHost {
   readonly log: (message: string) => void
 }
 
-/** A stable identity for a set of changed paths, independent of order. */
+/** A stable identity for a set of changed paths, independent of order.
+ * @param paths - the changed paths to fingerprint.
+ * @returns the short hex fingerprint.
+ */
 export function workspaceFingerprint(paths: readonly string[]): string {
   const normalized = [...new Set(paths.map(path => path.replace(/\\/gu, '/').trim()).filter(path => path !== ''))].sort()
   return createHash('sha256').update(normalized.join('\n')).digest('hex').slice(0, 16)
@@ -255,7 +261,10 @@ export class FreeCodeGoVerifyOnStop {
 
   constructor(private readonly host: VerifyOnStopHost) {}
 
-  /** Whether this tool call is one whose success changes workspace content. */
+  /** Whether this tool call is one whose success changes workspace content.
+   * @param agentId - the agent that made the call.
+   * @param toolName - name of the tool call being answered.
+   */
   noteToolCall(agentId: string, toolName: string): void {
     if (WORKSPACE_MUTATING_TOOLS.has(toolName)) this.mutated.add(agentId)
   }
@@ -266,6 +275,8 @@ export class FreeCodeGoVerifyOnStop {
    * Only the caller knows whether the run's probes were attributable; this gate
    * trusts the verdict it is handed, which is why `engineering-quality.ts`
    * refuses `verified` without one (`verification-evidence.ts`).
+   * @param agentId - the agent whose verification ran.
+   * @param evidence - the change set and verdict to record.
    */
   recordEvidence(agentId: string, evidence: VerifyOnStopEvidence): void {
     this.evidence.set(agentId, evidence)
@@ -302,7 +313,9 @@ export class FreeCodeGoVerifyOnStop {
     }
   }
 
-  /** Retire every entry for an agent; called when the agent is disposed. */
+  /** Retire every entry for an agent; called when the agent is disposed.
+   * @param agentId - the agent whose entries to drop.
+   */
   forget(agentId: string): void {
     this.mutated.delete(agentId)
     this.nudgedAt.delete(agentId)

@@ -50,6 +50,7 @@ export interface WorkBuddyImportSuccess {
   readonly probed: readonly string[]
 }
 
+/** The outcome of importing a desktop WorkBuddy credential. */
 export type WorkBuddyImportResult = WorkBuddyImportSuccess | WorkBuddyImportFailure
 
 /** Shared `CodeBuddyExtension` auth directory relative path (international app). */
@@ -87,6 +88,7 @@ function wslDesktopCandidates(home: string): string[] {
  * Platform candidates for the WorkBuddy International desktop auth file, in
  * probe order. Windows probes both AppData roots (current builds write under
  * Local, older ones under Roaming); WSL reads the same Windows locations.
+ * @returns the candidate paths, in probe order.
  */
 export function workbuddyDesktopAuthCandidates(): string[] {
   const home = homedir()
@@ -120,6 +122,8 @@ function expiryToMs(value: unknown): number {
  * Parse a WorkBuddy auth document in either observed shape: the nested
  * `{"auth":{...},"account":{...}}` form and the flat panel form. Returns
  * `undefined` when the document carries no access token.
+ * @param text - the auth document's raw JSON text.
+ * @returns the parsed credential, or `undefined` when no access token is present.
  */
 export function parseWorkBuddyDesktopAuth(text: string): Omit<WorkBuddyDesktopCredential, 'sourcePath'> | undefined {
   let parsed: unknown
@@ -166,6 +170,7 @@ function isENOENT(error: unknown): boolean {
  * The two failures are reported apart because they need different fixes: an
  * unparsable file means signing in again, an unreadable one means the file's
  * permissions.
+ * @returns the work Buddy Import Result.
  */
 export async function importWorkBuddyDesktopCredential(): Promise<WorkBuddyImportResult> {
   const candidates = workbuddyDesktopAuthCandidates()

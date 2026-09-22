@@ -27,10 +27,14 @@
 
 export type MemoryFreshness = 'fresh' | 'recent' | 'stale' | 'ancient'
 
+/** Age below which a memory reads as `fresh` (one day). */
 export const MEMORY_FRESH_MS = 24 * 60 * 60 * 1_000
+/** Age below which a memory reads as `recent` (one week). */
 export const MEMORY_RECENT_MS = 7 * 24 * 60 * 60 * 1_000
+/** Age below which a memory reads as `stale` (thirty days). */
 export const MEMORY_STALE_MS = 30 * 24 * 60 * 60 * 1_000
 
+/** One record's age and the freshness band it falls into. */
 export interface MemoryAge {
   /** Non-negative milliseconds since the record was written. */
   readonly ageMs: number
@@ -53,7 +57,11 @@ function formatDuration(ageMs: number): string {
   return `${days} day${days === 1 ? '' : 's'}`
 }
 
-/** Classify one record's age against the current clock. */
+/** Classify one record's age against the current clock.
+ * @param createdAt - when the record was written, in epoch milliseconds.
+ * @param now - current time in epoch milliseconds.
+ * @returns the memory Age.
+ */
 export function describeMemoryAge(createdAt: number, now: number): MemoryAge {
   const ageMs = Math.max(0, now - createdAt)
   const freshness: MemoryFreshness =
@@ -67,6 +75,8 @@ export function describeMemoryAge(createdAt: number, now: number): MemoryAge {
 /**
  * A one-line caveat to append when a recalled memory is injected into a prompt,
  * or `undefined` when the record is fresh enough to need none.
+ * @param age - the record's age to caveat.
+ * @returns the caveat line, or `undefined` when the record is fresh.
  */
 export function memoryFreshnessNote(age: MemoryAge): string | undefined {
   if (age.freshness === 'fresh') return undefined

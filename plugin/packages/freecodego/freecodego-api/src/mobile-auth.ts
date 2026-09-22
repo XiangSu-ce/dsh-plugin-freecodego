@@ -33,6 +33,19 @@ export interface FreeCodeGoCredentialVault {
   load(origin: string): Promise<FreeCodeGoTokenPair | undefined>
   save(origin: string, tokens: FreeCodeGoTokenPair): Promise<void>
   delete(origin: string): Promise<void>
+  /**
+   * The password a user asked this machine to remember, for prefilling the next
+   * sign-in form.
+   *
+   * Optional as one group: the session pair is the credential every vault
+   * holds, while a vault that models only that pair (a test double, an
+   * embedder's own store) is not obliged to keep a password. Only a sign-in that
+   * ticked the box writes here, and {@link FreeCodeGoAccountCoordinator} is the
+   * only writer — nothing else in the product reads or writes this value.
+   */
+  loadPassword?(origin: string): Promise<string | undefined>
+  savePassword?(origin: string, password: string): Promise<void>
+  deletePassword?(origin: string): Promise<void>
 }
 
 /** User-entered registration values; handled only by the host/browser authorization surface. */
@@ -55,11 +68,22 @@ export interface FreeCodeGoLoginInput {
   readonly deviceId?: string
   /** Keep the issued session on this machine for later launches (default true). */
   readonly remember?: boolean
+  /**
+   * Keep this attempt's password itself in the vault so the next sign-in form
+   * can prefill it. Off by default and deliberately separate from
+   * {@link FreeCodeGoLoginInput.remember}: the pair is the session credential,
+   * the password is a convenience the user has to ask for. A sign-in that leaves
+   * it unset erases a password an earlier attempt stored.
+   */
+  readonly rememberPassword?: boolean
 }
 
 /** Mobile public authentication client. It does not cache credentials. */
 export class FreeCodeGoMobileAuthClient {
-  readonly origin: string
+    /**
+   * Backend origin this client sends its authentication requests to.
+   */
+readonly origin: string
   private readonly baseUrl: URL
   private readonly fetch: typeof globalThis.fetch
   /**
@@ -101,13 +125,21 @@ export class FreeCodeGoMobileAuthClient {
     if (typeof this.fetch !== 'function') throw new Error('FreeCodeGo authentication requires a fetch implementation')
   }
 
-  /** Request the verification email needed by registration. */
+  /** Request the verification email needed by registration. 
+   * @param signal - aborts the request when the caller cancels.
+   * @param email - the address the code is sent to.
+   * @returns the countdown a resend control waits for.
+   */
   async sendVerifyCode(email: string, signal?: AbortSignal): Promise<{ readonly countdown: number }> {
     const payload = await this.request('/send-verify-code', { email }, signal)
     return { countdown: finiteNumber(payload.countdown, 'countdown') }
   }
 
-  /** Register and return an authenticated token pair to the host caller. */
+  /** Register and return an authenticated token pair to the host caller. 
+   * @param signal - aborts the request when the caller cancels.
+   * @param input - the address, password, and remember-me intent.
+   * @returns the authenticated token pair for the new account.
+   */
   async register(input: FreeCodeGoRegisterInput, signal?: AbortSignal): Promise<Extract<FreeCodeGoLoginResult, { kind: 'authenticated' }>> {
     const payload = await this.request('/register', {
       email: input.email,
@@ -121,7 +153,11 @@ export class FreeCodeGoMobileAuthClient {
     return authenticated(payload)
   }
 
-  /** Login; callers complete MFA using {@link login2FA} when requested. */
+  /** Login; callers complete MFA using {@link login2FA} when requested. 
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the login Result.
+   * @param input - credentials and the device identity of this attempt.
+   */
   async login(input: FreeCodeGoLoginInput, signal?: AbortSignal): Promise<FreeCodeGoLoginResult> {
     const payload = await this.request('/login', { email: input.email, password: input.password, device_id: input.deviceId }, signal)
     if (payload.requires_2fa === true) {
@@ -134,12 +170,23 @@ export class FreeCodeGoMobileAuthClient {
     return authenticated(payload)
   }
 
-  /** Complete a pending MFA login. */
+  /** Complete a pending MFA login. 
+   * @param signal - aborts the request when the caller cancels.
+   * @param tempToken - the MFA challenge token the first factor issued.
+   * @param totpCode - the code the user's authenticator produced.
+   * @param deviceId - device identifier recorded with the session.
+   * @returns the authenticated token pair.
+   */
   async login2FA(tempToken: string, totpCode: string, deviceId?: string, signal?: AbortSignal): Promise<Extract<FreeCodeGoLoginResult, { kind: 'authenticated' }>> {
     return authenticated(await this.request('/login/2fa', { temp_token: tempToken, totp_code: totpCode, device_id: deviceId }, signal))
   }
 
-  /** Rotate a refresh token; the caller must atomically replace its vault entry. */
+  /** Rotate a refresh token; the caller must atomically replace its vault entry. 
+   * @param refreshToken - refresh token the session rotates with.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the token Pair.
+   * @param deviceId - device identifier recorded with the rotated session.
+   */
   async refresh(refreshToken: string, deviceId?: string, signal?: AbortSignal): Promise<FreeCodeGoTokenPair> {
     return tokens(await this.request(
       '/refresh',
@@ -149,7 +196,10 @@ export class FreeCodeGoMobileAuthClient {
     ))
   }
 
-  /** Revoke a refresh token best-effort on the server. */
+  /** Revoke a refresh token best-effort on the server. 
+   * @param signal - aborts the request when the caller cancels.
+   * @param refreshToken - the token to revoke; omitted when the caller has none to revoke.
+   */
   async logout(refreshToken: string | undefined, signal?: AbortSignal): Promise<void> {
     await this.request('/logout', refreshToken === undefined ? {} : { refresh_token: refreshToken }, signal)
   }

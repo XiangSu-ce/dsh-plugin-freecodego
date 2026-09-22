@@ -10,6 +10,13 @@
  * | project | `.dsh/skills` | `.agents/skills` | — |
  * | user | `$DSH_HOME/skills` | `~/.agents/skills` | a configured root |
  *
+ * The roots are joined by `node:path`, not by string concatenation, because these
+ * strings are an *identity* rather than a label: the lockfile records one, the
+ * capability registry keys a root by it, and the install/removal/dedupe paths all
+ * compare them for equality. A hand-written `/` join would spell one directory two
+ * ways on Windows (`C:\data/skills` beside `C:\data\skills`), and two spellings of one
+ * root is how an install ends up invisible to the reader looking beside it.
+ *
  * The project tier is gated on folder trust (G1), and the gate runs **before the
  * path is built**, not after: an untrusted checkout's `.agents/skills` is a
  * directory the repository controls, and installing into it is a write the
@@ -49,14 +56,7 @@ export type PlacementResult =
   | { readonly ok: true; readonly root: string; readonly provenance: string }
   | { readonly ok: false; readonly reason: string }
 
-/** Join path segments without importing `path` semantics for a display value. */
-function join(...segments: readonly string[]): string {
-  return segments
-    .filter(segment => segment !== '')
-    .join('/')
-    .replace(/\/{2,}/g, '/')
-    .replace(/(.)\/$/, '$1')
-}
+import { join } from 'node:path'
 
 /**
  * Resolve where a skill should be installed.
@@ -116,3 +116,70 @@ export const PLACEMENT_COMBINATIONS: readonly { readonly agent: SkillAgent; read
   { agent: 'custom', scope: 'project' },
   { agent: 'custom', scope: 'user' },
 ]
+
+/**
+ * What resolving the whole matrix needs besides the choice itself.
+ *
+ * The roots are the caller's to supply rather than read from the process here: the
+ * Host knows `$DSH_HOME`, the home directory, and whether the folder it is running
+ * in has been trusted, and a module that read them itself would be a second place
+ * that decides what an untrusted folder is.
+ */
+export interface PlacementContext {
+  /** Repository root the session is working in. */
+  readonly workspace: string
+  /** `$DSH_HOME`, for the harness-native user root. */
+  readonly dataHome?: string
+  /** `~`, for the shared-agents user root. */
+  readonly home?: string
+  /** Explicit root, for `agent: 'custom'`. */
+  readonly customRoot?: string
+  /** Whether the folder this Host runs in has been trusted. */
+  readonly projectTrusted: boolean
+}
+
+/** One row of the matrix, resolved: a destination, or the reason there is none. */
+export type PlacementRow =
+  | { readonly agent: SkillAgent; readonly scope: SkillScope; readonly ok: true; readonly root: string; readonly provenance: string }
+  | { readonly agent: SkillAgent; readonly scope: SkillScope; readonly ok: false; readonly reason: string }
+
+/**
+ * Resolve every combination the table lists.
+ *
+ * The whole matrix rather than the one row a caller asked for, because an install
+ * surface has to be able to show the *reasons*: "project scope is unavailable here"
+ * is a fact about the folder, and a user who only ever sees the disabled option
+ * cannot tell an untrusted repository from one where the feature is off.
+ * @param context - the two axes' roots and the folder's trust.
+ * @returns one row per combination, in the table's own order.
+ */
+export function resolveSkillPlacements(context: PlacementContext): readonly PlacementRow[] {
+  return PLACEMENT_COMBINATIONS.map(({ agent, scope }) => {
+    const resolved = resolveSkillPlacement({
+      agent, scope,
+      workspace: context.workspace,
+      ...(context.dataHome === undefined ? {} : { dataHome: context.dataHome }),
+      ...(context.home === undefined ? {} : { home: context.home }),
+      ...(context.customRoot === undefined ? {} : { customRoot: context.customRoot }),
+      projectTrusted: context.projectTrusted,
+    })
+    return resolved.ok
+      ? { agent, scope, ok: true, root: resolved.root, provenance: resolved.provenance }
+      : { agent, scope, ok: false, reason: resolved.reason }
+  })
+}
+
+/**
+ * The managed-root id one placement's install is mounted under.
+ *
+ * Per placement rather than one shared id, because the capability registry keys a
+ * root by id as well as by path: reusing the Marketplace's id for a project install
+ * would *unmount* the community root it names, and the Skills page would lose the
+ * list it just installed into.
+ * @param agent - the first axis of the choice.
+ * @param scope - the second axis of the choice.
+ * @returns a stable, filesystem-safe root id.
+ */
+export function placementRootId(agent: SkillAgent, scope: SkillScope): string {
+  return `freecodego-skill-${agent}-${scope}`
+}

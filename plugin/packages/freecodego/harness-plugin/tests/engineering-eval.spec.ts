@@ -132,18 +132,31 @@ describe('evaluation sensitivity', () => {
     expect(mediaFallbackAllowed(new Error('HTTP 429 rate limited'), signal)).toBe(true)
   })
 
-  it('the rehydration case depends on the staleness window actually being applied', async () => {
+  it('the rehydration case depends on the freshness vocabulary actually being applied', async () => {
     const { rehydrationText } = await import('../src/rehydration.ts')
+    const { describeMemoryAge, memoryFreshnessNote } = await import('../src/memory/memory-age.ts')
     const now = Date.now()
     const at = (createdAt: number, id: string) => ({ id, title: 't', kind: 'decision', trust: 'reviewed', projectId: 'p', createdAt, detailTokens: 1 })
     const build = (ageDays: number): string => rehydrationText({
       memory: { projectId: 'p', tokenBudget: 1_000, usedTokens: 1, records: [at(now - ageDays * 86_400_000, 'mem_a')] } as never,
       memoryBodies: new Map([['mem_a', 'body']]),
     })
-    // Straddling the window from both sides: a fixed caveat would pass one and
-    // fail the other, so the case only passes if the age is actually compared.
-    expect(build(1)).not.toContain('may be outdated')
-    expect(build(30)).toContain('may be outdated')
+    // The sentence is read from the vocabulary instead of copied here: the phrase
+    // this test used to look for (`may be outdated`) belonged to a *second*
+    // implementation in `rehydration.ts`, so it went stale the moment the two were
+    // converged — and while it existed, this test could not see that the two
+    // surfaces disagreed.
+    const recent = memoryFreshnessNote(describeMemoryAge(now - 2 * 86_400_000, now))
+    const ancient = memoryFreshnessNote(describeMemoryAge(now - 30 * 86_400_000, now))
+    expect(recent).toBeDefined()
+    expect(ancient).toBeDefined()
+    // Straddling the fresh/recent band from both sides, with a margin so a clock
+    // tick between building the fixture and rendering it cannot flip the answer: a
+    // fixed caveat would pass one and fail the other, so this only passes if the
+    // age is really compared against the shared band.
+    expect(build(0)).not.toContain('Recorded ')
+    expect(build(2)).toContain(recent!)
+    expect(build(30)).toContain(ancient!)
   })
 
   it('the unsafe-script case separates a destructive delete from an ordinary one', async () => {

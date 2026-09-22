@@ -3,14 +3,14 @@
  * notice; PROVENANCE.md in this directory holds its source and upstream hash.
  */
 /* v8 ignore file -- vendored third-party engine; PROVENANCE.md records its source and per-file hashes, and the behaviour built on the engine is covered by this package's companion specs. */
-import { PROFILE_SAMPLES } from './profiles'
+import { PROFILE_SAMPLES } from './profiles.ts'
 import {
   hullOfCircles,
   profileFromPolygon,
   regularPolygonProfile,
   superellipseProfile,
   unionOfCirclesProfile,
-} from './shape'
+} from './shape.ts'
 
 /**
  * Formes et couleurs proposees par le personnalisateur du bot.

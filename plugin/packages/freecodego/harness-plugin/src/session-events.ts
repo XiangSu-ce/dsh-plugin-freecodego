@@ -2,6 +2,7 @@
 
 import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
 
+/** Every session event type this plugin appends or reads. */
 export const freeCodeGoSessionEventTypes = [
   'agent-engine/selected',
   'freecodego/engine-executor',

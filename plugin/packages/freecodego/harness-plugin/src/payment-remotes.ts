@@ -75,7 +75,10 @@ function isPermanentCreditPlan(plan: FreeCodeGoPaymentPlan): boolean {
  * is the discriminator: a plan with a term is a subscription that the hosted
  * web checkout sells, and offering it here would take money through a top-up
  * that could not grant it. When the table declares none, the built-in ladder
- * keeps the section usable. */
+ * keeps the section usable. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the payment Plan rows, in backend order.
+ */
 export async function paymentPlans(host: PaymentRemotesHost): Promise<readonly FreeCodeGoPaymentPlan[]> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   await host.restoreAccount()
@@ -89,6 +92,10 @@ export async function paymentPlans(host: PaymentRemotesHost): Promise<readonly F
   })
 }
 
+/** The payment channels the backend accepts for checkout, read with the account token.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the payment channel rows, in backend order.
+ */
 export async function paymentChannels(host: PaymentRemotesHost): Promise<readonly FreeCodeGoPaymentChannel[]> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   await host.restoreAccount()
@@ -96,7 +103,11 @@ export async function paymentChannels(host: PaymentRemotesHost): Promise<readonl
 }
 
 /** Return the current account-visible tariff catalog. Account model options
- * provide the enabled whitelist and effective group pricing. */
+ * provide the enabled whitelist and effective group pricing. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param language - locale the returned labels are written in.
+ * @returns the gateway Model Price rows, in backend order.
+ */
 export async function gatewayModelPrices(host: PaymentRemotesHost, language: 'zh' | 'en'): Promise<readonly FreeCodeGoGatewayModelPrice[]> {
   if (host.api === undefined) throw backendNotConfigured()
   const gateway = await host.accountGatewayModelPrices(language)
@@ -136,6 +147,15 @@ function imagePriceTiers(group: FreeCodeGoModelOptionGroup | undefined, groupRat
   return tiers
 }
 
+/** The account-scoped portion of the tariff catalog: the enabled whitelist and
+ * effective group pricing, read from the account's model options endpoint.
+ *
+ * Returns an empty list rather than throwing when the account is missing or the
+ * endpoint fails, so a caller can merge it behind the local rows.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param language - locale the returned labels are written in.
+ * @returns the account-visible gateway Model Price rows, in backend order.
+ */
 export async function accountGatewayModelPrices(host: PaymentRemotesHost, language: 'zh' | 'en'): Promise<readonly FreeCodeGoGatewayModelPrice[]> {
   if (host.account === undefined) return []
   try {
@@ -221,7 +241,10 @@ export async function accountGatewayModelPrices(host: PaymentRemotesHost, langua
 }
 
 /** Price rows for routes that are embedded in the model picker rather than
- * billed by the FreeCodeGo gateway. They are explicitly zero-cost. */
+ * billed by the FreeCodeGo gateway. They are explicitly zero-cost. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the gateway Model Price rows, in backend order.
+ */
 export async function localGatewayModelPrices(host: PaymentRemotesHost): Promise<readonly FreeCodeGoGatewayModelPrice[]> {
   const zero = (modelId: string, displayName: string, provider: FreeCodeGoGatewayModelPrice['source'], groupName: string): FreeCodeGoGatewayModelPrice => ({
     modelId, displayName, provider: groupName, source: provider, groupName,
@@ -253,15 +276,23 @@ export async function localGatewayModelPrices(host: PaymentRemotesHost): Promise
     rateMultiplier: 1,
     billingMode: 'token' as const,
     currency: 'USD',
-    inputPricePerMillion: model.inputPricePerMillion,
-    outputPricePerMillion: model.outputPricePerMillion,
-    // Cache pricing is deliberately left unpublished rather than zeroed: a
-    // zero here renders as FREE in the tariff table, which would promise a
-    // discount the provider never stated. An absent price reads as a dash.
+    // A row the live directory named but the plugin cannot price carries no
+    // numbers at all: an absent price reads as a dash, while a fabricated zero
+    // would render as FREE and promise a discount the provider never stated.
+    ...(model.inputPricePerMillion === undefined ? {} : { inputPricePerMillion: model.inputPricePerMillion }),
+    ...(model.outputPricePerMillion === undefined ? {} : { outputPricePerMillion: model.outputPricePerMillion }),
   })))
   return rows
 }
 
+/** Every order the panel can cite, merged from one request per order state.
+ *
+ * Each state is asked for explicitly rather than paging to the one that paid, so
+ * an account whose settled order sits past the first page still sees it. The
+ * result is sorted newest-first and shaped as the envelope the browser parses.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the merged order-list envelope.
+ */
 export async function paymentOrders(host: PaymentRemotesHost): Promise<JsonValue> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   await host.restoreAccount()
@@ -293,12 +324,28 @@ export async function paymentOrders(host: PaymentRemotesHost): Promise<JsonValue
 /**
  * Order states this remote asks the backend for, one request each.
  *
- * `pending` keeps the existing unpaid-order view populated; `paid` and
- * `completed` are what a receipt or an invoice can cite. Expired, cancelled and
- * failed rows are deliberately not requested: the browser has never rendered
- * them, and fetching them would only pad the list with attempts.
+ * `pending` keeps the existing unpaid-order view populated; `paid`,
+ * `recharging` and `completed` are the states a payment settles into, and are
+ * what a receipt or an invoice can cite. `recharging` is named separately
+ * because the backend's own list filter is an exact match: the lifecycle is
+ * `paid` → `recharging` → `completed`, so a paid order whose credits are still
+ * being applied answers only the middle spelling, and a panel that asked for the
+ * outer two would show it as missing while its receipt exists. Expired,
+ * cancelled and failed rows are deliberately not requested: the browser has
+ * never rendered them, and fetching them would only pad the list with attempts.
+ *
+ * The refund family (`REFUND_REQUESTED`, `REFUNDING`, `PARTIALLY_REFUNDED`,
+ * `REFUNDED`, `REFUND_FAILED`) is not requested either, and for a stronger
+ * reason than padding: this product does not sell refunds, so an order cannot
+ * reach those states and there is no refunded payment whose receipt anyone could
+ * want. Every request here is one HTTP call, so the list is exactly the set of
+ * states that can carry a document rather than every state the backend can name.
+ * The one way such a row can still exist is an operator using the admin route
+ * (`POST /api/v1/admin/payment/orders/:id/refund`); the user-facing request route
+ * exists in the backend too but this product does not offer it. Listing the
+ * refund family is therefore a product decision, not a missing feature.
  */
-const ORDER_LIST_STATES: readonly string[] = ['pending', 'paid', 'completed']
+const ORDER_LIST_STATES: readonly string[] = ['pending', 'paid', 'recharging', 'completed']
 
 /** One order row's creation time, for merging the per-state lists into one. */
 function orderCreatedAt(order: JsonValue): number {
@@ -328,6 +375,7 @@ function orderCreatedAt(order: JsonValue): number {
  *
  * @param gatewayBaseUrl - the configured gateway origin.
  * @param returnUrl - the caller's requested post-payment page.
+ * @returns true when the URL is the canonical result page on the gateway origin.
  */
 export function isCanonicalPaymentReturnUrl(gatewayBaseUrl: string, returnUrl: string): boolean {
   const origin = gatewayBaseUrl.replace(/\/+$/, '')
@@ -344,6 +392,8 @@ export function isCanonicalPaymentReturnUrl(gatewayBaseUrl: string, returnUrl: s
  * payload is client-safe: the endpoint is account-scoped, and a checkout surface
  * that cannot read it should say so rather than show a card form that cannot be
  * initialised.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the payment Config.
  */
 export async function paymentConfig(host: PaymentRemotesHost): Promise<FreeCodeGoPaymentConfig> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
@@ -351,7 +401,15 @@ export async function paymentConfig(host: PaymentRemotesHost): Promise<FreeCodeG
   return host.account.withAccessToken(accessToken => host.api!.getDesktopPaymentConfig({ accessToken }))
 }
 
-/** Create a payment order through the existing FreeCodeGo endpoint. */
+/** Create a payment order through the existing FreeCodeGo endpoint, with the
+ * plan, payment type, return page, and optional top-up amount.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param planId - the balance-credit plan id to buy.
+ * @param paymentType - the backend payment channel to charge through.
+ * @param returnUrl - the post-payment page the backend must accept.
+ * @param amount - optional explicit amount for a balance top-up.
+ * @returns the created payment order.
+ */
 export async function paymentCheckout(host: PaymentRemotesHost, planId: number, paymentType: string, returnUrl: string, amount?: number): Promise<FreeCodeGoPaymentOrder> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   if (!Number.isSafeInteger(planId) || planId < 0) throw new Error('FreeCodeGo payment plan id must be a non-negative integer')
@@ -364,7 +422,11 @@ export async function paymentCheckout(host: PaymentRemotesHost, planId: number, 
   return host.account.withAccessToken(accessToken => host.api!.createCheckout({ accessToken, planId, paymentType, returnUrl, isMobile: false, ...(amount === undefined ? {} : { amount }) }), undefined, { replayOnUnauthorized: false })
 }
 
-/** Poll an existing FreeCodeGo payment order. */
+/** Poll an existing FreeCodeGo payment order. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param orderId - the order id to poll.
+ * @returns the payment Order.
+ */
 export async function paymentOrder(host: PaymentRemotesHost, orderId: string): Promise<FreeCodeGoPaymentOrder> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   if (orderId.trim() === '') throw new Error('FreeCodeGo payment order id is required')
@@ -372,6 +434,12 @@ export async function paymentOrder(host: PaymentRemotesHost, orderId: string): P
   return host.account.withAccessToken(accessToken => host.api!.getCheckoutOrder({ accessToken, orderId }))
 }
 
+/** Have the backend verify a checkout order by its out trade number, the
+ * idempotent settle path a returning payment page uses.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param outTradeNo - the backend's out trade number for the order.
+ * @returns the verified payment order.
+ */
 export async function paymentVerify(host: PaymentRemotesHost, outTradeNo: string): Promise<FreeCodeGoPaymentOrder> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   if (outTradeNo.trim() === '') throw new Error('FreeCodeGo payment out trade number is required')
@@ -379,6 +447,12 @@ export async function paymentVerify(host: PaymentRemotesHost, outTradeNo: string
   return host.account.withAccessToken(accessToken => host.api!.verifyCheckoutOrder({ accessToken, outTradeNo }), undefined, { replayOnUnauthorized: false })
 }
 
+/** Cancel a pending order and report the backend's own outcome rather than
+ * claiming success unconditionally.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param orderId - the order id to cancel.
+ * @returns whether the order left the pending set.
+ */
 export async function paymentCancel(host: PaymentRemotesHost, orderId: string): Promise<{ readonly cancelled: boolean }> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   if (orderId.trim() === '') throw new Error('FreeCodeGo payment order id is required')
@@ -392,6 +466,11 @@ export async function paymentCancel(host: PaymentRemotesHost, orderId: string): 
   return { cancelled: order.state.trim().toLowerCase() !== 'pending' }
 }
 
+/** Email a paid order's receipt through the backend's mail service.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param orderId - the paid order whose receipt to send.
+ * @returns the destination address and the backend's optional message.
+ */
 export async function paymentReceiptEmail(host: PaymentRemotesHost, orderId: string): Promise<{ readonly email: string; readonly message?: string }> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   if (orderId.trim() === '') throw new Error('FreeCodeGo payment order id is required')
@@ -406,6 +485,9 @@ export async function paymentReceiptEmail(host: PaymentRemotesHost, orderId: str
  * action needs, so this is the path that works even when mail delivery is
  * unconfigured — and it is the receipt the backend actually issued rather than a
  * look-alike drawn in the client.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param orderId - the paid order whose receipt document to download.
+ * @returns the receipt Document.
  */
 export async function paymentReceiptDocument(host: PaymentRemotesHost, orderId: string): Promise<FreeCodeGoReceiptDocument> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
@@ -414,7 +496,31 @@ export async function paymentReceiptDocument(host: PaymentRemotesHost, orderId: 
   return host.account.withAccessToken(accessToken => host.api!.downloadCheckoutReceipt({ accessToken, orderId }), undefined, { replayOnUnauthorized: false })
 }
 
-/** Return replay-derived local Harness token usage without exposing prompts or tool output. */
+/**
+ * Fetch Stripe's own receipt for a paid Stripe order.
+ *
+ * Offered beside the receipt above rather than instead of it: a Stripe payment
+ * has both, and they answer different questions — the backend's commercial
+ * receipt for what the account was credited, Stripe's PDF for what the card was
+ * charged. Which orders have this one is decided by the backend
+ * (`stripe_receipt_available` on the order row), since only it knows which
+ * provider instance took the payment.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param orderId - the paid Stripe order whose receipt document to download.
+ * @returns the receipt Document, base64 encoded because it is a PDF.
+ */
+export async function paymentStripeReceiptDocument(host: PaymentRemotesHost, orderId: string): Promise<FreeCodeGoReceiptDocument> {
+  if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
+  if (orderId.trim() === '') throw new Error('FreeCodeGo payment order id is required')
+  await host.restoreAccount()
+  return host.account.withAccessToken(accessToken => host.api!.downloadCheckoutStripeReceipt({ accessToken, orderId }), undefined, { replayOnUnauthorized: false })
+}
+
+/** Return replay-derived local Harness token usage without exposing prompts or tool output. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param usageQuery - the local window and grouping to total.
+ * @returns the local Token Usage Snapshot.
+ */
 export async function tokenUsageLocal(host: PaymentRemotesHost, usageQuery: LocalTokenUsageQuery): Promise<LocalTokenUsageSnapshot> {
   return buildLocalTokenUsageSnapshot(host.ctx, usageQuery)
 }
@@ -442,7 +548,11 @@ function reduceModelRows(modelList: readonly unknown[]): Record<string, unknown>
   return totals
 }
 
-/** Gateway billing is intentionally kept as the existing account-scoped snapshot. */
+/** Gateway billing is intentionally kept as the existing account-scoped snapshot. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param days - the requested window length, clamped to 1–90 days.
+ * @returns the gateway Usage Snapshot.
+ */
 export async function tokenUsageGateway(host: PaymentRemotesHost, days: number): Promise<GatewayUsageSnapshot> {
   const windowDays = Number.isFinite(days) ? Math.max(1, Math.min(90, Math.trunc(days))) : 30
   if (host.api === undefined || host.account === undefined) return { source: 'freecodego-gateway', fetchedAt: Date.now(), days: windowDays, status: 'backend-not-configured', models: [], timeline: [] }
@@ -504,6 +614,12 @@ export async function tokenUsageGateway(host: PaymentRemotesHost, days: number):
   }
 }
 
+/** Local token usage for one session, or `undefined` when the session has no
+ * recorded usage.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the session whose usage to total.
+ * @returns the local snapshot, or `undefined` when the session has none.
+ */
 export async function tokenUsageCurrentSession(host: PaymentRemotesHost, sessionId: string): Promise<LocalTokenUsageSnapshot | undefined> {
   if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('token usage session id is invalid')
   const snapshot = await buildLocalTokenUsageSnapshot(host.ctx, { sessionId: sessionId.trim(), startAt: 0, endAt: Date.now() })

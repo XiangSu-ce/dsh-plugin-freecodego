@@ -11,6 +11,9 @@ import type { FreeCodeGoEngineeringCanvasGraph, FreeCodeGoEngineeringGraphProjec
 import { freeCodeGoDataHome } from './data-home.ts'
 import { BuildTracker, downloadVerifiedAsset, ensurePrivateDirectory as ensurePrivateRuntimeDirectory, readRuntimeManifest, replaceVerifiedRuntimeDirectory, writeRuntimeManifest } from './engineering-runtime-store.ts'
 
+/**
+ * The Graphify release this plugin installs and verifies against.
+ */
 export const GRAPHIFY_VERSION = '0.9.52'
 const GRAPHIFY_WHEEL_URL = 'https://files.pythonhosted.org/packages/eb/14/8a015f6b3e5e3dc06a762e9dc5b722097900832b322b922484dc2ae7a92a/graphifyy-0.9.52-py3-none-any.whl'
 const GRAPHIFY_WHEEL_SHA256 = '5588ea9af433a8cf74ada89dfc0b981abf596a1327a1375fdaf661905562bf44'
@@ -39,6 +42,9 @@ type GraphifyPlatformPackage = {
   readonly compatible: boolean
 }
 
+/**
+ * The outcome of one plugin-owned child process.
+ */
 export type ProcessResult = { readonly exitCode: number; readonly output: string }
 type UvArchive = { readonly url: string; readonly digest: string; readonly format: 'zip' | 'tar.gz' }
 
@@ -53,7 +59,13 @@ const UV_ARCHIVES: Readonly<Record<string, UvArchive>> = {
   'linux-arm64-musl': { format: 'tar.gz', digest: '6dcf60e3c085de88ace3671b949ca99f0652be561ff5627f0d21394140f041db', url: 'https://github.com/astral-sh/uv/releases/download/0.12.7/uv-aarch64-unknown-linux-musl.tar.gz' },
 }
 
-/** Pure platform resolver exercised in CI for every supported desktop target. */
+/**
+ * Pure platform resolver exercised in CI for every supported desktop target.
+ * @param os - the operating system id; defaults to the running host.
+ * @param architecture - the CPU architecture; defaults to the running host.
+ * @param libc - the Linux libc, when the caller knows it.
+ * @returns the platform id, whether it is supported, and the reason.
+ */
 export function graphifyPlatformSupport(os = platform(), architecture = process.arch, libc?: 'gnu' | 'musl'): { readonly id: string; readonly supported: boolean; readonly detail: string } {
   const arch = architecture === 'arm64' ? 'arm64' : architecture === 'x64' ? 'x64' : undefined
   const resolvedLibc = os === 'linux'
@@ -67,7 +79,12 @@ export function graphifyPlatformSupport(os = platform(), architecture = process.
 
 /** The Graphify equivalent of Claude's runtime package directory. The active
  * platform is the only auto-installable row; all other rows stay visible for
- * diagnostics and are intentionally not downloadable from this machine. */
+ * diagnostics and are intentionally not downloadable from this machine. 
+ * @returns the graphify Platform Package rows, in backend order.
+ * @param os - the operating system id; defaults to the running host.
+ * @param architecture - the CPU architecture; defaults to the running host.
+ * @param libc - the Linux libc, when the caller knows it.
+ */
 export function graphifyPlatformPackages(os = platform(), architecture = process.arch, libc?: 'gnu' | 'musl'): readonly GraphifyPlatformPackage[] {
   const active = graphifyPlatformSupport(os, architecture, libc)
   return Object.entries(UV_ARCHIVES).map(([platform, archive]) => ({
@@ -91,6 +108,10 @@ export class GraphifyRuntimeManager {
     this.rootDirectory = resolve(rootDirectory)
   }
 
+/**
+ * Report the installed runtime's state and version.
+ * @returns the runtime status.
+ */
   async status(): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
     if (this.installTask !== undefined) return { state: 'installing', installed: false, version: GRAPHIFY_VERSION, runtimeDirectory: this.runtimeDirectory() }
     const manifest = await this.readManifest()
@@ -107,6 +128,10 @@ export class GraphifyRuntimeManager {
     return { state: 'ready', installed: true, version: GRAPHIFY_VERSION, runtimeDirectory: this.runtimeDirectory(), pythonPath, wheelDigest: manifest.wheelDigest }
   }
 
+/**
+ * List the installation sources this engine offers.
+ * @returns the runtime package rows.
+ */
   async packages(): Promise<readonly FreeCodeGoEngineeringGraphRuntimePackage[]> {
     const platformPackage = graphifyPlatformPackages().find(entry => entry.compatible)
     const compatible = platformPackage !== undefined
@@ -127,6 +152,11 @@ export class GraphifyRuntimeManager {
     ]
   }
 
+/**
+ * Install the official runtime or adopt an existing Python, deduplicating concurrent calls.
+ * @param input - the chosen package id and the Python path for the existing-Python mode.
+ * @returns the runtime status after the install.
+ */
   async install(input: { readonly packageId: 'managed-uv-python' | 'existing-python'; readonly pythonPath?: string }): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
     if (this.installTask !== undefined) return this.installTask
     const task = this.installOfficialRuntime(input)
@@ -134,12 +164,21 @@ export class GraphifyRuntimeManager {
     try { return await task } finally { this.installTask = undefined }
   }
 
+/**
+ * Delete the installed runtime and report the resulting status.
+ * @returns the runtime status after removal.
+ */
   async remove(): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
     if (this.installTask !== undefined) throw new Error('Graphify Runtime 安装仍在进行，无法删除。')
     await rm(this.runtimeDirectory(), { recursive: true, force: true })
     return this.status()
   }
 
+/**
+ * Report whether the workspace graph exists and how fresh it is.
+ * @param cwd - the workspace to inspect.
+ * @returns the workspace's code graph status.
+ */
   async projectStatus(cwd: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     const projectId = projectIdFor(cwd)
     const graphPath = this.graphPath(cwd)
@@ -154,7 +193,12 @@ export class GraphifyRuntimeManager {
     }
   }
 
-  /** Build Graphify's official code-only graph without writing graphify-out into the workspace. */
+  /** Build Graphify's official code-only graph without writing graphify-out into the workspace. 
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the engineering Graph Project Status.
+   * @param cwd - working directory the command runs in.
+ * @param force - whether to rebuild instead of refreshing the existing graph.
+   */
   async build(cwd: string, force = false, signal?: AbortSignal): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     const workspace = resolve(cwd)
     const workspaceInfo = await stat(workspace).catch(() => undefined)
@@ -187,7 +231,11 @@ export class GraphifyRuntimeManager {
     return this.projectStatus(workspace)
   }
 
-  /** Incrementally refresh an existing official graph using Graphify's manifest and shrink guard. */
+  /** Incrementally refresh an existing official graph using Graphify's manifest and shrink guard. 
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the engineering Graph Project Status.
+   * @param cwd - working directory the command runs in.
+   */
   async update(cwd: string, signal?: AbortSignal): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     const workspace = resolve(cwd)
     const project = await this.projectStatus(workspace)
@@ -214,12 +262,18 @@ export class GraphifyRuntimeManager {
     return this.projectStatus(workspace)
   }
 
-  /** Abort the plugin-owned Graphify process tree for the current workspace. */
+  /** Abort the plugin-owned Graphify process tree for the current workspace. 
+   * @param cwd - working directory the command runs in.
+ * @returns whether a running build was cancelled.
+   */
   cancel(cwd: string): { readonly cancelled: boolean } {
     return this.builds.cancel(projectIdFor(cwd))
   }
 
-  /** Remove only the current workspace's plugin-owned graph and caches. */
+  /** Remove only the current workspace's plugin-owned graph and caches. 
+   * @returns the engineering Graph Project Status.
+   * @param cwd - working directory the command runs in.
+   */
   async clearProject(cwd: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     const projectId = projectIdFor(cwd)
     if (this.builds.isBuilding(projectId)) throw new Error('Graphify 构建进行中，无法清空项目图谱。')
@@ -230,7 +284,11 @@ export class GraphifyRuntimeManager {
     return this.projectStatus(cwd)
   }
 
-  /** Run a read-only official Graphify CLI query against the plugin-owned graph. */
+  /** Run a read-only official Graphify CLI query against the plugin-owned graph. 
+   * @param cwd - working directory the command runs in.
+ * @param input - the command, its values, and optional depth and budget.
+ * @returns the query output and the workspace status it ran against.
+   */
   async query(cwd: string, input: { readonly command: 'query' | 'explain' | 'path' | 'affected' | 'god-nodes'; readonly values?: readonly string[]; readonly depth?: number; readonly budget?: number }): Promise<{ readonly output: string; readonly project: FreeCodeGoEngineeringGraphProjectStatus }> {
     const project = await this.projectStatus(cwd)
     if (project.state !== 'ready') throw new Error(project.reason ?? '当前工作区的代码结构图不可用。')
@@ -243,7 +301,11 @@ export class GraphifyRuntimeManager {
     return { output: result.output, project }
   }
 
-  /** Bounded graph payload for a compatible Canvas plugin. Never returns raw Graphify JSON. */
+  /** Bounded graph payload for a compatible Canvas plugin. Never returns raw Graphify JSON. 
+   * @returns the engineering Canvas Graph.
+   * @param cwd - working directory the command runs in.
+ * @param maxNodes - the most nodes the bounded payload may carry.
+   */
   async canvas(cwd: string, maxNodes = 160): Promise<FreeCodeGoEngineeringCanvasGraph> {
     const project = await this.projectStatus(cwd)
     if (project.state !== 'ready') throw new Error(project.reason ?? '当前工作区的代码结构图不可用。')
@@ -418,7 +480,11 @@ const CHILD_ENVIRONMENT_KEYS = [
   'LANG', 'LC_ALL', 'TERM', 'NO_COLOR', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
 ] as const
 
-/** Explicit allowlist for child-process environments so host credentials and ambient state never leak to workers. */
+/**
+ * Explicit allowlist for child-process environments so host credentials and ambient state never leak to workers.
+ * @param overrides - entries merged over the inherited allowlist.
+ * @returns the allowlisted child-process environment.
+ */
 export function childProcessEnvironment(overrides: Readonly<Record<string, string>> = {}): NodeJS.ProcessEnv {
   const inherited: Record<string, string> = {}
   for (const key of CHILD_ENVIRONMENT_KEYS) {
@@ -434,7 +500,10 @@ function defaultGraphifyDirectory(): string {
 }
 
 /** Stable per-workspace identity shared by every plugin-owned runtime (graphify,
- *  codegraph, memory); exported so those runtimes cannot drift apart. */
+ *  codegraph, memory); exported so those runtimes cannot drift apart. 
+ * @param cwd - working directory the command runs in.
+ * @returns the stable per-workspace identity hash.
+ */
 export function projectIdFor(cwd: string): string {
   const workspace = resolve(cwd)
   // Windows paths are case-insensitive; the whole identity is lowercased so a
@@ -578,7 +647,12 @@ function graphifyQueryArguments(command: 'query' | 'explain' | 'path' | 'affecte
 /** Spawn one plugin-owned child process with an allowlisted environment,
  *  bounded output, a hard timeout, and whole-process-tree cancellation.
  *  Exported so sibling runtime managers reuse this audited path instead of
- *  growing a second subprocess implementation. */
+ *  growing a second subprocess implementation. 
+ * @param command - command line the worker is started with.
+ * @returns the process Result.
+ * @param args - the arguments, passed as an array.
+ * @param input - the cwd, timeout, environment, and optional abort signal.
+ */
 export async function runProcess(command: string, args: readonly string[], input: { readonly cwd: string; readonly timeout: number; readonly env: NodeJS.ProcessEnv; readonly signal?: AbortSignal }): Promise<ProcessResult> {
   return new Promise((resolveResult, reject) => {
     let output = ''
@@ -612,6 +686,11 @@ export async function runProcess(command: string, args: readonly string[], input
   })
 }
 
+/**
+ * An AbortController that follows another signal.
+ * @param signal - the signal to follow, when the caller supplied one.
+ * @returns the linked controller.
+ */
 export function linkedController(signal: AbortSignal | undefined): AbortController {
   const controller = new AbortController()
   if (signal === undefined) return controller

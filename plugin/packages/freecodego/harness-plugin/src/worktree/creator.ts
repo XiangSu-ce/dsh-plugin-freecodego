@@ -237,8 +237,8 @@ export async function createWorktree(
       const files = await deps.fingerprint(input.targetPath)
       // Git's own output, quoted into a result the caller reads. Git prints the
       // URL it failed against, and for an authenticated remote that URL carries
-      // the token — the same channel the team worktree reports through, which is
-      // why this is masked with the same call. (Reachability is weaker here: the
+      // the token — the channel the session worktree's own failures are masked
+      // for, which is why this is masked with the same call. (Reachability is weaker here: the
       // target path is derived by the planner rather than from a caller-supplied
       // member id, so a credential shape is not known to reach it today. It is
       // masked because a reader cannot tell the two paths apart.)
@@ -266,7 +266,11 @@ export async function createWorktree(
   }
 }
 
-/** The real copy primitive, bound so the default creator needs no injection. */
+/**
+ * The real copy primitive, bound so the default creator needs no injection.
+ * @param input - the source tree to copy and the target path to build.
+ * @returns How the copy was made and how many files it holds.
+ */
 export const FAST_COPY: WorktreeCreatorDeps['copyTree'] = async input =>
   copyTree({ from: input.source, to: input.target })
 

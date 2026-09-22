@@ -32,6 +32,9 @@ export interface HarnessMcpRoute {
 
 /** The two Skill operations this server advertises when Skills are enabled. */
 export const SKILL_DISCOVER_TOOL_NAME = 'freecodego_skill_discover'
+/**
+ * Advertised tool name for loading one Skill by name.
+ */
 export const SKILL_LOAD_TOOL_NAME = 'freecodego_skill_load'
 
 /**

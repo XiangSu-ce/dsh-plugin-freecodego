@@ -46,7 +46,10 @@ function callId(value: string): ToolCallId { return value as ToolCallId }
 /** Public Agent that serializes Harness inbox turns through one native runtime session. */
 export class FreeCodeGoNativeAgent implements Agent {
   readonly inbox: FreeCodeGoNativeInbox
-  readonly scope: Scope
+    /**
+   * Isolation scope this agent's tools and contributions are registered in.
+   */
+readonly scope: Scope
   readonly ctx: Context
   private phase: Phase
   private activityDone: Promise<void> = Promise.resolve()
@@ -91,16 +94,22 @@ export class FreeCodeGoNativeAgent implements Agent {
 
   get status(): AgentStatus { return this.phase.kind === 'running' ? 'running' : 'idle' }
 
-  /** Attach the opened process bridge before this agent is published. */
+  /** Attach the opened process bridge before this agent is published. 
+   * @param session - the opened process bridge this agent will drive.
+   */
   attachNative(session: NativeAgentSession): void {
     if (this.native !== undefined) throw new Error(`native agent "${this.id}" already has a runtime session`)
     this.native = session
   }
 
-  /** Configure lazy recovery after a worker crashes; the failed turn is never replayed. */
+  /** Configure lazy recovery after a worker crashes; the failed turn is never replayed. 
+   * @param recovery - how to reopen the worker if it dies mid-session.
+   */
   setNativeRecovery(recovery: NativeSessionRecovery): void { this.recovery = recovery }
 
-  /** Project a correlated native event into the current Harness turn. */
+  /** Project a correlated native event into the current Harness turn. 
+   * @param event - one correlated frame forwarded from the runtime.
+   */
   onNativeEvent(event: NativeRootAgentEvent): void {
     if (event.binding.harnessSessionId !== this.id || this.disposed) return
     if (this.native !== undefined && event.binding.runtimeSessionId !== this.native.identity.runtimeSessionId) return
@@ -220,7 +229,11 @@ export class FreeCodeGoNativeAgent implements Agent {
     }
   }
 
-  /** Resolve a native permission request and persist its Harness audit outcome. */
+  /** Resolve a native permission request and persist its Harness audit outcome. 
+   * @param requestId - id of the native permission request.
+   * @param outcome - the Harness audit outcome to persist for it.
+   * @param response - engine-shaped response; defaults to the answer `outcome` implies.
+   */
   async respondPermission(requestId: string, outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable', response: unknown = outcome === 'allowed-once' ? { type: 'approved' } : { type: 'rejected' }): Promise<void> {
     await (await this.requireNative()).respond('permission/respond', requestId, response)
     this.pendingApprovals.delete(requestId)

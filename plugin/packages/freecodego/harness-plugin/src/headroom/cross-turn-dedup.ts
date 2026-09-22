@@ -32,11 +32,19 @@ interface Anchor {
   readonly anchor: string
 }
 
+/**
+ * Outcome of one cross-turn fold: the rendering, and whether it is an
+ * improvement over the input rather than merely a matched run.
+ */
 export interface DedupResult {
   readonly output: string
   readonly applied: boolean
 }
 
+/**
+ * Remembers earlier tool outputs and folds verbatim runs of later ones back to
+ * a `(turn, anchor)` reference, so a repeated read costs a few bytes.
+ */
 export class CrossTurnDedup {
   /** 3-line-gram -> anchor of the earliest output containing it. */
   private readonly grams = new Map<string, Anchor>()
@@ -51,6 +59,8 @@ export class CrossTurnDedup {
    * three five-character lines would grow the text. Both callers read `applied`
    * as "use this instead", so the size check belongs here rather than in each of
    * them.
+   * @returns the dedup Result.
+   * @param text - the text to process.
    */
   fold(text: string): DedupResult {
     const lines = text.split('\n')
@@ -94,6 +104,7 @@ export class CrossTurnDedup {
   /**
    * Index an output that stays verbatim in context (never compressed). Only
    * the first 3-line-gram occurrence position is stored — keep-earliest.
+   * @param text - the text to process.
    */
   remember(text: string): void {
     this.turn += 1

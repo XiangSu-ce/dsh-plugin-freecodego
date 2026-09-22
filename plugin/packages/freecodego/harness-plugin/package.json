@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/XiangSu-ce/dsh-freecodego.git",
+    "url": "git+https://github.com/XiangSu-ce/dsh-plugin-freecodego.git",
     "directory": "packages/freecodego/harness-plugin"
   },
   "type": "module",
@@ -67,6 +67,7 @@
     "@deepseek-ai/schemastery": "workspace:^",
     "eventsource-parser": "^3.1.0",
     "js-yaml": "^4.2.0",
+    "typescript": "^6.0.3",
     "zod": "^4.4.3"
   },
   "peerDependencies": {

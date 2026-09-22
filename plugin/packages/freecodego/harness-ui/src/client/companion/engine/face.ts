@@ -3,7 +3,7 @@
  * notice; PROVENANCE.md in this directory holds its source and upstream hash.
  */
 /* v8 ignore file -- vendored third-party engine; PROVENANCE.md records its source and per-file hashes, and the behaviour built on the engine is covered by this package's companion specs. */
-import { clamp, createRng, loopNoise } from './math'
+import { clamp, createRng, loopNoise } from './math.ts'
 
 /**
  * Les yeux sont peints sur une sphere, pas poses a plat.
@@ -68,6 +68,7 @@ function spin(u: Vec3, v: Vec3, angle: number): [Vec3, Vec3] {
  * Repere de la tete puis des deux yeux.
  * Repere ecran : x a droite, y vers le bas, z vers le spectateur.
  * L'indice 0 est l'oeil interieur, l'indice 1 l'oeil exterieur.
+ * @param scale - scale factor the value is expressed in.
  */
 export function eyePoses(gaze: HeadGaze, scale: number, split = EYE_SPLIT): [EyePose, EyePose] {
   let f: Vec3 = [0, 0, 1]

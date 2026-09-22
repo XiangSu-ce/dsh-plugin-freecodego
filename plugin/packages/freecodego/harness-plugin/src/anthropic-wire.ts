@@ -7,12 +7,12 @@
  * OpenAI chat-completions body.
  */
 
-import { EMPTY_RESPONSE_CODE, LlmError } from '@deepseek-ai/dsh-llm'
+import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, FinishReason, GenerateOptions, Message, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
+import { callIdFor, closeStream, openBlock, DONE } from './wire-shared.ts'
+import type { OpenBlock } from './wire-shared.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
-
-const DONE = '[DONE]'
 /** Anthropic requires `max_tokens`; this is the budget used when the caller has none. */
 const DEFAULT_MAX_TOKENS = 8_192
 /** Room a thinking budget needs beside itself inside `max_tokens`. */
@@ -21,8 +21,6 @@ const ANTHROPIC_VERSION = '2023-06-01'
 
 /** Request headers required by the Anthropic Messages wire. */
 export const ANTHROPIC_MESSAGES_HEADERS: Readonly<Record<string, string>> = { 'anthropic-version': ANTHROPIC_VERSION }
-
-function toolCallId(value: string): never { return value as never }
 
 /** Resolves a durable image into an inline Anthropic request payload. */
 export interface AnthropicInlineImageSerialization {
@@ -183,13 +181,20 @@ function anthropicRequest(
   }
 }
 
-/** Serialize an Anthropic Messages request for a text-only turn. */
+/** Serialize an Anthropic Messages request for a text-only turn.
+ * @param options - the request to serialize.
+ * @returns the projected record the caller renders.
+ */
 export async function serializeAnthropicRequest(options: GenerateOptions): Promise<Record<string, unknown>> {
   const { system, messages } = await anthropicTurns(options, undefined)
   return anthropicRequest(options, system, messages)
 }
 
-/** Serialize an Anthropic Messages request with inline base64 image parts. */
+/** Serialize an Anthropic Messages request with inline base64 image parts.
+ * @param options - the request to serialize.
+ * @param images - the resolver that turns image blocks into base64 parts.
+ * @returns the projected record the caller renders.
+ */
 export async function serializeAnthropicRequestWithInlineImages(
   options: GenerateOptions,
   images: AnthropicInlineImageSerialization,
@@ -198,20 +203,12 @@ export async function serializeAnthropicRequestWithInlineImages(
   return anthropicRequest(options, system, messages)
 }
 
-interface OpenBlock { readonly index: number; readonly kind: 'text' | 'reasoning' | 'tool-call'; text: string; callId?: string; name?: string }
-
 function anthropicFinishReason(value: unknown): FinishReason {
   if (value === 'max_tokens') return { kind: 'max-tokens' }
   if (value === 'tool_use') return { kind: 'tool-calls' }
   if (value === 'refusal') return { kind: 'error', failure: { message: 'provider refused the request', code: 'PROVIDER_REFUSAL' } }
   // `end_turn`, `stop_sequence`, and unknown terminal reasons are a completed turn.
   return { kind: 'stop' }
-}
-
-function close(block: OpenBlock): ContentBlock {
-  if (block.kind === 'text') return { type: 'text', text: block.text }
-  if (block.kind === 'reasoning') return { type: 'reasoning', text: block.text }
-  return { type: 'tool-call', id: toolCallId(block.callId ?? `call_${block.index}`), name: block.name ?? '', arguments: block.text }
 }
 
 function anthropicUsage(value: unknown): Partial<TokenUsage> | undefined {
@@ -230,14 +227,17 @@ function anthropicUsage(value: unknown): Partial<TokenUsage> | undefined {
   }
 }
 
-/** Translate Anthropic Messages SSE payloads into Harness stream chunks. */
+/** Translate Anthropic Messages SSE payloads into Harness stream chunks.
+ * @param payloads - the SSE data payloads, in arrival order.
+ * @returns the assembled Harness stream chunks.
+ */
 export async function* translateAnthropic(payloads: AsyncIterable<string>): AsyncGenerator<StreamChunk> {
   let nextIndex = 0
   const order: OpenBlock[] = []
   const byAnthropicIndex = new Map<number, OpenBlock>()
   let pendingFinish: FinishReason | undefined
   let usage: TokenUsage | undefined
-  const open = (kind: OpenBlock['kind']): OpenBlock => { const block: OpenBlock = { index: nextIndex++, kind, text: '' }; order.push(block); return block }
+  const open = (kind: OpenBlock['kind']): OpenBlock => openBlock(order, nextIndex++, kind)
   const mergeUsage = (next: Partial<TokenUsage> | undefined): void => {
     if (next === undefined) return
     const cacheReadTokens = next.cacheReadTokens ?? usage?.cacheReadTokens
@@ -249,11 +249,9 @@ export async function* translateAnthropic(payloads: AsyncIterable<string>): Asyn
       ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
     }
   }
-  const terminal = function* (): Generator<StreamChunk> {
-    for (const block of order) yield { type: 'block-end', index: block.index, block: close(block) }
-    if (usage !== undefined) yield { type: 'usage', usage }
-    yield { type: 'finish', reason: pendingFinish ?? (order.length === 0 ? { kind: 'error', failure: { message: 'model returned no content', code: EMPTY_RESPONSE_CODE } } : { kind: 'stop' }) }
-  }
+  // Shared with the OpenAI wire (see `wire-shared.ts`): a stream that produced
+  // no block is a failure here too, never an empty successful turn.
+  const terminal = (): Generator<StreamChunk> => closeStream(order, usage, pendingFinish)
   for await (const payload of payloads) {
     if (payload === DONE) {
       yield* terminal()
@@ -324,7 +322,7 @@ export async function* translateAnthropic(payloads: AsyncIterable<string>): Asyn
           : delta.partial_json === undefined || delta.partial_json === null ? '' : JSON.stringify(delta.partial_json)
         if (fragment === '') continue
         block.text += fragment
-        yield { type: 'tool-call-delta', index: block.index, id: toolCallId(block.callId ?? `call_${block.index}`), ...(block.name === undefined ? {} : { name: block.name }), argumentsDelta: fragment }
+        yield { type: 'tool-call-delta', index: block.index, id: callIdFor(block), ...(block.name === undefined ? {} : { name: block.name }), argumentsDelta: fragment }
         continue
       }
       if (block.kind === 'reasoning') {

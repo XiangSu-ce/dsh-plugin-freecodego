@@ -73,6 +73,9 @@ const OPAQUE_TOKEN = /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)[A-Za-z0-9+/_=-]{24,}$/u
  * handed a path with characters its filesystem may not accept. The trailing
  * dash strip runs *after* truncation, because cutting a long name at the limit
  * is exactly what leaves a trailing separator.
+ * @param value - the raw string to reduce.
+ * @param maxLength - the maximum identifier length to keep.
+ * @returns the normalized identifier.
  */
 export function sanitizeMemoryIdentifier(value: string, maxLength: number = MAX_MEMORY_IDENTIFIER_CHARS): string {
   const normalized = value
@@ -87,14 +90,6 @@ export function sanitizeMemoryIdentifier(value: string, maxLength: number = MAX_
 }
 
 /**
- * Normalize memory text so the same evidence always produces the same bytes.
- *
- * Newlines are unified, control characters are dropped (they corrupt a
- * terminal, an XML tag, and a JSON string alike), trailing whitespace on each
- * line is removed, and runs of blank lines collapse to one. The result is
- * trimmed and truncated at a hard character limit.
- */
-/**
  * Cut `value` at `maxLength` without splitting a character.
  *
  * Every other cap in this plugin measures UTF-16 code units, so a boundary can
@@ -102,6 +97,9 @@ export function sanitizeMemoryIdentifier(value: string, maxLength: number = MAX_
  * character: a JSON encoder writes it as an unpaired escape, every reader shows a
  * replacement glyph, and the damage is visible in the stored body, in the excerpt
  * injected into the prompt, and in the export file the user opens.
+ * @param value - the string to cut.
+ * @param maxLength - the maximum number of UTF-16 units to keep.
+ * @returns the prefix, ending on a whole code point.
  */
 export function cutAtCodePointBoundary(value: string, maxLength: number): string {
   if (maxLength <= 0) return ''
@@ -114,7 +112,11 @@ export function cutAtCodePointBoundary(value: string, maxLength: number): string
 
 /** Keep at most `maxLength` units from the **end**, without starting on the
  *  second half of a pair — the same damage as {@link cutAtCodePointBoundary}, on
- *  the tail slices that keep the newest part of a message. */
+ *  the tail slices that keep the newest part of a message.
+ * @param value - the string to slice.
+ * @param maxLength - the maximum number of UTF-16 units to keep.
+ * @returns the tail, starting on a whole code point.
+ */
 export function tailAtCodePointBoundary(value: string, maxLength: number): string {
   if (maxLength <= 0) return ''
   if (maxLength >= value.length) return value
@@ -123,6 +125,17 @@ export function tailAtCodePointBoundary(value: string, maxLength: number): strin
   return first >= 0xdc00 && first <= 0xdfff ? value.slice(start + 1) : value.slice(start)
 }
 
+/**
+ * Normalize memory text so the same evidence always produces the same bytes.
+ *
+ * Newlines are unified, control characters are dropped (they corrupt a
+ * terminal, an XML tag, and a JSON string alike), trailing whitespace on each
+ * line is removed, and runs of blank lines collapse to one. The result is
+ * trimmed and truncated at a hard character limit.
+ * @param value - the raw text to normalize.
+ * @param maxLength - the maximum character length to keep.
+ * @returns the normalized text.
+ */
 export function sanitizeMemoryText(value: string, maxLength: number = MAX_MEMORY_TEXT_CHARS): string {
   const normalized = value
     // CRLF and a lone CR both become LF, so a file read on Windows and the same
@@ -136,7 +149,10 @@ export function sanitizeMemoryText(value: string, maxLength: number = MAX_MEMORY
   return normalized.length > maxLength ? cutAtCodePointBoundary(normalized, maxLength) : normalized
 }
 
-/** Whether text already carries the redaction marker this plugin writes. */
+/** Whether text already carries the redaction marker this plugin writes.
+ * @param text - the text to process.
+ * @returns true when the text already contains the redaction marker.
+ */
 export function containsMemoryRedaction(text: string): boolean {
   return text.includes(MEMORY_REDACTION_MARKER)
 }
@@ -167,6 +183,8 @@ export const MEMORY_TAG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/u
  * hex string is a legitimate memory with a digest in it, while a title that is
  * nothing but the digest is not a memory at all. The empty string is not a
  * secret — an absent optional field must not make every entry look suspect.
+ * @param value - the field value to test.
+ * @returns true when the whole value looks like an unnamed credential.
  */
 export function looksLikeMemorySecretValue(value: string): boolean {
   const trimmed = value.trim()
@@ -174,12 +192,14 @@ export function looksLikeMemorySecretValue(value: string): boolean {
   return HEX_BLOB.test(trimmed) || OPAQUE_TOKEN.test(trimmed)
 }
 
+/** The candidate entry a persistence decision is made about. */
 export interface MemoryScreenInput {
   readonly title: string
   readonly body: string
   readonly tags?: readonly string[]
 }
 
+/** The persistence decision for one candidate entry, with the evidence behind it. */
 export interface MemoryScreenVerdict {
   /**
    * False when the entry must not be persisted as written.
@@ -218,6 +238,8 @@ export interface MemoryScreenVerdict {
  * Order matters: the credential scan runs over the combined text with the
  * title first, so a finding's index points at a position a caller can explain
  * ("in the title" vs "in the body") without re-searching.
+ * @param input - the candidate entry to screen.
+ * @returns the memory Screen Verdict.
  */
 export function screenMemoryForPersistence(input: MemoryScreenInput): MemoryScreenVerdict {
   const combined = `${input.title}\n${input.body}`

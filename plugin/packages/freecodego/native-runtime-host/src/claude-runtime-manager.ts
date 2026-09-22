@@ -10,6 +10,9 @@ import { claudeRuntimePackages } from './runtime-packages.ts'
 const RUNTIME_PROTOCOL_ABI = 'freecodego-agent/1'
 const markerName = 'claude-agent-sdk-runtime.json'
 
+/**
+ * What the Host reports about the installed Claude Agent SDK runtime.
+ */
 export interface ClaudeRuntimeStatus {
   readonly installed: boolean
   readonly platform: string
@@ -20,6 +23,9 @@ export interface ClaudeRuntimeStatus {
   readonly reason?: string
 }
 
+/**
+ * Identity of an installed runtime: the facts a durable engine plan is pinned to.
+ */
 export interface ClaudeRuntimeIdentity {
   readonly protocolAbi: string
   readonly runtimeVersion: string
@@ -28,6 +34,9 @@ export interface ClaudeRuntimeIdentity {
   readonly executablePath: string
 }
 
+/**
+ * One downloadable official runtime package, as the install surface lists it.
+ */
 export interface ClaudeRuntimePackage {
   readonly id: string
   readonly platform: string
@@ -60,7 +69,10 @@ type ClaudeRuntimeMarker = {
  * digest, so an SDK repin invalidates a durable plan made under the old one.
  */
 export class ClaudeRuntimeManager {
-  readonly rootDirectory: string
+    /**
+   * Directory the runtime is installed into; every file the runtime owns lives under it.
+   */
+readonly rootDirectory: string
   private readonly engineManifestPath: string
   private operation: Promise<unknown> | undefined
 
@@ -74,7 +86,11 @@ export class ClaudeRuntimeManager {
     )
   }
 
-  status(): ClaudeRuntimeStatus {
+    /**
+   * Report whether a usable runtime is installed, without hashing the whole executable.
+   * @returns the current install state, carrying a reason code whenever it is not usable.
+   */
+status(): ClaudeRuntimeStatus {
     const platform = currentRuntimePlatform()
     const marker = readMarker(join(this.rootDirectory, markerName))
     if (marker === undefined || !existsSync(join(this.rootDirectory, '.complete'))) {
@@ -111,7 +127,11 @@ export class ClaudeRuntimeManager {
     }
   }
 
-  async runtime(): Promise<ClaudeRuntimeIdentity> {
+    /**
+   * Read the installed runtime's identity for opening a session.
+   * @returns the identity of the installed runtime, refused when no complete install is present.
+   */
+async runtime(): Promise<ClaudeRuntimeIdentity> {
     const status = this.status()
     if (!status.installed) throw unavailable(status.reason)
     const marker = readMarker(join(this.rootDirectory, markerName))
@@ -119,7 +139,11 @@ export class ClaudeRuntimeManager {
     return this.identity(resolveContained(this.rootDirectory, marker.executablePath))
   }
 
-  packages(): readonly ClaudeRuntimePackage[] {
+    /**
+   * List the official runtime packages this machine could install.
+   * @returns one row per known package, flagged for platform compatibility.
+   */
+packages(): readonly ClaudeRuntimePackage[] {
     const platform = currentRuntimePlatform()
     return claudeRuntimePackages.map(spec => ({
       id: spec.id,
@@ -134,7 +158,12 @@ export class ClaudeRuntimeManager {
     }))
   }
 
-  async install(packageID = currentClaudePackage().id): Promise<ClaudeRuntimeStatus> {
+    /**
+   * Download, verify, and atomically swap in a runtime package.
+   * @param packageID - the package to install; defaults to the one for this platform.
+   * @returns the install state after the swap.
+   */
+async install(packageID = currentClaudePackage().id): Promise<ClaudeRuntimeStatus> {
     return this.serialize(async () => {
       const platform = currentRuntimePlatform()
       const spec = claudeRuntimePackages.find(item => item.id === packageID)
@@ -194,7 +223,11 @@ export class ClaudeRuntimeManager {
     })
   }
 
-  async remove(): Promise<ClaudeRuntimeStatus> {
+    /**
+   * Delete the installed runtime, leaving the machine unconfigured rather than half-installed.
+   * @returns the install state after removal.
+   */
+async remove(): Promise<ClaudeRuntimeStatus> {
     return this.serialize(async () => {
       await rm(this.rootDirectory, { recursive: true, force: true })
       if (existsSync(this.rootDirectory)) throw new Error(`Claude runtime directory still exists after removal: ${this.rootDirectory}`)

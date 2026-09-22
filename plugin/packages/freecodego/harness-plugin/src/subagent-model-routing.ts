@@ -44,7 +44,11 @@ function sameRoutes(left: readonly ModelRoute[], right: readonly ModelRoute[]): 
     && left.every((route, index) => route.provider === right[index]?.provider && route.model === right[index]?.model)
 }
 
-/** Synchronize one authoritative catalog generation into the official setting. */
+/** Synchronize one authoritative catalog generation into the official setting.
+ * @param settings - the settings runtime the selection lives in.
+ * @param llm - the model directory the routes are derived from.
+ * @returns the model Route rows, in backend order.
+ */
 export async function synchronizeSubagentModelRoutes(
   settings: SettingsRuntime,
   llm: ModelDirectoryRuntime,
@@ -128,6 +132,7 @@ export class FreeCodeGoSubagentModelRouting {
     queueMicrotask(() => { this.refresh() })
   }
 
+  /** Re-derive the routes from the current catalog, coalescing concurrent calls. */
   refresh(): void {
     if (this.disposed) return
     if (this.pending !== undefined) {
@@ -148,6 +153,7 @@ export class FreeCodeGoSubagentModelRouting {
     this.pending = operation
   }
 
+  /** Stop applying refreshes once the Host is disposing. */
   dispose(): void {
     this.disposed = true
   }

@@ -51,6 +51,9 @@ export const PROJECT_CONFIG_RELATIVE_PATH = '.freecodego/config.json'
  */
 export const PROJECT_CONFIG_WHITELIST = ['mcpServers', 'skillRoots', 'permissionRules', 'hooks'] as const
 
+/**
+ * Settings keys a project config file is allowed to carry.
+ */
 export type ProjectConfigKey = (typeof PROJECT_CONFIG_WHITELIST)[number]
 
 /** The outcome of reading one project document. */

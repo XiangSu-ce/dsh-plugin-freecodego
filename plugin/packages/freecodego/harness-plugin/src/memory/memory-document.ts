@@ -64,6 +64,7 @@ export interface MemoryDocumentParseError {
   readonly reason: string
 }
 
+/** The outcome of parsing one memory document: its record, or the fields that failed. */
 export type MemoryDocumentParseResult =
   | { readonly ok: true; readonly record: MemoryDocumentRecord }
   | { readonly ok: false; readonly errors: readonly MemoryDocumentParseError[] }
@@ -80,6 +81,9 @@ const MEMORY_FILENAME_STEM_CHARS = 60
  * a title with nothing usable left, which is a caller error for an identifier and
  * an ordinary case for a filename — an all-CJK title still deserves a document — so
  * the empty result falls back rather than propagating.
+ * @param title - the memory's title, reduced to a filename stem.
+ * @param id - the memory's id, appended as the identity suffix.
+ * @returns the document filename.
  */
 export function memoryFileName(title: string, id: string): string {
   let stem: string
@@ -89,15 +93,6 @@ export function memoryFileName(title: string, id: string): string {
   return `${stem === '' ? 'memory' : stem}--${id}.md`
 }
 
-/**
- * Render one memory as a Markdown document with YAML frontmatter.
- *
- * The body is fenced off from the frontmatter by the standard `---` delimiters
- * and appended verbatim after one blank line, so an editor's rendering matches
- * what the store holds. Returns `undefined` when the record should not be
- * exported at all: a malformed id, or a body that still carries a credential —
- * an export must never be the step that writes a secret to disk in plaintext.
- */
 /**
  * The trailing freshness comment, matched exactly so the parser can remove the
  * note the renderer added without touching anything a user wrote.
@@ -129,6 +124,18 @@ export function memoryFileName(title: string, id: string): string {
  */
 const FRESHNESS_COMMENT = /\n\n<!-- freshness: [^\n]*-->(?=\n$)/u
 
+/**
+ * Render one memory as a Markdown document with YAML frontmatter.
+ *
+ * The body is fenced off from the frontmatter by the standard `---` delimiters
+ * and appended verbatim after one blank line, so an editor's rendering matches
+ * what the store holds. Returns `undefined` when the record should not be
+ * exported at all: a malformed id, or a body that still carries a credential —
+ * an export must never be the step that writes a secret to disk in plaintext.
+ * @param record - the memory record to render.
+ * @param now - current time in epoch milliseconds, for the freshness note.
+ * @returns the document text, or `undefined` when it must not be exported.
+ */
 export function renderMemoryDocument(record: MemoryDocumentRecord, now?: number): string | undefined {
   if (!MEMORY_ID.test(record.id)) return undefined
   // A record whose instant is not a finite number has no ISO form, and
@@ -165,6 +172,8 @@ export function renderMemoryDocument(record: MemoryDocumentRecord, now?: number)
  * than one error per attempt. An `unknown` kind or trust is accepted verbatim:
  * the document is the faithful transport, and re-classifying is the store's
  * decision, not the file format's.
+ * @returns the memory Document Parse Result.
+ * @param text - the text to process.
  */
 export function parseMemoryDocument(text: string): MemoryDocumentParseResult {
   const errors: MemoryDocumentParseError[] = []
@@ -284,6 +293,9 @@ export function parseMemoryDocument(text: string): MemoryDocumentParseResult {
  * reader cannot see is not doing its job. Which is also why the parser strips
  * this exact comment before it yields a body — the note is transport metadata, and
  * a round-trip that folded it into the body would grow the body on every export.
+ * @param record - the memory record the note is about.
+ * @param now - current time in epoch milliseconds.
+ * @returns the freshness comment line.
  */
 export function memoryDocumentAgeNote(record: MemoryDocumentRecord, now: number): string {
   const age = describeMemoryAge(record.createdAt, now)
@@ -295,6 +307,9 @@ export function memoryDocumentAgeNote(record: MemoryDocumentRecord, now: number)
  * Render the Markdown index that lists exported memories, oldest first.
  * A directory of documents without an index forces a user to open each file to
  * see what exists; the index is what makes the directory browsable.
+ * @param records - the memory records to list.
+ * @param now - current time in epoch milliseconds.
+ * @returns the index document text.
  */
 export function renderMemoryIndex(records: readonly MemoryDocumentRecord[], now: number): string {
   const lines = ['---', 'title: Engineering memory', `generated: ${new Date(now).toISOString()}`, '---', '', '| id | title | kind | trust | recorded |', '| --- | --- | --- | --- | --- |']

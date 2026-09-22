@@ -25,9 +25,12 @@
  * there is no deletion anywhere in this file before a copy has succeeded.
  *
  * Environment seams, all optional:
- *   HARNESS_SYNC_ROOT      workspace root to sync into (default: this script's parent)
- *   HARNESS_SYNC_SOURCE    upstream tree to copy from, bypassing cache discovery
- *   HARNESS_SYNC_DRY_RUN   `1` reports the plan and writes nothing, not even a clone
+ *   HARNESS_SYNC_ROOT       workspace root to sync into (default: this script's parent)
+ *   HARNESS_SYNC_SOURCE     upstream tree to copy from, bypassing cache discovery
+ *   HARNESS_SYNC_DRY_RUN    `1` reports the plan and writes nothing, not even a clone
+ *   HARNESS_SYNC_PATCH_ONLY `1` re-applies only the forks at the bottom of this
+ *                           file to the tree as it stands, copying nothing and
+ *                           needing no upstream source
  */
 
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
@@ -50,6 +53,20 @@ const cache = join(root, '.upstream-cache', commit)
 // Directories this script owns wholesale: each one ends up an exact mirror of the
 // source copy, which is the promise COMPATIBILITY.md records for them.
 const copiedDirectories = ['apps', 'native', 'python', 'docs', 'website', 'snapshots', 'vendor']
+
+// Re-apply the forks alone, without a source checkout.
+//
+// Every fork function is idempotent (each one checks for its marker and returns),
+// so a second run reports nothing to do rather than writing the same bytes again.
+// That makes this mode the way to answer "is the patch I just wrote live?" -- and
+// the way to restore the forks after resolving a conflict by hand -- without
+// holding a checkout of the locked commit, which on this host is the difference
+// between a one-second check and a network clone.
+if (process.env.HARNESS_SYNC_PATCH_ONLY === '1') {
+  await applyForks(root)
+  console.log(`sync-harness: re-applied forks under ${root} (patch-only; nothing copied)`)
+  process.exit(0)
+}
 
 /**
  * The tree this run copies from.
@@ -253,13 +270,23 @@ await writeFile(join(targetPackages, 'experimental/tool-agent-team/tsdown.config
 await writeFile(join(targetPackages, 'experimental/agent-team-profile/tsdown.config.ts'), `import { defineConfig } from 'tsdown'\n\nexport default defineConfig({\n  entry: ['lib/types/index.js'],\n  outDir: 'lib',\n  format: ['esm'],\n  platform: 'node',\n  target: 'es2024',\n  fixedExtension: false,\n  dts: false,\n  clean: false,\n})\n`)
 await writeFile(join(targetPackages, 'experimental/agent-team-web-profile/tsdown.config.ts'), `import { defineConfig } from 'tsdown'\n\nexport default defineConfig({\n  entry: ['lib/types/index.js'],\n  outDir: 'lib',\n  format: ['esm'],\n  platform: 'node',\n  target: 'es2024',\n  fixedExtension: false,\n  dts: false,\n  clean: false,\n})\n`)
 
-await patchFreeCodeGoProfileInstaller(join(root, 'packages/boot/plugin-manager/src/operations.ts'))
-await patchHarnessV013Compatibility(root)
-await patchTimeoutSuspensionSeam(root)
-await patchReadBinaryDocumentGuard(root)
-await patchSessionRowIdentitySeam(root)
+await applyForks(root)
 
 console.log(`sync-harness: materialized ${commit} from ${repository}`)
+
+/**
+ * Apply every fork, in the order the tree needs them.
+ *
+ * One list rather than the call sites it used to be, so full sync and patch-only
+ * cannot drift apart: a fork that is added here is applied by both.
+ */
+async function applyForks(root) {
+  await patchFreeCodeGoProfileInstaller(join(root, 'packages/boot/plugin-manager/src/operations.ts'))
+  await patchHarnessV013Compatibility(root)
+  await patchTimeoutSuspensionSeam(root)
+  await patchReadBinaryDocumentGuard(root)
+  await patchSessionRowIdentitySeam(root)
+}
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', windowsHide: true })
@@ -822,6 +849,7 @@ async function patchSessionRowIdentitySeam(root) {
   }
   await writeFile(rows, source)
 }
+
 
 /** Keep the private FreeCodeGo overlay compatible with the released v2 seams. */
 async function patchHarnessV013Compatibility(root) {

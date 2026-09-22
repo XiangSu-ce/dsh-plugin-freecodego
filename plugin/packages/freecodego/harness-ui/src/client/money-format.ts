@@ -63,6 +63,10 @@ function currencyFractionDigits(currency: string | undefined): number {
  * See the module note above for what throws and why the display path must not:
  * the fallback prints the amount followed by the backend's own code, the one
  * label this client can show without inventing a symbol nobody quoted.
+ * @param value - the amount to render.
+ * @param currency - the ISO 4217 code the amount is denominated in.
+ * @param digits - the currency's minor-unit fraction digits.
+ * @returns the formatted amount, or the amount plus its code when the runtime cannot name the currency.
  */
 export function formatAmountInCurrency(value: number, currency: string, digits: number): string {
   try {

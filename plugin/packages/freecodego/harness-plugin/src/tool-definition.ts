@@ -52,3 +52,18 @@ export type ToolDefinitionShape = Pick<ToolDefinition, 'name' | 'description' | 
 export function toolDefinition<T extends ToolDefinitionShape>(tool: T): T {
   return tool
 }
+
+/**
+ * The output declaration of a tool that answers with data.
+ *
+ * The persona and worktree tool sets both render their answer as pretty JSON,
+ * and each declared that shape itself — the open schema, the string passthrough
+ * for an answer that is already text, and the indent. Two copies of a rendering
+ * rule is how the same kind of answer starts looking different depending on
+ * which tool produced it; typed against the registry's own `output` so a change
+ * to the contract lands here rather than at ~200 call sites.
+ */
+export const JSON_TOOL_OUTPUT: ToolDefinitionShape['output'] = {
+  schema: { type: 'object', additionalProperties: true },
+  render: (_args: unknown, value) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
+}

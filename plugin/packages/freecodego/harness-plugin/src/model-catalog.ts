@@ -1,6 +1,7 @@
 import { isLockedRoute, isZeroPriceRoute } from '@deepseek-ai/dsh-freecodego-api'
 import type { FreeCodeGoCatalog, FreeCodeGoModelOptionGroup, FreeCodeGoModelRouteOption } from '@deepseek-ai/dsh-freecodego-api'
 import type { FreeCodeGoManagedCatalog, FreeCodeGoManagedCatalogChoice, FreeCodeGoManagedCatalogGroup } from './types.ts'
+import { normalizeWireProtocol, SUPPORTED_WIRE_PROTOCOLS } from './openai-compatible-adapter.ts'
 
 const LOGFARE_MODEL_PREFIX = 'logfare/'
 
@@ -13,12 +14,21 @@ const LOGFARE_MODEL_PREFIX = 'logfare/'
  * here because three layers see the id: routing, the wire, and the picker. */
 export const GROUP_PIN_PARAM = '@group'
 
-/** Model id plus its group pin: `gpt-5.6@group:4`. Absent pin = Host default. */
+/**
+ * Model id plus its group pin: `gpt-5.6@group:4`. Absent pin = Host default.
+ * @param modelId - the wire model id.
+ * @param groupId - the backend group to pin the selection to.
+ * @returns the pinned selection value.
+ */
 export function withGroupPin(modelId: string, groupId: number): string {
   return `${modelId}${GROUP_PIN_PARAM}:${groupId}`
 }
 
-/** Split `id@group:N` into the wire model id and the pinned group. */
+/**
+ * Split `id@group:N` into the wire model id and the pinned group.
+ * @param selection - the selection value to split.
+ * @returns the wire model id and the pinned group, when one is present.
+ */
 export function parseGroupPin(selection: string): { readonly modelId: string; readonly groupId?: number } {
   const match = new RegExp(`^(.+?)${GROUP_PIN_PARAM}:(\\d+)$`, 'u').exec(selection.trim())
   if (match === null) return { modelId: selection.trim() }
@@ -31,26 +41,34 @@ export function parseGroupPin(selection: string): { readonly modelId: string; re
  * `OpenAiCompatibleAdapter` sends an OpenAI chat-completions body to
  * `/chat/completions` for the OpenAI dialects and an Anthropic Messages body
  * to `/messages` for `anthropic`; anything else has no wire, so a pinned row
- * for such a group must not be offered as selectable. Folded spellings match
- * the routing layer (`normalizeChoiceProtocol`).
+ * for such a group must not be offered as selectable. Both facts come from the
+ * transport itself — `SUPPORTED_WIRE_PROTOCOLS` for the set and
+ * `normalizeWireProtocol` for the spelling rule — so this layer cannot offer a
+ * row the router would refuse, or hide one it could send. The list was once
+ * restated here, and a fourth wire would have been added to one of the two
+ * copies only.
  */
-export const SUPPORTED_WIRE_PROTOCOL_SET: ReadonlySet<string> = new Set(['openai_responses', 'openai_chat_completions', 'anthropic'])
+export const SUPPORTED_WIRE_PROTOCOL_SET: ReadonlySet<string> = new Set(SUPPORTED_WIRE_PROTOCOLS)
 
-/** A group row is offerable when the account can use it and we can send it. */
+/**
+ * A group row is offerable when the account can use it and we can send it.
+ * @param choice - the group row's enablement, lock state, and protocol.
+ * @returns whether the row can be offered as selectable.
+ */
 export function isGroupRowSelectable(choice: {
   readonly enabled?: boolean
   readonly locked?: boolean
   readonly protocol?: string
 }): boolean {
   if (choice.enabled === false || choice.locked === true) return false
-  const raw = (choice.protocol ?? '').trim().toLowerCase().replace(/-/gu, '_')
-  if (raw === '') return true
-  // Fold the backend's short spellings the same way the routing layer does.
-  const protocol = raw === 'openai' || raw === 'responses'
-    ? 'openai_responses'
-    : raw === 'chat' || raw === 'chat_completions'
-      ? 'openai_chat_completions'
-      : raw
+  // Folded by the transport's own rule rather than a copy of it: a spelling this
+  // predicate accepts while the router rejects it offers a row that fails on
+  // selection, and the reverse hides a group the account can actually use.
+  const protocol = normalizeWireProtocol(choice.protocol)
+  // A route that declares no protocol stays offerable for the same reason
+  // routing keeps it usable: legacy options send the OpenAI default, so there is
+  // nothing here to compare, not an unknown wire to refuse.
+  if (protocol === '') return true
   return SUPPORTED_WIRE_PROTOCOL_SET.has(protocol)
 }
 const REMOVED_FREE_MODEL_IDS = new Set([
@@ -60,6 +78,32 @@ const REMOVED_FREE_MODEL_IDS = new Set([
   'google/gemini-2.5-flash-lite', 'google/gemini-3.1-flash-lite-preview',
   'google/gemini-3.1-pro-preview',
 ])
+
+/** One row per route, in the order the backend listed them.
+ *
+ * The backend can list the same group route twice: `gpt-5.6-terra` arrived from
+ * `/models/options` as two `group:2:gpt-5.6-terra` choices — same group id, same
+ * group name, same rate, same protocol, byte-identical. Rendering both put two
+ * `gpt 5.6 terra ×0.1` rows in the picker, which reads as a defect in the model
+ * list rather than as a choice the user is making.
+ *
+ * Two choices that share a route key are the same route, so one row is the
+ * honest answer. A genuinely different group keeps its own row, because its
+ * route key differs — the collapse is keyed on the route, never on the visible
+ * text, so two same-named groups at different rates both stay selectable.
+ * @param routes - the option routes one model received.
+ * @returns the routes with duplicate keys collapsed to the first occurrence.
+ */
+function distinctRoutes(routes: readonly FreeCodeGoModelRouteOption['options'][number][]): readonly FreeCodeGoModelRouteOption['options'][number][] {
+  const seen = new Set<string>()
+  return routes.filter((route) => {
+    const key = route.routeKey
+    if (key === undefined || key === '') return true
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
 
 /**
  * Merge the account's model-option groups into the browser-safe model catalog.
@@ -73,10 +117,13 @@ const REMOVED_FREE_MODEL_IDS = new Set([
  *
  * When a model has option groups, the choice list is rebuilt from them; a model
  * with no groups keeps its bootstrap choices untouched.
+ * @param models - the bootstrap catalog models to enrich.
+ * @param options - the account's model-option groups.
+ * @returns the models with their group choices rebuilt.
  */
 export function enrichCatalogChoices(models: FreeCodeGoCatalog['models'], options: readonly FreeCodeGoModelRouteOption[]): FreeCodeGoManagedCatalog['models'] {
   return models.map((model) => {
-    const routes = options.find(option => option.model === model.id || option.model.toLowerCase() === model.id.toLowerCase())?.options ?? []
+    const routes = distinctRoutes(options.find(option => option.model === model.id || option.model.toLowerCase() === model.id.toLowerCase())?.options ?? [])
     if (routes.length === 0) return model
     const engines = model.choices[0]?.compatibleEngines ?? model.compatibleEngines
     return {
@@ -141,7 +188,11 @@ export const GROUP_LOCKED_REASON = 'FREECODEGO_GROUP_LOCKED'
 /** Reason code for a group that is switched off, or has no wire we can send. */
 export const GROUP_UNAVAILABLE_REASON = 'FREECODEGO_GROUP_UNAVAILABLE'
 
-/** Why a group option cannot serve, or `undefined` when it can. */
+/**
+ * Why a group option cannot serve, or `undefined` when it can.
+ * @param route - the group option's lock, unlock, enablement, and protocol.
+ * @returns the reason code, or `undefined` when the group can serve.
+ */
 export function groupRowBlockReason(route: {
   readonly enabled?: boolean
   readonly locked?: boolean
@@ -168,6 +219,9 @@ export function groupRowBlockReason(route: {
  * the reason) rather than being dropped here: this projection answers "which
  * groups does the backend publish", and the answer is the same whether or not
  * the account happens to be entitled to one today.
+ * @returns the group Pinned Model Row rows, in backend order.
+ * @param models - the catalog models to expand.
+ * @param options - the account's model-option groups.
  */
 export function expandGroupPinnedModels(
   models: readonly GroupPinnedCatalogModel[],
@@ -181,7 +235,7 @@ export function expandGroupPinnedModels(
     rows.push(row)
   }
   for (const model of models) {
-    const routes = options.find(option => option.model === model.id || option.model.toLowerCase() === model.id.toLowerCase())?.options ?? []
+    const routes = distinctRoutes(options.find(option => option.model === model.id || option.model.toLowerCase() === model.id.toLowerCase())?.options ?? [])
     const printed = routes.filter(route => route.groupId !== undefined)
     if (printed.length === 0) {
       push({ ...model })
@@ -208,11 +262,20 @@ export function expandGroupPinnedModels(
  * reason win would point at the wrong fix ("unlock this group" on a row that
  * only needs a login). When the model itself is usable, the group's own reason
  * explains the row — a group the account cannot bill through is disabled with
- * that reason instead of being listed as if it worked. */
+/**
+ * hat reason instead of being listed as if it worked.
+ * @param row - the pinned picker row to inspect.
+ * @returns the group-level block reason, or `undefined` when the row is usable.
+ */
 export function modelRowGroupBlock(row: GroupPinnedModelRow): string | undefined {
   return row.availability === 'available' ? row.__groupUnavailable : undefined
 }
 
+/**
+ * Project the account's option groups into the browser-safe catalog groups.
+ * @param groups - the account's model-option groups.
+ * @returns the catalog group rows.
+ */
 export function managedCatalogGroups(groups: readonly FreeCodeGoModelOptionGroup[]): readonly FreeCodeGoManagedCatalogGroup[] {
   return groups.map(group => ({
     id: group.id,
@@ -232,6 +295,11 @@ export function managedCatalogGroups(groups: readonly FreeCodeGoModelOptionGroup
   }))
 }
 
+/**
+ * Render a model's per-choice rate multipliers as a display string.
+ * @param model - the model whose choices are summarized.
+ * @returns the joined multiplier text, or a placeholder when none is known.
+ */
 export function modelMultiplierDescription(model: { readonly choices: readonly { readonly zeroPrice?: boolean; readonly rateMultiplier?: number }[] }): string {
   const values = model.choices.map(choice => choice.zeroPrice === true ? 0 : choice.rateMultiplier).filter((value): value is number => value !== undefined && Number.isFinite(value))
   return values.length === 0 ? '倍率未知' : Array.from(new Set(values)).map(value => `×${value}`).join(' / ')
@@ -255,7 +323,11 @@ const DIRECT_PROVIDER_PREFIX_RE = /^(?:opencode|openrouter|agnes|logfare|senseno
  * Agnes was missing from this list, so its media routes were offered under the
  * FreeCodeGo group as if the gateway served them — they are image/video models,
  * so selecting one started a chat request against a route that only accepts a
- * generation prompt. */
+/**
+ * eneration prompt.
+ * @param models - the merged catalog rows to filter.
+ * @returns the gateway-owned rows only.
+ */
 export function mergeCatalogModels(models: FreeCodeGoManagedCatalog['models']): FreeCodeGoManagedCatalog['models'] {
   return models.filter((model) => {
     const id = model.id.trim().toLowerCase()
@@ -270,7 +342,12 @@ export function mergeCatalogModels(models: FreeCodeGoManagedCatalog['models']): 
   })
 }
 
-/** Conservative visual-input detection for catalogs without modality metadata. */
+/**
+ * Conservative visual-input detection for catalogs without modality metadata.
+ * @param id - the model id.
+ * @param name - the model's display name.
+ * @returns the input modalities the model is inferred to accept.
+ */
 export function imageInputModalities(id: string, name: string): readonly ('text' | 'image')[] {
   const value = `${id} ${name}`.toLowerCase()
   if (/(?:dall[-_.]?e|gpt[-_.]?image|imagen|imagegen|flux|sdxl|stable[-_. ]?diffusion|midjourney|ideogram|recraft|(?:image|vision)[-_.]?(?:generation|gen|edit))/iu.test(value)) return ['text']

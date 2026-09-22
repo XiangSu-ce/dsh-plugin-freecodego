@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { COMPILED_BUILT_IN_COMMAND_POLICY } from '../src/command-policy.ts'
-import { DoomLoopGuard, freeCodeGoToolGuard } from '../src/tool-guards.ts'
+import { freeCodeGoToolGuard } from '../src/tool-guards.ts'
 
 function guard(options: { readonly planMode?: 'plan' | 'execute' | undefined } = {}) {
-  const doomLoop = new DoomLoopGuard()
   return freeCodeGoToolGuard({
     settings: () => ({ envReadGuardEnabled: true, doomLoopGuardEnabled: true, commandPolicyEnabled: true, planModeEnabled: true }),
-    doomLoop,
     policy: COMPILED_BUILT_IN_COMMAND_POLICY,
     ...(options.planMode === undefined ? {} : { planMode: { policy: COMPILED_BUILT_IN_COMMAND_POLICY, modeFor: () => options.planMode } }),
   })
@@ -56,11 +54,20 @@ describe('plan mode guard', () => {
     expect(guard()(exec('write', { path: 'a.ts' }))).toBeUndefined()
   })
 
-  it('does not report a policy refusal as a doom loop', () => {
+  it('does not report a policy refusal as a doom loop, and never as a loop at all', () => {
+    // The tier used to sit at the end of this pipeline and refuse the third
+    // identical repeat. It is gone from here on purpose: every call this guard
+    // judges was dispatched by the Host, so the Harness's own
+    // `dsh-repeat-tool-reminder` already counts it, and two answers on one call
+    // is the split authority this plugin avoids. Repeated identical calls must
+    // therefore *keep* being answered by the policy, and never by a loop.
     const subject = guard({ planMode: 'plan' })
     for (let index = 0; index < 5; index += 1) {
       expect(subject(exec('bash', { command: 'rm -rf build' }))).toContain('command policy')
     }
+    const allowed = guard()
+    const call = exec('read', { path: 'src/a.ts' })
+    for (let index = 0; index < 6; index += 1) expect(allowed(call)).toBeUndefined()
   })
 })
 
@@ -68,7 +75,6 @@ describe('guard switches', () => {
   it('honours the command-policy off switch', () => {
     const subject = freeCodeGoToolGuard({
       settings: () => ({ commandPolicyEnabled: false, doomLoopGuardEnabled: false }),
-      doomLoop: new DoomLoopGuard(),
       policy: COMPILED_BUILT_IN_COMMAND_POLICY,
     })
     expect(subject(exec('bash', { command: 'rm -rf build' }))).toBeUndefined()
@@ -77,7 +83,6 @@ describe('guard switches', () => {
   it('honours the Plan Mode off switch while the guard still protects credentials', () => {
     const subject = freeCodeGoToolGuard({
       settings: () => ({ planModeEnabled: false, commandPolicyEnabled: false, doomLoopGuardEnabled: false }),
-      doomLoop: new DoomLoopGuard(),
       policy: COMPILED_BUILT_IN_COMMAND_POLICY,
       planMode: { policy: COMPILED_BUILT_IN_COMMAND_POLICY, modeFor: () => 'plan' },
     })

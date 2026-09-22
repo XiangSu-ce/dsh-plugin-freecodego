@@ -16,7 +16,10 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { FreeCodeGoManagedCatalogs } from '../src/managed-catalogs.ts'
+import { LlmError, MessageId } from '@deepseek-ai/dsh-llm'
+
+import { FreeCodeGoManagedCatalogs, KILO_RATE_LIMIT_HINT } from '../src/managed-catalogs.ts'
+import { KILO_GATEWAY_BASE_URL } from '../src/managed-catalog-utils.ts'
 
 const HOUR_MS = 60 * 60_000
 const DAY_MS = 24 * HOUR_MS
@@ -59,6 +62,41 @@ function catalogsFor(): FreeCodeGoManagedCatalogs {
   return new FreeCodeGoManagedCatalogs({
     ctx: { emit: () => undefined, get: () => undefined },
   } as unknown as ConstructorParameters<typeof FreeCodeGoManagedCatalogs>[0])
+}
+
+/**
+ * The registered `kilo` adapter as this spec reads it: the route resolution the
+ * adapter runs per request lives on its configuration, not on the instance.
+ */
+interface KiloAdapterHandle {
+  readonly config: {
+    readonly resolveConnection: (model: string) => Promise<{ readonly baseURL: string; readonly model: string }>
+  }
+  readonly stream: (options: { readonly provider: string; readonly model: string; readonly messages: readonly unknown[] }) => AsyncIterable<unknown>
+}
+
+/**
+ * The adapter the class registers for the `kilo` provider, captured the way the
+ * Host's `llm` service would hold it. Routing a selection is the adapter's job,
+ * so the pins below drive the real registration rather than a re-derived copy
+ * of the lookup.
+ */
+function registeredKiloAdapter(): KiloAdapterHandle {
+  const registered: Record<string, unknown> = {}
+  const catalogs = new FreeCodeGoManagedCatalogs({
+    ctx: {
+      emit: () => undefined,
+      // Registration also subscribes this route to provider-topology changes.
+      on: () => undefined,
+      get: (name: string) => name === 'llm'
+        ? { registerAdapter: (providers: readonly string[], adapter: unknown) => { for (const provider of providers) registered[provider] = adapter } }
+        : undefined,
+    },
+  } as unknown as ConstructorParameters<typeof FreeCodeGoManagedCatalogs>[0])
+  catalogs.registerKiloAdapter()
+  // The route is registered behind the known-directory decorator, so the routing
+  // under test is the connector adapter's own — read through `connector`.
+  return (registered.kilo as { connector: KiloAdapterHandle }).connector
 }
 
 const snapshotPath = (catalogs: FreeCodeGoManagedCatalogs): string => catalogs.catalogCachePath('kilo-free-models.json')
@@ -179,5 +217,52 @@ describe('kilo free-model cache', () => {
     const after = await readSnapshot(file)
     expect(idsOf(after.models)).toEqual(['kilo-auto/free', 'kilo-pro/free'])
     expect(Date.now() - after.savedAt).toBeLessThan(HOUR_MS)
+  })
+})
+
+describe('kilo selection routing', () => {
+  it('resolves a picker-namespaced selection against the bare directory roster', async () => {
+    // The picker namespaces its Kilo rows as `kilo/<directory id>` while the
+    // directory lists the same routes bare. Comparing the two spellings
+    // verbatim matched nothing, so every Kilo route failed with "not available
+    // in the public directory" before it ever reached the gateway.
+    const adapter = registeredKiloAdapter()
+
+    // The row id is the directory's normalized one (the `:free` suffix is
+    // stripped before the picker ever sees it) while the request carries the
+    // directory's own upstream id, so the two must not be conflated either.
+    await expect(adapter.config.resolveConnection('kilo/kilo-pro/free'))
+      .resolves.toEqual(expect.objectContaining({ baseURL: KILO_GATEWAY_BASE_URL, model: 'kilo-pro/free:free' }))
+    // The auto row exists in the directory under its own id and stays exact.
+    await expect(adapter.config.resolveConnection('kilo/kilo-auto/free'))
+      .resolves.toEqual(expect.objectContaining({ model: 'kilo-auto/free' }))
+  })
+
+  it('still refuses an id the directory does not publish', async () => {
+    // The prefix fix must not turn the roster into a wildcard.
+    const adapter = registeredKiloAdapter()
+
+    await expect(adapter.config.resolveConnection('kilo/nex-agi/nex-n2.5-pro'))
+      .rejects.toThrow('not available in the public directory')
+  })
+
+  it('explains a 429 with the quota Kilo documents, not just the status', async () => {
+    // The free routes are metered per egress IP at 200 requests an hour and the
+    // response carries no `retry-after`, so a bare status sends the user hunting
+    // for a broken model on every row at once.
+    // The directory still answers — a limited *route* is not a missing roster.
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => String(url).includes('/models')
+      ? new Response(JSON.stringify({ data: freeRows }), { status: 200, headers: { 'content-type': 'application/json' } })
+      : new Response(JSON.stringify({ error: 'Rate limit exceeded', error_type: 'rate_limit_exceeded' }), { status: 429 })))
+    const adapter = registeredKiloAdapter()
+    const drain = async (): Promise<unknown> => {
+      for await (const _chunk of adapter.stream({ provider: 'kilo', model: 'kilo/kilo-pro/free', messages: [{ id: MessageId('m1'), role: 'user', content: [{ type: 'text', text: 'hi' }] }] })) { /* drain */ }
+      return undefined
+    }
+
+    const failure = await drain().then(() => new Error('the request was expected to fail'), (error: unknown) => error)
+    expect(failure).toBeInstanceOf(LlmError)
+    expect((failure as LlmError).code).toBe('RATE_LIMIT')
+    expect((failure as LlmError).message).toContain(KILO_RATE_LIMIT_HINT)
   })
 })

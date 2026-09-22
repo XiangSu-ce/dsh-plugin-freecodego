@@ -10,6 +10,11 @@
  * a percentile over a session replay, or inside an event-driven runtime that
  * needs a full Host context). They are listed explicitly so the debt is visible
  * and cannot grow: adding a sixth means editing this test, which is the point.
+ *
+ * A second gate covers the same failure from the other side: a fixture fed
+ * through `as never` is not checked against the production type it is handed to,
+ * so the case keeps scoring after that type moves. Those cases are enumerated
+ * below for the same reason — the list may only shrink.
  */
 
 import { readFile } from 'node:fs/promises'
@@ -50,12 +55,28 @@ interface CaseSource {
   readonly body: string
 }
 
-/** Split the suite source into per-case bodies, the way the runner assembles them. */
+/**
+ * Split the suite source into per-case bodies, the way the runner assembles them.
+ *
+ * A case is an `id` immediately followed by its `suite`, which is the shape
+ * {@link CaseSpec} requires and the shape every case in the suite is written in.
+ * Matching the `id` line alone was not enough: a fixture object that happens to
+ * carry a string `id` at the same indentation — a helper that builds one comment
+ * or one report — was read as a case, and since a fixture calls no production
+ * symbol it was then reported as a decorative case. It also swallowed the body of
+ * the next real case, so the entry that appeared was not even the right one.
+ */
 function splitCases(source: string): readonly CaseSource[] {
-  return source.split("\n    id: '").slice(1).map((chunk) => {
-    const id = chunk.slice(0, chunk.indexOf("'"))
-    const end = chunk.indexOf('\n  },')
-    return { id, body: end === -1 ? chunk : chunk.slice(0, end) }
+  // `\r?` because the source is checked out with CRLF line endings: a pattern that
+  // assumed a bare `\n` matched nothing at all, and a suite that parses as zero
+  // cases is a gate that passes by measuring nothing.
+  const starts = [...source.matchAll(/\r?\n {4}id: '([^']+)',\r?\n {4}suite: '/gu)]
+  return starts.map((match, index) => {
+    const from = match.index ?? 0
+    const to = starts[index + 1]?.index ?? source.length
+    const body = source.slice(from, to)
+    const end = body.indexOf('\n  },')
+    return { id: match[1] ?? '', body: end === -1 ? body : body.slice(0, end) }
   })
 }
 
@@ -95,5 +116,52 @@ describe('evaluation case falsifiability', () => {
     // Every exception must carry a reason: an unexplained exemption is how a
     // decorative case gets permanent cover.
     for (const [id, reason] of RESTATED_ONLY) expect(reason.length, id).toBeGreaterThan(20)
+  })
+})
+
+/**
+ * Cases whose fixture is still fed through `as never`, by case id.
+ *
+ * The cast switches the compiler off for that case: the fixture is shaped like
+ * whatever its author had in mind, so when the production type it feeds moves,
+ * nothing fails — the case goes on asserting something about a shape that no
+ * longer exists. The refusal-identity cases were converted by naming the
+ * parameter type, with one documented `invalidInput` channel for the inputs no
+ * type can express; these entries are what is left.
+ *
+ * The list may only shrink, and each entry states what is cast and why, because
+ * the reason is the thing a later reader needs in order to finish the job.
+ */
+const UNTYPED_FIXTURES: ReadonlyMap<string, string> = new Map([
+  ['guard.doom-loop-detection', 'the tool-run context the guard reads, built field by field for two turns'],
+  ['guard.doom-loop-exemption', 'the same tool-run context, for the exempted tool'],
+  ['rehydration.stale-memory-is-flagged', 'the memory view the rehydration text builder takes'],
+  ['catalog.gateway-status-mapping', 'status rows compared one at a time against the expected verdict'],
+  ['catalog.logfare-media-detected-from-endpoints', 'a Logfare model row reduced to the three fields the detector reads'],
+  ['community.install-target-resolution', 'a catalog row whose npm and url fields are absent'],
+  ['account.snapshot-redacts-by-status', 'the coordinator snapshot, entered at one status per row'],
+  ['adapter.image-content-detection', 'a message whose content parts are reduced to their type names'],
+  ['routing.filters-unusable-models-and-dedups', 'the settings value the model filter reads'],
+  ['routing.empty-catalog-is-authoritative-when-it-answers', 'the settings value the model filter reads'],
+  ['routing.never-re-enables-an-explicit-opt-out', 'the settings value the model filter reads'],
+  ['routing.no-write-when-nothing-changed', 'the settings value the model filter reads'],
+  ['spec.task-derivation-order', 'the memory records the task list is derived from'],
+])
+
+describe('evaluation fixture typing', () => {
+  it('names every case the compiler no longer checks, and no others', async () => {
+    const source = await readFile(EVAL_SOURCE, 'utf8')
+    // Comments are stripped first: one case's `as never` mentions only appear in
+    // the note explaining that it was converted, which would otherwise give it
+    // permanent residency on this list.
+    const untyped = splitCases(source)
+      .filter(({ body }) => /as never/u.test(body.replace(/(^|\s)\/\/.*$/gmu, '')))
+      .map(({ id }) => id)
+      .sort()
+    // Equality rather than "no more than": a converted case has to drop its
+    // entry, so the debt cannot be inherited silently by the next reader.
+    expect(untyped, 'a case feeding a fixture through a cast is not checked by the compiler')
+      .toEqual([...UNTYPED_FIXTURES.keys()].sort())
+    for (const [id, reason] of UNTYPED_FIXTURES) expect(reason.length, id).toBeGreaterThan(20)
   })
 })

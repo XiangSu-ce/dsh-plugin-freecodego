@@ -1,6 +1,10 @@
 import { createHmac } from 'node:crypto'
 import { redactCredentialShapes } from './secret-scan.ts'
+import { asRecord, asRecord as object } from './untrusted-json.ts'
 
+/**
+ * The media kind a model route serves.
+ */
 export type MediaCategory = 'image' | 'video' | 'audio'
 
 /**
@@ -32,8 +36,17 @@ export class MediaRouteLimitation extends Error {}
  * renders 5 seconds exactly.
  */
 export class MediaRouteCapabilityRefusal extends MediaRouteLimitation {}
+/**
+ * One configured media route: its selection id, provider, and model.
+ */
 export interface MediaRoute { readonly selection: string; readonly provider: string; readonly model: string }
 
+/**
+ * Build the selection id for a media route, prefixing the provider unless it is the gateway or already prefixed.
+ * @param provider - the route's provider id.
+ * @param model - the route's model id.
+ * @returns the provider-prefixed selection id.
+ */
 export function mediaSelection(provider: string, model: string): string {
   const normalized = provider.trim().toLowerCase()
   return normalized === 'freecodego' || model.toLowerCase().startsWith(`${normalized}/`) ? model : `${provider}/${model}`
@@ -47,14 +60,32 @@ export function mediaSelection(provider: string, model: string): string {
  * (`logfare/…`, `agnes/…`) for a gateway row. Two spellings of one key is how an
  * override the picker enforces ends up invisible to the runtime, so the rule lives
  * in one place and every reader of the setting calls it.
+ * @param provider - provider id the turn is routed to.
+ * @param id - the model id exactly as the catalog row carries it.
+ * @returns the override key the settings page reads and writes.
  */
 export function mediaCategoryOverrideKey(provider: string, id: string): string { return `${provider}\u0000${id}` }
+/**
+ * Read the model id out of a `model:<provider>:<id>` selection value.
+ * @param selection - the selection string.
+ * @returns the model id, unchanged when the string carries no prefix.
+ */
 export function gatewayModelId(selection: string): string {
   const value = selection.trim()
   const match = /^model:[^:]+:(.+)$/iu.exec(value)
   return match?.[1]?.trim() || value
 }
+/**
+ * The selection id as shown in the picker, with gateway prefixes hidden behind `freecodego/`.
+ * @param selection - the raw selection id.
+ * @returns the display selection id.
+ */
 export function visibleMediaSelection(selection: string): string { return gatewayModelId(selection.replace(/^logfare\//i, 'freecodego/').replace(/^agnes\//i, '')) }
+/**
+ * Guess a route's media category from its id or display name.
+ * @param value - the id or name text to inspect.
+ * @returns the inferred category, or `undefined` when the text names none.
+ */
 export function inferMediaCategory(value: string): MediaCategory | undefined {
   const normalized = value.toLowerCase()
   if (/(?:veo(?:\d|[-_.])|seedance|kling|可灵|sora|wan[-_.]?\d.*video|grok.*video|video[-_. ]?(?:gen|create|generation))/.test(normalized)) return 'video'
@@ -100,6 +131,12 @@ export const MEDIA_REQUEST_REFUSAL_PATTERN = /\b(?:HTTP )?401\b|unauthorized|aut
  * into another paid attempt.
  */
 export const MEDIA_ROUTE_STATUS_PATTERN = /\bHTTP (?:402|404|429|5\d\d)\b/i
+/**
+ * Whether a failed media attempt may be retried on the next configured route.
+ * @param error - the failure raised by the route.
+ * @param signal - the caller's abort signal.
+ * @returns whether the ladder may fall back to another route.
+ */
 export function mediaFallbackAllowed(error: unknown, signal: AbortSignal): boolean {
   if (signal.aborted) return false
   // The one signal whose meaning is declared rather than guessed, so it is read
@@ -138,12 +175,29 @@ export function mediaFallbackAllowed(error: unknown, signal: AbortSignal): boole
  * runs the other way. Only a reason that names a decision about the request
  * stops the ladder, and a provider that gave no reason at all gave the route's
  * problem, not the request's.
+ * @param detail - the provider's own failure text.
+ * @returns whether the text describes a decision about the request.
  */
 export function mediaFailureBelongsToRequest(detail: string): boolean {
   return MEDIA_REQUEST_REFUSAL_PATTERN.test(detail)
 }
+/**
+ * Whether an image failure reports a parameter the endpoint does not accept.
+ * @param error - the failure to inspect.
+ * @returns whether the error names an unknown or unsupported parameter.
+ */
 export function unknownImageParameter(error: unknown): boolean { return /unknown parameter|unrecognized (?:parameter|field)|additional propert(?:y|ies)|unsupported parameter/i.test(error instanceof Error ? error.message : String(error)) }
+/**
+ * Whether an image failure reports the endpoint itself as unavailable.
+ * @param error - the failure to inspect.
+ * @returns whether the error reports a 404, 405, or 501.
+ */
 export function imageEndpointUnavailable(error: unknown): boolean { return /failed with HTTP (?:404|405|501)\b/i.test(error instanceof Error ? error.message : String(error)) }
+/**
+ * Whether an image failure could be served by the Responses-shaped image route instead.
+ * @param error - the failure to inspect.
+ * @returns whether the failure is an unknown parameter or a missing endpoint.
+ */
 export function imageEndpointMayBeResponses(error: unknown): boolean { return unknownImageParameter(error) || imageEndpointUnavailable(error) }
 /**
  * Scrub a media provider's own error text before it becomes a message.
@@ -154,8 +208,15 @@ export function imageEndpointMayBeResponses(error: unknown): boolean { return un
  * that redact upstream text, so a shape added here protected one exit and left
  * the rest. Only the formatting stays local: a provider error body is
  * unbounded and multi-line, and this text is read by a person.
+ * @param value - the provider error text to scrub.
+ * @returns the redacted, single-line, bounded detail.
  */
 export function redactMediaDetail(value: string): string { return redactCredentialShapes(value).replace(/[\r\n]+/gu, ' ').slice(0, 1_000) }
+/**
+ * The conventional API base URL for a media provider, when the plugin knows one.
+ * @param provider - the provider id.
+ * @returns the base URL, or `undefined` for an unrecognized provider.
+ */
 export function defaultMediaBaseURL(provider: string): string | undefined {
   const normalized = provider.trim().toLowerCase()
   if (normalized === 'openai') return 'https://api.openai.com/v1'
@@ -168,6 +229,11 @@ export function defaultMediaBaseURL(provider: string): string | undefined {
   if (normalized === 'volcengine' || normalized === 'ark' || normalized === 'seedance' || normalized === 'bytedance') return 'https://ark.cn-beijing.volces.com/api/v3'
   return undefined
 }
+/**
+ * The credential name a media provider's key is stored under.
+ * @param provider - the provider id.
+ * @returns the credential reference, or `undefined` for an unrecognized provider.
+ */
 export function defaultMediaCredentialRef(provider: string): string | undefined {
   const normalized = provider.trim().toLowerCase()
   if (normalized === 'openai') return 'OPENAI_API_KEY'
@@ -187,11 +253,21 @@ export function defaultMediaCredentialRef(provider: string): string | undefined 
  * and the create call comes back as an opaque failure.
  */
 export type MediaAuthScheme = 'bearer' | 'token'
+/**
+ * The authorization scheme a media provider expects.
+ * @param provider - the provider id.
+ * @returns `token` for Vidu and `bearer` otherwise.
+ */
 export function defaultMediaAuthScheme(provider: string): MediaAuthScheme {
   const normalized = provider.trim().toLowerCase()
   if (normalized === 'vidu') return 'token'
   return 'bearer'
 }
+/**
+ * Reduce a `WxH` size to its lowest-terms aspect ratio.
+ * @param size - the size string to parse.
+ * @returns the reduced ratio, or `undefined` when the size is not two positive integers.
+ */
 export function sizeToAspectRatio(size: string): string | undefined {
   const match = /^(\d{2,5})\s*[xX×]\s*(\d{2,5})$/u.exec(size.trim())
   const width = match?.[1] === undefined ? undefined : Number(match[1]); const height = match?.[2] === undefined ? undefined : Number(match[2])
@@ -200,11 +276,25 @@ export function sizeToAspectRatio(size: string): string | undefined {
   const divisor = gcd(width, height)
   return `${width / divisor}:${height / divisor}`
 }
+/**
+ * Wait for a delay, rejecting early when the caller aborts.
+ * @param milliseconds - how long to wait.
+ * @param signal - the caller's abort signal.
+ * @returns a promise that resolves after the delay or rejects on abort.
+ */
 export function sleepForMedia(milliseconds: number, signal: AbortSignal): Promise<void> { return new Promise((resolve, reject) => { if (signal.aborted) { reject(new Error('Media request aborted by caller')); return }; const onAbort = (): void => { clearTimeout(timer); reject(new Error('Media request aborted by caller')) }; const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve() }, milliseconds); signal.addEventListener('abort', onAbort, { once: true }) }) }
 
+/**
+ * The path a provider's async video task is polled through.
+ * @param route - the route the task was created on.
+ * @param value - the create response, read for a protocol-specific id.
+ * @param id - the task id to poll.
+ * @param statusPath - the create path, when the protocol repeats it.
+ * @returns the status path, or `undefined` when the protocol has none.
+ */
 export function videoStatusEndpoint(route: MediaRoute, value: unknown, id: string, statusPath?: string): string | undefined {
   const protocol = mediaVideoProtocol(route.provider)
-  const root = value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  const root = asRecord(value)
   if (protocol === 'gemini' && typeof root.name === 'string') {
     const operation = root.name.replace(/^\/+/, '')
     if (/^[A-Za-z0-9._/-]+$/.test(operation) && !operation.split('/').includes('..')) return `/${operation}`
@@ -245,6 +335,11 @@ export function videoStatusEndpoint(route: MediaRoute, value: unknown, id: strin
  * generic OpenAI-compatible server exposes.
  */
 export type MediaVideoProtocol = 'kling' | 'ark' | 'dashscope' | 'minimax' | 'vidu' | 'gemini' | 'xai' | 'openai' | 'gateway'
+/**
+ * The video wire protocol a provider speaks.
+ * @param provider - the provider id.
+ * @returns the protocol, defaulting to the portable gateway shape.
+ */
 export function mediaVideoProtocol(provider: string): MediaVideoProtocol {
   const normalized = provider.trim().toLowerCase()
   if (/(?:kling|kuaishou)/u.test(normalized)) return 'kling'
@@ -291,6 +386,8 @@ export type VideoSecondsAcceptance =
  * a request outside the window is raised as a route limitation (the ladder tries
  * another route, and the message names what this one does accept) instead of being
  * clamped into the window and returned as a length the caller never asked for.
+ * @param provider - provider id the turn is routed to.
+ * @returns the durations the route accepts, or `undefined` when they are unknown.
  */
 export function videoSecondsAcceptance(provider: string): VideoSecondsAcceptance | undefined {
   const protocol = mediaVideoProtocol(provider)
@@ -374,6 +471,9 @@ export const REFERENCE_IMAGE_LIMIT = 8
  * would have to be read by the Host and uploaded, which is a separately guarded
  * operation — and a path-shaped string that reached the provider as a "URL"
  * would fail there instead of here, where the caller can still fix it.
+ * @param images - the reference image URLs to validate.
+ * @param field - the field name used in the refusal message.
+ * @returns the trimmed, accepted URLs.
  */
 export function referenceImageUrls(images: readonly string[] | undefined, field = 'reference images'): readonly string[] {
   if (images === undefined) return []
@@ -389,6 +489,8 @@ export function referenceImageUrls(images: readonly string[] | undefined, field 
  * Kling takes a source frame as a bare base64 payload or as a URL. Its own SDK
  * always sends base64, so an inline data URL is unwrapped to exactly that; an
  * http(s) URL travels unchanged.
+ * @param value - the frame as a URL or an inline data URL.
+ * @returns the bare base64 payload for an inline image, or the URL unchanged.
  */
 export function klingMedia(value: string): string {
   const inline = dataUrlImage(value)
@@ -397,11 +499,16 @@ export function klingMedia(value: string): string {
 
 /** The credential names Kling's key pair is stored under. */
 export const KLING_ACCESS_KEY_REF = 'KLING_ACCESS_KEY'
+/**
+ * Credential slot holding Kling's secret key.
+ */
 export const KLING_SECRET_KEY_REF = 'KLING_SECRET_KEY'
 
 /**
  * Whether a route belongs to Kling. An OpenAI-shaped reseller in front of Kling
  * accepts a single bearer key, so the pair is only tried when it is present.
+ * @param provider - provider id the turn is routed to.
+ * @returns whether the provider is Kling.
  */
 export function isKlingProvider(provider: string): boolean {
   return /(?:kling|kuaishou)/u.test(provider.trim().toLowerCase())
@@ -411,6 +518,11 @@ export function isKlingProvider(provider: string): boolean {
  * Mint the HS256 token Kling authenticates with: the access key is the issuer
  * and the secret key signs the claim set, with the same 30 minute lifetime and
  * five second clock back-off its own SDK uses.
+ * @param accessKey - the Kling access key, used as the token issuer.
+ * @param secretKey - the Kling secret key that signs the claim set.
+ * @param nowSeconds - the current time in seconds; defaults to the wall clock.
+ * @param ttlSeconds - the token lifetime in seconds; defaults to 30 minutes.
+ * @returns the signed HS256 token.
  */
 export function signKlingJwt(accessKey: string, secretKey: string, nowSeconds = Math.floor(Date.now() / 1_000), ttlSeconds = 1_800): string {
   const encode = (value: unknown): string => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
@@ -426,6 +538,8 @@ export function signKlingJwt(accessKey: string, secretKey: string, nowSeconds = 
  * rather than on the `/images/edits` endpoint. Ark's Seedream is the one family
  * whose image route is generation-shaped and still accepts sources; every other
  * OpenAI-shaped provider edits through its own endpoint.
+ * @param provider - provider id the turn is routed to.
+ * @returns whether the provider takes reference images in the generations body.
  */
 export function imagesViaGenerationBody(provider: string): boolean {
   return /(?:volcengine|ark|seedream|bytedance|doubao)/u.test(provider.trim().toLowerCase())
@@ -435,6 +549,8 @@ export function imagesViaGenerationBody(provider: string): boolean {
  * Best-effort media type for a remote image URL, read from its extension. A
  * provider part that demands a media type only wants the hint: the bytes it
  * fetches are validated on its side, and image/png is the safe default.
+ * @param url - absolute URL the request is sent to.
+ * @returns the media type hinted by the URL's extension, defaulting to `image/png`.
  */
 export function guessImageMediaType(url: string): string {
   const withoutQuery = url.split(/[?#]/u)[0] ?? ''
@@ -447,6 +563,8 @@ export function guessImageMediaType(url: string): string {
 /**
  * Split a `data:` image URL into the base64 payload and media type an inline
  * provider part needs. Anything else has no inline form and returns undefined.
+ * @param value - the string to parse.
+ * @returns the media type and base64 payload, or `undefined` when it is not an inline image.
  */
 export function dataUrlImage(value: string): { readonly mimeType: string; readonly data: string } | undefined {
   const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/iu.exec(value.trim())
@@ -454,6 +572,12 @@ export function dataUrlImage(value: string): { readonly mimeType: string; readon
   return mimeType === undefined || data === undefined ? undefined : { mimeType: mimeType.toLowerCase(), data }
 }
 
+/**
+ * Build the create call for one video protocol.
+ * @param route - the route the request is built for.
+ * @param args - the caller-facing generation arguments.
+ * @returns the endpoint chain, body, and any create-only headers.
+ */
 export function mediaVideoRequest(route: MediaRoute, args: MediaVideoArgs): MediaVideoRequest {
   const protocol = mediaVideoProtocol(route.provider)
   // Reference media is validated for every protocol here, not only for the image
@@ -647,6 +771,12 @@ export function mediaVideoRequest(route: MediaRoute, args: MediaVideoArgs): Medi
   return { endpoint: ['/videos/generations', '/videos'], body: { model: route.model, prompt: args.prompt, ...(args.seconds === undefined ? {} : { seconds: args.seconds }), ...(args.aspectRatio === undefined ? {} : { aspect_ratio: args.aspectRatio }), ...(firstFrame === undefined ? {} : { image: firstFrame }), ...(references.length === 0 ? {} : { reference_images: references.map(url => ({ url })) }) } }
 }
 
+/**
+ * Read the task id, status, URL, or error out of a provider's video response.
+ * @param model - the model the request was made to.
+ * @param value - the provider response.
+ * @returns the normalized result, with `result` carrying the raw value.
+ */
 export function generatedVideoResult(model: string, value: unknown): { readonly model: string; readonly videoId?: string; readonly status?: string; readonly url?: string; readonly error?: string; readonly result: unknown } {
   const root = object(value); const data = object(root.data); const output = object(root.output); const first = Array.isArray(root.data) ? object(root.data[0]) : {}; const taskResult = object(data.task_result ?? data.taskResult); const taskVideo = Array.isArray(taskResult.videos) ? object(taskResult.videos[0]) : {}; const googleResponse = object(root.response); const googleVideoResponse = object(googleResponse.generateVideoResponse ?? googleResponse.generate_video_response); const googleSample = Array.isArray(googleVideoResponse.generatedSamples) ? object(googleVideoResponse.generatedSamples[0]) : Array.isArray(googleVideoResponse.generated_samples) ? object(googleVideoResponse.generated_samples[0]) : {}; const googleVideo = object(googleSample.video); const videoObject = object(root.video); const creations = Array.isArray(root.creations) ? object(root.creations[0]) : {}; const task = object(root.task); const errorObject = object(root.error)
   // Task-id precedence follows the protocols: DashScope answers with
@@ -665,5 +795,4 @@ export function generatedVideoResult(model: string, value: unknown): { readonly 
   const url = ([root.url, root.video_url, root.output_url, data.url, data.video_url, data.output_url, output.url, output.video_url, videoObject.url, videoObject.video_url, creations.url, creations.video_url, first.url, first.video_url, taskVideo.url, googleVideo.uri].find(item => typeof item === 'string' && /^https?:\/\//i.test(item)) as string | undefined) ?? findGeneratedVideoUrl(value)
   return { model, ...(videoId === undefined ? {} : { videoId }), ...(status === undefined ? {} : { status }), ...(url === undefined ? {} : { url }), ...(error === undefined ? {} : { error }), result: value }
 }
-function object(value: unknown): Record<string, any> { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {} }
 function findGeneratedVideoUrl(value: unknown, depth = 0): string | undefined { if (depth > 6 || value === null || value === undefined) return undefined; if (Array.isArray(value)) return value.map(item => findGeneratedVideoUrl(item, depth + 1)).find(Boolean); if (typeof value !== 'object') return undefined; for (const [key, nested] of Object.entries(value as Record<string, unknown>)) if (typeof nested === 'string' && /(?:video|output|url|uri)/i.test(key) && /^https?:\/\//i.test(nested)) return nested; for (const nested of Object.values(value as Record<string, unknown>)) { const found = findGeneratedVideoUrl(nested, depth + 1); if (found !== undefined) return found }; return undefined }

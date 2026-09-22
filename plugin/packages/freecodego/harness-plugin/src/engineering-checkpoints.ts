@@ -29,12 +29,14 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { freeCodeGoDataHome } from './data-home.ts'
 import { isCredentialPath } from './tool-guards.ts'
 
+/** One stored file in a checkpoint: its workspace-relative path, content hash, and byte length. */
 export interface CheckpointEntry {
   readonly file: string
   readonly hash: string
   readonly bytes: number
 }
 
+/** A checkpoint manifest: its identity, when it was taken, and what it recorded. */
 export interface Checkpoint {
   readonly id: string
   readonly label: string
@@ -72,6 +74,7 @@ function knownFilesAtCapture(checkpoint: Checkpoint): ReadonlySet<string> {
   return new Set(checkpoint.captured ?? checkpoint.entries.map(entry => entry.file))
 }
 
+/** What a restore actually did, so a withheld deletion half is visible rather than silent. */
 export interface CheckpointRestoreResult {
   readonly restoredFiles: number
   readonly deletedFiles: number
@@ -208,6 +211,7 @@ export class EngineeringCheckpointStore {
     this.databasePath = join(this.rootDirectory, 'checkpoints.sqlite')
   }
 
+  /** Open the store: create the blob tree, verify it is not a symlink, and open the manifest database. */
   async open(): Promise<void> {
     await mkdir(this.blobDirectory, { recursive: true, mode: 0o700 })
     if (lstatSync(this.rootDirectory).isSymbolicLink()) throw new Error('engineering checkpoint directory must not be a symlink')
@@ -245,6 +249,7 @@ export class EngineeringCheckpointStore {
     this.database = database
   }
 
+  /** Close the manifest database, if it is open. */
   close(): void {
     this.database?.close()
     this.database = undefined
@@ -258,6 +263,8 @@ export class EngineeringCheckpointStore {
   /**
    * Capture a checkpoint of every tracked source file under the workspace.
    * Files are hashed and their contents stored once in the blob store.
+   * @param input - the workspace to snapshot, the label to file it under, and whether to pin it.
+   * @returns the checkpoint.
    */
   async capture(input: { readonly cwd: string; readonly label: string; readonly pinned?: boolean }): Promise<Checkpoint> {
     const database = this.requireDatabase()
@@ -322,7 +329,10 @@ export class EngineeringCheckpointStore {
     return checkpoint
   }
 
-  /** List checkpoint manifests for a workspace, newest first. */
+  /** List checkpoint manifests for a workspace, newest first.
+   * @param input - the workspace whose manifests to list.
+   * @returns the checkpoint rows, in backend order.
+   */
   list(input: { readonly cwd: string }): readonly Checkpoint[] {
     const database = this.requireDatabase()
     const projectId = projectIdFor(input.cwd)
@@ -333,7 +343,10 @@ export class EngineeringCheckpointStore {
     return rows.flatMap((row): Checkpoint[] => { const parsed = manifestFromRow(row); return parsed === undefined ? [] : [parsed] })
   }
 
-  /** Read one checkpoint's manifest. */
+  /** Read one checkpoint's manifest.
+   * @param input - the workspace and the checkpoint id to read.
+   * @returns the checkpoint, or `undefined` when no such manifest exists in the workspace.
+   */
   get(input: { readonly cwd: string; readonly id: string }): Checkpoint | undefined {
     const database = this.requireDatabase()
     const projectId = projectIdFor(input.cwd)
@@ -341,7 +354,10 @@ export class EngineeringCheckpointStore {
     return row === undefined ? undefined : manifestFromRow(row)
   }
 
-  /** Set or clear one checkpoint's pin (pinned checkpoints survive retention). */
+  /** Set or clear one checkpoint's pin (pinned checkpoints survive retention).
+   * @param input - the workspace, the checkpoint id, and the pin state to write.
+   * @returns the pin state now stored for the checkpoint.
+   */
   setPinned(input: { readonly cwd: string; readonly id: string; readonly pinned: boolean }): { readonly pinned: boolean } {
     const database = this.requireDatabase()
     const result = database.prepare('UPDATE engineering_checkpoints SET pinned = ? WHERE project_id = ? AND id = ?').run(input.pinned ? 1 : 0, projectIdFor(input.cwd), input.id)
@@ -353,6 +369,8 @@ export class EngineeringCheckpointStore {
    * Preview a restore without touching any file: compare the manifest against
    * the current workspace so the model or user can judge the blast radius
    * first (Cline shows restore previews; all-or-nothing restore was the gap).
+   * @param input - the workspace and the checkpoint id to preview.
+   * @returns the checkpoint Diff Result.
    */
   diff(input: { readonly cwd: string; readonly id: string }): CheckpointDiffResult {
     const checkpoint = this.get(input)
@@ -390,6 +408,8 @@ export class EngineeringCheckpointStore {
    * Restore the workspace to a checkpoint: rewrite every tracked file from its
    * blob and delete files the checkpoint does not know (they were created
    * after it). Untracked binaries and ignored directories are never touched.
+   * @param input - the workspace and the checkpoint id to restore.
+   * @returns the checkpoint Restore Result.
    */
   async restore(input: { readonly cwd: string; readonly id: string }): Promise<CheckpointRestoreResult> {
     const checkpoint = this.get(input)
@@ -442,6 +462,8 @@ export class EngineeringCheckpointStore {
    * Delete one checkpoint manifest, then release the blobs no manifest references
    * any more. Blobs are shared with sibling checkpoints and with other
    * workspaces, so what may go is decided store-wide by `prune`, never here.
+   * @param input - the workspace and the checkpoint id to delete.
+   * @returns the confirmation that the manifest was deleted.
    */
   remove(input: { readonly cwd: string; readonly id: string }): { readonly deleted: true } {
     const database = this.requireDatabase()
@@ -478,6 +500,8 @@ export class EngineeringCheckpointStore {
    * Nothing is reclaimed while any manifest is unreadable: one unparsable row
    * would drop every hash it names from the live set, and that is the one mistake
    * here that loses bytes another checkpoint needs.
+   * @param input - the optional sweep configuration; `graceMs` overrides `PRUNE_GRACE_MS`.
+   * @returns the count and total bytes of the blobs reclaimed, or zeros when a manifest is unreadable.
    */
   prune(input: { readonly graceMs?: number } = {}): { readonly deleted: number; readonly bytes: number } {
     const live = this.referencedHashes()
@@ -557,6 +581,7 @@ export class EngineeringCheckpointStore {
    * compares it against itself, so the shard count passed for a blob count until a
    * store with more distinct contents than shards. Staging files are not blobs yet
    * and are not counted.
+   * @returns the number of stored blobs across all shards.
    */
   blobCount(): number {
     let total = 0

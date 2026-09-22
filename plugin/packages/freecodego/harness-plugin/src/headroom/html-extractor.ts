@@ -16,12 +16,20 @@ const HEAD_RE = /<head[\s>]/
 const BODY_RE = /<body[\s>]/
 const STRUCTURAL_TAGS_RE = /<(div|span|script|style|link|meta|nav|header|footer|aside|article|section|main)[\s>]/gi
 
+/**
+ * Outcome of one HTML extraction: the text rendering, and whether it was
+ * adopted over the source markup.
+ */
 export interface HtmlResult {
   readonly output: string
   readonly applied: boolean
 }
 
-/** Original confidence model; the router only claims content at ≥0.7. */
+/**
+ * Original confidence model; the router only claims content at ≥0.7.
+ * @param content - the content to send.
+ * @returns true when the payload reads as HTML.
+ */
 export function detectHtml(content: string): boolean {
   const sample = content.slice(0, 3000)
   const hasDoctype = DOCTYPE_RE.test(sample)
@@ -51,7 +59,11 @@ function extractTitle(html: string): string | undefined {
   return m === null ? undefined : m[1]!.replace(/\s+/g, ' ').trim()
 }
 
-/** Strip scripts/styles/comments/nav chrome, then all tags; collapse whitespace. */
+/**
+ * Strip scripts/styles/comments/nav chrome, then all tags; collapse whitespace.
+ * @param html - the HTML source to extract from.
+ * @returns the extracted plain text, prefixed with the page title when present.
+ */
 export function extractHtmlText(html: string): string {
   let text = html
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -76,7 +88,11 @@ export function extractHtmlText(html: string): string {
   return title === undefined ? text : `# ${title}\n\n${text}`
 }
 
-/** Extract the main text of a detected HTML payload. */
+/**
+ * Extract the main text of a detected HTML payload.
+ * @param html - the HTML source to extract from.
+ * @returns the extraction result, or the input verbatim when it does not pay off.
+ */
 export function compressHtml(html: string): HtmlResult {
   if (!detectHtml(html)) return { output: html, applied: false }
   const extracted = extractHtmlText(html)

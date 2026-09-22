@@ -23,6 +23,7 @@ import type { FreeCodeGoCapabilityRegistry } from './capabilities.ts'
 import type { OpenAiCompatibleConnection } from './openai-compatible-adapter.ts'
 import { backendNotConfigured } from './account-utils.ts'
 import { isCredentialPath } from './tool-guards.ts'
+import { asRecord as record, asString as text } from './untrusted-json.ts'
 import { KLING_ACCESS_KEY_REF, KLING_SECRET_KEY_REF, dataUrlImage, defaultMediaAuthScheme, defaultMediaBaseURL, defaultMediaCredentialRef, gatewayModelId, generatedVideoResult, guessImageMediaType, imageEndpointMayBeResponses, imageEndpointUnavailable, imagesViaGenerationBody, inferMediaCategory, isKlingProvider, mediaFailureBelongsToRequest, mediaCategoryOverrideKey, mediaFallbackAllowed, MediaRouteCapabilityRefusal, MediaRouteLimitation, mediaSelection, mediaVideoRequest, redactMediaDetail, referenceImageUrls, signKlingJwt, sizeToAspectRatio, sleepForMedia, unknownImageParameter, videoStatusEndpoint, videoSecondsRefusal, visibleMediaSelection, type MediaCategory, type MediaRoute, type MediaVideoArgs, type MediaVideoRequest } from './media-utils.ts'
 import { LOGFARE_MODEL_PREFIX, logfareMediaCategory, logfareSelectionId, mediaCategoryForManagedModel } from './managed-catalog-utils.ts'
 import { toolDefinition as rawAgnesTool, type ToolDefinitionShape } from './tool-definition.ts'
@@ -114,6 +115,24 @@ async function downloadGeneratedImage(url: string): Promise<Uint8Array> {
   return bytes
 }
 
+/**
+ * Turn whatever shape the provider answered with into stored image attachments.
+ *
+ * Four vendor shapes arrive here — the Images API's `data[]`, Gemini's inline
+ * parts, Imagen's `predictions`, DashScope's `choices[].message.content[].image`
+ * and the Responses API's `output[].result` — and they are read in that order
+ * rather than merged, so the first shape that carries anything wins and a body
+ * that matches two of them cannot produce the same image twice.
+ *
+ * A URL-only result is downloaded and stored like a base64 one, because an image
+ * the user cannot see is not an image: only a failed download keeps the URL. A
+ * body carrying no image at all is an error rather than an empty success, which
+ * is what makes the fallback ladder try the next route.
+ * @param model - the selection the image came from, used to name the attachment.
+ * @param value - the provider's response body, of unknown shape.
+ * @param attachments - the Host's attachment store, required for any byte result.
+ * @returns The model name and one entry per generated image, with its attachment.
+ */
 export async function persistGeneratedImages(model: string, value: unknown, attachments: AttachmentStore | undefined): Promise<{ readonly model: string; readonly images: readonly { readonly url?: string; readonly attachment?: ImageAttachmentRef }[] }> {
   const root = record(value)
   const safeModelName = model.replace(/[^A-Za-z0-9._-]+/gu, '-').replace(/^-+|-+$/gu, '') || 'generated-image'
@@ -187,6 +206,16 @@ function generatedImageMediaType(bytes: Uint8Array): ImageMediaType {
   throw new MediaRouteLimitation('The selected image model returned an unsupported image format')
 }
 
+/**
+ * Render a persisted image result for the conversation.
+ *
+ * A text summary always comes first, so the model can read which model produced
+ * what even in a transport that drops images; an attachment renders as an image,
+ * and a URL that never became one renders as clickable text rather than as raw
+ * JSON.
+ * @param value - the persisted result the image tool returned.
+ * @returns The content blocks to append, summary first.
+ */
 export function renderGeneratedImages(value: unknown): ContentBlock[] {
   const root = record(value)
   const images = Array.isArray(root.images) ? root.images.map(record) : []
@@ -208,11 +237,11 @@ export function renderGeneratedImages(value: unknown): ContentBlock[] {
   ]
 }
 
-export function record(value: unknown): Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
-export function text(value: unknown): string | undefined { return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined }
 function audioMimeType(file: string): string { const extension = path.extname(file).toLowerCase(); return extension === '.webm' ? 'audio/webm' : extension === '.ogg' || extension === '.opus' ? 'audio/ogg' : extension === '.wav' ? 'audio/wav' : extension === '.m4a' || extension === '.mp4' ? 'audio/mp4' : extension === '.flac' ? 'audio/flac' : 'audio/mpeg' }
 
-/** Generic media tools resolve the user's live default at execution time. */
+/** Generic media tools resolve the user's live default at execution time. 
+ * @param host - the Host surface this remote call reaches its services through.
+ */
 export function registerMediaTools(host: MediaGenerationHost): void {
   const tools = host.ctx.get('tools') as { register: (tool: ToolDefinitionShape) => () => void } | undefined
   if (tools === undefined) return
@@ -310,6 +339,18 @@ export function registerMediaTools(host: MediaGenerationHost): void {
   host.ctx.effect(() => () => { disposeImage(); disposeVideo(); disposeAudio(); disposeTranscribe() }, 'freecodego: default media tools')
 }
 
+/**
+ * Generate an image, walking the configured routes until one delivers.
+ *
+ * The route's *provider* selects the transport, never a keyword in the model's
+ * name: a gateway model whose id contains "image" is still the gateway's, and
+ * sending it down the Agnes transport failed on every profile without an Agnes
+ * credential.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param args - the prompt and any reference images the caller supplied.
+ * @param signal - aborts the request when the caller cancels.
+ * @returns The persisted image result, once a route has produced one.
+ */
 export async function generateImageWithFallback(host: MediaGenerationHost, args: ImageGenerationArgs, signal: AbortSignal): Promise<unknown> {
   return withMediaFallback(host, 'image', signal, async (route) => {
     // The Agnes transport is selected by *provider*, never by the model name.
@@ -441,6 +482,18 @@ export async function generateImageWithFallback(host: MediaGenerationHost, args:
   })
 }
 
+/**
+ * Generate a video, walking the configured routes until one delivers.
+ *
+ * Same transport rule as images: the provider decides, so a gateway model with a
+ * `-video` suffix stays on the gateway. A duration this route cannot render is
+ * raised as a typed limitation rather than a failure, which is what lets the
+ * ladder move on instead of ending the call.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param args - the prompt, duration and any reference material.
+ * @param signal - aborts the request when the caller cancels.
+ * @returns The provider's finished video result, after polling.
+ */
 export async function generateVideoWithFallback(host: MediaGenerationHost, args: MediaVideoArgs, signal: AbortSignal): Promise<unknown> {
   return withMediaFallback(host, 'video', signal, async (route) => {
     // Same rule as images: the provider decides the transport. A `-video` suffix
@@ -520,6 +573,20 @@ async function writeGeneratedMedia(file: string, bytes: Uint8Array): Promise<voi
   }
 }
 
+/**
+ * Generate speech into a file in the workspace.
+ *
+ * The workspace is validated before any quota is spent, because a missing one can
+ * never be recovered by trying another route. The format is validated here too:
+ * it reaches both the request and the resulting filename, so a caller-supplied
+ * `../` in it would resolve the write out of the workspace — the tool schema's
+ * `enum` is a description, not a gate.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param args - the text to speak, and the voice, format and speed to use.
+ * @param cwd - the workspace the audio file is written into.
+ * @param signal - aborts the request when the caller cancels.
+ * @returns The generated file's path and format, once it is written.
+ */
 export async function generateAudioWithFallback(host: MediaGenerationHost, args: { input: string; voice?: string; format?: string; speed?: number }, cwd: string | undefined, signal: AbortSignal): Promise<unknown> {
   // The workspace precondition can never recover by trying another route:
   // validate it before spending any provider quota on the request.
@@ -645,6 +712,20 @@ function circuitRecordSuccess(route: MediaRoute): void {
   mediaCircuits.delete(circuitKey(route))
 }
 
+/**
+ * Run one media request against the route ladder, with a per-route circuit.
+ *
+ * Two passes rather than one: routes whose circuit is open are tried after the
+ * healthy ones, so traffic goes where it is likely to work while a recovered
+ * provider is still discovered inside the same request. Only a route that failed
+ * to *deliver* feeds the breaker — a route that declined by its own declaration
+ * never sent anything, which is no evidence about that provider's health.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param category - the media category whose routes are walked.
+ * @param signal - aborts the request when the caller cancels.
+ * @param execute - the request to run against whichever route is selected.
+ * @returns The first successful result, or an error naming every route's failure.
+ */
 export async function withMediaFallback<T>(host: MediaGenerationHost, category: MediaCategory, signal: AbortSignal, execute: (route: MediaRoute) => Promise<T>): Promise<T> {
   const preferred = mediaDefault(host, category)
   const candidates = await mediaCandidates(host, category, preferred)
@@ -678,6 +759,19 @@ export async function withMediaFallback<T>(host: MediaGenerationHost, category: 
   throw new Error(`No configured ${category} model completed the request${failures.length === 0 ? '' : `: ${failures.join(' | ')}`}`)
 }
 
+/**
+ * Every route that could serve one media category, best first.
+ *
+ * The user's own category override outranks the automatic classification, and it
+ * is consulted for every provider rather than only the native ones: the override
+ * used to be read in one path, so a model a user moved into a category was still
+ * never offered as a fallback. A provider whose model list cannot be read is
+ * skipped rather than failing the ladder.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param category - the media category to collect routes for.
+ * @param preferred - the selection to try first.
+ * @returns The candidate routes, preferred first and duplicates removed.
+ */
 export async function mediaCandidates(host: MediaGenerationHost, category: MediaCategory, preferred: string): Promise<MediaRoute[]> {
   const selections = [preferred]
   const overrides = host.capabilities.configuration().modelCategories
@@ -743,12 +837,30 @@ export async function mediaCandidates(host: MediaGenerationHost, category: Media
   }).map(item => item.route)
 }
 
+/**
+ * The model this category is configured to use.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param category - the media category whose default is asked for.
+ * @returns The configured selection, trimmed.
+ */
 export function mediaDefault(host: MediaGenerationHost, category: 'image' | 'video' | 'audio'): string {
   const model = host.policy.get()?.mediaDefaults?.[category]?.trim() ?? ''
   if (model === '') throw new Error(`No default ${category} model is selected in FreeCodeGo settings`)
   return model
 }
 
+/**
+ * Work out which provider and transport one selection names.
+ *
+ * A model-directory route key is normalized to the model id the FreeCodeGo API
+ * resolves by, and the original value is kept for diagnostics, so a selection that
+ * arrived through one integration keeps working through it. When no configured
+ * provider claims the prefix, the plugin's own prefixes decide, which is what
+ * makes a bare `agnes-*` id keep its legacy mapping.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param selection - the selected model, in any of the shapes callers use.
+ * @returns The provider, the model, and the selection it was read from.
+ */
 export function mediaRoute(host: MediaGenerationHost, selection: string): MediaRoute {
   const normalized = selection.trim()
   // Some Harness model-directory integrations expose the provider route key
@@ -773,6 +885,17 @@ export function mediaRoute(host: MediaGenerationHost, selection: string): MediaR
   return { selection: normalized, provider, model: normalized.slice(provider.length + 1) }
 }
 
+/**
+ * The connection a media route actually reaches: base URL and credential.
+ *
+ * Read from the Harness Models settings rather than from anything this plugin
+ * owns, and falling back to the provider's known endpoint only where one exists —
+ * so a provider that needs a Base URL says so instead of posting somewhere
+ * arbitrary.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param route - the route whose connection is being resolved.
+ * @returns The resolved base URL, credential reference and protocol.
+ */
 export async function configuredMediaConnection(host: MediaGenerationHost, route: MediaRoute): Promise<ConfiguredMediaConnection> {
   const settings = host.ctx.get('settings') as { get(namespace: 'llm-pi-ai'): unknown } | undefined
   const profiles = record(record(settings?.get('llm-pi-ai')).providers)
@@ -825,6 +948,12 @@ const VIDEO_POLL_FAILURE_LIMIT = 3
  * (401) forces a re-resolution, and it goes through the same account recovery
  * path as every other gateway request; ordinary network failures retry until
  * three ticks miss.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param route - the route whose task is being polled.
+ * @param initial - the response that started the task.
+ * @param signal - aborts the request when the caller cancels.
+ * @param statusPath - the endpoint to poll, when the provider's start response does not name one.
+ * @returns The task's finished payload, once the provider reports one.
  */
 export async function pollGeneratedVideo(host: MediaGenerationHost, route: MediaRoute, initial: unknown, signal: AbortSignal, statusPath?: string): Promise<unknown> {
   let current = initial
@@ -889,6 +1018,16 @@ export async function pollGeneratedVideo(host: MediaGenerationHost, route: Media
   }
 }
 
+/**
+ * Whether a Google-family route speaks Gemini's native contract.
+ *
+ * Both the provider and the model have to name the family, because an OpenAI-
+ * compatible proxy in front of Google models must keep the portable request shape:
+ * the base URL is what decides which of the two it is.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param route - the route to classify.
+ * @returns True when this route takes the native multimodal request.
+ */
 export async function isNativeGeminiRoute(host: MediaGenerationHost, route: MediaRoute): Promise<boolean> {
   if (!/(?:google|gemini)/i.test(route.provider) || !/(?:gemini|imagen)/i.test(route.model)) return false
   const connection = await configuredMediaConnection(host, route)
@@ -900,6 +1039,9 @@ export async function isNativeGeminiRoute(host: MediaGenerationHost, route: Medi
  * DashScope also serves an OpenAI-compatible image endpoint under
  * /compatible-mode/v1, so a profile pointed there must keep the portable shape:
  * only a profile without that marker gets the native multimodal request.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param route - the route to classify.
+ * @returns True when this route takes the vendor's native image request.
  */
 export async function isNativeDashscopeRoute(host: MediaGenerationHost, route: MediaRoute): Promise<boolean> {
   if (!/(?:dashscope|aliyun|qwen|wanx)/i.test(route.provider)) return false
@@ -908,7 +1050,11 @@ export async function isNativeDashscopeRoute(host: MediaGenerationHost, route: M
 }
 
 /** Shared transport resolution for media requests (direct, configured, or
- * managed gateway), including the gateway route-key headers. */
+ * managed gateway), including the gateway route-key headers.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param model - model id the turn runs.
+ * @returns The URL builder, headers and flags one media request needs.
+ */
 export async function mediaTransport(host: MediaGenerationHost, model: string): Promise<{
   readonly url: (endpoint: string) => string
   readonly headers: Record<string, string>
@@ -1004,6 +1150,22 @@ function mediaRequestOptions(target: MediaVideoRequest): MediaRequestOptions | u
   return { ...(headers === undefined ? {} : { headers }), ...(omitModel ? { omitModel: true } : {}) }
 }
 
+/**
+ * Post one media request through the gateway, with endpoint fallback.
+ *
+ * `endpoint` may be a chain, and a 404, 405 or 501 moves to the next candidate —
+ * a provider that serves generation on a different path says so with one of those,
+ * not with a body. Retried material re-resolves its account when the gateway
+ * reports the credential went stale, and the response body is masked before it is
+ * put into an error, because a media body can quote the URL it was called with.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param model - model id the turn runs.
+ * @param endpoint - the endpoint to post to, or a chain of candidates to try.
+ * @param body - the request body to send.
+ * @param signal - aborts the request when the caller cancels.
+ * @param options - per-request header and body overrides.
+ * @returns The first response that was not a routing miss.
+ */
 export async function gatewayMediaFetch(host: MediaGenerationHost, model: string, endpoint: string | readonly string[], body: Record<string, unknown>, signal: AbortSignal, options?: MediaRequestOptions): Promise<Response> {
   let transport = await mediaTransport(host, model)
   let stale = false
@@ -1033,6 +1195,20 @@ export async function gatewayMediaFetch(host: MediaGenerationHost, model: string
 
 
 
+/**
+ * The same request, with the JSON body parsed.
+ *
+ * A non-JSON content type is an error rather than a parse attempt: a media provider
+ * that answers with HTML is a misconfigured Base URL, and reporting it as a JSON
+ * failure would hide that.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param model - model id the turn runs.
+ * @param endpoint - the endpoint to post to, or a chain of candidates to try.
+ * @param body - the request body to send.
+ * @param signal - aborts the request when the caller cancels.
+ * @param options - per-request header and body overrides.
+ * @returns The parsed response body, of unknown shape.
+ */
 export async function gatewayMediaJson(host: MediaGenerationHost, model: string, endpoint: string | readonly string[], body: Record<string, unknown>, signal: AbortSignal, options?: MediaRequestOptions): Promise<unknown> {
   const response = await gatewayMediaFetch(host, model, endpoint, body, signal, options)
   const contentType = response.headers.get('content-type') ?? ''

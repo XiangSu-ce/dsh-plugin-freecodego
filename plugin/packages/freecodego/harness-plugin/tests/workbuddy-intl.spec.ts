@@ -76,7 +76,12 @@ const userMessage = (text: string) => ({
   content: [{ type: 'text' as const, text }],
 })
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  // The park tests move the clock; a leaked fake clock would decide every later
+  // account expiry in this file.
+  vi.useRealTimers()
+})
 
 /** The requested URL of a recorded fetch call, whatever shape it was passed in. */
 const requestedUrl = (input: Parameters<typeof fetch>[0]): string => typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -372,6 +377,69 @@ describe('WorkBuddyIntlClient', () => {
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('authorization')).toBe('Bearer token-b')
   })
 
+  it('does not exchange a token over a plan gate', async () => {
+    // A 403 on these routes is the plan, not an expired token: no refresh can move a
+    // model into a plan, and each attempt spends a single-use refresh token. The
+    // read used to treat any 403 as an unauthorized answer and rotate twice — once
+    // across the three resource queries, once in the legacy billing fallback.
+    const refreshes: string[] = []
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (...args: Parameters<typeof fetch>) => {
+      const url = requestedUrl(args[0])
+      if (url.endsWith('/v2/plugin/auth/token/refresh')) {
+        refreshes.push(url)
+        return new Response(JSON.stringify({ code: 0, data: { accessToken: 'rotated', refreshToken: 'rotated-refresh', expiresIn: 3_600 } }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: 40_003, msg: 'this model is not in your plan' }), { status: 403 })
+    })
+    const [accountA] = await readWorkBuddyIntlAccounts(store([account('a')]))
+    const client = new WorkBuddyIntlClient(store([account('a')]))
+    const snapshot = await client.credits(accountA!)
+    expect(refreshes).toEqual([])
+    // The refusal still has to be reported in the upstream's own words: the read
+    // answered with an error rather than with a position it invented.
+    expect(snapshot.credits).toMatchObject({ error: expect.stringContaining('not in your plan') })
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(3)
+  })
+
+  it('parks a plan gate for the credit window, not the sign-in window', async () => {
+    // Six minutes later, the five-minute sign-in park this used to take would have
+    // expired and the turn would start on the account whose plan cannot serve the
+    // route; the credit window keeps the walk on the account that can.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const start = Date.parse('2026-09-13T00:00:00Z')
+    vi.setSystemTime(start)
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 40_003, msg: 'this model is not in your plan' }), { status: 403 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+    const client = new WorkBuddyIntlClient(store([account('a'), account('b')]))
+    await client.chat({ model: 'auto', messages: [{ role: 'user', content: 'one' }] })
+    vi.setSystemTime(start + 6 * 60_000)
+    await client.chat({ model: 'auto', messages: [{ role: 'user', content: 'two' }] })
+    const sent = fetchMock.mock.calls.map(call => new Headers(call[1]?.headers).get('authorization'))
+    expect(sent).toEqual(['Bearer token-a', 'Bearer token-b', 'Bearer token-b'])
+  })
+
+  it('lets a rate-limited account back in once its minute has passed', async () => {
+    // The control for the case above: the same six minutes, a different gate. A 429
+    // is a one-minute turn, so the first account serves again — which is what makes
+    // the parked plan gate above a reading of the status rather than a clock that
+    // never moves.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const start = Date.parse('2026-09-13T00:00:00Z')
+    vi.setSystemTime(start)
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('{}', { status: 429 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+    const client = new WorkBuddyIntlClient(store([account('a'), account('b')]))
+    await client.chat({ model: 'auto', messages: [{ role: 'user', content: 'one' }] })
+    vi.setSystemTime(start + 6 * 60_000)
+    await client.chat({ model: 'auto', messages: [{ role: 'user', content: 'two' }] })
+    const sent = fetchMock.mock.calls.map(call => new Headers(call[1]?.headers).get('authorization'))
+    expect(sent).toEqual(['Bearer token-a', 'Bearer token-b', 'Bearer token-a'])
+  })
+
   it('starts the turn on the account the card selected', async () => {
     // The selection is the one thing the card writes that says which account a
     // request should ride; the pool rotated from its own cursor instead, so the
@@ -432,6 +500,64 @@ describe('WorkBuddyIntlClient', () => {
       availability: 'unavailable',
       unavailableReason: 'WORKBUDDY_LOGIN_REQUIRED',
     }])
+  })
+})
+
+describe('WorkBuddy metered routes', () => {
+  /** A document whose allowlist holds one free route and one that costs money. */
+  const MIXED_DOCUMENT = {
+    code: 0,
+    data: {
+      agents: [{ name: 'cli', models: ['auto', 'glm-5.3'] }],
+      models: [
+        { id: 'auto', name: 'Auto', credits: 'x0.00', maxInputTokens: 200_000, maxOutputTokens: 32_000 },
+        { id: 'glm-5.3', name: 'GLM 5.3', credits: 'x1.50', maxInputTokens: 128_000, maxOutputTokens: 16_000 },
+      ],
+    },
+  }
+
+  function mockDocument(): void {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(MIXED_DOCUMENT), { status: 200, headers: { 'content-type': 'application/json' } }))
+  }
+
+  it('lists the metered half of the product document and states its rate', async () => {
+    mockDocument()
+    const adapter = new WorkBuddyIntlAdapter(new WorkBuddyIntlClient(store([account('a')])))
+    const rows = await adapter.listModels('workbuddy')
+    // Both halves: the settings checklist has to list a metered route, or the
+    // user could never switch one on.
+    expect(rows.map(row => row.id)).toEqual(['auto', 'glm-5.3'])
+    expect(rows[0]!.description).toContain('×0')
+    // The rate is the product's own, not a placeholder: the row that costs more is
+    // described as costing more.
+    expect(rows[1]!.description).toContain('×1.5')
+    // And the status card's cloud still counts only what is free.
+    mockDocument()
+    await expect(new WorkBuddyIntlClient(store([account('a')])).freeModels()).resolves.toMatchObject([{ id: 'auto' }])
+  })
+
+  it('prices a promoted route at zero while the promotion is in force', async () => {
+    // The document bakes the discounted value into `credits` for the length of a
+    // promotion, so a route it lists as costing 1.5 while a factor-0 promotion
+    // covers it must still be described as free.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      code: 0,
+      data: {
+        agents: [{ name: 'cli', models: ['glm-5.3'] }],
+        models: [{ id: 'glm-5.3', name: 'GLM 5.3', credits: 'x1.50', maxInputTokens: 128_000, maxOutputTokens: 16_000 }],
+        modelPromotions: [{
+          enabled: true,
+          modelIds: ['glm-5.3'],
+          priority: 1,
+          discount: { displayMode: 'replace', factor: 0 },
+          schedule: { validFrom: '2020-01-01T00:00:00Z', validUntil: '2099-12-31T00:00:00Z' },
+        }],
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    const rows = await new WorkBuddyIntlAdapter(new WorkBuddyIntlClient(store([account('a')]))).listModels('workbuddy')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.description).toContain('×0')
+    expect(rows[0]!.description).not.toContain('×1.5')
   })
 })
 

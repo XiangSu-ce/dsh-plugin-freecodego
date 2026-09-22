@@ -86,7 +86,13 @@ export class NativeRootAgentSession {
     this.binding = { engine: options.engine, runtimeSessionId, harnessSessionId: options.harnessSessionId, modelId: options.modelId, provider: options.provider, artifactDigest: options.artifactDigest, protocolAbi: options.protocolAbi }
   }
 
-  static async open(hostOptions: NativeRuntimeHostOptions, options: NativeRootAgentCreateOptions): Promise<NativeRootAgentSession> {
+    /**
+   * Start a native session through the worker protocol and return the handle that owns it.
+   * @param hostOptions - how to launch the runtime host worker for this session.
+   * @param options - the immutable engine plan and Harness session facts to open with.
+   * @returns the opened session, bound to the runtime session id the worker issued.
+   */
+static async open(hostOptions: NativeRuntimeHostOptions, options: NativeRootAgentCreateOptions): Promise<NativeRootAgentSession> {
     let session: NativeRootAgentSession | undefined
     /**
      * The highest wire sequence forwarded so far.
@@ -144,7 +150,10 @@ export class NativeRootAgentSession {
     }
   }
 
-  get identity(): NativeRootAgentBinding { return this.binding }
+    /**
+   * Immutable identity of the runtime session, as durable session bindings record it.
+   */
+get identity(): NativeRootAgentBinding { return this.binding }
 
   private diagnostics: readonly string[] = []
 
@@ -152,23 +161,34 @@ export class NativeRootAgentSession {
    * Record a non-fatal diagnostic without killing the session. The latest
    * messages are readable through `recentDiagnostics()` so a swallowed
    * capability refresh (or similar soft failure) stays observable.
+   * @param message - the diagnostic text; truncated to 2,000 characters and capped at ten messages.
    */
   emitDiagnostic(message: string): void {
     this.diagnostics = [...this.diagnostics.slice(-9), message.slice(0, 2_000)]
   }
 
-  /** Recent non-fatal diagnostics for status surfaces. */
+  /** Recent non-fatal diagnostics for status surfaces. 
+   * @returns the most recent non-fatal diagnostics, oldest first.
+   */
   recentDiagnostics(): readonly string[] {
     return this.diagnostics
   }
 
-  /** Refresh Host-owned tool/capability configuration without recreating the session. */
+  /** Refresh Host-owned tool/capability configuration without recreating the session. 
+   * @param params - Host-shaped tool and capability configuration to install on the live session.
+   */
   async configure(params: unknown): Promise<void> {
     this.assertLive()
     await this.host.request('host/configure', params)
   }
 
-  async prompt(content: string, route?: { readonly modelId: string; readonly provider: string; readonly reasoningEffort?: string }, signal?: AbortSignal): Promise<void> {
+    /**
+   * Send one turn's user content, optionally overriding the route the model is prompted on.
+   * @param content - the user content for this turn.
+   * @param route - model, provider, and reasoning effort to prompt with instead of the agent's own.
+   * @param signal - aborts the turn while the runtime is still working on it.
+   */
+async prompt(content: string, route?: { readonly modelId: string; readonly provider: string; readonly reasoningEffort?: string }, signal?: AbortSignal): Promise<void> {
     this.assertLive()
     if (content.trim() === '') throw new Error('native root prompt must not be empty')
     await this.host.request('session/prompt', {
@@ -179,17 +199,30 @@ export class NativeRootAgentSession {
     }, signal === undefined ? {} : { signal })
   }
 
-  async cancel(reason = 'user'): Promise<void> {
+    /**
+   * Ask the runtime to cancel the active turn; a disposed session ignores the request.
+   * @param reason - short reason recorded with the cancellation.
+   */
+async cancel(reason = 'user'): Promise<void> {
     if (this.disposed) return
     await this.host.request('session/cancel', { runtimeSessionId: this.binding.runtimeSessionId, harnessSessionId: this.binding.harnessSessionId, reason }).catch(() => undefined)
   }
 
-  async respond(method: 'permission/respond' | 'question/respond' | 'bridge/respond', requestId: string, response: unknown): Promise<void> {
+    /**
+   * Answer a pending runtime request, such as a permission or question prompt.
+   * @param method - the response method the pending request expects.
+   * @param requestId - id of the pending request.
+   * @param response - engine-shaped response payload.
+   */
+async respond(method: 'permission/respond' | 'question/respond' | 'bridge/respond', requestId: string, response: unknown): Promise<void> {
     this.assertLive()
     await this.host.request(method, { runtimeSessionId: this.binding.runtimeSessionId, harnessSessionId: this.binding.harnessSessionId, requestId, response })
   }
 
-  async dispose(): Promise<void> {
+    /**
+   * Release the native process and make every later call on this session fail.
+   */
+async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
     await this.host.request('session/dispose', { runtimeSessionId: this.binding.runtimeSessionId, harnessSessionId: this.binding.harnessSessionId }).catch(() => undefined)

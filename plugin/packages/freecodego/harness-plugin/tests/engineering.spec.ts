@@ -1,7 +1,7 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
@@ -35,6 +35,29 @@ function toolResult(callId: string, isError = false): { readonly type: string; r
       },
     },
   }
+}
+
+/**
+ * Emoji, as Unicode defines them, in a bundled asset.
+ *
+ * `\p{Emoji_Presentation}` is the property that answers "does this character ask
+ * to be drawn as an emoji", and the variation selector is what promotes a
+ * character that defaults to text (`➡️`, `⚠️`). Deliberately outside it: `✓`
+ * (U+2713) and `→` (U+2192), which are text-presentation marks with the same
+ * coverage as the letters around them — the vendored `wizard/template.sh` prints
+ * both in the terminal output it generates.
+ */
+const EMOJI = /[\p{Emoji_Presentation}\uFE0F]/gu
+
+/** Every file under `root`, depth first, so a pack is swept rather than sampled. */
+function filesUnder(root: string): readonly string[] {
+  const found: string[] = []
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) found.push(...filesUnder(path))
+    else if (entry.isFile()) found.push(path)
+  }
+  return found
 }
 
 const CORE_SKILL_IDS = [
@@ -201,6 +224,39 @@ describe('FreeCodeGo engineering assets', () => {
     // roots, since the vendored pack now spans the starter and engineering ones.
     expect(vendored.map(skill => skill.id)).toEqual([...VENDORED_MATT_POCOCK_SKILL_IDS])
     expect(vendored.every(skill => skill.valid && skill.findings.length === 0)).toBe(true)
+  })
+
+  it('ships no emoji in any bundled asset', () => {
+    // Bundled Skills are rendered in the Skills page, copied into a workspace, and
+    // read as prompt text, so a pictograph is content whose rendering the product
+    // does not control: on the terminals this plugin runs in, a verdict glyph
+    // arrives from the emoji font at double width or as a box, and the words these
+    // bodies use instead ("WRONG", "RIGHT", "UNVERIFIABLE") have to survive any
+    // renderer, because a model reads them to decide what to do next.
+    //
+    // Every file, not only each Skill's `SKILL.md`: the emoji this rule was written
+    // for lived in `subagent-driven-development/task-reviewer-prompt.md`, which a
+    // `SKILL.md`-only check (the doctor's own shape) would have shipped anyway.
+    const root = { starter: starterSkillDirectory(), engineering: engineeringSkillDirectory(), superpowers: superpowersSkillDirectory() }
+    const offences: string[] = []
+    let scanned = 0
+    let beyondSkillMd = 0
+    for (const directory of Object.values(root)) {
+      for (const path of filesUnder(directory)) {
+        scanned += 1
+        if (!path.endsWith('SKILL.md')) beyondSkillMd += 1
+        const content = readFileSync(path, 'utf8')
+        for (const match of content.matchAll(EMOJI)) {
+          const line = content.slice(0, match.index).split('\n').length
+          offences.push(`${relative(directory, path)}:${line} U+${match[0].codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`)
+        }
+      }
+    }
+    // Without these the sweep passes the day the roots move or a pack is dropped to
+    // `SKILL.md` alone, and it would be green while reading nothing.
+    expect(scanned, 'the sweep must read the bundled packs rather than walk past them').toBeGreaterThan(50)
+    expect(beyondSkillMd, 'the sweep must cover the files beside SKILL.md too, or the rule has a hole').toBeGreaterThan(0)
+    expect(offences, `\n${offences.join('\n')}\n`).toEqual([])
   })
 
   it('reports external marketplace assets that carry unsafe command or prompt patterns', () => {

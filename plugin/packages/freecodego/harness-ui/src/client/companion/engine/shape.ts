@@ -3,8 +3,8 @@
  * notice; PROVENANCE.md in this directory holds its source and upstream hash.
  */
 /* v8 ignore file -- vendored third-party engine; PROVENANCE.md records its source and per-file hashes, and the behaviour built on the engine is covered by this package's companion specs. */
-import { TAU, lerp, r2 } from './math'
-import { PROFILES, PROFILE_SAMPLES, type ProfileName } from './profiles'
+import { TAU, lerp, r2 } from './math.ts'
+import { PROFILES, PROFILE_SAMPLES, type ProfileName } from './profiles.ts'
 
 export interface Point {
   x: number
@@ -47,7 +47,9 @@ export function silhouette(name: ProfileName, pose: Partial<Silhouette> = {}): S
   }
 }
 
-/** Cercle parfait : sert de base neutre (point, bulle, cible de fondu). */
+/** Cercle parfait : sert de base neutre (point, bulle, cible de fondu). 
+ * @returns the silhouette.
+ */
 export function circle(radius: number, pose: Partial<Silhouette> = {}): Silhouette {
   return {
     radii: new Array(PROFILE_SAMPLES).fill(radius),
@@ -60,7 +62,9 @@ export function circle(radius: number, pose: Partial<Silhouette> = {}): Silhouet
   }
 }
 
-/** Interpolation de deux silhouettes. `out` est reutilise pour eviter d'allouer a 60 fps. */
+/** Interpolation de deux silhouettes. `out` est reutilise pour eviter d'allouer a 60 fps. 
+ * @returns the silhouette.
+ */
 export function blend(a: Silhouette, b: Silhouette, t: number, out?: Silhouette): Silhouette {
   const dst = out ?? { radii: new Array<number>(PROFILE_SAMPLES), rot: 0, cx: 0, cy: 0, sx: 1, sy: 1 }
   for (let i = 0; i < PROFILE_SAMPLES; i++) {
@@ -79,7 +83,10 @@ export function blend(a: Silhouette, b: Silhouette, t: number, out?: Silhouette)
   return dst
 }
 
-/** Projette la silhouette en points ecran. `scale` = rayon de la boule en unites de viewBox. */
+/** Projette la silhouette en points ecran. `scale` = rayon de la boule en unites de viewBox. 
+ * @returns the point rows, in backend order.
+ * @param scale - scale factor the value is expressed in.
+ */
 export function toPoints(s: Silhouette, scale: number, out: Point[] = []): Point[] {
   const cr = Math.cos(s.rot)
   const sr = Math.sin(s.rot)
@@ -156,7 +163,9 @@ export function profileFromPolygon(poly: Point[], cx: number, cy: number): numbe
   return radii
 }
 
-/** Enveloppe convexe de deux cercles : la barre tronconique du "!" vertical. */
+/** Enveloppe convexe de deux cercles : la barre tronconique du "!" vertical. 
+ * @returns the point rows, in backend order.
+ */
 export function hullOfCircles(
   x1: number,
   y1: number,

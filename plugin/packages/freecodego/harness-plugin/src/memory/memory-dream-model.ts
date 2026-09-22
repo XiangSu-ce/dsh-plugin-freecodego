@@ -52,6 +52,7 @@ export interface MemoryDreamLlm {
 /** A planner: the pipeline's model port, bound to one route and session. */
 export type MemoryDreamPlanner = (request: ConsolidationRequest) => Promise<readonly TopicProposal[]>
 
+/** The model port and route one dream pass is bound to. */
 export interface MemoryDreamOptions {
   readonly llm: MemoryDreamLlm
   readonly route: { readonly provider: string; readonly model: string }

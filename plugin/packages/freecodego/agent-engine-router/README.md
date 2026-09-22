@@ -15,6 +15,8 @@ The router is the single `AgentFactory` for a FreeCodeGo composition, so a reque
 
 - [Routing and the engine plan](#routing-and-the-engine-plan)
 - [Native engines](#native-engines)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
 
 -----
@@ -39,8 +41,25 @@ Resume re-acquires the exact durable engine generation and the immutable plan. A
 
 -----
 
+<a id="model-experience"></a>
+## Model Experience
+
+Indirectly, through the durable engine plan the router reserves for the session; the Harness AgentLoop assembles the request from the engine the plan names.
+
+#### KV Cache effect
+
+The router contributes no request text, so it cannot shift the cached prefix. A different engine reaches the model only at the next prompt-assembly boundary, where the plan is already fixed.
+
+## Known Limitations and Deferred Work
+<a id="known-limitations-and-deferred-work"></a>
+
+- **A native engine never falls back** — a missing or incompatible runtime fails explicitly, because a silent fallback would run the conversation on a different engine than its durable plan names.
+- **Exactly one factory per process** — the bundle disables `agent-loop.registerFactory`, so a composition that mounts a second factory breaks the invariant instead of being tolerated.
+- **Native engines need verified openers** — Codex and Claude are delegated only when the plugin-owned runtime openers are installed with a matching generation.
+- **Resume re-acquires the exact durable generation** — a runtime that no longer matches cannot continue that session.
+
 <a id="dev-note"></a>
-## Dev Note
+### Dev Note
 
 <details>
 <summary>Working context for maintainers — click to expand</summary>

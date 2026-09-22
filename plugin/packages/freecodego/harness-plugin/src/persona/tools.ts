@@ -31,7 +31,7 @@ import {
 } from './contract.ts'
 import type { PersonaRoster } from './files.ts'
 import { resolvePersonaRuntime, type ResolvedPersonaRuntime, type SpawnOverrides } from './resolve.ts'
-import type { ToolDefinitionShape } from '../tool-definition.ts'
+import { JSON_TOOL_OUTPUT, type ToolDefinitionShape } from '../tool-definition.ts'
 
 /**
  * What discovery returned, as the list tool reports it.
@@ -127,7 +127,9 @@ export class PersonaRuns {
     }
   }
 
-  /** Forget a child without checking it — for a child that never started. */
+  /** Forget a child without checking it — for a child that never started. 
+   * @param sessionId - the Harness session this operation acts on.
+   */
   forget(sessionId: string): void {
     this.pending.delete(sessionId)
   }
@@ -185,11 +187,6 @@ export class PersonaRuns {
  * @returns the definitions: list, then start.
  */
 export function personaToolDefinitions(deps: PersonaToolDeps, runs: PersonaRuns): readonly ToolDefinitionShape[] {
-  const JSON_OUTPUT = {
-    schema: { type: 'object', additionalProperties: true },
-    render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
-  } as const
-
   return [
     {
       name: 'engineering_persona_list',
@@ -201,7 +198,7 @@ export function personaToolDefinitions(deps: PersonaToolDeps, runs: PersonaRuns)
           json: { type: 'boolean', description: 'Return the roster as structured JSON instead of a readable list.' },
         },
       },
-      output: JSON_OUTPUT,
+      output: JSON_TOOL_OUTPUT,
       execute: async (args: { readonly json?: boolean }, exec: unknown) => {
         const caller = deps.callerOf(exec)
         if (caller === undefined) return { error: 'Personas are resolved per workspace, and this call has no session behind it.' }
@@ -243,7 +240,7 @@ export function personaToolDefinitions(deps: PersonaToolDeps, runs: PersonaRuns)
           reasoning_effort: { type: 'string', description: 'Override the persona\'s reasoning effort for this child only.' },
         },
       },
-      output: JSON_OUTPUT,
+      output: JSON_TOOL_OUTPUT,
       execute: async (args: {
         readonly persona?: string
         readonly task?: string
@@ -378,7 +375,10 @@ export function composeChildBrief(input: {
   return parts.join('\n\n')
 }
 
-/** The roster as text, for the list tool's readable half. */
+/** The roster as text, for the list tool's readable half.
+ * @param roster - the resolved roster to render.
+ * @returns the readable roster text.
+ */
 export function renderRoster(roster: PersonaRoster): string {
   if (roster.personas.length === 0) {
     return [
@@ -409,7 +409,11 @@ export function renderRoster(roster: PersonaRoster): string {
   return [...lines, ...tails].join('\n')
 }
 
-/** Merge a persona's instructions with its file, reported rather than silent. */
+/** Merge a persona's instructions with its file, reported rather than silent.
+ * @param persona - the persona whose instructions to load.
+ * @param read - reads the instructions file, returning `undefined` when missing.
+ * @returns the merged instruction text.
+ */
 export async function loadPersonaInstructions(
   persona: PersonaDefinition,
   read: (path: string) => Promise<string | undefined>,

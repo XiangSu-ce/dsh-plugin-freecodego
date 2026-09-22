@@ -12,6 +12,9 @@
  */
 
 import type { JsonValue } from '../types.ts'
+// The same ANSI stripper the lossless fold and the log branch use, so "what the
+// terminal renders" has one definition in this subsystem.
+import { stripAnsi } from './lossless-compaction.ts'
 // The span scanner and the concatenated-object decoder live beside the crusher
 // that consumes the same reading; two copies of them had already been kept in
 // step by hand.
@@ -20,6 +23,10 @@ import { decodeConcatenatedObjects, findBulkJsonSpan } from './json-span.ts'
 // detector renders is the shape that module then parses.
 import { detectDelimited, detectMarkdownTable } from './table-shape.ts'
 
+/**
+ * Content families the router can claim; `text` is the fall-through when no
+ * detector reaches its confidence floor.
+ */
 export type HeadroomContentType =
   | 'json'
   | 'diff'
@@ -31,6 +38,10 @@ export type HeadroomContentType =
   | 'code'
   | 'text'
 
+/**
+ * One detection verdict: the contentType claimed, its confidence, and any
+ * metadata (language, delimiter, format) the downstream transform needs.
+ */
 export interface DetectionResult {
   readonly contentType: HeadroomContentType
   readonly confidence: number
@@ -118,7 +129,10 @@ const TIMESTAMP_PREFIX_RE = /^(?:\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?|\d{4}-\d{2
 
 /** `path:line:content` shape. A bare `word:digits:` prefix also matches clock
  * times and `key=value:12:` fragments, so those are rejected explicitly: a
- * timestamp is a log line, and the log compressor extracts far more from it. */
+ * timestamp is a log line, and the log compressor extracts far more from it. 
+ * @param line - the candidate line to classify.
+ * @returns true when the line has the `path:line:content` shape.
+ */
 function isSearchResultLine(line: string): boolean {
   if (!SEARCH_RESULT_RE.test(line)) return false
   if (TIMESTAMP_PREFIX_RE.test(line)) return false
@@ -318,8 +332,25 @@ function tryDetectCode(content: string): DetectionResult | undefined {
  * Detect the content type with the original's priority chain: parse-confirmed
  * JSON first, then the distinctive shapes (diff/HTML), then the ambiguous
  * line-grammars (search/log), then tabular/config, then code, then plain text.
+ *
+ * Every shape test reads the payload as a terminal would *render* it: SGR colour
+ * escapes are removed once, here, before any of them run. Colour is not content,
+ * and leaving it in place silently defeated one of these tests. `isSearchResultLine`
+ * rejects a line that *starts* with a clock or date — that guard is what sends a
+ * log to the log compressor (see `headroom-log-routing.spec.ts`) — but a coloured
+ * line starts with `\x1b[32m`, so `\x1b[32m2026-09-19T09:00:01.000Z INFO …`
+ * parsed as `path:line:content` with the path `\x1b[32m2026-09-19T09`, the search
+ * test claimed the payload at confidence 1.0, and the log branch was never
+ * reached: the same misrouting that spec documents, arriving through a spelling
+ * its fixtures did not carry. It is one line of measurement to see (a coloured
+ * application log is `search`; the same bytes with the escapes removed are
+ * `log`), and it is why the strip lives on the entry point rather than in the
+ * search test alone — tabular, config and code all read raw lines too.
+ * @returns the detection Result.
+ * @param raw - the content to send.
  */
-export function detectContentType(content: string): DetectionResult {
+export function detectContentType(raw: string): DetectionResult {
+  const content = stripAnsi(raw)
   if (content.trim() === '') return { contentType: 'text', confidence: 0.0, metadata: {} }
 
   const json = tryDetectJson(content)

@@ -143,6 +143,11 @@ img.communityPluginIcon { display: block; width: 34px; height: 34px; flex: 0 0 a
 .badgeLive { color: var(--fcg-success); }
 /* A failing self-check reads as danger, not as the neutral "no state yet" pill. */
 .badgeDanger { color: var(--fcg-danger); }
+/* The loaded-surface list gives one row per collected face, and that row is a
+   grid — so a badge stretched to the row's height paints its neutral fill as a
+   block of grey down the whole card. Only the colour is the signal there, so the
+   fill is dropped and the label keeps its own height. */
+.inspectStatus { align-self: start; background: transparent; }
 /* Raw backend snapshot: monospace, bounded, and scrollable so a large account
    object cannot stretch the panel. It is a fallback for support, not a view. */
 .diagnosticsDump { max-height: 240px; margin: 4px 0 0; padding: 8px 10px; overflow: auto; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-input); color: var(--fcg-text-secondary); font-family: var(--fcg-font-mono); font-size: var(--fcg-font-caption); line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -495,10 +500,32 @@ that the provider key forms rely on keep their own density. */
 .authFull { grid-column: 1 / -1; }
 .remember { display: flex; align-items: center; gap: 8px; color: var(--fcg-text-secondary); cursor: pointer; font-size: var(--fcg-font-caption); }
 .remember input { width: 15px; height: 15px; margin: 0; accent-color: var(--fcg-brand); cursor: pointer; }
-.paymentBar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--fcg-line-subtle); }
+/* Two intents share the row: keep the session, and keep the password itself. */
+.rememberRow { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+/* The password field carries its own reveal control, so the wrapper — not the
+   input — is the form's grid item and the two-up row keeps its two columns. */
+.passwordField { position: relative; display: flex; min-width: 0; }
+.authPanel .passwordField .input { width: 100%; padding-right: 64px; }
+.passwordToggle { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); padding: 4px 6px; border: 0; border-radius: var(--fcg-radius-sm); background: transparent; color: var(--fcg-text-tertiary); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); }
+.passwordToggle:hover { color: var(--fcg-text-primary); }
+/* Heading left, the payer's two choices right, and the channel's own sentence on
+   a line of its own underneath. The sentence used to be a third item in the same
+   flex row, which is what deformed the bar: sharing the row pushed the select to
+   its minimum width (the selected option printed as `银行卡 / 信用卡 (Un…`) and
+   left the two-character label with nothing but its own wrap, so it read as a
+   vertical column of characters. A sentence needs a line, not a share of one. */
+.paymentBar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px 16px; margin-bottom: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--fcg-line-subtle); }
+.paymentBarDetail { grid-column: 1 / -1; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 17px; overflow-wrap: anywhere; }
+.paymentPicker { display: grid; justify-items: end; gap: 6px; min-width: 0; }
 .paymentHeading { display: block; margin-bottom: 3px; font-size: var(--fcg-font-title); font-weight: 600; letter-spacing: -.01em; color: var(--fcg-text-primary); }
 .paymentMethod { display: inline-flex; align-items: center; gap: 8px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
-.paymentMethod .select { width: auto; min-width: 135px; }
+/* The label is two characters in Chinese and two words in English: it is never the
+   half that gives up width. */
+.paymentMethod > span { flex: 0 0 auto; white-space: nowrap; }
+/* Wide enough for the longest channel name with its currency —
+   `银行卡 / 信用卡 (USD)` — so the option that is selected is the option that is
+   read instead of a clipped `…(Un`. */
+.paymentMethod .select { width: auto; min-width: 176px; max-width: 100%; }
 .alert { margin-bottom: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--fcg-danger) 28%, transparent); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-danger) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-danger); font-size: var(--fcg-font-caption); line-height: 18px; overflow-wrap: anywhere; }
 .alert button { margin-left: 10px; border: 0; padding: 0; background: transparent; color: inherit; font-size: var(--fcg-font-caption); cursor: pointer; text-decoration: underline; white-space: nowrap; }
 .pending { display: grid; gap: 8px; margin-bottom: 12px; padding: 10px 11px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 35%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 6%, var(--fcg-bg-layer-2)); }
@@ -515,8 +542,12 @@ that the provider key forms rely on keep their own density. */
    contrast under the dark host instead of hardcoding a navy that only reads on
    white. `align-items: stretch` on the grid keeps equal-height shells and
    `margin-top: auto` on the button pins the actions to one baseline. */
+/* The ladder and the payment dialog opened from it share one hardware language,
+   so they share the tokens that render it. Declared once here rather than
+   restated per consumer: the two drifting apart is the defect this prevents. */
 .plans,
-.planShared {
+.planShared,
+.payDialog {
   --pixel-ink: color-mix(in srgb, var(--fcg-brand) 58%, var(--fcg-text-primary));
   --pixel-face: var(--fcg-bg-layer-1);
   --pixel-recess: color-mix(in srgb, var(--fcg-text-primary) 4%, var(--fcg-bg-layer-1));
@@ -628,8 +659,13 @@ that the provider key forms rely on keep their own density. */
 .pricingFreeHeader strong { color: var(--fcg-text-primary); font-size: var(--fcg-font-body); font-weight: 650; }
 /* The card picker's methods: named chips so a payer checks "does mine work?"
    without opening the form. */
-.paymentMethods { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.paymentMethods { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-top: 0; }
 .paymentMethodChip { padding: 2px 9px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-1); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); font-weight: 550; letter-spacing: .01em; white-space: nowrap; }
+/* Narrower than the two columns need: the picker takes its own row and the select
+   fills it, which is what the ladder above already does with its cards. Stated
+   after every base rule it overrides, because an equal-specificity rule that
+   comes later wins whatever block it sits in. */
+@media (max-width: 520px) { .paymentBar { grid-template-columns: minmax(0, 1fr); } .paymentPicker { justify-items: stretch; } .paymentMethod .select { width: 100%; } .paymentMethods { justify-content: flex-start; } }
 .pricingTable th:first-child, .pricingTable td:first-child { width: 34%; }
 .pricingTable td:first-child { white-space: normal; }
 /* The pricing table carries the backend's group name column, so its model
@@ -683,7 +719,7 @@ that the provider key forms rely on keep their own density. */
 .tokenCacheWasteCause { padding: 2px 9px; border-radius: var(--fcg-radius-full); font-size: var(--fcg-font-caption); line-height: 18px; background: color-mix(in srgb, var(--fcg-warn) 10%, transparent); color: var(--fcg-text-secondary); }
 .tokenCacheWasteCause[data-cause="idle-gap"] { background: color-mix(in srgb, var(--fcg-warn) 10%, transparent); }
 .tokenCacheWasteCause[data-cause="model-changed"] { background: color-mix(in srgb, var(--fcg-danger) 10%, transparent); }
-.tokenCacheWasteCause[data-cause="prefix-changed"] { background: color-mix(in srgb, var(--fcg-accent, var(--fcg-text-tertiary)) 12%, transparent); }
+.tokenCacheWasteCause[data-cause="prefix-changed"] { background: color-mix(in srgb, var(--fcg-text-tertiary) 12%, transparent); }
 .tokenCacheWasteCause b { color: var(--fcg-text-primary); font-variant-numeric: tabular-nums; }
 .tokenCacheWasteWorst { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .tokenCacheWasteWorst li { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: baseline; gap: 10px; font-size: var(--fcg-font-caption); color: var(--fcg-text-secondary); }
@@ -1058,24 +1094,93 @@ body[data-ds-dark-theme] .tokenChartWrap {
    than inherited because a card form that is narrower than the dialog looks
    broken, and one that is wider scrolls sideways.
 --------------------------------------------------------------------------- */
-/* Wide enough for Stripe's card row, narrow enough to still read as a dialog:
-   the form fills it, so there is no empty half-card to look at. */
-.payDialog { width: min(372px, calc(100vw - 36px)); }
-.payDialogBody { display: grid; gap: 10px; }
-.payDialogHead { display: grid; gap: 1px; padding-bottom: 12px; border-bottom: 1px solid var(--fcg-line-subtle); }
-.payDialogLabel { color: var(--fcg-text-tertiary); font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
-.payDialogAmount { font-size: 27px; font-weight: 660; letter-spacing: -.028em; color: var(--fcg-text-primary); line-height: 34px; font-variant-numeric: tabular-nums; }
+/* ─── The payment dialog wears the ladder's shell ───────────────────────
+   This dialog is opened from the ladder and returns to it, and it is the only
+   surface in the panel that used to wear the host modal's generic chrome —
+   24px corners, a soft elevation shadow, pill buttons — which is what made it
+   read as a form from another product. It wears that language now: the 2px ink
+   outline, the pressed-in recess the figures sit in, the stepped chip, and the
+   arcade key. It deliberately does not wear the stepped *silhouette*: the notch
+   is cut with `clip-path`, a clip cuts the offset shadow with it, and that hard
+   shadow is the half that makes the shell read as hardware. Square corners plus
+   the offset shadow do that work here, and the notch stays on the chips inside,
+   where nothing is painted outside their own box.
+
+   The chrome it overrides belongs to the host modal's own card (`.dialog` in
+   ui-primitives), whose selectors carry the same single-class specificity and
+   arrive from a different bundle. The ancestor states the winner instead of
+   leaving it to whichever stylesheet happened to be injected first. */
+/* Wide enough for the card row, narrow enough to still read as a dialog: the form
+   fills it, so there is no empty half-card to look at. */
+body .payDialog {
+  width: min(392px, calc(100vw - 36px));
+  /* The host card's own 24px lands under the footer keys, which now carry a 3px
+     base; 20px keeps the key's travel clear of the shell's bottom edge. */
+  padding-bottom: 20px;
+  border: 2px solid var(--pixel-ink);
+  border-radius: 0;
+  background: var(--pixel-face);
+  box-shadow: 6px 6px 0 0 var(--pixel-ink);
+}
+/* The nameplate is the host's title row, squared off: the shell has one radius,
+   and it is zero, so the close control cannot stay a rounded well. */
+.payDialog h2 { margin: 0; color: var(--fcg-text-primary); font-size: var(--fcg-font-body-lg); font-weight: 800; letter-spacing: -.012em; }
+.payDialog h2 + button { border: 1px solid var(--pixel-ink); border-radius: 0; color: var(--pixel-ink); }
+.payDialog h2 + button:hover { background: var(--pixel-recess); }
+.payDialogBody { display: grid; gap: 12px; }
+/* The number this dialog exists for sits in the ladder's own recess, with the
+   mono kicker its cards put over an offer. */
+.payDialogHead { display: grid; gap: 3px; padding: 12px; border: 2px solid var(--pixel-ink); background: var(--pixel-recess); box-shadow: inset 2px 2px 0 0 var(--pixel-recess-edge); }
+.payDialogLabel { color: var(--fcg-brand); font-family: var(--fcg-font-mono); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.payDialogAmount { color: var(--fcg-text-primary); font-size: 27px; font-weight: 800; letter-spacing: -.03em; line-height: 34px; font-variant-numeric: tabular-nums; }
 .payDialogMeta { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
 .payDialogCredit { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
-.payDialogCredit strong { color: var(--fcg-text-primary); font-weight: 650; font-variant-numeric: tabular-nums; }
-.payDialogState { margin-left: auto; padding: 2px 9px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-full); background: var(--fcg-bg-tip); color: var(--fcg-text-tertiary); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.payDialogCredit strong { color: var(--fcg-text-primary); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* The order state wears the ladder's stepped chip: a pill is the one shape this
+   shell does not have. */
+.payDialogState { margin-left: auto; padding: 2px 9px; border: 1px solid var(--pixel-ink); background: var(--pixel-face); color: var(--fcg-text-secondary); font-family: var(--fcg-font-mono); font-size: 10px; font-weight: 700; letter-spacing: .06em; white-space: nowrap; clip-path: var(--pixel-chip); }
+/* The card form, the QR and the provider page sit in a pressed-in slot of their
+   own, for the same reason the figure above does: the card Element draws its own
+   fields, and the frame is what makes it part of this shell. */
+.payDialogSlot { display: grid; gap: 10px; justify-items: start; padding: 12px; border: 2px solid var(--pixel-ink); background: var(--pixel-recess); box-shadow: inset 2px 2px 0 0 var(--pixel-recess-edge); }
+/* A code is looked at, not read: it is centred the way the ladder centres its
+   figures, while a form keeps its fields flush left. */
+.payDialogQr { justify-items: center; text-align: center; }
+/* A refusal or an unpayable order is reported inside the slot that could not take
+   the payment, in the shell's own frame. */
+.payDialogSlot .paymentNotice { margin-top: 0; border-width: 2px; border-radius: 0; }
 /* No floor larger than Stripe's own height: a fixed 180px box left a white gap
    under a short card form. */
-.payDialogElement { min-height: 0; }
-.payDialogPaid { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--fcg-ok, #2f9e6f) 42%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-ok, #2f9e6f) 10%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
-.payDialogNote { display: block; margin-top: 2px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
-.payDialogQr, .payDialogLink { display: grid; gap: 10px; justify-items: start; }
+.payDialogSlot .payDialogElement { width: 100%; min-height: 0; }
+.payDialogPaid { padding: 10px 12px; border: 2px solid color-mix(in srgb, var(--fcg-success) 42%, var(--pixel-ink)); background: color-mix(in srgb, var(--fcg-success) 10%, var(--pixel-face)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
+.payDialogNote { display: block; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+/* The arcade key, stated once and worn by every action in this dialog: a solid
+   fill, a lit top edge, a hard 3px base the press collapses. These selectors are
+   two classes deep on purpose — the shared `.button` rules carry the same weight
+   as a single class, so the shape is stated rather than left to source order. */
 .payDialogFooter { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.payDialogFooter .button, .payDialogSlot .button {
+  min-height: 40px;
+  border: 2px solid var(--pixel-ink);
+  border-radius: 0;
+  background: var(--pixel-face);
+  color: var(--fcg-text-primary);
+  font-weight: 700;
+  letter-spacing: .04em;
+  box-shadow: 0 3px 0 0 var(--pixel-ink);
+  transition: background var(--fcg-fast) var(--fcg-ease), box-shadow 60ms linear, transform 60ms linear;
+}
+.payDialogFooter .button:hover:not(:disabled), .payDialogSlot .button:hover:not(:disabled) { background: var(--pixel-recess); }
+.payDialogFooter .button:active:not(:disabled), .payDialogSlot .button:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 0 0 0 var(--pixel-ink); }
+/* The brand fill stays blue in both host themes, so the foreground has to be the
+   theme-invariant white — `--fcg-text-on-brand` flips to near-black under the
+   dark theme and would land on a blue key. */
+.payDialogFooter .buttonPrimary, .payDialogSlot .buttonPrimary { border-color: var(--pixel-ink); background: var(--fcg-brand); color: var(--fcg-text-on-brand-fixed); box-shadow: inset 0 2px 0 0 color-mix(in srgb, #fff 38%, transparent), 0 3px 0 0 var(--pixel-ink); }
+.payDialogFooter .buttonPrimary:hover:not(:disabled), .payDialogSlot .buttonPrimary:hover:not(:disabled) { border-color: var(--pixel-ink); background: var(--fcg-brand-strong); box-shadow: inset 0 2px 0 0 color-mix(in srgb, #fff 48%, transparent), 0 4px 0 0 var(--pixel-ink); }
+.payDialogFooter .buttonDanger { color: var(--fcg-danger); }
+/* Focus keeps this package's ring, restated because the shared focus rule is one
+   class deep and the key's own base shadow would otherwise replace it. */
+.payDialogFooter .button:focus-visible, .payDialogSlot .button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 26%, transparent), 0 3px 0 0 var(--pixel-ink); }
 
 /* ── Plan review overlay ──────────────────────────────────────────────
    The numbered plan surface: every line is a selectable row, because a
@@ -1088,3 +1193,43 @@ body[data-ds-dark-theme] .tokenChartWrap {
 .planReviewLineNumber { color: var(--fcg-text-tertiary); font-family: var(--fcg-font-mono); text-align: right; }
 .planReviewLineText { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .planReviewRemark { display: grid; gap: 8px; padding: 10px 11px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+
+/* The per-provider "what the model picker shows" block on the provider cards.
+   It reuses the shared .switch above rather than restating a pill, because the
+   two controls sit on the same page and a second lookalike would drift. */
+.pickerVisibilityPanel { display: grid; gap: var(--fcg-space-2); padding: 12px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+/* Folded, the panel is only its settings button: the checklist below is what
+   made every provider card tall, and most users never change it. */
+.pickerVisibilityPanel[data-open="false"] { padding: 9px 12px; }
+.pickerVisibilityToggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0; border: 0; background: transparent; color: var(--fcg-text-secondary); cursor: pointer; font: inherit; text-align: left; }
+.pickerVisibilityToggle:hover { color: var(--fcg-text-primary); }
+.pickerVisibilityToggle:focus-visible { border-radius: var(--fcg-radius-sm); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.pickerVisibilityGear { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.pickerVisibilityToggleLabel { flex: 1 1 auto; min-width: 0; font-size: var(--fcg-font-caption); font-weight: 620; line-height: 18px; }
+.pickerVisibilityBadge { flex: 0 0 auto; padding: 0 6px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-layer-2); color: var(--fcg-text-tertiary); font-size: 10px; font-style: normal; font-weight: 600; line-height: 16px; }
+.pickerVisibilityChevron { flex: 0 0 auto; display: inline-flex; align-items: center; transition: transform 120ms ease; }
+.pickerVisibilityToggle[aria-expanded="true"] .pickerVisibilityChevron { transform: rotate(180deg); }
+.pickerVisibilityMaster { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.pickerVisibilityText { display: grid; gap: 2px; min-width: 0; }
+.pickerVisibilityText strong { color: var(--fcg-text-primary); font-size: var(--fcg-font-caption); font-weight: 620; line-height: 18px; }
+.pickerVisibilityText small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 17px; }
+.pickerVisibilityHead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pickerVisibilityLabel { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.pickerVisibilityActions { display: flex; align-items: center; gap: 10px; }
+.pickerVisibilityLink { padding: 0; border: 0; background: transparent; color: var(--fcg-brand); cursor: pointer; font: inherit; font-size: var(--fcg-font-caption); line-height: 18px; }
+.pickerVisibilityLink:hover { text-decoration: underline; }
+.pickerVisibilityLink:focus-visible { border-radius: var(--fcg-radius-sm); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+/* A switched-off provider keeps its per-model choices, so the list stays
+   readable but reads as inert: the switch above is what has to move first. */
+.pickerVisibilityList { display: grid; gap: 2px; max-height: 224px; overflow-y: auto; scrollbar-color: var(--fcg-line-strong) transparent; scrollbar-width: thin; }
+.pickerVisibilityList[data-visible="false"] { opacity: 0.5; }
+.pickerVisibilityRow { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 6px; border-radius: var(--fcg-radius-sm); cursor: pointer; }
+.pickerVisibilityRow:hover { background: var(--fcg-bg-layer-2); }
+.pickerVisibilityCheck { flex: 0 0 auto; width: 14px; height: 14px; margin: 0; accent-color: var(--fcg-brand); cursor: pointer; }
+.pickerVisibilityName { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--fcg-text-secondary); font-family: var(--fcg-font-mono); font-size: 11px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+/* A metered row's tag: the same weight and shape as the free one, because the
+   two answer the same question and only the answer differs. Danger, not brand —
+   this is the tag a user reads before deciding to spend money. */
+.pickerVisibilityPaid { flex: 0 0 auto; padding: 0 6px; border-radius: var(--fcg-radius-full); background: color-mix(in srgb, var(--fcg-danger) 12%, transparent); color: var(--fcg-danger); font-size: 10px; font-style: normal; font-weight: 700; line-height: 16px; }
+.pickerVisibilityFree { flex: 0 0 auto; padding: 0 6px; border-radius: var(--fcg-radius-full); background: color-mix(in srgb, var(--fcg-success) 12%, transparent); color: var(--fcg-success); font-size: 10px; font-style: normal; font-weight: 700; line-height: 16px; }
+.pickerVisibilityEmpty { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }

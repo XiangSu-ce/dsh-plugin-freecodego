@@ -38,6 +38,14 @@ export interface ProviderCardProps {
   readonly notice?: string | undefined
   readonly actions?: ReactNode | undefined
   readonly children?: ReactNode | undefined
+  /**
+   * Provider-specific controls that belong after the card's account body and
+   * before its actions, so the primary button keeps the bottom of the card.
+   * Today that is the model-list visibility panel, which every provider card
+   * carries; it is a slot rather than a prop of its own because only the caller
+   * knows which provider id its models are filed under.
+   */
+  readonly visibility?: ReactNode | undefined
   readonly language: 'zh' | 'en'
 }
 
@@ -72,7 +80,7 @@ export function uniqueModelLabels(models: readonly string[]): readonly string[] 
  * redrawn third-party logos: these identify a section inside our own settings
  * panel, and shipping recognisable brand marks we do not own would be a
  * licensing problem for a purely decorative gain. */
-export type ProviderGlyphKind = 'logfare' | 'sensenova' | 'nvidia' | 'agnes' | 'cline' | 'workbuddy' | 'vyce' | 'generic'
+export type ProviderGlyphKind = 'logfare' | 'sensenova' | 'nvidia' | 'agnes' | 'cline' | 'workbuddy' | 'qoder' | 'trae' | 'vyce' | 'generic'
 
 export function ProviderGlyph({ kind, size = 18 }: { readonly kind: ProviderGlyphKind; readonly size?: number }): ReactNode {
   const common = { width: size, height: size, viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': true as const }
@@ -90,6 +98,14 @@ export function ProviderGlyph({ kind, size = 18 }: { readonly kind: ProviderGlyp
   }
   if (kind === 'workbuddy') {
     return <svg {...common}><circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.5" /><path d="M6.6 8.4c1-.9 2.3-1 3.2-.2.9-.8 2.2-.7 3.2.2M6.4 11.8h7.2M8 13.6c1.3.8 2.7.8 4 0" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+  }
+  if (kind === 'qoder') {
+    return <svg {...common}><path d="M13.4 10a3.4 3.4 0 1 1-3.4-3.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /><path d="M10 6.6A3.4 3.4 0 0 1 10 13.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /><path d="M13.2 12.8l2.4 2.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+  }
+  if (kind === 'trae') {
+    // A trail that doubles back on itself: the connector's own shape is a
+    // browser round trip out and a pasted callback back in.
+    return <svg {...common}><path d="M5.2 15.4c0-4.2 3-5.6 4.8-3.4 1.6 2-.4 4.2-2.4 3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /><path d="M9.6 5.4h5.2M12.2 5.4v4.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
   }
   if (kind === 'vyce') {
     return <svg {...common}><path d="M4.4 4.6 10 15.4 15.6 4.6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /><path d="M12.2 4.6h3.4v3.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -134,6 +150,7 @@ export function ProviderCard(input: ProviderCardProps): ReactNode {
       {input.description === undefined ? null : <small className={css.description}>{input.description}</small>}
       {input.notice === undefined ? null : <div className={css.notice} role="note"><span className={css.noticeDot} aria-hidden="true" />{input.notice}</div>}
       {input.children === undefined ? null : <div className={css.body}>{input.children}</div>}
+      {input.visibility === undefined ? null : input.visibility}
       {input.actions === undefined ? null : <div className={css.actions}>{input.actions}</div>}
     </section>
   )

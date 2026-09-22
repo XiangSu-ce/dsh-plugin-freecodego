@@ -1,10 +1,13 @@
 /**
- * Host-only WorkBuddy International (workbuddy.ai) free-model provider.
+ * Host-only WorkBuddy International (workbuddy.ai) provider.
  *
  * The Settings card owns sign-in; this module owns everything after it. A
  * browser authorization (or a desktop-app import) lands a token pair in the
  * Host vault, and the pool behind that vault becomes a real provider: the live
- * free-route directory plus the adapter that serves them.
+ * route directory plus the adapter that serves it. The product document prices
+ * each route, so the directory is listed in full — the free tier is what the
+ * pool serves for nothing, and a metered sibling is what a user may deliberately
+ * pay for, which is why it is listed (default-off) instead of hidden.
  *
  * Endpoints, all on the product host:
  *
@@ -29,8 +32,11 @@
 import { credentialRef, type CredentialProvider, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { attributionHeaders, LlmAdapter, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { parseSse, serializeRequest, translate } from './openai-wire.ts'
+import { serializeRequest, translate } from './openai-wire.ts'
+import { parseSse } from './wire-shared.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
+import { asNumber as number, asRecord as record, asString as string } from './untrusted-json.ts'
+import { llmCodeForUpstreamStatus, upstreamStatusCategory, type UpstreamStatusCategory } from './upstream-status-code.ts'
 import { isHttpUrl } from './system-browser.ts'
 import type { WorkBuddyCreditPackage, WorkBuddyCredits, WorkBuddyInternationalAccount, WorkBuddyInternationalModel } from './types.ts'
 import {
@@ -66,9 +72,33 @@ const WORKBUDDY_INTL_REFRESH_BUFFER_MS = 5 * 60_000
 const WORKBUDDY_INTL_MODELS_CACHE_TTL_MS = 5 * 60_000
 const WORKBUDDY_INTL_CHAT_TIMEOUT_MS = 120_000
 /** Waiting times applied when the upstream does not state its own. */
-const WORKBUDDY_INTL_AUTH_COOLDOWN_MS = 5 * 60_000
+const WORKBUDDY_INTL_SHORT_COOLDOWN_MS = 5 * 60_000
 const WORKBUDDY_INTL_CREDIT_COOLDOWN_MS = 30 * 60_000
 const WORKBUDDY_INTL_RATE_COOLDOWN_MS = 60_000
+
+/**
+ * How long an account is parked when the upstream states no delay of its own.
+ *
+ * Read from the shared status category rather than compared against the status
+ * again, because parking is a statement about the *account* and only `401` makes
+ * that statement about its credential: `402`/`403` are a spent budget and a plan
+ * gate, and waiting refills neither, so the account takes the credit park while the
+ * walk meets another one. A `429` is a one-minute turn. A `5xx` and a status no rule
+ * claims name nothing the account can change, so they take the short park and leave
+ * the decision to the pool.
+ *
+ * This ladder used to read `402 → credit, 429 → rate, everything else → auth`, which
+ * parked a `403` on the *sign-in* window — the same status the error code one screen
+ * away reports as `RATE_LIMIT`, because the credential it merely declined to accept
+ * on this route was still good.
+ */
+const WORKBUDDY_INTL_COOLDOWN_BY_CATEGORY: Readonly<Record<UpstreamStatusCategory, number>> = {
+  auth: WORKBUDDY_INTL_SHORT_COOLDOWN_MS,
+  quota: WORKBUDDY_INTL_CREDIT_COOLDOWN_MS,
+  'rate-limit': WORKBUDDY_INTL_RATE_COOLDOWN_MS,
+  server: WORKBUDDY_INTL_SHORT_COOLDOWN_MS,
+  other: WORKBUDDY_INTL_SHORT_COOLDOWN_MS,
+}
 /** Fallback context ceiling for a route the catalog did not size. */
 const WORKBUDDY_INTL_DEFAULT_CONTEXT = 128_000
 const WORKBUDDY_INTL_DEFAULT_MAX_TOKENS = 32_000
@@ -104,15 +134,6 @@ export class WorkBuddyIntlError extends Error {
   }
 }
 
-function record(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-}
-function string(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
-}
-function number(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
 /**
  * The reason to report for a step that failed inside the pool walk.
  *
@@ -174,6 +195,8 @@ function rateMultiplierOf(credits: string | undefined, explicit: number | undefi
  *
  * `undefined` means the row cannot be addressed at all (no id, no uid, no
  * address, no token).
+ * @param row - the stored account row.
+ * @returns the addressable id, or `undefined` when the row carries none.
  */
 export function workBuddyIntlAccountId(row: Record<string, unknown>): string | undefined {
   return string(row.id) ?? string(row.uid) ?? string(row.email) ?? ((): string | undefined => {
@@ -185,6 +208,8 @@ export function workBuddyIntlAccountId(row: Record<string, unknown>): string | u
 /**
  * Read the account pool. Cheap and offline: the picker and the Settings card
  * ask on every render, so this never touches the network.
+ * @returns the work Buddy International Account rows, in backend order.
+ * @param credentials - the credential provider, or `undefined` before it mounts.
  */
 export async function readWorkBuddyIntlAccounts(credentials: CredentialProvider | undefined): Promise<readonly WorkBuddyInternationalAccount[]> {
   const resolved = await credentials?.resolve(WORKBUDDY_INTL_STORE_REF)
@@ -241,6 +266,8 @@ export async function readWorkBuddyIntlAccounts(credentials: CredentialProvider 
  * first row with a token, so the selection was a field with no consumer and the
  * control appeared to do nothing. It is a *preference* — a caller must still be
  * ready for that row to be absent, spent, or parked.
+ * @param credentials - the credential provider, or `undefined` before it mounts.
+ * @returns the selected account id, or `undefined` when none is recorded.
  */
 export async function readWorkBuddyIntlActiveId(credentials: CredentialProvider | undefined): Promise<string | undefined> {
   const resolved = await credentials?.resolve(WORKBUDDY_INTL_STORE_REF)
@@ -336,6 +363,9 @@ function activePromotion(route: WorkBuddyIntlRoute, now: number): WorkBuddyIntlP
  * the document bakes the discounted value into `credits` while a promotion runs,
  * so an expired one would otherwise advertise a discount that has ended — the
  * worst case of which is telling the user a paid model is free.
+ * @param route - the route to price.
+ * @param now - the time the promotion is evaluated at.
+ * @returns whether the route costs nothing right now.
  */
 export function isFreeRoute(route: WorkBuddyIntlRoute, now = Date.now()): boolean {
   const promotion = activePromotion(route, now)
@@ -402,6 +432,8 @@ function declaredTier(value: unknown): WorkBuddyReasoningTier | undefined {
  * inert: for `hy3` and `hy4-preview` the upstream ignores "Off" entirely
  * (`canDisableThinking: false`) and for `glm-5.3` the tier the product actually
  * declares — `max` — was not even offered.
+ * @param row - one route row from the product document.
+ * @returns the reasoning declaration, or `undefined` when the route declares none.
  */
 export function parseWorkBuddyReasoning(row: Record<string, unknown>): WorkBuddyInternationalModel['reasoning'] | undefined {
   const raw = record(row.reasoning)
@@ -430,6 +462,8 @@ export function parseWorkBuddyReasoning(row: Record<string, unknown>): WorkBuddy
  * `undefined` means the route has no reasoning control to show. `off` is only
  * offered when the product says thinking can be disabled, so the menu never
  * advertises a level the upstream ignores.
+ * @param model - the route whose declaration is read.
+ * @returns the efforts to offer and the default, or `undefined` when there is no control.
  */
 export function workBuddyReasoningOptions(
   model: WorkBuddyInternationalModel | undefined,
@@ -459,6 +493,8 @@ function workBuddyEffortLabel(tier: WorkBuddyReasoningTier): string {
  * documented API: rows without a usable id are dropped, the allowlist is
  * honoured when present, and a bad multiplier degrades to "not free" rather than
  * to a number nobody stated.
+ * @param payload - the payload to interpret, of unknown shape.
+ * @returns the work Buddy Intl Route rows, in backend order.
  */
 export function parseWorkBuddyCatalog(payload: unknown): readonly WorkBuddyIntlRoute[] {
   const envelope = record(payload)
@@ -510,11 +546,37 @@ export function parseWorkBuddyCatalog(payload: unknown): readonly WorkBuddyIntlR
  * window must leave the list on its own. The returned rows are marked free, so
  * the card can never receive a row whose own billing disagrees with the list it
  * arrived in.
+ * @returns the work Buddy International Model rows, in backend order.
+ * @param routes - the parsed directory routes.
+ * @param now - the time the promotions are re-evaluated at.
  */
 export function freeRoutesOf(routes: readonly WorkBuddyIntlRoute[], now = Date.now()): readonly WorkBuddyInternationalModel[] {
   const free = routes.filter(route => isFreeRoute(route, now))
   if (free.length === 0) return [WORKBUDDY_INTL_FALLBACK_ROUTE]
   return free.map(route => route.billing?.free === true ? route : { ...route, billing: { ...route.billing, free: true } })
+}
+
+/**
+ * One route's price as the picker and the settings checklist read it.
+ *
+ * The `×N` marker is not decoration: it is the only price channel a browser half
+ * has, and `model-price.ts` reads it to decide whether a row starts shown. A
+ * metered route that arrived without one would look exactly like a free route
+ * and would be switched on by default — which is the opposite of what a priced
+ * route should do.
+ *
+ * The multiplier is recomputed here rather than taken from the parse, for the
+ * same reason {@link isFreeRoute} is: the directory is cached for minutes, and a
+ * promotion that expired inside that window must stop presenting its route as
+ * the cheaper one.
+ * @param route - the parsed route.
+ * @param now - the time the promotions are re-evaluated at.
+ * @returns the description string.
+ */
+export function workBuddyModelDescription(route: WorkBuddyIntlRoute, now = Date.now()): string {
+  const free = isFreeRoute(route, now)
+  const multiplier = free ? 0 : route.rateMultiplier ?? 1
+  return `WorkBuddy · ×${multiplier} · ${free ? 'free' : 'metered'}`
 }
 
 /**
@@ -525,6 +587,8 @@ export function freeRoutesOf(routes: readonly WorkBuddyIntlRoute[], now = Date.n
  * first message is not `system` is refused with HTTP 400 code 11128. The
  * prepended line contains no user content, and existing messages keep their
  * order: this only satisfies the gateway, it never steers the model.
+ * @param body - the serialized chat body.
+ * @returns the body with the international endpoint's preconditions applied.
  */
 export function prepareWorkBuddyChatBody(body: Record<string, unknown>): Record<string, unknown> {
   const source = Array.isArray(body.messages) ? body.messages : []
@@ -564,6 +628,8 @@ export type WorkBuddyLoginPollResult =
  * lives at `data` on the observed shape, but the same endpoint has been seen to
  * nest the pair under `auth` with the identity under `account`, so all three
  * spellings are read rather than making a signed-in user wait on a guess.
+ * @param payload - the payload to interpret, of unknown shape.
+ * @returns the work Buddy Login Poll Result.
  */
 export function parseWorkBuddyLoginPoll(payload: unknown): WorkBuddyLoginPollResult {
   const envelope = record(payload)
@@ -614,6 +680,8 @@ export interface WorkBuddyDeviceAuthorization {
  * only link whose sign-in result is recorded under it. Returning `undefined`
  * lets the caller fail loudly rather than open an unbound login page, which is
  * exactly how the old client-generated state dead-ended.
+ * @param payload - the payload to interpret, of unknown shape.
+ * @returns the state and auth URL, or `undefined` when the payload is unusable.
  */
 export function parseWorkBuddyAuthState(payload: unknown): WorkBuddyDeviceAuthorization | undefined {
   const data = record(record(payload).data)
@@ -629,7 +697,10 @@ export function parseWorkBuddyAuthState(payload: unknown): WorkBuddyDeviceAuthor
   return { state, authUrl }
 }
 
-/** One authenticated identity read for a state that just issued tokens. */
+/** One authenticated identity read for a state that just issued tokens. 
+ * @param payload - the payload to interpret, of unknown shape.
+ * @returns the identity fields the payload carries, each absent when unstated.
+ */
 export function parseWorkBuddyLoginAccount(payload: unknown): { uid?: string; nickname?: string; enterpriseId?: string; email?: string } {
   const data = record(record(payload).data)
   const identity = Object.keys(record(data.account)).length > 0 ? record(data.account) : data
@@ -733,7 +804,11 @@ function creditExpiry(value: unknown): number | undefined {
  * Sources disagree on field names and on whether the empty-string spelling is
  * used for an unknown number, so the parser reads a candidate list per concept
  * and never invents a figure: an unreadable amount becomes `0`, which is what
- * "no credits reported" means for a total. */
+ * "no credits reported" means for a total. 
+ * @returns the work Buddy Credit Package.
+ * @param row - one credit row of unknown shape.
+ * @param now - the time relative expiries are computed from.
+ */
 export function parseWorkBuddyCreditPackage(row: unknown, now = Date.now()): WorkBuddyCreditPackage {
   const source = record(row)
   const slices = Array.isArray(source.SlicePeriodUsageDetails) ? source.SlicePeriodUsageDetails : Array.isArray(source.slicePeriodUsageDetails) ? source.slicePeriodUsageDetails : []
@@ -814,7 +889,10 @@ function mergeCreditPackages(detail: readonly WorkBuddyCreditPackage[], summary:
   return [...detail, ...summary.filter(entry => entry.packageCode === undefined || !described.has(entry.packageCode))]
 }
 
-/** The upstream's own reason a credit response was refused. */
+/** The upstream's own reason a credit response was refused. 
+ * @param payload - the payload to interpret, of unknown shape.
+ * @returns the refusal reason, or `undefined` when the envelope reports success.
+ */
 export function workBuddyEnvelopeError(payload: unknown): string | undefined {
   const envelope = record(payload)
   const nested = record(envelope.data)
@@ -826,7 +904,10 @@ export function workBuddyEnvelopeError(payload: unknown): string | undefined {
   return code === undefined || code === 0 || code === 200 ? undefined : `code=${code}`
 }
 
-/** Whether an envelope reports success (no code, `0`, or `200`). */
+/** Whether an envelope reports success (no code, `0`, or `200`). 
+ * @param payload - the payload to interpret, of unknown shape.
+ * @returns whether the envelope reports success.
+ */
 export function workBuddyEnvelopeOk(payload: unknown): boolean {
   const envelope = record(payload)
   if (Object.keys(envelope).length === 0) return false
@@ -837,9 +918,22 @@ export function workBuddyEnvelopeOk(payload: unknown): boolean {
   return envelope.ok !== false && envelope.success !== false && ('data' in envelope || 'ok' in envelope || 'success' in envelope)
 }
 
-/** Whether a failed response is an expired/rejected credential. */
+/**
+ * Whether a failed response is an expired/rejected credential.
+ *
+ * The HTTP status is read through the shared table, so `401` is the only one that
+ * answers yes: a `403` is the plan gate on *this route* — the reading the error code
+ * uses too — and refreshing a token cannot make a plan accept a model. Answering yes
+ * for `403` burned a rotation on every gate, which is the mistake this file already
+ * names for code `10085` (*"refreshing cannot fix it and would burn a rotation"*),
+ * and replayed a request the upstream had refused on other grounds.
+ *
+ * The envelope's own `code` is read separately, because it is the gateway's
+ * numbering and not an HTTP status: a `401`/`403` there is this upstream's spelling
+ * of a credential refusal, and that reading is unchanged.
+ */
 function workBuddyUnauthorized(status: number, payload: unknown): boolean {
-  if (status === 401 || status === 403) return true
+  if (upstreamStatusCategory(status) === 'auth') return true
   // Gateways answer 200 with the refusal in the body, so the body is read too.
   const envelope = record(payload)
   const code = number(envelope.code) ?? number(record(envelope.data).code)
@@ -858,7 +952,12 @@ function workBuddyUnauthorized(status: number, payload: unknown): boolean {
   return aboutCredential && expired
 }
 
-/** Aggregate packages into the account-level credit position. */
+/** Aggregate packages into the account-level credit position. 
+ * @returns the work Buddy Credits.
+ * @param packages - the parsed credit packages to aggregate.
+ * @param checkedAt - the time this snapshot was taken.
+ * @param error - the failure to attach, when the sweep could not answer.
+ */
 export function summarizeWorkBuddyCredits(packages: readonly WorkBuddyCreditPackage[], checkedAt: number, error?: string): WorkBuddyCredits {
   let total = 0
   let remaining = 0
@@ -888,6 +987,9 @@ export function summarizeWorkBuddyCredits(packages: readonly WorkBuddyCreditPack
   }
 }
 
+/**
+ * A WorkBuddy International client over the stored account pool.
+ */
 export class WorkBuddyIntlClient {
   private cursor = 0
   private readonly cooldowns = new Map<string, number>()
@@ -908,11 +1010,17 @@ export class WorkBuddyIntlClient {
     private readonly persistTokens?: (account: WorkBuddyInternationalAccount) => Promise<void>,
   ) {}
 
-  /** The pool, newest first is not guaranteed: the order is the vault's. */
+  /** The pool, newest first is not guaranteed: the order is the vault's. 
+   * @returns the work Buddy International Account rows, in backend order.
+   */
   async accounts(): Promise<readonly WorkBuddyInternationalAccount[]> {
     return readWorkBuddyIntlAccounts(this.credentials)
   }
 
+/**
+ * Whether the pool holds at least one account.
+ * @returns whether any account is available.
+ */
   async signedIn(): Promise<boolean> {
     return (await this.accounts()).length > 0
   }
@@ -964,6 +1072,8 @@ export class WorkBuddyIntlClient {
    *
    * The legacy aggregate query is the fallback, reached only when none of the
    * three answered in a shape this provider understands.
+ * @param account - the account to query first.
+ * @returns the aggregated credits and the account the failing call ended on.
    */
   async credits(account: WorkBuddyInternationalAccount): Promise<{ readonly credits: WorkBuddyCredits; readonly account: WorkBuddyInternationalAccount }> {
     const now = Date.now()
@@ -1030,13 +1140,34 @@ export class WorkBuddyIntlClient {
    * A signed-out pool has no directory at all rather than a seeded one: the seed
    * exists for a reachable account whose document is not readable yet, not for
    * advertising WorkBuddy to someone who never signed in.
+   * @returns the work Buddy International Model rows, in backend order.
    */
   async freeModels(): Promise<readonly WorkBuddyInternationalModel[]> {
     if (!(await this.signedIn())) return []
     return freeRoutesOf(await this.catalog())
   }
 
-  /** Stream one chat completion, rotating accounts on auth and credit failures. */
+  /**
+   * Every route the product document declares, free or metered.
+   *
+   * {@link freeModels} answers "what can this pool serve for nothing"; this
+   * answers "what does the pool hold", which is what the settings checklist has
+   * to show so a user can switch a metered route on deliberately. The account
+   * has to be signed in for either: an unsigned pool can still be *asked* to
+   * route a paid model, and offering one before a credential exists would be an
+   * offer nobody can accept.
+   * @returns the parsed routes, in product order; empty when signed out.
+   */
+  async allModels(): Promise<readonly WorkBuddyIntlRoute[]> {
+    if (!(await this.signedIn())) return []
+    return await this.catalog()
+  }
+
+  /** Stream one chat completion, rotating accounts on auth and credit failures. 
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the response.
+ * @param body - the chat-completions body to stream.
+   */
   async chat(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
     const selected = await readWorkBuddyIntlActiveId(this.credentials)
     const pool = await this.accounts()
@@ -1073,7 +1204,7 @@ export class WorkBuddyIntlClient {
         try {
           credential = await this.refresh(credential)
         } catch (error) {
-          this.cooldowns.set(account.id, Date.now() + WORKBUDDY_INTL_AUTH_COOLDOWN_MS)
+          this.cooldowns.set(account.id, Date.now() + WORKBUDDY_INTL_COOLDOWN_BY_CATEGORY.auth)
           lastStatus = 401
           lastDetail = failureDetail(error)
           continue
@@ -1097,16 +1228,17 @@ export class WorkBuddyIntlClient {
    * Park an account that could not serve this turn and return the redacted
    * reason.
    *
-   * Credit exhaustion is an account-level fact, so it parks the account for
-   * longer than a rate hint; both walk the pool instead of failing the turn.
+   * The upstream's own delay always wins when it states one — a `Retry-After`, or a
+   * wait carried in the envelope — because that is a measurement where the table
+   * below is a policy. Credit exhaustion is an account-level fact, so it parks the
+   * account for longer than a rate hint; both walk the pool instead of failing the
+   * turn.
    */
   private async fail(account: WorkBuddyInternationalAccount, response: Response): Promise<string> {
     const raw = await response.text().catch(() => '')
     const detail = redact(raw)
     const wait = retryAfterMs(response) ?? cooldownFromBody(raw)
-      ?? (response.status === 402 ? WORKBUDDY_INTL_CREDIT_COOLDOWN_MS
-        : response.status === 429 ? WORKBUDDY_INTL_RATE_COOLDOWN_MS
-          : WORKBUDDY_INTL_AUTH_COOLDOWN_MS)
+      ?? WORKBUDDY_INTL_COOLDOWN_BY_CATEGORY[upstreamStatusCategory(response.status)]
     this.cooldowns.set(account.id, Date.now() + wait)
     return detail
   }
@@ -1262,16 +1394,18 @@ export class WorkBuddyIntlClient {
   }
 }
 
-/** Map WorkBuddy failures onto the shared LLM error vocabulary. */
+/**
+ * Map WorkBuddy failures onto the shared LLM error vocabulary.
+ *
+ * The status policy is the shared one: `401` is the sign-in itself, while
+ * `402/403/429` are credit and rate gates whose credential is still good and whose
+ * code must not send the user back to sign in over a spent quota. `fail()` picks a
+ * cooldown for the same statuses when it parks the account that could not serve the
+ * turn.
+ */
 function workBuddyLlmError(error: unknown): LlmError {
   if (error instanceof WorkBuddyIntlError) {
-    // 401 is the sign-in itself; 402/403/429 are credit and rate gates whose
-    // credential is still good, and reporting those as AUTH would tell the user
-    // to sign in again over a spent quota.
-    const code = error.status === 401 ? 'AUTH'
-      : error.status === 402 || error.status === 403 || error.status === 429 ? 'RATE_LIMIT'
-        : error.status >= 500 ? 'SERVER'
-          : `HTTP_${error.status}`
+    const code = llmCodeForUpstreamStatus(error.status)
     const detail = error.detail.trim()
     const suffix = detail === '' ? '' : `（上游：${detail}）`
     const message = error.status === 401
@@ -1308,11 +1442,17 @@ export class WorkBuddyIntlAdapter extends LlmAdapter {
     // groups from what this method returns: an empty list hid WorkBuddy from
     // the model selector entirely, so nobody could see what signing in adds.
     // The documented route is advertised instead, marked unavailable below.
-    const models = signedIn ? await this.client.freeModels() : freeRoutesOf([])
+    // The whole directory, not only its free tier. A metered route is a route
+    // the user may deliberately pay for, and the checklist that lists it is the
+    // only place they can say so — a directory that hid it could never be
+    // switched on. The row's own price decides whether it starts in the picker
+    // (see `model-price.ts`), so listing it here is not the same as offering it.
+    const models = signedIn ? await this.client.allModels() : [WORKBUDDY_INTL_FALLBACK_ROUTE]
     return models.map(model => ({
       provider,
       id: model.id,
       name: model.displayName,
+      description: workBuddyModelDescription(model),
       inputModalities: model.supportsImages ? ['text', 'image'] as const : ['text'] as const,
       ...signedIn
         ? { availability: 'available' as const }
@@ -1321,7 +1461,10 @@ export class WorkBuddyIntlAdapter extends LlmAdapter {
   }
 
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
-    const known = (await this.client.freeModels()).find(candidate => candidate.id === model)
+    // The whole directory: a metered route the user switched on has to resolve
+    // to its own name, context window, and reasoning ladder, and reading only
+    // the free tier would answer with the generic defaults for it.
+    const known = (await this.client.allModels()).find(candidate => candidate.id === model)
     const reasoning = workBuddyReasoningOptions(known)
     return {
       provider,

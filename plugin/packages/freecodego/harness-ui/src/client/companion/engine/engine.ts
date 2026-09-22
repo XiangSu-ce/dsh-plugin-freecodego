@@ -3,11 +3,11 @@
  * notice; PROVENANCE.md in this directory holds its source and upstream hash.
  */
 /* v8 ignore file -- vendored third-party engine; PROVENANCE.md records its source and per-file hashes, and the behaviour built on the engine is covered by this package's companion specs. */
-import { arcRender, type ArcRender, type DotRender } from './decor'
-import { blendExpression, type BotExpression } from './expressions'
-import { decalageDesYeux } from './eyefit'
-import { blinkScale, eyePoses, liveliness } from './face'
-import { clamp, easings, lerp, r2 } from './math'
+import { arcRender, type ArcRender, type DotRender } from './decor.ts'
+import { blendExpression, type BotExpression } from './expressions.ts'
+import { decalageDesYeux } from './eyefit.ts'
+import { blinkScale, eyePoses, liveliness } from './face.ts'
+import { clamp, easings, lerp, r2 } from './math.ts'
 import {
   blend,
   capsulePath,
@@ -16,8 +16,8 @@ import {
   toPoints,
   type Point,
   type Silhouette,
-} from './shape'
-import { STATE_BY_ID, type Pose, type StateDef, type StateId } from './states'
+} from './shape.ts'
+import { STATE_BY_ID, type Pose, type StateDef, type StateId } from './states.ts'
 
 export interface RenderedEye {
   d: string
@@ -245,6 +245,7 @@ export class BotEngine {
    * Meme contrat que `setShape` par ailleurs : l'etat externe entre par un
    * setter horodate, jamais par une variable lue pendant `sample`, sinon le
    * moteur cesse d'etre une fonction pure du temps.
+   * @param now - current time in epoch milliseconds.
    */
   setLook(look: Look | null, now: number, morph = BotEngine.LOOK_MORPH) {
     /*
@@ -353,6 +354,7 @@ export class BotEngine {
    *
    * `sample` reste une fonction pure du temps : comme `setState`, ceci est un setter DATE,
    * appele par le pilote de la sequence, jamais pendant un echantillonnage.
+   * @param now - current time in epoch milliseconds.
    */
   reset(id: StateId, now: number) {
     this.cur = id
@@ -412,6 +414,7 @@ export class BotEngine {
    * exactement l'image affichee. La lecture d'un montage, dont les blocs durent au moins
    * le plus long fondu (`MIN_BLOCK`), ne fige donc jamais rien et rend au bit ce qu'elle
    * rendait.
+   * @param now - current time in epoch milliseconds.
    */
   setState(id: StateId, now: number) {
     if (id === this.cur) return

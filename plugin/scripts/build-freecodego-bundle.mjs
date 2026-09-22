@@ -87,7 +87,7 @@ function buildHost() {
     '--external:@deepseek-ai/*',
     '--external:@anthropic-ai/claude-agent-sdk',
     '--external:eventsource-parser', '--external:eventsource-parser/*',
-    '--external:js-yaml', '--external:tar', '--external:zod',
+    '--external:js-yaml', '--external:tar', '--external:typescript', '--external:zod',
     ...aliasArgs(),
   ])
 }
@@ -98,6 +98,9 @@ function buildWorker(input, name, externals) {
     '--bundle', '--platform=node', '--format=esm', '--target=es2024',
     '--outfile=' + join(output, 'workers', name),
     '--external:@deepseek-ai/*',
+    // The workflow static gate loads the compiler at runtime, so it must stay a
+    // real dependency rather than being inlined into every worker artifact.
+    '--external:typescript',
     ...externals.flatMap(value => [`--external:${value}`]),
   ])
 }
@@ -108,6 +111,7 @@ function buildPlugin(input, name) {
     '--bundle', '--platform=node', '--format=esm', '--target=es2024',
     '--outfile=' + join(output, name),
     '--external:@deepseek-ai/*',
+    '--external:typescript',
     ...aliasArgs(),
   ])
 }

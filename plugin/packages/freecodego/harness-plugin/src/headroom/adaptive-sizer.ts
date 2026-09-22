@@ -49,7 +49,10 @@ function popcount32(x: number): number {
   return (Math.imul(v, 0x0101_0101) >>> 24)
 }
 
-/** 64-bit SimHash fingerprint of a text string: each char 4-gram hashed and bit-voted. */
+/** 64-bit SimHash fingerprint of a text string: each char 4-gram hashed and bit-voted. 
+ * @returns the simhash.
+ * @param text - the text to process.
+ */
 export function simhash(text: string): Simhash {
   const lower = text.toLowerCase()
   const n = lower.length
@@ -79,12 +82,24 @@ export function simhash(text: string): Simhash {
   return { hi: fpHi, lo: fpLo }
 }
 
-/** Hamming distance between two 64-bit SimHash fingerprints. */
+/**
+ * Hamming distance between two 64-bit SimHash fingerprints.
+ * @param a - the first fingerprint.
+ * @param b - the second fingerprint.
+ * @returns the number of differing bits across both halves.
+ */
 export function hammingDistance(a: Simhash, b: Simhash): number {
   return popcount32(a.hi ^ b.hi) + popcount32(a.lo ^ b.lo)
 }
 
-/** Count distinct content groups via SimHash + greedy clustering. */
+/**
+ * Count distinct content groups via SimHash + greedy clustering. Sets beyond
+ * the sample cap are estimated from an evenly-spaced sample and scaled back to
+ * the population.
+ * @param items - the items to process, in order.
+ * @param threshold - maximum Hamming distance for two items to share a cluster.
+ * @returns the count of distinct content groups.
+ */
 export function countUniqueSimhash(items: readonly string[], threshold: number): number {
   if (items.length === 0) return 0
   // The greedy clustering pass is O(n × clusters) and degenerates to O(n²) on
@@ -106,7 +121,10 @@ export function countUniqueSimhash(items: readonly string[], threshold: number):
   return Math.round(clusters.length * items.length / CLUSTER_SAMPLE_CAP)
 }
 
-/** Cumulative unique word-bigram coverage curve; CJK items use char bigrams. */
+/** Cumulative unique word-bigram coverage curve; CJK items use char bigrams. 
+ * @param items - the items to process, in order.
+ * @returns the cumulative distinct-bigram count after each item, in order.
+ */
 export function computeUniqueBigramCurve(items: readonly string[]): readonly number[] {
   const seen = new Set<string>()
   const curve: number[] = []
@@ -129,7 +147,12 @@ export function computeUniqueBigramCurve(items: readonly string[]): readonly num
   return curve
 }
 
-/** Find the knee in a monotonically-increasing curve (Kneedle). Returns a 1-based keep count. */
+/**
+ * Find the knee in a monotonically-increasing curve (Kneedle).
+ * @param curve - the cumulative coverage curve to inspect.
+ * @returns the 1-based keep count at the knee, or undefined when the curve is
+ * too short or too flat to have one.
+ */
 export function findKnee(curve: readonly number[]): number | undefined {
   const n = curve.length
   if (n < 3) return undefined
@@ -155,7 +178,16 @@ function zlibCompressedLen(text: string): number {
   return deflateRawSync(Buffer.from(text, 'utf8'), { level: 1 }).length
 }
 
-/** zlib-ratio sanity check: if the kept subset compresses far better than the full set, bump k by 20%. */
+/**
+ * zlib-ratio sanity check: if the kept subset compresses far better than the
+ * full set, bump k by 20%. Payloads under 200 bytes are left alone, where the
+ * ratio is too noisy to mean anything.
+ * @param items - the items to process, in order.
+ * @param k - the candidate keep count to validate.
+ * @param maxK - upper bound on the bumped keep count.
+ * @param tolerance - allowed ratio gap before the bump applies.
+ * @returns the validated keep count.
+ */
 export function validateWithZlib(items: readonly string[], k: number, maxK: number, tolerance = 0.15): number {
   if (k >= items.length || k >= maxK) return k
   const fullText = items.join('\n')
@@ -175,6 +207,7 @@ export function validateWithZlib(items: readonly string[], k: number, maxK: numb
  * @param bias - multiplier on the knee point (>1 keeps more).
  * @param minK - lower bound on the return value.
  * @param maxK - upper bound; omitted means "up to items.length".
+ * @returns the number of items to keep.
  */
 export function computeOptimalK(items: readonly string[], bias: number, minK: number, maxK?: number): number {
   const n = items.length

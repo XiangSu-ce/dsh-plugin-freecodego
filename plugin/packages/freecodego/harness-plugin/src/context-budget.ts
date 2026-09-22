@@ -57,6 +57,13 @@ export const CONTEXT_BAND_AT: Readonly<Record<Exclude<ContextBand, 'unknown'>, n
   over: 1,
 }
 
+/**
+ * What the budget report is computed from.
+ *
+ * `measured` travels with the figures rather than being decided at render time,
+ * because a heuristic price that is presented as provider usage is the one claim
+ * this surface must not make.
+ */
 export interface ContextBudgetInput {
   /** Current request pressure in tokens, as the token-meter measured it. */
   readonly usedTokens: number
@@ -71,6 +78,13 @@ export interface ContextBudgetInput {
   readonly responseReserve?: number | undefined
 }
 
+/**
+ * One session's context budget, as the fragment, the status line and the band
+ * memory all read it.
+ *
+ * `band` is derived here rather than by each caller, so the text a model is shown
+ * and the band the store remembers cannot be computed from different numbers.
+ */
 export interface ContextBudgetReport {
   readonly usedTokens: number
   readonly contextWindow?: number | undefined
@@ -89,6 +103,10 @@ export interface ContextBudgetReport {
  * The comparison uses the *remaining* room after the response reserve, because a
  * window 90% full with a large reply still to come is tighter than the same
  * window with a short one.
+ * @param usedTokens - current request pressure in tokens.
+ * @param contextWindow - the routed model's advertised window, when it advertises one.
+ * @param responseReserve - tokens the reply needs, taken out of the usable room.
+ * @returns The band, or `unknown` when no usable window is known.
  */
 export function classifyContextPressure(usedTokens: number, contextWindow: number | undefined, responseReserve = 0): ContextBand {
   if (contextWindow === undefined || !Number.isFinite(contextWindow) || contextWindow <= 0) return 'unknown'
@@ -101,6 +119,15 @@ export function classifyContextPressure(usedTokens: number, contextWindow: numbe
   return 'ample'
 }
 
+/**
+ * Compute one session's budget report.
+ *
+ * The reserve is clamped to the room that exists, so a session already past its
+ * window is not reported as over by the overrun *plus* the reply it planned: the
+ * shortfall is the same number whether or not a reply was reserved for.
+ * @param input - the measured pressure and the window it is measured against.
+ * @returns The figures, the band, and whether they came from provider usage.
+ */
 export function contextBudgetReport(input: ContextBudgetInput): ContextBudgetReport {
   const usedTokens = Math.max(0, Math.round(input.usedTokens))
   const responseReserve = Math.max(0, Math.round(input.responseReserve ?? 0))
@@ -167,6 +194,9 @@ export const CONTEXT_BUDGET_REPLACEMENT_NOTICE = 'This context-budget figure rep
  * Kept to a fixed shape so that crossing a band changes as few bytes as
  * possible, and so the text never names a threshold the model should obey
  * mechanically.
+ * @param report - the budget to render.
+ * @param options - whether this fragment replaces one the session already saw.
+ * @returns The lines injected into the conversation, remedy included.
  */
 export function contextBudgetFragment(report: ContextBudgetReport, options: { readonly replaces?: boolean } = {}): string {
   const lines = [`Context budget (${report.band}): ${count(report.usedTokens)} tokens in use${report.measured ? '' : ' (heuristic estimate, not provider usage)'}.`]
@@ -183,6 +213,8 @@ export function contextBudgetFragment(report: ContextBudgetReport, options: { re
  *
  * Same numbers as the fragment, no remedy text: a report is for a reader who is
  * deciding, not for a model that has to act inside the turn.
+ * @param report - the budget to describe.
+ * @returns One line naming the figures, the band, and that no window was advertised.
  */
 export function describeContextBudget(report: ContextBudgetReport): string {
   const usage = `${count(report.usedTokens)} tokens used${report.measured ? '' : ' (estimated)'}`
@@ -192,6 +224,13 @@ export function describeContextBudget(report: ContextBudgetReport): string {
   return `${usage} of ${count(report.contextWindow)} (${percent(report.usedFraction)}), ${count(Math.max(0, report.remainingTokens))} remaining after a ${count(report.responseReserve)}-token reply reserve — ${report.band}`
 }
 
+/**
+ * What the fragment engine should do with this session's budget right now.
+ *
+ * `changed` is what suppresses the injection entirely: the fragment is rebuilt only
+ * when a band is crossed, which is what keeps the injected prefix stable and the
+ * cache prefix with it.
+ */
 export interface BudgetPlan {
   /** Whether the injected fragment differs from what this session last received. */
   readonly changed: boolean
@@ -209,7 +248,11 @@ export interface BudgetPlan {
 export class ContextBudgetStore {
   private readonly bands = new Map<string, ContextBand>()
 
-  /** Band last injected for a session, or `undefined` if it has never been told. */
+  /**
+   * Band last injected for a session, or `undefined` if it has never been told.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns The band last committed for it, or `undefined` when none was.
+   */
   bandFor(sessionId: string): ContextBand | undefined {
     return this.bands.get(sessionId)
   }
@@ -220,6 +263,9 @@ export class ContextBudgetStore {
    * `commit()` is separate so a caller that measures but does not send (an
    * aborted turn, a session whose fragment was suppressed) does not desynchronize
    * the store from what the model was actually shown.
+   * @param sessionId - the Harness session this operation acts on.
+   * @param report - the budget just measured for that session.
+   * @returns Whether the band changed, and the text to inject when it did.
    */
   plan(sessionId: string, report: ContextBudgetReport): BudgetPlan {
     const band = report.band
@@ -234,14 +280,24 @@ export class ContextBudgetStore {
     }
   }
 
+  /**
+   * Remember the band that was actually injected.
+   * @param sessionId - the Harness session this operation acts on.
+   * @param band - the band its fragment announced.
+   */
   commit(sessionId: string, band: ContextBand): void {
     this.bands.set(sessionId, band)
   }
 
+  /**
+   * Forget a session's band, so its next fragment is announced in full.
+   * @param sessionId - the session that ended or was compacted away.
+   */
   forget(sessionId: string): void {
     this.bands.delete(sessionId)
   }
 
+  /** Drop every remembered band, for a Host whose sessions are all gone. */
   clear(): void {
     this.bands.clear()
   }

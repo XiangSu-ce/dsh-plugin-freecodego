@@ -80,7 +80,7 @@
   border-radius: 50%;
   /* Every full-round radius pairs this, or the smoothing token squarcles it. */
   corner-shape: round;
-  background: var(--fcg-text-dimmed, var(--fcg-text-tertiary));
+  background: var(--fcg-text-tertiary);
 }
 .dotRunning {
   background: var(--fcg-brand);
@@ -110,7 +110,7 @@
   font: inherit;
 }
 .contentButton:disabled { cursor: default; }
-.contentButton:not(:disabled):hover .title strong { color: var(--fcg-link, var(--fcg-brand)); }
+.contentButton:not(:disabled):hover .title strong { color: var(--fcg-brand); }
 
 .content { min-width: 0; flex: 1; display: grid; gap: 3px; }
 .title { display: flex; gap: var(--fcg-space-2); align-items: center; min-width: 0; }

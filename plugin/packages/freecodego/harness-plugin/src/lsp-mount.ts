@@ -40,6 +40,7 @@ export interface LspSubprocessLike {
   readonly resolveExecutable: (command: string, env?: Record<string, string>, signal?: AbortSignal) => Promise<unknown>
 }
 
+/** What a caller gets back from installing the LSP mount. */
 export interface LspMountDeps {
   /** Probe lazily and cache; return the live mount state. */
   readonly status: () => Promise<FreeCodeGoLspMountStatus>
@@ -52,6 +53,7 @@ interface LspRuntimeLike {
   readonly subprocess: LspSubprocessLike | undefined
 }
 
+/** Probes for language servers and mounts the LSP stack when any are found. */
 export class FreeCodeGoLspMount {
   private probePromise?: Promise<FreeCodeGoLspMountStatus>
   private mounted = false
@@ -59,7 +61,9 @@ export class FreeCodeGoLspMount {
 
   constructor(private readonly ctx: LspRuntimeLike, private readonly settings: { get(): unknown } | undefined) {}
 
-  /** Probe PATH once and mount the stack when servers exist. Fails soft. */
+  /** Probe PATH once and mount the stack when servers exist. Fails soft. 
+   * @returns the lsp Mount Status.
+   */
   async status(): Promise<FreeCodeGoLspMountStatus> {
     this.probePromise ??= this.probeAndMount()
     return this.probePromise
@@ -126,13 +130,19 @@ export class FreeCodeGoLspMount {
     this.ctx.effect(() => { this.mounted = false }, 'freecodego: LSP stack disposed')
   }
 
-  /** Synchronous last-known state for status remotes. */
+  /** Synchronous last-known state for status remotes. 
+   * @returns the lsp Mount Status.
+   */
   snapshot(): FreeCodeGoLspMountStatus {
     return this.cachedStatus ?? { enabled: this.enabled(), mounted: this.mounted, servers: [] }
   }
 }
 
-/** Install the probe-based LSP mount (status-only until a session asks). */
+/** Install the probe-based LSP mount (status-only until a session asks). 
+ * @param ctx - context carrying the services this call reads.
+ * @param settings - the settings scope that decides whether the mount is wanted.
+ * @returns the lsp Mount Deps.
+ */
 export function installFreeCodeGoLspMount(ctx: Context, settings: { get(): unknown } | undefined): LspMountDeps {
   const runtime = ctx as unknown as LspRuntimeLike
   const mount = new FreeCodeGoLspMount(runtime, settings)

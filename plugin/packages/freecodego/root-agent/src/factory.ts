@@ -36,6 +36,9 @@ interface SandboxPolicyLike {
  * with two policies. A read that yields no mode — service not mounted, or a
  * value outside the vocabulary — returns `undefined` so the engine keeps its own
  * default instead of the plugin inventing a restriction the user never chose.
+ * @param ctx - context carrying the Host sandbox policy service.
+ * @param session - the Harness session whose policy is being read.
+ * @returns the mode the engine must run under, or `undefined` when no readable policy is mounted.
  */
 export function nativeSandboxModeForSession(ctx: Context, session: Session): NativeSandboxMode | undefined {
   const policy = ctx.get('sandboxPolicy') as SandboxPolicyLike | undefined

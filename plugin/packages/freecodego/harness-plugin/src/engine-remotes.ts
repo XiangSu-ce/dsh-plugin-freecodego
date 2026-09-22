@@ -27,6 +27,8 @@ import { AgnesAdapter, AgnesClient } from './agnes.ts'
 import { ClineAdapter, ClineClient } from './cline.ts'
 import { WorkBuddyIntlClient } from './workbuddy-intl.ts'
 import { WorkBuddyPoolService } from './workbuddy-pool.ts'
+import { QoderClient } from './qoder-intl.ts'
+import { TraeClient } from './trae-intl.ts'
 import type { ClaudeProtocolBridge } from './claude-protocol-bridge.ts'
 import type { FreeCodeGoCapabilityRegistry } from './capabilities.ts'
 import { installFreeCodeGoPluginConflictGuard } from './plugin-conflicts.ts'
@@ -36,7 +38,7 @@ import { deletePersistedSession } from './session-storage-utils.ts'
 import { readPersistedEvents, type SessionDeletionPersistence, type SessionEventsPersistence } from './session-storage-utils.ts'
 import { gatewayModelId, inferMediaCategory } from './media-utils.ts'
 import { agnesMediaCategory } from './agnes.ts'
-import { record } from './media-generation.ts'
+import { asRecord as record } from './untrusted-json.ts'
 import { normalizeWireProtocol, SUPPORTED_WIRE_PROTOCOLS } from './openai-compatible-adapter.ts'
 import { AGNES_TEXT_MODEL_IDS } from './engineering-remotes.ts'
 import { enrichCatalogChoices, mergeCatalogModels, parseGroupPin } from './model-catalog.ts'
@@ -93,11 +95,19 @@ export interface EngineRemotesHost {
   readonly setCline: (cline: ClineClient | undefined) => void
   readonly setWorkbuddy: (workbuddy: WorkBuddyIntlClient | undefined) => void
   readonly setWorkbuddyPool: (pool: WorkBuddyPoolService | undefined) => void
+  readonly setQoder: (qoder: QoderClient | undefined) => void
+  readonly setTrae: (trae: TraeClient | undefined) => void
   readonly setAccount: (account: FreeCodeGoAccountCoordinator | undefined) => void
   readonly setApi: (api: FreeCodeGoApiClient | undefined) => void
   readonly setGatewayBaseUrl: (baseUrl: string) => void
 }
 
+/**
+ * Persist the engine future sessions open with.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param engine - engine id to persist.
+ * @returns the persisted engine.
+ */
 export async function setDefaultEngine(host: EngineRemotesHost, engine: string): Promise<{ readonly engine: 'deepseek' | 'codex' | 'claude' }> {
   if (engine !== 'deepseek' && engine !== 'codex' && engine !== 'claude') throw new Error('agent engine must be deepseek, codex, or claude')
   if (engine === 'codex' && !host.codexRuntime().status().installed) throw new Error('CODEX_RUNTIME_NOT_INSTALLED: install Codex before selecting it')
@@ -113,7 +123,11 @@ export async function setDefaultEngine(host: EngineRemotesHost, engine: string):
  * An empty model explicitly clears the persisted default, after which the Host
  * falls back to config/engine defaults. The picker no longer offers this as a
  * standing "backend default" choice — it was a no-op wherever no default was
- * stored — but clearing stays supported for callers that hold the setting. */
+ * stored — but clearing stays supported for callers that hold the setting. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param model - model id the turn runs.
+ * @returns the persisted model id.
+ */
 export async function setDefaultModel(host: EngineRemotesHost, model: string): Promise<{ readonly model: string }> {
   if (model.trim() === '') {
     if (host.policy.get() === undefined) throw new Error('FreeCodeGo settings are not configured')
@@ -151,7 +165,10 @@ export async function setDefaultModel(host: EngineRemotesHost, model: string): P
   return { model: persisted }
 }
 
-/** Root-engine defaults are read by the Host API only for new identities. */
+/** Root-engine defaults are read by the Host API only for new identities. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the default engine, provider, and model new identities start with.
+ */
 export function defaultAgentOptions(host: EngineRemotesHost): { readonly engine: 'deepseek' | 'codex' | 'claude'; readonly provider: string; readonly model?: string } {
   const configuredEngine = host.policy.get()?.defaultEngine ?? host.config.defaultEngine ?? 'deepseek'
   const engine = configuredEngine === 'codex' || configuredEngine === 'claude' ? configuredEngine : 'deepseek'
@@ -201,7 +218,12 @@ function providerForModelId(host: EngineRemotesHost, model: string): string | un
   return host.configuredProviderRoute(normalized)?.provider
 }
 
-/** Resolve the native execution plan through the RC.1 AgentFactory seam. */
+/** Resolve the native execution plan through the RC.1 AgentFactory seam. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param restore - the durable engine plan being restored, when reopening an existing session.
+ * @param requested - the caller's options to layer over that plan.
+ * @returns the options a native child agent is created with.
+ */
 export function nativeAgentOptionsAlpha(
   host: EngineRemotesHost,
   restore?: { readonly engine: 'codex' | 'claude'; readonly modelId?: string; readonly provider?: string },
@@ -276,7 +298,10 @@ export function nativeAgentOptionsAlpha(
   }
 }
 
-/** Return the redacted engine directory consumed by settings surfaces. */
+/** Return the redacted engine directory consumed by settings surfaces. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engine directory settings surfaces render.
+ */
 export function catalog(host: EngineRemotesHost): { readonly defaultEngine: FreeCodeGoEngineId; readonly defaultModel?: string; readonly engines: readonly FreeCodeGoEngineSnapshot[] } {
   const backendReady = host.api !== undefined && host.account !== undefined
   const codex = host.codexRuntime().status()
@@ -306,6 +331,8 @@ export function catalog(host: EngineRemotesHost): { readonly defaultEngine: Free
  * The generic Harness SessionController catalog intentionally carries only
  * portable model fields. Preserve FreeCodeGo credential readiness here so
  * our private picker can render known-but-unconfigured routes as disabled.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the model Availability rows, in backend order.
  */
 export async function modelAvailability(host: EngineRemotesHost): Promise<readonly FreeCodeGoModelAvailability[]> {
   const states = new Map<string, FreeCodeGoModelAvailability>()
@@ -340,7 +367,11 @@ export async function modelAvailability(host: EngineRemotesHost): Promise<readon
 }
 
 /** Session-local execution fact for the UI. This is log-derived rather than
- * inferred from the currently selected toolbar default. */
+ * inferred from the currently selected toolbar default. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engine fact recorded for that session.
+ */
 export async function sessionEngineStatus(host: EngineRemotesHost, sessionId: string): Promise<{ readonly engine: string; readonly executor: 'native' | 'adapter-loop'; readonly provider: string; readonly model: string }> {
   if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('session engine status session id is invalid')
   const session = (host.ctx.get('sessions') as { get(id: string): ({ snapshotEvents?: () => readonly { readonly type: string; readonly data: Record<string, unknown> }[]; events?: readonly { readonly type: string; readonly data: Record<string, unknown> }[] } | undefined)   } | undefined)?.get(sessionId)
@@ -381,7 +412,11 @@ export async function sessionEngineStatus(host: EngineRemotesHost, sessionId: st
   }
 }
 
-/** Permanently delete one idle session and withdraw it from workspace navigation. */
+/** Permanently delete one idle session and withdraw it from workspace navigation. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns true once the session is gone.
+ */
 export async function sessionDelete(host: EngineRemotesHost, sessionId: string): Promise<{ readonly deleted: true }> {
   if (!host.capabilities.configuration().sessionDeleteEnabled) throw new Error('Session delete is disabled in FreeCodeGo settings')
   if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('session id is invalid')
@@ -425,24 +460,39 @@ export async function sessionDelete(host: EngineRemotesHost, sessionId: string):
   return { deleted: true }
 }
 
-/** Return the current cross-engine MCP and Skill capability inventory. */
+/** Return the current cross-engine MCP and Skill capability inventory. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the capability snapshot the Host reports.
+ */
 export async function capabilitiesSnapshot(host: EngineRemotesHost): Promise<FreeCodeGoCapabilitySnapshot> {
   return host.capabilities.snapshot()
 }
 
-/** Persist MCP and Skill switches; disabled capabilities are not mounted for future sessions. */
+/** Persist MCP and Skill switches; disabled capabilities are not mounted for future sessions. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the capability snapshot the Host reports.
+ * @param input - the capability switches to persist.
+ */
 export async function capabilitiesSetEnabled(host: EngineRemotesHost, input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }): Promise<FreeCodeGoCapabilitySnapshot> {
   if (input === null || typeof input !== 'object') throw new Error('capability switches must be an object')
   return host.capabilities.setEnabled(input)
 }
 
-/** Persist a manual model capability category without altering native provider settings. */
+/** Persist a manual model capability category without altering native provider settings. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the capability snapshot the Host reports.
+ * @param input - the model key and the category to store for it.
+ */
 export async function modelCategorySet(host: EngineRemotesHost, input: { readonly key: string; readonly category?: FreeCodeGoModelCategory }): Promise<FreeCodeGoCapabilitySnapshot> {
   if (input === null || typeof input !== 'object') throw new Error('model category update must be an object')
   return host.capabilities.setModelCategory(input)
 }
 
-/** Resolve native-worker requests through the same Host-owned capability inventory used by DeepSeek. */
+/** Resolve native-worker requests through the same Host-owned capability inventory used by DeepSeek. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the backend payload, of unknown shape.
+ * @param request - the bridge call the native worker asked for.
+ */
 export async function claudeBridgeHandle(host: EngineRemotesHost, request: {
   readonly bridge: string
   readonly op: string
@@ -493,23 +543,38 @@ export async function claudeBridgeHandle(host: EngineRemotesHost, request: {
   throw new Error(`unsupported FreeCodeGo capability bridge "${request.bridge}/${request.op}"`)
 }
 
-/** Read automatic third-party plugin conflict protection state and repair history. */
+/** Read automatic third-party plugin conflict protection state and repair history. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the plugin Conflict Status.
+ */
 export function pluginConflictStatus(host: EngineRemotesHost): FreeCodeGoPluginConflictStatus {
   return host.pluginConflictGuard.snapshot()
 }
 
-/** Enable or disable automatic third-party plugin conflict prevention. */
+/** Enable or disable automatic third-party plugin conflict prevention. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param enabled - whether this capability is switched on.
+ * @returns the plugin Conflict Status.
+ */
 export async function pluginConflictSetEnabled(host: EngineRemotesHost, enabled: boolean): Promise<FreeCodeGoPluginConflictStatus> {
   if (typeof enabled !== 'boolean') throw new Error('plugin conflict protection enabled must be a boolean')
   return host.pluginConflictGuard.setEnabled(enabled)
 }
 
-/** Save one third-party stdio or Streamable HTTP MCP server. */
+/** Save one third-party stdio or Streamable HTTP MCP server. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the capability snapshot the Host reports.
+ * @param input - the MCP server to save, carrying its id when it already exists.
+ */
 export async function mcpSave(host: EngineRemotesHost, input: Omit<FreeCodeGoMcpServer, 'id'> & { readonly id?: string }): Promise<FreeCodeGoCapabilitySnapshot> {
   return host.capabilities.saveMcpServer(input)
 }
 
-/** Remove one third-party MCP server. */
+/** Remove one third-party MCP server. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the capability snapshot the Host reports.
+ * @param id - id of the MCP server to remove.
+ */
 export async function mcpRemove(host: EngineRemotesHost, id: string): Promise<FreeCodeGoCapabilitySnapshot> {
   if (typeof id !== 'string' || id.trim() === '') throw new Error('MCP server id is required')
   return host.capabilities.removeMcpServer(id)
@@ -523,16 +588,29 @@ export async function mcpRemove(host: EngineRemotesHost, id: string): Promise<Fr
  * {@link capabilitiesSnapshot}, which discovers the global layer, so reading a
  * row back with a session scope could resolve a different Skill of the same
  * name than the one the user clicked.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the skill Detail.
+ * @param input - the Skill and the companion file to read.
  */
 export async function skillDetail(host: EngineRemotesHost, input: FreeCodeGoSkillDetailRequest): Promise<FreeCodeGoSkillDetail> {
   return host.capabilities.readSkill(input.name, input.file)
 }
 
+/**
+ * Save one additional filesystem Skill root.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param input - the Skill root to save, carrying its id when it already exists.
+ * @returns the capability snapshot the Host reports.
+ */
 export async function skillRootSave(host: EngineRemotesHost, input: Omit<FreeCodeGoSkillRoot, 'id'> & { readonly id?: string }): Promise<FreeCodeGoCapabilitySnapshot> {
   return host.capabilities.saveSkillRoot(input)
 }
 
-/** Remove one additional filesystem Skill root. */
+/** Remove one additional filesystem Skill root. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the capability snapshot the Host reports.
+ * @param id - id of the Skill root to remove.
+ */
 export async function skillRootRemove(host: EngineRemotesHost, id: string): Promise<FreeCodeGoCapabilitySnapshot> {
   if (typeof id !== 'string' || id.trim() === '') throw new Error('Skill root id is required')
   return host.capabilities.removeSkillRoot(id)
@@ -543,12 +621,21 @@ export async function skillRootRemove(host: EngineRemotesHost, id: string): Prom
  *
  * `modelInvocable: undefined` clears the override, restoring the Skill file's
  * own declaration.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the capability snapshot the Host reports.
+ * @param input - the Skill name and its model-invocability override.
  */
 export async function skillInvocationSet(host: EngineRemotesHost, input: { readonly name: string; readonly modelInvocable?: boolean }): Promise<FreeCodeGoCapabilitySnapshot> {
   if (input === null || typeof input !== 'object') throw new Error('Skill invocation input is required')
   return host.capabilities.setSkillInvocation(input)
 }
 
+/**
+ * Install one official Codex runtime package.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param packageID - the package to install; defaults to this platform's.
+ * @returns the install state after the swap.
+ */
 export async function codexRuntimeInstall(host: EngineRemotesHost, packageID?: string): Promise<FreeCodeGoCodexRuntimeStatus> {
   setEngineAvailability(host.agentEngines, 'codex', 'updating')
   try {
@@ -561,12 +648,23 @@ export async function codexRuntimeInstall(host: EngineRemotesHost, packageID?: s
   }
 }
 
+/**
+ * Remove the installed Codex runtime.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the install state after removal.
+ */
 export async function codexRuntimeRemove(host: EngineRemotesHost): Promise<FreeCodeGoCodexRuntimeStatus> {
   const result = await host.codexRuntime().remove()
   setEngineAvailability(host.agentEngines, 'codex', 'unavailable')
   return result
 }
 
+/**
+ * Install one official Claude Agent SDK runtime package.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param packageID - the package to install; defaults to this platform's.
+ * @returns the install state after the swap.
+ */
 export async function claudeRuntimeInstall(host: EngineRemotesHost, packageID?: string): Promise<FreeCodeGoClaudeRuntimeStatus> {
   // Mirror the codex flow: signal the install, map the result to availability,
   // and restore a honest state when the installation fails.
@@ -581,13 +679,21 @@ export async function claudeRuntimeInstall(host: EngineRemotesHost, packageID?: 
   }
 }
 
+/**
+ * Remove the installed Claude Agent SDK runtime.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the install state after removal.
+ */
 export async function claudeRuntimeRemove(host: EngineRemotesHost): Promise<FreeCodeGoClaudeRuntimeStatus> {
   const result = await host.claudeRuntime().remove()
   setEngineAvailability(host.agentEngines, 'claude', 'unavailable')
   return result
 }
 
-/** Return a dynamic opener; each session revalidates the installed artifact. */
+/** Return a dynamic opener; each session revalidates the installed artifact. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the native Agent Runtime Openers.
+ */
 export function nativeRuntimeOpeners(host: EngineRemotesHost): NativeAgentRuntimeOpeners {
   return {
     codex: async (options) => {
@@ -682,6 +788,11 @@ function mediaGuidance(
  * not the callable one: this transport advertises Harness tools as
  * `mcp__freecodego-host__freecodego_harness_<name>`, so a model that followed
  * the instruction called a tool that does not exist under that name.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param agent - the agent this call applies to.
+ * @param route - the provider, model, and reasoning effort this session prompts with.
+ * @param workspace - the workspace the session runs in.
+ * @returns the developer instructions handed to the SDK subprocess.
  */
 export function claudeSystemPrompt(
   host: EngineRemotesHost,
@@ -719,7 +830,14 @@ export function claudeSystemPrompt(
   return sections.join('\n\n')
 }
 
-/** Codex App Server receives this as developer instructions for every native thread. */
+/** Codex App Server receives this as developer instructions for every native thread. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param agent - the agent this call applies to.
+ * @param _provider - the provider id; unused, kept for the shared prompt signature.
+ * @param _model - the model id; unused, kept for the shared prompt signature.
+ * @param workspace - the workspace the session runs in.
+ * @returns the developer instructions handed to the App Server thread.
+ */
 export function codexSystemPrompt(host: EngineRemotesHost, _provider: string, _model: string, workspace: string, agent?: Agent): string {
   const capabilities = host.capabilities.nativeConfiguration(agent)
   const harnessTools = capabilities.harnessTools.map(tool => tool.name).join(', ')
@@ -753,7 +871,9 @@ export function codexSystemPrompt(host: EngineRemotesHost, _provider: string, _m
   ].join('\n\n')
 }
 
-/** Rebuild Host-only clients whenever the persisted endpoint changes. */
+/** Rebuild Host-only clients whenever the persisted endpoint changes. 
+ * @param host - the Host surface this remote call reaches its services through.
+ */
 export function configureGateway(host: EngineRemotesHost): void {
   host.setAccount(undefined)
   host.setApi(undefined)
@@ -775,6 +895,15 @@ export function configureGateway(host: EngineRemotesHost): void {
     accounts: () => host.catalogs.workbuddyAccounts(),
     persist: (accountId, update) => host.catalogs.workbuddyApplyAccountState(accountId, update),
   }))
+  // Qoder is another Host-only pool: its token never leaves the vault, and the
+  // chat adapter rotates across the accounts the vault holds.
+  const qoder = credentials === undefined ? undefined : new QoderClient(credentials, account => host.catalogs.qoderPersistAccount(account))
+  host.setQoder(qoder)
+  // TRAE is the same shape of pool: an account is a token pair plus the machine
+  // identity it was authorized to, and a rotation is written back to the vault
+  // because the exchange spends the refresh token it used.
+  const trae = credentials === undefined ? undefined : new TraeClient(credentials, account => host.catalogs.traePersistAccount(account))
+  host.setTrae(trae)
   if (credentials !== undefined) {
     const gateway = host.config.gateway ?? {}
     const auth = new FreeCodeGoMobileAuthClient({
@@ -799,6 +928,9 @@ export function configureGateway(host: EngineRemotesHost): void {
  * Host-vault access token and select the model group through a route header.
  * Warp runtime keys are intentionally not used here because their default
  * route can differ from the selected model group.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param model - model id the turn runs.
+ * @returns the managed runtime and the route it resolved to.
  */
 export async function managedRuntime(host: EngineRemotesHost, model?: string): Promise<FreeCodeGoManagedRuntime & { readonly routeKey?: string; readonly protocol?: string }> {
   if (host.api === undefined || host.account === undefined) throw new Error('FreeCodeGo managed runtime is not configured')
@@ -815,7 +947,10 @@ export async function managedRuntime(host: EngineRemotesHost, model?: string): P
   })
 }
 
-/** Fetch a redacted remote catalog using the Host vault; tokens never cross this Remote boundary. */
+/** Fetch a redacted remote catalog using the Host vault; tokens never cross this Remote boundary. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the managed Catalog.
+ */
 export async function managedCatalog(host: EngineRemotesHost): Promise<FreeCodeGoManagedCatalog> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   await host.restoreAccount()
@@ -828,7 +963,12 @@ export async function managedCatalog(host: EngineRemotesHost): Promise<FreeCodeG
   })
 }
 
-/** Resolve direct upstream routes that stay outside the FreeCodeGo gateway. */
+/** Resolve direct upstream routes that stay outside the FreeCodeGo gateway. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param model - the model id being routed.
+ * @param allowExternalProviders - whether routes outside the FreeCodeGo gateway may be used.
+ * @returns the connection and runtime for that route, or `undefined` when the gateway serves it.
+ */
 export async function directConnection(host: EngineRemotesHost, model: string | undefined, allowExternalProviders = true): Promise<{ connection: Omit<import('./openai-compatible-adapter.ts').OpenAiCompatibleConnection, 'apiKey'>; runtime: FreeCodeGoManagedRuntime } | undefined> {
   if (model === undefined) return undefined
   const normalized = model.trim().toLowerCase()
@@ -888,7 +1028,12 @@ export async function directConnection(host: EngineRemotesHost, model: string | 
   return undefined
 }
 
-/** Route key only: the Remote contract used by the model picker and media routes. */
+/** Route key only: the Remote contract used by the model picker and media routes. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param model - model id the turn runs.
+ * @param accessToken - the Host-vault access token the lookup authenticates with.
+ * @returns the route key the model resolves to.
+ */
 export async function routeForModel(host: EngineRemotesHost, model: string, accessToken: string): Promise<string> {
   return (await routeForModelDetail(host, model, accessToken)).routeKey
 }
@@ -896,6 +1041,10 @@ export async function routeForModel(host: EngineRemotesHost, model: string, acce
 /**
  * Route key plus the chosen group's protocol, so the caller can pick a wire
  * (`openai` chat-completions vs `anthropic` Messages) for the request.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param model - model id the turn runs.
+ * @param accessToken - the Host-vault access token the lookup authenticates with.
+ * @returns the route key and the wire protocol of the group it chose.
  */
 export async function routeForModelDetail(
   host: EngineRemotesHost,
@@ -1001,6 +1150,12 @@ function isLockedChoice(choice: FreeCodeGoModelChoice): boolean {
  * It applies only when the user pinned nothing; when the model is not offered
  * through that group the first usable choice in backend order wins, so routing
  * stays a function of the backend's payload rather than of local heuristics.
+ * @param choices - the enabled group choices to pick from.
+ * @param preferredProtocols - protocols to favor, in order.
+ * @param preferredRouteKey - route key to favor.
+ * @param preferredGroupId - group id to favor.
+ * @param defaultGroupId - the account's default group id.
+ * @returns the choice to use, or `undefined` when none of them is enabled.
  */
 export function selectModelOptionChoice<T extends FreeCodeGoModelChoice>(
   choices: readonly T[],
@@ -1051,7 +1206,11 @@ function speakableChoices<T extends FreeCodeGoModelChoice>(pool: readonly T[], p
   })
 }
 
-/** Resolve a saved model against user-owned llm-pi-ai routes before falling back to FreeCodeGo. */
+/** Resolve a saved model against user-owned llm-pi-ai routes before falling back to FreeCodeGo. 
+ * @param ctx - context carrying the services this call reads.
+ * @param model - model id the turn runs.
+ * @returns the user-owned provider route for that model, or `undefined` when FreeCodeGo serves it.
+ */
 export function configuredProviderRoute(ctx: Context, model: string): { readonly provider: string; readonly model: string } | undefined {
   const llm = ctx.get('llm') as { listProviders?: () => readonly { readonly id: string }[] } | undefined
   for (const entry of llm?.listProviders?.() ?? []) {

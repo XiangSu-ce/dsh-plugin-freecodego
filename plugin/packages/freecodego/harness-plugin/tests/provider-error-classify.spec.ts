@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { LlmError } from '@deepseek-ai/dsh-llm'
 
 import { classifyProviderError } from '../src/provider-error-classify.ts'
 import { StreamIdleTimeoutError } from '../src/stream-deadline.ts'
@@ -88,6 +89,44 @@ describe('what is worth retrying', () => {
     // The transport's number is what it observed; the message is prose, and a
     // proxy that appends "timeout" to a 429 must not turn it into a timeout.
     expect(classifyProviderError(http(429, 'timeout while waiting')).kind).toBe('rate-limit')
+  })
+
+  it('reads a 403 as the plan gate it is, not as a rejected key', () => {
+    // The wire type is what an Anthropic client keys its re-sign-in guidance on, and
+    // `authentication_error` sent users to re-authorize a credential the plan gate had
+    // never questioned. `quota` is the kind whose own row already argues why
+    // `invalid_request_error` is the frame for an account that cannot pay.
+    const verdict = classifyProviderError(http(403, 'this model is not in your plan'))
+    expect(verdict.kind).toBe('quota')
+    expect(verdict.wireType).toBe('invalid_request_error')
+    expect(verdict.wireType).not.toBe('authentication_error')
+    expect(verdict.retryable).toBe(false)
+  })
+
+  it('keeps 401 the one status that names the credential', () => {
+    expect(classifyProviderError(http(401, 'unauthorized')))
+      .toMatchObject({ kind: 'auth', wireType: 'authentication_error', retryable: false })
+  })
+
+  it('gives a 402 the balance kind even when no code arrived with it', () => {
+    // The code tier already named this one for an adapter that attached `QUOTA`; a
+    // transport that reports only the number used to arrive as a malformed request.
+    expect(classifyProviderError(http(402, 'payment required')))
+      .toMatchObject({ kind: 'quota', retryable: false, wireType: 'invalid_request_error' })
+  })
+
+  it('reads a 402 or 403 in prose the way it reads the number', () => {
+    // No status on the value, so the wording tier decides — and it has to decide the
+    // same thing, or the same refusal classifies two ways depending on how it arrived.
+    expect(classifyProviderError(new Error('the route answered 403 Forbidden')).kind).toBe('quota')
+    expect(classifyProviderError(new Error('upstream said 402')).kind).toBe('quota')
+  })
+
+  it('still reads a 403 that names a key as the credential problem', () => {
+    // A proxy answering `403 Forbidden: Incorrect API key` is describing the key, and
+    // that is the more specific of the two statements, so it keeps the credential
+    // reading and the frame that goes with it.
+    expect(classifyProviderError(new Error('403 Forbidden: Incorrect API key provided')).kind).toBe('auth')
   })
 
   it('prefers a status over cancellation wording too, so a rate limit is not silenced', () => {
@@ -190,6 +229,42 @@ describe('the machine code, which is the one signal written to be routed on', ()
     // and the safe reading of a contradiction is the one that stops quietly.
     const both = Object.assign(new Error('the caller gave up'), { name: 'AbortError', code: 'RATE_LIMIT' })
     expect(classifyProviderError(both)).toMatchObject({ cancellation: true, retryable: false })
+  })
+})
+
+describe('the code an adapter attached and the status behind it', () => {
+  it('reads a 403 the adapter recorded as RATE_LIMIT as the gate it is', () => {
+    // The real shape, not a flattering one: every adapter in this plugin throws
+    // `LlmError`, whose frozen `failure` record is where the status lives, and whose
+    // code is the same `RATE_LIMIT` for 402, 403 and 429 because the vocabulary has no
+    // code for a balance. Read by code alone — which is what happened while the status
+    // tier could not see `failure.status` — a plan gate reached the client as a
+    // retryable rate gate and the client's own backoff went back at it.
+    const failure = new LlmError('this model is not in your plan', 'RATE_LIMIT', { status: 403 })
+    expect(classifyProviderError(failure))
+      .toMatchObject({ kind: 'quota', retryable: false, wireType: 'invalid_request_error' })
+    // The control: the same code on the status it was written for keeps its reading.
+    expect(classifyProviderError(new LlmError('slow down', 'RATE_LIMIT', { status: 429 })))
+      .toMatchObject({ kind: 'rate-limit', retryable: true, wireType: 'rate_limit_error' })
+    expect(classifyProviderError(new LlmError('payment required', 'RATE_LIMIT', { status: 402 })).kind).toBe('quota')
+  })
+
+  it('keeps the codes that are decisions rather than buckets', () => {
+    // `AUTH` on a 403 was chosen by an adapter that read the refusal, and that reading
+    // is more specific than the number; a provider that answers `400` with "rate limit
+    // exceeded" in the body is reporting a rate limit and the code is right about it.
+    expect(classifyProviderError(new LlmError('the credential was refused', 'AUTH', { status: 403 })).kind).toBe('auth')
+    expect(classifyProviderError(new LlmError('rate limit exceeded', 'RATE_LIMIT', { status: 400 })).kind).toBe('rate-limit')
+  })
+
+  it('finds a status an adapter attached to the failure record', () => {
+    // A code the table does not name used to skip the status tier whenever the status
+    // was on `failure`, so a 404 from a proxy came back retryable — the same failure
+    // mode this file's own doc blames for re-sending a request until the budget is
+    // gone.
+    expect(classifyProviderError(new LlmError('no such route', 'HTTP_404', { status: 404 })))
+      .toMatchObject({ kind: 'invalid-request', retryable: false })
+    expect(classifyProviderError(new LlmError('upstream broke', 'HTTP_503', { status: 503 })).retryable).toBe(true)
   })
 })
 

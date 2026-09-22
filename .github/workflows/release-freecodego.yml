@@ -1,0 +1,230 @@
+# Publish the standalone FreeCodeGo composition bundle as one version in two
+# places: a GitHub release carrying the tarball an update check downloads, and the
+# registry version the Harness CLI resolves a bare package name to. Both halves
+# are published by this run from the same packed file, and the run verifies both
+# against that file, so the two cannot end up naming different versions,
+# carrying different bytes, or disagreeing about the Harness line they mount on.
+name: Release publish (FreeCodeGo)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+
+# GitHub loads a workflow from `<repository root>/.github/workflows` only, and
+# in this repository the workspace is `plugin/` — so the file lives at the root
+# while every `run:` step executes in that directory. The one thing
+# `defaults.run` cannot reach is an action input: `path:` on the two artifact
+# steps is resolved against the workspace root, so those name `plugin/`
+# explicitly.
+defaults:
+  run:
+    working-directory: plugin
+
+jobs:
+  pack:
+    name: Pack and verify FreeCodeGo bundle
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+      - run: pnpm run sync:harness
+      - run: pnpm install --frozen-lockfile
+      - name: Verify FreeCodeGo release
+        env:
+          RELEASE_PUBLISH: 'true'
+        run: pnpm run release:verify --family freecodego
+      # `build:official` builds against the public client environment it records,
+      # and publication is allowed only from the family's tag: bind both to this
+      # run's ref, so the recorded client proves which release built it and a
+      # dispatch from a branch fails here instead of at the publication gate.
+      - name: Bind the client build to this release tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#freecodego-v}"
+          if [ "$version" = "$tag" ]; then
+            echo "::error::dispatch this workflow from a freecodego-v* tag, got ${tag}"
+            exit 1
+          fi
+          declared="$(node -p "require('./package.json').version")"
+          if [ "$version" != "$declared" ]; then
+            echo "::error::tag ${tag} names ${version}, but the workspace declares ${declared}"
+            exit 1
+          fi
+          echo "DSH_CLIENT_COMMIT_HASH=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "DSH_CLIENT_VERSION=${version}" >> "$GITHUB_ENV"
+      - run: pnpm run build:official
+      # The packed file is already named as the release asset — the freecodego
+      # family renames `pnpm pack`'s output to `freecodego-<Harness version>.tgz`
+      # inside this step — so nothing downstream renames it again.
+      # `packages/freecodego/AGENTS.md` is the naming contract.
+      - run: pnpm run release:pack --family freecodego --out dist/freecodego
+      # FreeCodeGo publishes libraries and a profile bundle, not an executable.
+      # OAuth authorization is verified by the Host/API tests; the generic
+      # executable consumer probe has no meaningful entry point for this family.
+      - name: Record FreeCodeGo consumer probe scope
+        run: pnpm run release:verify-packed-install --family freecodego --from dist/freecodego
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freecodego-release-assets
+          path: plugin/dist/freecodego/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the FreeCodeGo release
+    needs: pack
+    runs-on: ubuntu-24.04
+    # One release per tag, and a release is how a version is withdrawn: editing
+    # it. Nothing here may run concurrently with itself on the same tag.
+    concurrency:
+      group: freecodego-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      # The registry half authenticates with an OIDC token the job requests per
+      # run, so the release pipeline stores no long-lived publish credential and
+      # nothing has to be rotated. `npm` prefers this over a token whenever the
+      # OIDC environment is present.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      # No `registry-url`: it writes an `.npmrc` line interpolating
+      # `NODE_AUTH_TOKEN`, which nothing sets here — npm then fails on every
+      # command with "Failed to replace env in config". The default registry is
+      # npmjs.org, which is where these packages publish.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+      # Trusted publishing needs npm 11.5.1 or later, and the CLI shipped with a
+      # Node release is not guaranteed to be that new. The floor is installed
+      # rather than assumed, so a runner image bump cannot turn the publish step
+      # into an authentication failure that looks like a registry problem.
+      - name: Ensure the npm CLI supports trusted publishing
+        run: |
+          npm install --global npm@^11.5.1
+          npm --version
+      # The pack job's workspace does not travel in an artifact, and the publish
+      # steps are TypeScript scripts with dependencies of their own, so the
+      # workspace is materialized here the same way that job materializes it.
+      - run: pnpm run sync:harness
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: freecodego-release-assets
+          path: plugin/dist/freecodego
+      # The gate the naming rule exists for. An asset whose name no update check
+      # looks for is a release nobody installs, and it is invisible at the moment
+      # of publication: the upload succeeds either way. So the name is checked
+      # against the Harness version this bundle declares, before anything is
+      # published, and a second tarball is refused rather than uploaded beside it
+      # (the checker falls back to a release's only tarball, which one extra file
+      # would silently retire).
+      - name: Check the packed asset is the name an update check looks for
+        id: assets
+        run: |
+          version="${GITHUB_REF_NAME#freecodego-v}"
+          if [ "$version" = "$GITHUB_REF_NAME" ]; then
+            echo "::error::dispatch this workflow from a freecodego-v* tag, got ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          baseline="$(node -p "require('./packages/freecodego/bundle-latest/package.json').freecodego.harnessBaseline")"
+          mapfile -t tarballs < <(find dist/freecodego -maxdepth 1 -type f -name '*.tgz' -printf '%f\n')
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one packed tarball, found ${#tarballs[@]}"
+            exit 1
+          fi
+          if [ "${tarballs[0]}" != "freecodego-${baseline}.tgz" ]; then
+            echo "::error::packed ${tarballs[0]}, but an update check looks for freecodego-${baseline}.tgz"
+            exit 1
+          fi
+          {
+            echo "asset=dist/freecodego/${tarballs[0]}"
+            echo "assetName=${tarballs[0]}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+      # The registry half, published before the release half on purpose. The
+      # registry step skips a version whose bytes are already there, so a run
+      # interrupted after this point is repaired by re-running it; the release
+      # step refuses a tag that already carries a release, because a published
+      # release is withdrawn by editing it. The other order would make a failed
+      # half need the release deleted before the run could be retried.
+      - name: Publish the packed tarball to the registry
+        run: pnpm run release:publish --family freecodego --from dist/freecodego
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          ASSET: ${{ steps.assets.outputs.asset }}
+          VERSION: ${{ steps.assets.outputs.version }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::release ${RELEASE_TAG} already exists; a published release is withdrawn by editing it, or by publishing a new version"
+            exit 1
+          fi
+          # A prerelease is marked as one for the repository's own listing, the
+          # same way the bundle would publish under `next`: an update check reads
+          # releases, not the `latest` pointer, so this changes no check.
+          extra=()
+          case "$VERSION" in
+            *-*) extra+=(--prerelease) ;;
+          esac
+          gh release create "$RELEASE_TAG" "$ASSET" \
+            --title "$RELEASE_TAG" \
+            --notes "FreeCodeGo bundle for DeepSeek Harness, published to the registry as freecodego@${VERSION} as well. One release per Harness line; the asset is named after the Harness version it mounts on." \
+            "${extra[@]}"
+      # Publication is verified the way a check reads it, not the way this job
+      # wrote it: the release is re-read from the API and put through the same
+      # tag shape and asset lookup the plugin uses, so a release no check can
+      # select fails the run instead of shipping quietly.
+      - name: Verify the release is one an update check can select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          ASSET_NAME: ${{ steps.assets.outputs.assetName }}
+          VERSION: ${{ steps.assets.outputs.version }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "${RUNNER_TEMP}/release.json"
+          node -e '
+            const { readFileSync } = require("node:fs")
+            const release = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/release.json`, "utf8"))
+            const { RELEASE_TAG, ASSET_NAME, VERSION } = process.env
+            // The tag shape `bundleReleaseForHarness` reads, and the version it
+            // takes from it.
+            const version = /^(?:freecodego-)?v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u.exec(release.tag_name ?? "")?.[1]
+            if (version !== VERSION) {
+              throw new Error(`release ${RELEASE_TAG} is not selectable: tag ${release.tag_name} names ${version}, expected ${VERSION}`)
+            }
+            const names = (release.assets ?? []).map(asset => asset.name)
+            if (names.length !== 1 || names[0] !== ASSET_NAME) {
+              throw new Error(`release ${RELEASE_TAG} carries ${JSON.stringify(names)}, expected exactly ${ASSET_NAME}`)
+            }
+            console.log(`release publish: ${RELEASE_TAG} carries ${ASSET_NAME} for Harness line ${VERSION}`)
+          '
+      # The registry half is verified the way its consumers read it, not the way
+      # the publish step reported it: the version's integrity has to be the hash
+      # of the file this run uploaded as the release asset, the Harness baseline
+      # has to be the one the bundle declares (that field is what the CLI selects
+      # a version by), and the family's channel tag has to resolve to this
+      # version. Together with the release check above, one artifact is confirmed
+      # in both places, which is the drift this pipeline exists to prevent.
+      - name: Verify the registry carries the released version
+        run: pnpm run release:verify-published --family freecodego --tarball "${{ steps.assets.outputs.asset }}"

@@ -32,6 +32,7 @@
 
 export type SecretConfidence = 'high' | 'medium'
 
+/** One curated credential pattern and the severity it reports at. */
 export interface SecretRule {
   /** Rule id, so a finding names which pattern matched. */
   readonly id: string
@@ -232,6 +233,7 @@ export const TRANSPORT_SHAPE_RULES: readonly SecretRule[] = [
   { id: 'basic-auth', source: '\\bBasic\\s+(?=[A-Za-z0-9+/=._~-]{16,})(?=[A-Za-z0-9+/=._~-]*(?:\\d|[+/=]))[A-Za-z0-9+/=._~-]+', confidence: 'medium', marker: 'Basic <redacted>' },
 ]
 
+/** One credential-shaped match, carrying enough to redact it but never the secret. */
 export interface SecretFinding {
   readonly ruleId: string
   readonly confidence: SecretConfidence
@@ -245,6 +247,7 @@ export interface SecretFinding {
   readonly marker?: string
 }
 
+/** Everything one scan found, split by whether it blocks. */
 export interface SecretScanResult {
   readonly clean: boolean
   readonly findings: readonly SecretFinding[]
@@ -257,6 +260,8 @@ export interface SecretScanResult {
  *
  * Four characters is enough to tell two credentials apart in a report and far too
  * few to reconstruct one.
+ * @param match - the matched credential text.
+ * @returns the identifying prefix and length, never usable as the secret.
  */
 export function redactSecret(match: string): string {
   const head = match.slice(0, 4)
@@ -306,6 +311,7 @@ function findingsIn(text: string, rules: readonly SecretRule[], flags: string, s
   return findings
 }
 
+/** Knobs for one scan: the blocking threshold and rules to skip. */
 export interface SecretScanOptions {
   /** Lowest confidence that counts as blocking. Defaults to `high`. */
   readonly minimumConfidence?: SecretConfidence
@@ -321,6 +327,9 @@ const RANK: Readonly<Record<SecretConfidence, number>> = { high: 2, medium: 1 }
  * Overlapping matches from different rules are reported once each — an AWS key
  * inside a PEM blob is two real findings, not a duplicate — but a rule never
  * reports the same span twice.
+ * @param text - the text to scan.
+ * @param options - the confidence threshold and rules to skip.
+ * @returns the secret Scan Result.
  */
 export function scanForSecrets(text: string, options: SecretScanOptions = {}): SecretScanResult {
   const minimum = options.minimumConfidence ?? 'high'
@@ -346,6 +355,10 @@ export function scanForSecrets(text: string, options: SecretScanOptions = {}): S
  * of the range that starts first, because that is the range a reader would say
  * the span "is": `Bearer ghp_…` is a bearer credential that happens to carry a
  * vendor key, not the other way round.
+ * @param text - the text to redact.
+ * @param findings - the findings whose spans to replace.
+ * @param marker - the fallback marker for findings that name none.
+ * @returns the text with every reported credential replaced.
  */
 export function redactSecretSpans(text: string, findings: readonly SecretFinding[], marker = '[redacted credential]'): string {
   const ranges = findings
@@ -365,7 +378,10 @@ export function redactSecretSpans(text: string, findings: readonly SecretFinding
   return result
 }
 
-/** One-line summary for a log line or a memory-write refusal message. */
+/** One-line summary for a log line or a memory-write refusal message.
+ * @param findings - the findings to summarize.
+ * @returns the one-line summary, safe to log.
+ */
 export function describeSecretFindings(findings: readonly SecretFinding[]): string {
   if (findings.length === 0) return 'no credential-shaped content found'
   const rules = [...new Set(findings.map(finding => finding.ruleId))].sort()

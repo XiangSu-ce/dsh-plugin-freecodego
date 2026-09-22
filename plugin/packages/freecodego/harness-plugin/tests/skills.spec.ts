@@ -18,7 +18,8 @@ import {
   type LockedFile,
   type SkillLockfile,
 } from '../src/skills/lockfile.ts'
-import { PLACEMENT_COMBINATIONS, resolveSkillPlacement } from '../src/skills/placement.ts'
+import { PLACEMENT_COMBINATIONS, resolveSkillPlacement, resolveSkillPlacements } from '../src/skills/placement.ts'
+import { join } from 'node:path'
 import { assertExternalEngineeringAssetSafe, inspectExternalEngineeringAsset } from '../src/engineering.ts'
 import { checkSkillForPublish, DEFAULT_SKILL_TOKEN_LIMIT, parseSkillDocument } from '../src/skills/publish.ts'
 import { formatSkillSource, parseSkillSource, sameSkillSource, type SkillSource } from '../src/skills/source.ts'
@@ -221,14 +222,31 @@ describe('placement', () => {
   const roots = { workspace: '/repo', dataHome: '/home/.dsh', home: '/home', customRoot: '/custom' }
 
   test('the four named combinations resolve to the documented roots', () => {
+    // Expected values are joined by the platform's own `join`, not written with `/`:
+    // a placement root is an identity the lockfile, the root registry and the
+    // install/removal/dedupe paths all compare, so the module must produce the
+    // canonical spelling of the directory rather than a second one.
     expect(resolveSkillPlacement({ agent: 'harness', scope: 'project', projectTrusted: true, ...roots }))
-      .toMatchObject({ ok: true, root: '/repo/.dsh/skills' })
+      .toMatchObject({ ok: true, root: join('/repo', '.dsh/skills') })
     expect(resolveSkillPlacement({ agent: 'agents', scope: 'project', projectTrusted: true, ...roots }))
-      .toMatchObject({ ok: true, root: '/repo/.agents/skills' })
+      .toMatchObject({ ok: true, root: join('/repo', '.agents/skills') })
     expect(resolveSkillPlacement({ agent: 'harness', scope: 'user', projectTrusted: false, ...roots }))
-      .toMatchObject({ ok: true, root: '/home/.dsh/skills' })
+      .toMatchObject({ ok: true, root: join('/home/.dsh', 'skills') })
     expect(resolveSkillPlacement({ agent: 'agents', scope: 'user', projectTrusted: false, ...roots }))
-      .toMatchObject({ ok: true, root: '/home/.agents/skills' })
+      .toMatchObject({ ok: true, root: join('/home', '.agents/skills') })
+  })
+
+  test('a resolved root is the canonical spelling of its directory, not a second one', () => {
+    // The defect this pins: the module joined with a literal `/`, so on Windows the
+    // user root came back as `C:\\data/skills` while every reader that built the same
+    // path with `node:path` got `C:\\data\\skills`. Two spellings of one directory is a
+    // root that cannot be found by the code looking beside it — the whole matrix is a
+    // path arithmetic, so it has to agree with the platform it runs on.
+    const dataHome = join('/home', 'data')
+    const rows = resolveSkillPlacements({ workspace: '/repo', dataHome, home: '/home', projectTrusted: true })
+    const native = rows.find(row => row.agent === 'harness' && row.scope === 'user')
+    expect(native).toMatchObject({ ok: true, root: join(dataHome, 'skills') })
+    expect(native?.ok === true ? native.root : '').not.toContain('/skills')
   })
 
   test('every combination in the table answers, or says why it cannot', () => {
@@ -263,7 +281,7 @@ describe('placement', () => {
     const custom = resolveSkillPlacement({ agent: 'custom', scope: 'user', projectTrusted: false, ...roots })
     expect(custom).toMatchObject({ ok: true, root: '/custom' })
     const native = resolveSkillPlacement({ agent: 'harness', scope: 'user', projectTrusted: false, ...roots })
-    expect(native).toMatchObject({ ok: true, root: '/home/.dsh/skills' })
+    expect(native).toMatchObject({ ok: true, root: join('/home/.dsh', 'skills') })
   })
 
   test('a custom agent without a root is refused rather than guessed', () => {
@@ -283,7 +301,8 @@ describe('placement', () => {
     const result = resolveSkillPlacement({ agent: 'harness', scope: 'project', projectTrusted: true, ...roots })
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.root.endsWith('.agents/skills')).toBe(false)
+    expect(result.root).toBe(join('/repo', '.dsh/skills'))
+    expect(result.root).not.toBe(join('/repo', '.agents/skills'))
   })
 })
 

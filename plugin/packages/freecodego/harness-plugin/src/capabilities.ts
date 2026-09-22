@@ -12,6 +12,7 @@ import type { FreeCodeGoSettingsPort } from './policy.ts'
 import { isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { redactCredentialShapes } from './secret-scan.ts'
+import { asRecord as plainRecord } from './untrusted-json.ts'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
@@ -21,7 +22,7 @@ import { apply as applyMcpClient } from '@deepseek-ai/dsh-mcp-client'
 import type { Config as McpClientConfig } from '@deepseek-ai/dsh-mcp-client'
 import { apply as applySkillFilesystem } from '@deepseek-ai/dsh-skill-filesystem'
 import type { FreeCodeGoCapabilitySettings, FreeCodeGoCapabilitySnapshot, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillEntry, FreeCodeGoSkillForward, FreeCodeGoSkillRoot } from './types.ts'
-import { listSkillCompanionFiles, readSkillCompanionFile, skillCompanionDirectory, skillForwardTargets } from './skill-detail.ts'
+import { listSkillCompanionFiles, readSkillCompanionFile, skillForwardTargets, skillResourceLocation, type SkillCompanionFs } from './skill-detail.ts'
 import { omitRecordKey } from './record-utils.ts'
 
 const SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/
@@ -41,9 +42,6 @@ export const MCP_SECRET_REDACTED = '__FREECODEGO_MCP_SECRET_REDACTED__'
  */
 export const INLINE_IMAGE_MAX_BYTES = 3 * 1024 * 1024
 
-function plainRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-}
 
 /**
  * Replace `{type:'image', attachment}` blocks with inline image bytes.
@@ -86,6 +84,13 @@ export async function inlineImageAttachmentBlocks(
 }
 
 function callId(value: string): never { return value as never }
+/**
+ * The capability view a native worker is handed before a session opens.
+ *
+ * Flat and already filtered, because the worker runs in another process and cannot
+ * ask the Host whether Skills are enabled: an empty `skillRoots` here is how a
+ * disabled switch reaches it.
+ */
 export type NativeCapabilityConfiguration = {
   readonly mcpEnabled: boolean
   readonly skillEnabled: boolean
@@ -119,6 +124,23 @@ export const FreeCodeGoCapabilitySettingsSchema = z.object({
     path: z.string().min(1).max(4096),
   })).default([]),
   skillInvocationOverrides: z.dict(z.boolean()).default({}),
+  // Declared without a default, the way `Config`'s optional fields are: schemastery
+  // has no optional-object spelling, and an absent key *is* the answer here — no
+  // preference, which means the community root. A default would have to invent a
+  // placement on every install that never chose one.
+  //
+  // `null` is the *clear*, and it is here because a settings write is a **merge**
+  // (`mergeLayers` in the settings service: plain objects merge recursively, other
+  // values replace, and `undefined` entries are stripped so that "a sparse patch cannot
+  // erase lower keys"). Omitting the field therefore cannot remove a stored preference —
+  // the live harness proved it — so clearing has to say so with a value.
+  preferredSkillPlacement: z.union([
+    z.object({
+      agent: z.union([z.const('harness'), z.const('agents')]),
+      scope: z.union([z.const('project'), z.const('user')]),
+    }),
+    z.const(null),
+  ]),
 }) as z<FreeCodeGoCapabilitySettings>
 
 type Fiber = { dispose(): Promise<void> }
@@ -242,13 +264,17 @@ export class FreeCodeGoCapabilityRegistry {
     })
   }
 
-  /** Return a detached, browser-safe durable configuration snapshot. */
+  /** Return a detached, browser-safe durable configuration snapshot. 
+   * @returns the capability Settings.
+   */
   configuration(): FreeCodeGoCapabilitySettings {
     const value = this.settings?.get() ?? emptySettings()
     return copySettings(value)
   }
 
-  /** Return the current configuration plus discoverable Host-owned capabilities. */
+  /** Return the current configuration plus discoverable Host-owned capabilities. 
+   * @returns the capability snapshot the Host reports.
+   */
   async snapshot(): Promise<FreeCodeGoCapabilitySnapshot> {
     const settings = this.configuration()
     // The settings library is the user-facing inventory, so it lists every
@@ -275,7 +301,10 @@ export class FreeCodeGoCapabilityRegistry {
     }
   }
 
-  /** Persist both feature switches and apply the new provider generation. */
+  /** Persist both feature switches and apply the new provider generation.
+   * @param input - the switches to move; an omitted one keeps its stored value.
+   * @returns the capability snapshot the Host reports.
+   */
   async setEnabled(input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }): Promise<FreeCodeGoCapabilitySnapshot> {
     const current = this.configuration()
     await this.update({
@@ -288,7 +317,10 @@ export class FreeCodeGoCapabilityRegistry {
     return this.snapshot()
   }
 
-  /** Persist one user-selected category override, or remove it to restore auto classification. */
+  /** Persist one user-selected category override, or remove it to restore auto classification.
+   * @param input - the model key to classify, and the category to pin on it.
+   * @returns the capability snapshot the Host reports.
+   */
   async setModelCategory(input: { readonly key: string; readonly category?: FreeCodeGoModelCategory }): Promise<FreeCodeGoCapabilitySnapshot> {
     const key = input.key.trim()
     if (key === '' || key.length > 768 || !key.includes('\u0000')) throw new Error('model category key is invalid')
@@ -301,7 +333,10 @@ export class FreeCodeGoCapabilityRegistry {
     return this.snapshot()
   }
 
-  /** Add or replace one user-managed MCP connection after validating its transport-specific fields. */
+  /** Add or replace one user-managed MCP connection after validating its transport-specific fields.
+   * @param input - the connection to store; an id replaces that entry, none adds one.
+   * @returns the capability snapshot the Host reports.
+   */
   async saveMcpServer(input: Omit<FreeCodeGoMcpServer, 'id'> & { readonly id?: string }): Promise<FreeCodeGoCapabilitySnapshot> {
     const current = this.configuration()
     const existing = input.id === undefined ? undefined : current.mcpServers.find(item => item.id === input.id)
@@ -313,14 +348,20 @@ export class FreeCodeGoCapabilityRegistry {
     return this.snapshot()
   }
 
-  /** Remove an MCP connection and unload its registered tools. */
+  /** Remove an MCP connection and unload its registered tools.
+   * @param id - the stored connection to remove; an unknown id is not an error.
+   * @returns the capability snapshot the Host reports.
+   */
   async removeMcpServer(id: string): Promise<FreeCodeGoCapabilitySnapshot> {
     const current = this.configuration()
     await this.update({ ...current, mcpServers: current.mcpServers.filter(item => item.id !== id) })
     return this.snapshot()
   }
 
-  /** Add or replace one absolute Skill root. */
+  /** Add or replace one absolute Skill root.
+   * @param input - the root to store; an id replaces that entry, none adds one.
+   * @returns the capability snapshot the Host reports.
+   */
   async saveSkillRoot(input: Omit<FreeCodeGoSkillRoot, 'id'> & { readonly id?: string }): Promise<FreeCodeGoCapabilitySnapshot> {
     const root = normalizeSkillRoot(input)
     const current = this.configuration()
@@ -331,7 +372,11 @@ export class FreeCodeGoCapabilityRegistry {
     return this.snapshot()
   }
 
-  /** Register one managed Skill root and enable Skills in the same settings commit. */
+  /** Register one managed Skill root and enable Skills in the same settings commit.
+   * @param id - the managed root's identity, which replaces any root of the same id.
+   * @param directory - directory the operation runs against.
+   * @returns the capability snapshot the Host reports.
+   */
   async enableManagedSkillRoot(id: string, directory: string): Promise<FreeCodeGoCapabilitySnapshot> {
     const root = normalizeSkillRoot({ id, enabled: true, path: directory })
     const current = this.configuration()
@@ -348,6 +393,8 @@ export class FreeCodeGoCapabilityRegistry {
    * go back to whatever the Skill's own file declares — including after that
    * file changes. The name is validated here because it becomes a settings key
    * that a later discovery pass matches against real Skill names.
+   * @param input - the Skill name, and the override to store or clear.
+   * @returns the capability snapshot the Host reports.
    */
   async setSkillInvocation(input: { readonly name: string; readonly modelInvocable?: boolean }): Promise<FreeCodeGoCapabilitySnapshot> {
     const name = input.name.trim()
@@ -361,14 +408,53 @@ export class FreeCodeGoCapabilityRegistry {
     return this.snapshot()
   }
 
-  /** Remove one user-managed Skill root. */
+  /**
+   * Remember where a Skill install should land, or forget the preference.
+   *
+   * The axes are stored rather than the root they resolve to, because the root moves:
+   * the folder, `$DSH_HOME` and the home directory each decide part of it, and a saved
+   * path would outlive the workspace it was resolved in. `agent: 'custom'` is refused
+   * instead of stored — nothing supplies a custom root through these remotes, so it
+   * would be a preference that can never resolve into a destination.
+   *
+   * Both axes or neither: half a placement is not a placement, and guessing the other
+   * half would be this plugin choosing a directory the user did not.
+   * @param input - the two axes to prefer, or neither to clear the preference.
+   * @returns the capability snapshot the Host reports.
+   */
+  async setPreferredSkillPlacement(input: { readonly agent?: 'harness' | 'agents'; readonly scope?: 'project' | 'user' }): Promise<FreeCodeGoCapabilitySnapshot> {
+    const current = this.configuration()
+    const clearing = input.agent === undefined && input.scope === undefined
+    if (!clearing && (typeof input.agent !== 'string' || typeof input.scope !== 'string')) {
+      throw new Error('a Skill placement needs both axes: name the agent and the scope, or clear it')
+    }
+    // The clear writes `null` rather than dropping the key: a settings write merges, so
+    // an absent field is "no change to what is stored" and the old destination would
+    // survive a user asking for the default back. `null` is a value, and a value replaces.
+    const next = {
+      ...current,
+      preferredSkillPlacement: clearing
+        ? null
+        : { agent: input.agent as 'harness' | 'agents', scope: input.scope as 'project' | 'user' },
+    }
+    await this.update(next, false)
+    return this.snapshot()
+  }
+
+  /** Remove one user-managed Skill root.
+   * @param id - the stored root to remove; an unknown id is not an error.
+   * @returns the capability snapshot the Host reports.
+   */
   async removeSkillRoot(id: string): Promise<FreeCodeGoCapabilitySnapshot> {
     const current = this.configuration()
     await this.update({ ...current, skillRoots: current.skillRoots.filter(item => item.id !== id) })
     return this.snapshot()
   }
 
-  /** Current Host capability snapshot used by native workers before a session opens. */
+  /** Current Host capability snapshot used by native workers before a session opens. 
+   * @param agent - the agent this call applies to.
+   * @returns the native Capability Configuration.
+   */
   nativeConfiguration(agent?: Agent): NativeCapabilityConfiguration {
     const value = this.configuration()
     const tools = this.ctx.tools.schemas(agent)
@@ -381,7 +467,13 @@ export class FreeCodeGoCapabilityRegistry {
     }
   }
 
-  /** Execute one active MCP tool through the normal Harness policy pipeline. */
+  /** Execute one active MCP tool through the normal Harness policy pipeline.
+   * @param agent - the agent the call is made for, when one is in scope.
+   * @param name - the registered `mcp__` tool name to call.
+   * @param args - the arguments the call was made with, of unknown shape.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns The tool's content and error flag, as the pipeline reported them.
+   */
   async executeMcpTool(agent: Agent | undefined, name: string, args: unknown, signal: AbortSignal): Promise<unknown> {
     if (!this.configuration().mcpEnabled) throw new Error('MCP is disabled in FreeCodeGo settings')
     if (!name.startsWith('mcp__') || !this.mcpTools(agent).some(tool => tool.name === name)) throw new Error(`MCP tool "${name}" is not active`)
@@ -403,6 +495,12 @@ export class FreeCodeGoCapabilityRegistry {
    * (every codex worker frame is bounded by `MAX_WORKER_FRAME_BYTES` in
    * `runtime-codex/src/frame-budget.ts` — 1 MB, far below one image), so it
    * is off unless a transport asks — see {@link inlineImageAttachmentBlocks}.
+   * @param agent - the agent the call is made for, when one is in scope.
+   * @param name - the registered Harness tool name to call.
+   * @param args - the arguments the call was made with, of unknown shape.
+   * @param signal - aborts the request when the caller cancels.
+   * @param options - whether image results may be inlined for this transport.
+   * @returns The tool's content and error flag, as the pipeline reported them.
    */
   async executeHarnessTool(
     agent: Agent | undefined,
@@ -466,7 +564,11 @@ export class FreeCodeGoCapabilityRegistry {
    *
    * This is the model-facing surface (the Claude bridge `skill/list` op and the
    * subagent projection), so it keeps honoring `disable-model-invocation`. The
-   * settings library does not — see {@link listSkillInventory}. */
+   * settings library does not — see {@link listSkillInventory}. 
+   * @param agent - the agent this call applies to.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns The model-invocable Skills as name, description and source.
+   */
   async listSkills(agent?: Agent, signal?: AbortSignal): Promise<readonly { readonly name: string; readonly description: string; readonly source: string }[]> {
     return (await this.discoverSkills(agent, signal))
       .filter(skill => skill.invocation.modelInvocable)
@@ -481,6 +583,9 @@ export class FreeCodeGoCapabilityRegistry {
    * marked Skills are still invocable by name, so omitting them from a page the
    * user browses hides the entries they are most likely to be looking for. The
    * invocation flags travel with each row so the page can say which is which.
+   * @param agent - the agent this call applies to.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the skill Entry rows, in backend order.
    */
   async listSkillInventory(agent?: Agent, signal?: AbortSignal): Promise<readonly FreeCodeGoSkillEntry[]> {
     return (await this.discoverSkills(agent, signal)).map(skill => ({
@@ -513,8 +618,18 @@ export class FreeCodeGoCapabilityRegistry {
       ...(signal === undefined ? {} : { signal }),
     })
     if (skill === undefined) throw new Error(`Skill "${name}" is not available`)
-    const directory = skillCompanionDirectory(skill.path)
-    const files = await listSkillCompanionFiles(directory)
+    // The provider's declared base first, the `SKILL.md` path as the fallback:
+    // a virtual Skill states where its resources are and has no path to infer
+    // from, and a base this build cannot read is reported rather than replaced
+    // by a local read that would list something else.
+    const location = skillResourceLocation(skill)
+    const directory = location.kind === 'directory' ? location.directory : undefined
+    // The Harness's filesystem seam when the composition mounts one: the Skill
+    // body the service just handed over came through it, so a listing read from
+    // the host's own disk would describe a different filesystem whenever the seam
+    // points at a sandbox. Absent, the host filesystem is the answer.
+    const fileSystem = this.ctx.get('fs') as SkillCompanionFs | undefined
+    const files = await listSkillCompanionFiles(directory, fileSystem)
     const entry: FreeCodeGoSkillEntry = {
       name: skill.name,
       description: skill.description,
@@ -522,7 +637,13 @@ export class FreeCodeGoCapabilityRegistry {
       modelInvocable: this.modelInvocable(skill.name, skill.invocation.modelInvocable),
       userInvocable: skill.invocation.userInvocable,
     }
-    if (file !== undefined) return { ...entry, content: skill.content, files, forwarded: [], file: await readSkillCompanionFile({ directory, files, path: file }) }
+    if (file !== undefined) {
+      // The reason the listing is empty, not the listing: "no directory" and
+      // "the resources are served from a URL" are different answers to a user
+      // who clicked a file the Skill's own provider advertised.
+      if (location.kind !== 'directory') throw new Error(`"${file}" cannot be read: ${redactCredentialShapes(location.reason)}`)
+      return { ...entry, content: skill.content, files, forwarded: [], file: await readSkillCompanionFile({ directory, files, path: file, ...(fileSystem === undefined ? {} : { fs: fileSystem }) }) }
+    }
     return { ...entry, content: skill.content, files, forwarded: await this.resolveSkillForwards(skills, skill, agent, signal) }
   }
 
@@ -558,7 +679,13 @@ export class FreeCodeGoCapabilityRegistry {
     return resolved
   }
 
-  /** Load one model-invocable skill using the calling Agent's scope when supplied. */
+  /**
+   * Load one model-invocable skill using the calling Agent's scope when supplied.
+   * @param name - the Skill to load, which must be model-invocable here.
+   * @param agent - the agent this call applies to.
+   * @param signal - aborts the request when the caller cancels.
+   * @returns The Skill's name, description and content.
+   */
   async loadSkill(name: string, agent?: Agent, signal?: AbortSignal): Promise<unknown> {
     if (!this.configuration().skillEnabled) throw new Error('Skill is disabled in FreeCodeGo settings')
     const skills = this.ctx.get('skills')
@@ -571,7 +698,10 @@ export class FreeCodeGoCapabilityRegistry {
     return { name: skill.name, description: skill.description, content: skill.content }
   }
 
-  /** Whether a global Skill tool call must be denied for a disabled configuration. */
+  /**
+   * Whether a global Skill tool call must be denied for a disabled configuration.
+   * @returns True when the Skills switch is on.
+   */
   skillEnabled(): boolean { return this.configuration().skillEnabled }
 
   private async update(value: FreeCodeGoCapabilitySettings, waitForReconcile = true): Promise<void> {
@@ -738,6 +868,8 @@ export class FreeCodeGoCapabilityRegistry {
    * monotonic `skill` tool guard, which runs on the pre-execute path where no
    * discovery is available. An override naming a Skill no root discovers is
    * harmless: it guards nothing.
+   * @param name - the Skill name a call is being guarded for.
+   * @returns True when a stored manual-only answer bars the model from it.
    */
   skillInvocationLocked(name: string): boolean {
     return this.configuration().skillInvocationOverrides[name] === false
@@ -769,6 +901,14 @@ function emptySettings(): FreeCodeGoCapabilitySettings {
 
 function copySettings(value: FreeCodeGoCapabilitySettings): FreeCodeGoCapabilitySettings {
   return {
+    // Copied by value, and dropped for both "absent" and the document's explicit `null`:
+    // the snapshot is serialized across the remote boundary, where "no preference" must
+    // be one fact rather than two spellings. The stored document keeps the `null` — that
+    // is the only way a merge can record a clear — but nothing above this function has to
+    // know that.
+    ...(value.preferredSkillPlacement === undefined || value.preferredSkillPlacement === null
+      ? {}
+      : { preferredSkillPlacement: { ...value.preferredSkillPlacement } }),
     mcpEnabled: value.mcpEnabled ?? false,
     skillEnabled: value.skillEnabled ?? false,
     voiceInputEnabled: value.voiceInputEnabled ?? true,
@@ -879,6 +1019,14 @@ function validateSettings(value: FreeCodeGoCapabilitySettings): void {
     names.add(server.serverName)
   }
   for (const root of value.skillRoots) normalizeSkillRoot(root)
+  // A stored placement is read back as a destination the *user* chose, so a spelling
+  // the matrix does not know would sit in settings looking like a preference while
+  // every install ignored it.
+  if (value.preferredSkillPlacement !== undefined && value.preferredSkillPlacement !== null) {
+    const { agent, scope } = value.preferredSkillPlacement
+    if (agent !== 'harness' && agent !== 'agents') throw new Error(`Skill placement agent "${String(agent)}" is not one of harness, agents`)
+    if (scope !== 'project' && scope !== 'user') throw new Error(`Skill placement scope "${String(scope)}" is not one of project, user`)
+  }
   // A garbage key never matches a real Skill, so it would sit in settings
   // looking like an applied preference that does nothing.
   for (const [name, modelInvocable] of Object.entries(value.skillInvocationOverrides ?? {})) {

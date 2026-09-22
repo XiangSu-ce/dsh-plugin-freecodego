@@ -19,4 +19,29 @@ describe('FreeCodeGo sidebar icons', () => {
 
     dispose()
   })
+
+  // Regression: "FreeCodeGo 网关账单" is the gateway tab of the token-usage
+  // panel, and it matched the `freecodego` entry by prefix. Decorating it grew
+  // the segmented control by a 27px glyph and a 10px gap, which is the header
+  // the panel below no longer lined up with.
+  it('leaves segmented-control tabs inside a tablist undecorated', () => {
+    document.body.innerHTML = '<div role="tablist"><button type="button" role="tab">FreeCodeGo 网关账单</button><button type="button" role="tab">本地 Harness 用量</button></div>'
+    const dispose = installFreeCodeGoSidebarIcons()
+
+    expect(document.querySelector('[data-fcg-semantic-entry]')).toBe(null)
+    expect(document.querySelector('[data-fcg-icon]')).toBe(null)
+
+    dispose()
+  })
+
+  // The skip is structural, not a narrowing of the label list: a navigation
+  // entry whose label carries a badge suffix is still decorated.
+  it('still decorates a navigation entry whose label carries a suffix', () => {
+    document.body.innerHTML = '<button type="button">FreeCodeGo 3</button>'
+    const dispose = installFreeCodeGoSidebarIcons()
+
+    expect(document.querySelector('[data-fcg-icon="freecodego"] svg')).toBeTruthy()
+
+    dispose()
+  })
 })

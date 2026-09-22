@@ -176,6 +176,67 @@ describe('cron fixed rate', () => {
     }
   })
 
+  it('never labels a cadence the occurrences do not keep', () => {
+    // Differential rather than by hand: the label and the interval answer are two
+    // readings of one expression, and the fact they can both be checked against is
+    // the gap the rule actually keeps. Sampled past a day boundary, because a
+    // cadence claim is only false once a day, a week, or a month ends — 400 firings
+    // of `*/15 * * * 1` covers four Mondays and finds the six silent days.
+    //
+    // Gaps are measured on the *wall clock*, not on elapsed milliseconds: a rule
+    // answered as a fixed rate is still a wall-clock rule, so a machine in a zone
+    // that shifts its clock must run this the same way a machine in a fixed-offset
+    // zone does (see the duration caveat on `cronFixedRateSeconds`).
+    const start = local(2026, 1, 1, 0, 0)
+    const wallClockMs = (ms: number): number => {
+      const at = new Date(ms)
+      return Date.UTC(at.getFullYear(), at.getMonth(), at.getDate(), at.getHours(), at.getMinutes())
+    }
+    const firings = (source: string): number[] => {
+      const expression = parseCronExpression(source)
+      const at: number[] = []
+      let cursor = start
+      for (let index = 0; index < 400; index += 1) {
+        const next = computeNextCronRun(expression, cursor)
+        expect(next, source).toBeDefined()
+        at.push(next!)
+        cursor = next!
+      }
+      return at
+    }
+    const cadence = [
+      '*/15 * * * *', '0,30 * * * *', '1,31 * * * *', '*/15 * * 6 *',
+      '0 * * * *', '0 9 * * *', '0 */4 * * *', '0 1,7,13,19 * * *',
+      '*/15 * * * 1', '0,30 * * * 1', '*/15 * 15 * *', '1,31 * * * 0',
+      '*/15 * 15 6 1', '*/7 * * * *', '5,35,55 * * * *',
+    ]
+    for (const source of cadence) {
+      const expression = parseCronExpression(source)
+      const label = describeCronExpression(expression)
+      const claimed = /^every (\d+) minutes/u.exec(label)
+      const interval = cronFixedRateSeconds(expression)
+      if (claimed !== null) {
+        // The claim is only honest while no day field narrows the rule; a month may
+        // travel beside it as the qualifier this label already emits.
+        expect(expression.dayOfMonth.length, `${source} (${label})`).toBe(31)
+        expect(expression.dayOfWeek.length, `${source} (${label})`).toBe(7)
+      }
+      const expected = interval !== undefined ? interval * 1000 : claimed === null ? undefined : Number(claimed[1]) * 60_000
+      if (expected === undefined) continue
+      const at = firings(source)
+      // An interval is answered only for a rule nothing narrows, so its gaps are
+      // constant throughout. A labelled cadence may carry a month qualifier, and the
+      // measure of it is then the firings inside one month.
+      const namedMonths = / in [A-Z][a-z]+/u.test(label)
+      for (let index = 1; index < at.length; index += 1) {
+        const before = new Date(at[index - 1]!)
+        const after = new Date(at[index]!)
+        if (namedMonths && (before.getMonth() !== after.getMonth() || before.getFullYear() !== after.getFullYear())) continue
+        expect(wallClockMs(at[index]!) - wallClockMs(at[index - 1]!), `${source} gap before ${after.toISOString()}`).toBe(expected)
+      }
+    }
+  })
+
   it('answers the interval only for shapes that are provably constant', () => {
     expect(seconds('*/5 * * * *')).toBe(300)
     expect(seconds('0,30 * * * *')).toBe(1_800)
@@ -261,6 +322,27 @@ describe('cron weekday description', () => {
     // An unrestricted month leaves every existing shape unchanged.
     expect(describeCronExpression(parseCronExpression('0 9 * * *'))).toBe('daily at 09:00')
     expect(describeCronExpression(parseCronExpression('*/15 * * * *'))).toBe('every 15 minutes')
+  })
+
+  it('does not name a cadence a day field narrows', () => {
+    // `*/15 * * * 1` fires ninety-six times on a Monday and then not again for six
+    // days: no single interval carries it (the answer beside it already says so),
+    // and "every 15 minutes" reads as a rule that runs all week. The month used to
+    // travel into a qualifier here while the day fields were dropped, which is the
+    // one narrowing left that the label did not name.
+    //
+    // Mutation: without the shared day predicate these read "every 15 minutes".
+    for (const source of ['*/15 * * * 1', '0,30 * * * 6', '*/15 * 15 * *', '1,31 * * * 0', '*/15 * * * 6']) {
+      expect(cronFixedRateSeconds(parseCronExpression(source)), source).toBeUndefined()
+      expect(describeCronExpression(parseCronExpression(source)), source).toBe(`cron ${source}`)
+    }
+    // The day fields are read as *sets*, not as their `restricted` switches, so a
+    // spelled-out full set still names every day and keeps the cadence.
+    expect(describeCronExpression(parseCronExpression('*/15 * * * 0-6'))).toBe('every 15 minutes')
+    expect(describeCronExpression(parseCronExpression('*/15 * 1-31 * *'))).toBe('every 15 minutes')
+    // A month is the one narrowing that still travels: it is a qualifier the label
+    // can name exactly, which the day sets are not.
+    expect(describeCronExpression(parseCronExpression('*/15 * * 6 *'))).toBe('every 15 minutes in June')
   })
 
   it('does not name a schedule no calendar day can satisfy', () => {

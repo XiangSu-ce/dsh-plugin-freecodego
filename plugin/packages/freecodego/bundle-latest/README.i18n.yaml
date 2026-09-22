@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/bundle-latest/README.md
-README.md: 2b5c1cda744af66e19d62718633323fa24081f86
-README.zh.md: adfbd6109cc89d016f8d44f6a0ee86838ea84537
+README.md: a55282f22dea6b39738bf359c0aa3942ae935bc9
+README.zh.md: 6892acf2dc9a8ef0ccdc5f88b482d335f113320a

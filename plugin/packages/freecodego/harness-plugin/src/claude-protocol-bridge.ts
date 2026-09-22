@@ -65,6 +65,7 @@ export class ClaudeProtocolBridge {
 
   constructor(private readonly llm: LlmRuntime, private readonly streamIdleMs: number = DEFAULT_STREAM_IDLE_MS) {}
 
+  /** Start the local bridge listener, resolving once it is accepting connections. */
   start(): Promise<void> {
     return this.readyPromise ??= new Promise((resolve, reject) => {
       const server = createServer((req, res) => { void this.handle(req, res).catch((error: unknown) => { this.fail(res, error) }) })
@@ -79,6 +80,7 @@ export class ClaudeProtocolBridge {
     })
   }
 
+  /** Close the listener and drop its routes and cached readiness. */
   async dispose(): Promise<void> {
     const server = this.server
     this.server = undefined
@@ -92,6 +94,12 @@ export class ClaudeProtocolBridge {
     if (server !== undefined) await new Promise<void>(resolve => server.close(() => { resolve() }))
   }
 
+  /** Mint an Anthropic-wire endpoint for one provider/model route.
+   * @param provider - provider id the turn is routed to.
+   * @param model - model id the turn runs.
+   * @param reasoningEffort - the reasoning effort to pin, when the route names one.
+   * @returns the endpoint base URL and its bridge API key.
+   */
   async endpoint(provider: string, model: string, reasoningEffort?: string): Promise<{ readonly baseURL: string; readonly apiKey: string }> {
     await this.start()
     this.pruneRoutes()
@@ -100,6 +108,11 @@ export class ClaudeProtocolBridge {
     return { baseURL: `${this.address}/anthropic/${id}`, apiKey: this.secret }
   }
 
+  /** Mint the session's OpenAI-wire endpoint, whose model field carries later route tags.
+   * @param provider - the initial provider id the session routes to.
+   * @param model - the initial model id the session runs.
+   * @returns the endpoint base URL and its bridge API key.
+   */
   async openAIEndpoint(provider: string, model: string): Promise<{ readonly baseURL: string; readonly apiKey: string }> {
     await this.start()
     this.pruneRoutes()
@@ -347,7 +360,12 @@ export class ClaudeProtocolBridge {
   private fail(res: ServerResponse, error: unknown): void { if (res.headersSent) { res.end(); return }; this.json(res, 500, { error: { type: 'api_error', message: redactCredentialShapes(error instanceof Error ? error.message : String(error)) } }) }
 }
 
-/** Encode a model route for Codex's fixed local OpenAI endpoint. */
+/** Encode a model route for Codex's fixed local OpenAI endpoint. 
+ * @param provider - provider id the turn is routed to.
+ * @param model - model id the turn runs.
+ * @param reasoningEffort - the reasoning effort to encode, when one is pinned.
+ * @returns the encoded route tag.
+ */
 export function encodeCodexBridgeRoute(provider: string, model: string, reasoningEffort?: string): string {
   const effort = isBridgeReasoningEffort(reasoningEffort) ? `.${reasoningEffort}` : ''
   return `freecodego-route:${Buffer.from(provider, 'utf8').toString('base64url')}.${Buffer.from(model, 'utf8').toString('base64url')}${effort}`

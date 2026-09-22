@@ -466,6 +466,30 @@ describe('FreeCodeGoApiClient', () => {
     ])
   })
 
+  it('carries the backend’s two receipt flags, and leaves them unset when it sends none', async () => {
+    // Which documents exist is the backend's answer, so the projection has to keep
+    // the flags: dropping one turns into "no Stripe receipt" for every order. The
+    // other direction matters as much — the create-order response carries no flags
+    // for an order nobody has paid, and a defaulted `false` there would be this
+    // client making a claim about a document instead of reading one.
+    const client = new FreeCodeGoApiClient({
+      baseUrl: 'https://freecodego.example',
+      fetch: async (input) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname
+        return response({ data: path.endsWith('/verify')
+          ? { order_id: 45, amount: 5, status: 'PAID', out_trade_no: 'out-45', receipt_available: true, stripe_receipt_available: true }
+          : { order_id: 45, amount: 5, status: 'paid' } })
+      },
+    })
+    const request = { accessToken: 'host-only-token' }
+    const read = await client.getCheckoutOrder({ ...request, orderId: '45' })
+    expect('receiptAvailable' in read).toBe(false)
+    expect('stripeReceiptAvailable' in read).toBe(false)
+    const verified = await client.verifyCheckoutOrder({ ...request, outTradeNo: 'out-45' })
+    expect(verified.receiptAvailable).toBe(true)
+    expect(verified.stripeReceiptAvailable).toBe(true)
+  })
+
   it('reads the shared checkout-info projection used by the FreeCodeGo web payment page', async () => {
     const client = new FreeCodeGoApiClient({
       baseUrl: 'https://freecodego.example',
@@ -505,6 +529,36 @@ describe('FreeCodeGoApiClient', () => {
       },
     })
     await expect(client.emailCheckoutReceipt({ accessToken: 'host-only-token', orderId: '42' })).resolves.toEqual({ email: 'account@example.test', message: 'Receipt email was accepted for delivery.' })
+  })
+
+  it("saves Stripe's own receipt as the bytes Stripe issued", async () => {
+    // The last byte is deliberately not valid UTF-8: Stripe's receipt is a PDF,
+    // and a body read as text would arrive with that byte replaced. Round-tripping
+    // it is what proves the document travels as bytes rather than as a string.
+    const pdf = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0xff])
+    const client = new FreeCodeGoApiClient({
+      baseUrl: 'https://freecodego.example',
+      fetch: async (input, init) => {
+        expect(new URL(String(input)).pathname).toBe('/api/v1/freecodego/payment/orders/42/stripe-receipt')
+        expect(init?.method ?? 'GET').toBe('GET')
+        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer host-only-token')
+        return new Response(pdf, { status: 200, headers: { 'content-type': 'application/pdf', 'content-disposition': 'attachment; filename="stripe-receipt-pi_3UF.pdf"' } })
+      },
+    })
+
+    const document = await client.downloadCheckoutStripeReceipt({ accessToken: 'host-only-token', orderId: '42' })
+    expect(document.fileName).toBe('stripe-receipt-pi_3UF.pdf')
+    expect(document.contentType).toBe('application/pdf')
+    expect(document.encoding).toBe('base64')
+    expect(Uint8Array.from(Buffer.from(document.content, 'base64'))).toEqual(pdf)
+  })
+
+  it('reports a Stripe receipt the backend refuses without inventing a file', async () => {
+    const client = new FreeCodeGoApiClient({
+      baseUrl: 'https://freecodego.example',
+      fetch: async () => new Response(JSON.stringify({ message: 'receipt is available after payment is completed' }), { status: 409, headers: { 'content-type': 'application/json' } }),
+    })
+    await expect(client.downloadCheckoutStripeReceipt({ accessToken: 'host-only-token', orderId: '42' })).rejects.toThrow('receipt is available after payment is completed')
   })
 
   it('cancels an existing payment order through the payment route', async () => {
@@ -665,6 +719,39 @@ describe('FreeCodeGo account coordination', () => {
     await expect(vault.load('https://freecodego.example')).rejects.toThrow('Stored FreeCodeGo session is incomplete')
   })
 
+  it('stores a remembered password beside the session, not inside it', async () => {
+    const values = new Map<string, string>()
+    const provider = {
+      resolve: async (ref: string) => values.has(ref) ? { value: values.get(ref)!, source: 'file' } : undefined,
+      set: async (ref: string, value: string) => { values.set(ref, value) },
+      unset: async (ref: string) => { values.delete(ref) },
+    } as unknown as CredentialProvider
+    const vault = new HarnessFreeCodeGoCredentialVault(provider, 'https://freecodego.example')
+    const origin = 'https://freecodego.example'
+
+    await vault.save(origin, { accessToken: 'a', refreshToken: 'r', expiresIn: 3600, tokenType: 'Bearer' })
+    await vault.savePassword(origin, 'hunter2')
+    const refs = [...values.keys()].sort()
+    expect(refs).toHaveLength(2)
+    expect(refs[0]).toMatch(/^FREECODEGO_PASSWORD_[A-F0-9]+$/)
+    expect(refs[1]).toMatch(/^FREECODEGO_SESSION_[A-F0-9]+$/)
+    await expect(vault.loadPassword(origin)).resolves.toBe('hunter2')
+    // The session is rotated and erased by paths the password must not follow:
+    // nothing may lose a password the user asked to keep just because a token
+    // expired, and a password must not stand in for a session.
+    await vault.delete(origin)
+    await expect(vault.loadPassword(origin)).resolves.toBe('hunter2')
+    await expect(vault.load(origin)).resolves.toBeUndefined()
+    await vault.deletePassword(origin)
+    await expect(vault.loadPassword(origin)).resolves.toBeUndefined()
+  })
+
+  it('reads an empty remembered password as none at all', async () => {
+    const provider = { resolve: async () => ({ value: '', source: 'file' }) } as unknown as CredentialProvider
+    const vault = new HarnessFreeCodeGoCredentialVault(provider, 'https://freecodego.example')
+    await expect(vault.loadPassword('https://freecodego.example')).resolves.toBeUndefined()
+  })
+
   it('rotates and erases credentials through the account coordinator', async () => {
     let stored: { accessToken: string; refreshToken: string; expiresIn: number; tokenType: 'Bearer' } | undefined
     const vault: FreeCodeGoCredentialVault = {
@@ -691,6 +778,73 @@ describe('FreeCodeGo account coordination', () => {
     await coordinator.logout()
     expect(stored).toBeUndefined()
     expect(coordinator.snapshot()).toEqual({ status: 'signed-out' })
+  })
+
+  it('commits the remembered-password intent only with a pair, and never into the snapshot', async () => {
+    let password: string | undefined
+    const writes: (string | undefined)[] = []
+    const vault: FreeCodeGoCredentialVault = {
+      load: async () => undefined,
+      save: async () => {},
+      delete: async () => {},
+      loadPassword: async () => password,
+      savePassword: async (_origin, value) => { password = value; writes.push(value) },
+      deletePassword: async () => { password = undefined; writes.push(undefined) },
+    }
+    const auth = {
+      origin: 'https://freecodego.example',
+      login: async () => ({
+        kind: 'authenticated' as const,
+        tokens: { accessToken: 'access', refreshToken: 'refresh', expiresIn: 3600, tokenType: 'Bearer' as const },
+        user: { id: 1, username: 'user', email: 'user@example.com', role: 'user', balance: 0, status: 'active' },
+      }),
+      logout: async () => {},
+    } as unknown as FreeCodeGoMobileAuthClientType
+    const coordinator = new FreeCodeGoAccountCoordinator(auth, vault)
+
+    await coordinator.login({ email: 'user@example.com', password: 'hunter2', rememberPassword: true })
+    await expect(coordinator.rememberedPassword()).resolves.toBe('hunter2')
+    // Browser-safe state is what every surface renders and what crosses the
+    // remote boundary; a password must not be reachable from it.
+    expect(JSON.stringify(coordinator.snapshot())).not.toContain('hunter2')
+
+    // Silence is not an untick: a caller that never mentions a password leaves
+    // the entry alone, which is what the registration form relies on.
+    await coordinator.login({ email: 'user@example.com', password: 'second' })
+    await expect(coordinator.rememberedPassword()).resolves.toBe('hunter2')
+
+    // An explicit untick is how a user forgets it, and it is what the next
+    // sign-in carries out.
+    await coordinator.login({ email: 'user@example.com', password: 'third', rememberPassword: false })
+    await expect(coordinator.rememberedPassword()).resolves.toBeUndefined()
+
+    await coordinator.login({ email: 'user@example.com', password: 'fourth', rememberPassword: true })
+    await coordinator.logout()
+    await expect(coordinator.rememberedPassword()).resolves.toBeUndefined()
+    expect(writes).toEqual(['hunter2', undefined, 'fourth', undefined])
+  })
+
+  it('keeps a password out of the vault when the login it was asked on never issued a pair', async () => {
+    let password: string | undefined
+    const vault: FreeCodeGoCredentialVault = {
+      load: async () => undefined,
+      save: async () => {},
+      delete: async () => {},
+      loadPassword: async () => password,
+      savePassword: async (_origin, value) => { password = value },
+      deletePassword: async () => { password = undefined },
+    }
+    const auth = {
+      origin: 'https://freecodego.example',
+      login: async () => { throw new Error('invalid credentials') },
+      logout: async () => {},
+    } as unknown as FreeCodeGoMobileAuthClientType
+    const coordinator = new FreeCodeGoAccountCoordinator(auth, vault)
+
+    // A rejected credential must not be the password this machine keeps — the
+    // most likely thing a failed attempt typed is a typo.
+    await expect(coordinator.login({ email: 'user@example.com', password: 'typo', rememberPassword: true })).rejects.toThrow('invalid credentials')
+    await expect(coordinator.rememberedPassword()).resolves.toBeUndefined()
   })
 
   it('keeps an unremembered login out of the vault and clears a stored session', async () => {

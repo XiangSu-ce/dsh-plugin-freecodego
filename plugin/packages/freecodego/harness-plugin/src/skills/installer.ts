@@ -232,6 +232,7 @@ function backupPath(root: string): string {
 /**
  * Install one skill into a root.
  * @param request - the payload, its destination root, and where the lockfile lives.
+ * @param fs - the filesystem port the install writes through.
  * @returns what was installed, or a refusal with nothing written.
  */
 export async function installSkill(
@@ -412,6 +413,7 @@ async function readLockfile(fs: InstallerFs, path: string): Promise<SkillLockfil
  * install writes files first: the record must never describe files that are not
  * there. A removal that fails leaves both alone.
  * @param request - the skill name, its root and the lockfile's directory.
+ * @param fs - the filesystem port the removal writes through.
  * @returns what was removed.
  */
 export async function removeSkill(

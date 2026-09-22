@@ -23,12 +23,18 @@
  *   so the client can tell a stall from a finished turn.
  * - **Which error the client is told.** Anthropic's clients key their own retry
  *   and backoff on the SSE error type, so sending everything as `api_error`
- *   throws away a distinction the caller already knows how to use.
+ *   throws away a distinction the caller already knows how to use. It is also why a
+ *   `403` must never reach the client as `authentication_error`: that type is how an
+ *   Anthropic client decides to send the user back to sign in, and a plan gate is not
+ *   a credential problem. The numbers that say something about the account are read
+ *   from `upstream-status-code.ts`, so the type in the frame and the `LlmError` code
+ *   a user is shown cannot disagree.
  *
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/provider-error-classify
  */
 
 import { StreamIdleTimeoutError } from './stream-deadline.ts'
+import { upstreamStatusCategory } from './upstream-status-code.ts'
 
 /** The kinds this plugin distinguishes. Each maps to one caller decision. */
 export type ProviderErrorKind =
@@ -53,6 +59,7 @@ export type ProviderWireErrorType =
   | 'request_too_large'
   | 'api_error'
 
+/** How one provider error should be classified and answered. */
 export interface ProviderErrorVerdict {
   readonly kind: ProviderErrorKind
   /** The type to put in the protocol's error frame. */
@@ -86,6 +93,10 @@ export function classifyProviderError(error: unknown): ProviderErrorVerdict {
   //   1. An explicit signal — a timeout or abort *name*. Nothing a message says
   //      may override one.
   //   2. The machine code the adapter attached, which was written to be routed on.
+  //      One exception, and it is deliberate: a *bucket* code (`RATE_LIMIT`) yields to
+  //      a status that says the account cannot pay. That code is what this plugin's
+  //      providers report for 402, 403 and 429 alike — the `LlmError` vocabulary has
+  //      no code for a balance — so only the status keeps those three apart.
   //   3. The transport's status number, which is what it observed rather than prose
   //      it, or a proxy, wrapped around it.
   //   4. Wording, and only then. Inside this tier the specific conditions come
@@ -109,8 +120,9 @@ export function classifyProviderError(error: unknown): ProviderErrorVerdict {
   // `LlmFailure` carries it alongside both. A code this table does not name leaves
   // the tiers below untouched, so it can never turn a retryable failure terminal by
   // omission.
-  const byCode = KIND_BY_CODE[codeOf(error) ?? '']
-  if (byCode !== undefined) return verdict(byCode, message)
+  const code = codeOf(error)
+  const byCode = KIND_BY_CODE[code ?? '']
+  if (byCode !== undefined && !statusRefinesCode(code, status)) return verdict(byCode, message)
   // Before the status table, and deliberately: an overflow arrives as a 400,
   // which the transport rule below would file as the caller's bad request. It is
   // the one 4xx whose message says the request was fine and the *input* is too
@@ -122,7 +134,16 @@ export function classifyProviderError(error: unknown): ProviderErrorVerdict {
 
   if (/rate[ _-]?limit|too many requests|429\b/i.test(message)) return verdict('rate-limit', message)
   if (/overloaded|at capacity|server is busy|529\b/i.test(message)) return verdict('overloaded', message)
-  if (/api[ _-]?key|unauthori[sz]ed|authentication|invalid token|permission denied|401\b|403\b/i.test(message)) return verdict('auth', message)
+  if (/api[ _-]?key|unauthori[sz]ed|authentication|invalid token|permission denied|401\b/i.test(message)) return verdict('auth', message)
+  // A `402`/`403` in prose, with no number for the transport tier to read, is the
+  // gate `fromStatus` reads those two as. It used to be folded into the credential
+  // pattern above — which put `authentication_error` in the client's frame for an
+  // account whose credential was fine — and it must not fall through to `unknown`
+  // either, which is retryable and spends the budget re-sending a request the plan
+  // already refused. The credential patterns stay first on purpose: a `403` whose
+  // prose also names a key is that proxy's way of saying the key was refused, and
+  // that is the more specific statement of the two.
+  if (/\b402\b|\b403\b/i.test(message)) return verdict('quota', message)
   if (/content (?:policy|filter)|safety|moderat|flagged|blocked by/i.test(message)) return verdict('content', message)
   if (/timed? ?out|timeout|etimedout|deadline exceeded/i.test(message)) return verdict('timeout', message)
   if (/invalid[_ ]request|bad request|malformed|400\b|422\b/i.test(message)) return verdict('invalid-request', message)
@@ -185,15 +206,61 @@ const KIND_BY_CODE: Readonly<Record<string, ProviderErrorKind>> = {
   IMAGE_OFFLOAD_REQUIRED: 'invalid-request',
 }
 
-/** A status code answers the question by itself when the transport reports one. */
+/**
+ * Whether a status outranks the code it arrived with.
+ *
+ * `RATE_LIMIT` is the code this plugin's providers report for `402`, `403` and `429`
+ * alike, because the `LlmError` vocabulary has no code for a spent balance. The status
+ * is therefore the finer of the two facts, and it decides: read by code alone, a plan
+ * gate reached the client as `rate_limit_error` — the frame that sends the client's own
+ * backoff straight back at the account that cannot pay, which is the argument the
+ * `quota` row already makes against that wire type.
+ *
+ * Deliberately one status family. A provider that answers `400` with "rate limit
+ * exceeded" in the body *is* reporting a rate limit and the code is right about it; a
+ * `403` recorded as `AUTH` was chosen by an adapter that read the refusal, and that
+ * reading is more specific than the number.
+ */
+function statusRefinesCode(code: string | undefined, status: number | undefined): boolean {
+  if (status === undefined) return false
+  if (code !== 'RATE_LIMIT' && code !== 'RATE_LIMITED') return false
+  return upstreamStatusCategory(status) === 'quota'
+}
+
+/**
+ * A status code answers the question by itself when the transport reports one.
+ *
+ * The numbers that say something about the *account* are read from the shared table
+ * (`upstream-status-code.ts`), so a `403` classifies here exactly as it is coded in
+ * the `LlmError` a user is shown. It used to be filed with `401` as `auth`, which put
+ * `authentication_error` in the protocol frame — and that frame is what a client keys
+ * its re-sign-in guidance on — for a plan that had merely declined the route. `402`
+ * fell all the way to `invalid-request`, telling whoever read the log that the
+ * request was malformed when it was the balance that was empty.
+ *
+ * Two statuses are decided before the table because they are protocol facts rather
+ * than statements about the account: `529` is Anthropic's overload, with its own
+ * retryable wire type, and `413` is a body too large for the route.
+ */
 function fromStatus(status: number, message: string): ProviderErrorVerdict {
-  if (status === 429) return verdict('rate-limit', message)
   if (status === 529) return verdict('overloaded', message)
-  if (status === 401 || status === 403) return verdict('auth', message)
   if (status === 413) return verdict('context-overflow', message)
-  if (status >= 500) return verdict('unknown', message)
-  if (status >= 400) return verdict('invalid-request', message)
-  return verdict('unknown', message)
+  switch (upstreamStatusCategory(status)) {
+    case 'auth':
+      return verdict('auth', message)
+    // 402 and 403: the account cannot pay for this route, which is what the `quota`
+    // row already argues about a wire type — `invalid_request_error` because that is
+    // what Anthropic sends for a balance, and not `rate_limit_error`, which would send
+    // the client's own backoff straight back at the account that cannot pay.
+    case 'quota':
+      return verdict('quota', message)
+    case 'rate-limit':
+      return verdict('rate-limit', message)
+    case 'server':
+      return verdict('unknown', message)
+    default:
+      return status >= 400 ? verdict('invalid-request', message) : verdict('unknown', message)
+  }
 }
 
 /** One row of the table: kind, wire type, and whether another attempt is worth it. */
@@ -263,11 +330,27 @@ function nameOf(error: unknown): string | undefined {
   return typeof name === 'string' ? name : undefined
 }
 
-/** A numeric HTTP status, when the value carries a usable one. */
+/**
+ * A numeric HTTP status, when the value carries a usable one.
+ *
+ * Two shapes carry one, and both are read. A provider's own exception — a library's
+ * error, or one of this plugin's `…UpstreamError`s — puts the number at `status`.
+ * `LlmError`, which is what every adapter in this plugin throws, keeps it on the frozen
+ * `failure` record instead (`LlmFailure` is `{ message, code, status? }`, documented in
+ * `@deepseek-ai/dsh-llm`). Reading only the first shape left the whole status tier dead
+ * for this plugin's own failures: the code tier answered every one of them, which is
+ * how a `403` recorded as `RATE_LIMIT` became a retryable rate gate in the frame.
+ */
 function statusOf(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null) return undefined
-  const status = (error as { readonly status?: unknown }).status
-  return typeof status === 'number' && Number.isFinite(status) ? status : undefined
+  const bare = (error as { readonly status?: unknown }).status
+  const nested = (error as { readonly failure?: { readonly status?: unknown } }).failure?.status
+  return usableStatus(bare) ?? usableStatus(nested)
+}
+
+/** An HTTP status this table can route on, or `undefined` for anything else. */
+function usableStatus(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599 ? value : undefined
 }
 
 /**

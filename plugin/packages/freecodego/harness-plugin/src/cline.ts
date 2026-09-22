@@ -1,13 +1,17 @@
 /**
- * Host-only Cline account pool, token refresh, device login, live free-model
+ * Host-only Cline account pool, token refresh, device login, live model
  * directory, and the LLM adapter that serves them.
  *
  * Cline has no API key. A request carries a WorkOS-issued access token in the
  * `workos:`-prefixed bearer form, and that token is rotated through
- * `/auth/refresh`. The free routes come from Cline's own
+ * `/auth/refresh`. The routes come from Cline's own
  * `ai/cline/recommended-models` feed rather than a pinned list, so a model that
  * becomes free later is selectable without a plugin update; the pinned list is
- * only a floor for when the feed cannot be reached.
+ * only a floor for when the feed cannot be reached. That feed is one document
+ * holding two sets — the free routes and the subscription ones beside them — and
+ * {@link readClineFeed} reads both, because a subscription route the user may
+ * deliberately pay for has to reach the settings checklist before it can be
+ * switched on. Only the free half is what the status card calls free.
  *
  * Several accounts rotate on auth and rate failures. Cline grants each free
  * promotion its own budget, so a budget is parked against the *route* that ran
@@ -25,12 +29,30 @@ import { LlmAdapter, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { activeAccountIdAfterRemoval, activeAccountIdAfterWrite } from './account-utils.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
-import { parseSse, serializeRequest, translate } from './openai-wire.ts'
+import { asNumber as number, asRecord as object, asString as string } from './untrusted-json.ts'
+import { llmCodeForUpstreamStatus } from './upstream-status-code.ts'
+import { serializeRequest, translate } from './openai-wire.ts'
+import { parseSse } from './wire-shared.ts'
 import { isHttpUrl } from './system-browser.ts'
 import type { ClineAccountInfo, ClineDeviceLogin, ClineFreeModel, ClineUsage, ClineUsageWindow } from './types.ts'
 
 /** Host-only credential slot for the Cline account pool. */
 export const CLINE_AUTH_REF: CredentialRef = credentialRef('CLINE_AUTH')
+
+/**
+ * The price a Cline row states, in the one channel a browser half can read.
+ *
+ * The free half keeps the string it has always carried; the subscription half
+ * states that it costs something without claiming a rate the feed never
+ * published — `tag:metered` is the marker for exactly that (see the client's
+ * `model-price.ts`). Without it a subscription row would arrive looking free and
+ * would be offered by default.
+ * @param free - whether the feed listed this route in its free half.
+ * @returns the description string.
+ */
+function clineModelDescription(free: boolean): string {
+  return free ? 'Cline · ×0 · 官方免费模型' : 'Cline · tag:metered · 订阅线路'
+}
 
 /** Cline's product API root. `/chat/completions` is OpenAI-compatible. */
 export const CLINE_API_BASE = 'https://api.cline.bot/api/v1'
@@ -81,6 +103,8 @@ const CLINE_CLIENT_IDENTITY: Readonly<Record<string, string>> = {
  * `taskId` is the same value the request body carries as `session_id`: the
  * upstream treats a task id that disagrees with the body as a mismatched
  * surface, and one id built in two places is how they come to disagree.
+ * @param taskId - the task/session id to attach as `x-task-id`.
+ * @returns the identity headers for the request.
  */
 export function clineClientHeaders(taskId: string): Record<string, string> {
   return { ...CLINE_CLIENT_IDENTITY, 'x-task-id': taskId }
@@ -132,19 +156,11 @@ interface ClineAccountUpdate {
   readonly email?: string
 }
 
-function object(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-}
-function string(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
-}
-function number(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}function redact(value: string): string {
+function redact(value: string): string {
   // Curated credential shapes first (this module's own rules only knew bearer and
   // keyword forms), then the local ones.
-  return redactCredentialShapes(value)
-    .replace(/Bearer\s+[^\s"']+/gi, 'Bearer <redacted>')
+  return redactCredentialShapes(value)    .replace(/Bearer\s+[^\s"']+/gi, 'Bearer <redacted>')
+
     .replace(/(?:^|[\s"'=&?])(?:access[_-]?token|refresh[_-]?token|accessToken|refreshToken|client[_-]?secret|token)(?:["'=:\s]+)[a-z0-9._~+/=-]{8,}/gi, '$1<redacted>')
     .replace(/[\r\n]+/g, ' ')
     .slice(0, 512)
@@ -313,6 +329,63 @@ function parseClineModel(value: unknown): ClineFreeModel | undefined {
     ...(tags === undefined || tags.length === 0 ? {} : { tags }),
   }
 }
+
+/**
+ * One feed route plus which half of the document it came from.
+ *
+ * The flag is not part of the browser-safe row: the status card only ever
+ * carries free ones, and the adapter is the only reader that needs to tell the
+ * halves apart.
+ */
+export interface ClineFeedRoute extends ClineFreeModel {
+  /** True when the feed listed this route in its free half. */
+  readonly free: boolean
+}
+
+/**
+ * Read both halves of the `recommended-models` document.
+ *
+ * The feed is one document carrying two sets: the routes billed at zero, under
+ * `free`, and the subscription half the official clients list beside them. This
+ * used to read `free` alone, which is why every Cline row the picker showed was
+ * a free one — the metered half was in the payload and thrown away.
+ *
+ * Which array the metered rows arrive under is not fixed by anything this code
+ * can see (the feed is private and only ever reports itself through the clients
+ * that read it), so the metered half is stated by shape rather than by key: any
+ * model-shaped array other than the free one. A row is model-shaped when
+ * {@link parseClineModel} accepts it, which is the same guard the free half has
+ * always passed through; junk arrays therefore drop out, and an id that appears
+ * in both halves stays free.
+ *
+ * The free half is `free` when the document declares one and `models` when it
+ * does not — the key this reader accepted before the second half existed. Without
+ * that fallback a single-list feed, which used to be read entirely as free, would
+ * have every route on it re-labelled as a subscription one and switched off.
+ * @param payload - the untrusted feed document.
+ * @returns the two halves, each in the order the document listed them.
+ */
+export function readClineFeed(payload: unknown): { readonly free: readonly ClineFeedRoute[]; readonly metered: readonly ClineFeedRoute[] } {
+  const document = object(payload)
+  const free: ClineFeedRoute[] = []
+  const metered: ClineFeedRoute[] = []
+  const seen = new Set<string>()
+  const read = (rows: readonly unknown[], isFree: boolean): void => {
+    for (const value of rows) {
+      const model = parseClineModel(value)
+      if (model === undefined || seen.has(model.id)) continue
+      seen.add(model.id)
+      ;(isFree ? free : metered).push({ ...model, free: isFree })
+    }
+  }
+  const freeKey = Array.isArray(document.free) ? 'free' : Array.isArray(document.models) ? 'models' : undefined
+  if (freeKey !== undefined) read(document[freeKey] as readonly unknown[], true)
+  for (const [key, value] of Object.entries(document)) {
+    if (key === freeKey || !Array.isArray(value)) continue
+    read(value, false)
+  }
+  return { free, metered }
+}
 /** Parse "try again in 17h 59m" into a cooldown deadline. */
 function cooldownUntilFrom(detail: string, now = Date.now()): number {
   const hours = /(\d+)\s*h/i.exec(detail)
@@ -339,10 +412,14 @@ export class ClineUpstreamError extends Error {
   }
 }
 
+/**
+ * Cline accounts, free-model pools, and device sign-in, with sessions kept in the Host credential store.
+ */
 export class ClineClient {
   private cursor = 0
-  private modelsCache: { readonly expiresAt: number; readonly models: readonly ClineFreeModel[] } | undefined
-  private modelsPromise: Promise<readonly ClineFreeModel[]> | undefined
+  /** Both halves of the feed, cached together: one document, one read. */
+  private feedCache: { readonly expiresAt: number; readonly free: readonly ClineFeedRoute[]; readonly metered: readonly ClineFeedRoute[] } | undefined
+  private feedPromise: Promise<{ readonly free: readonly ClineFeedRoute[]; readonly metered: readonly ClineFeedRoute[] }> | undefined
   private usageCache: { readonly expiresAt: number; readonly usage: ClineUsage } | undefined
   private usagePromise: Promise<ClineUsage> | undefined
   constructor(private readonly credentials: CredentialProvider) {}
@@ -350,6 +427,7 @@ export class ClineClient {
   /**
    * Read the account pool. Cheap and offline: the picker and the Settings card
    * ask this on every render, so it never touches the network.
+   * @returns the cline Account Info rows, in backend order.
    */
   async accounts(): Promise<readonly ClineAccountInfo[]> {
     const store = await this.readStore()
@@ -380,6 +458,7 @@ export class ClineClient {
    * The picker uses this to park exactly the routes that ran out of free
    * budget: a capped promotion must not take the account's other routes — or
    * the whole provider — down with it.
+   * @returns whether any account is signed in, and which models are parked while they cool down.
    */
   async poolAvailability(): Promise<{ readonly signedIn: boolean; readonly parked: ReadonlySet<string> }> {
     const store = await this.readStore()
@@ -391,7 +470,9 @@ export class ClineClient {
     return { signedIn: store.accounts.length > 0, parked }
   }
 
-  /** Whether any account can currently carry a request. */
+  /** Whether any account can currently carry a request. 
+   * @returns true when at least one account is stored.
+   */
   async signedIn(): Promise<boolean> {
     const store = await this.readStore()
     return store.accounts.length > 0
@@ -404,28 +485,46 @@ export class ClineClient {
    * An unreachable feed or a signed-out pool yields an empty list rather than
    * a stale substitute — a fabricated model id would 4xx on every call, so
    * showing nothing is the honest state.
+   * @returns the cline Free Model rows, in backend order.
    */
   async freeModels(): Promise<readonly ClineFreeModel[]> {
-    const cached = this.modelsCache
-    if (cached !== undefined && cached.expiresAt > Date.now()) return cached.models
-    const inFlight = this.modelsPromise
+    return (await this.feed()).free
+  }
+
+  /**
+   * Every route the feed lists, free half first.
+   *
+   * {@link freeModels} answers what this pool can serve for nothing; this answers
+   * what the account can reach, which is what the settings checklist has to list
+   * so a subscription route is *switchable*. Presence here is not an offer: the
+   * row's own price decides whether it starts in the picker.
+   * @returns every parsed route, in feed order.
+   */
+  async allModels(): Promise<readonly ClineFeedRoute[]> {
+    const feed = await this.feed()
+    return [...feed.free, ...feed.metered]
+  }
+
+  /** Both halves of one cached read of the feed. */
+  private async feed(): Promise<{ readonly free: readonly ClineFeedRoute[]; readonly metered: readonly ClineFeedRoute[] }> {
+    const cached = this.feedCache
+    if (cached !== undefined && cached.expiresAt > Date.now()) return cached
+    const inFlight = this.feedPromise
     if (inFlight !== undefined) return inFlight
-    const operation = (async (): Promise<readonly ClineFreeModel[]> => {
+    const operation = (async (): Promise<{ readonly free: readonly ClineFeedRoute[]; readonly metered: readonly ClineFeedRoute[] }> => {
       try {
         const store = await this.readStore()
-        if (store.accounts.length === 0) return []
-        const payload = object(await this.requestJson(CLINE_MODELS_URL, { method: 'GET' }))
-        const rows = Array.isArray(payload.free) ? payload.free : Array.isArray(payload.models) ? payload.models : []
-        return rows.map(parseClineModel).filter((model): model is ClineFreeModel => model !== undefined)
-      } catch { return [] }
+        if (store.accounts.length === 0) return { free: [], metered: [] }
+        return readClineFeed(object(await this.requestJson(CLINE_MODELS_URL, { method: 'GET' })))
+      } catch { return { free: [], metered: [] } }
     })()
-    this.modelsPromise = operation
+    this.feedPromise = operation
     try {
-      const models = await operation
-      this.modelsCache = { expiresAt: Date.now() + CLINE_MODELS_CACHE_TTL_MS, models }
-      return models
+      const feed = await operation
+      this.feedCache = { expiresAt: Date.now() + CLINE_MODELS_CACHE_TTL_MS, ...feed }
+      return feed
     } finally {
-      if (this.modelsPromise === operation) this.modelsPromise = undefined
+      if (this.feedPromise === operation) this.feedPromise = undefined
     }
   }
 
@@ -436,6 +535,7 @@ export class ClineClient {
    * Best-effort by design: the card treats usage as an extra panel, so a
    * failed or unexpected payload is an empty snapshot rather than an error —
    * the same failure must not take the account list down with it.
+   * @returns the cline Usage.
    */
   async usage(): Promise<ClineUsage> {
     const cached = this.usageCache
@@ -499,10 +599,10 @@ export class ClineClient {
   }
 
 
-  /** Drop the cached free-model feed and usage snapshot; the next read hits the network. */
+  /** Drop the cached model feed and usage snapshot; the next read hits the network. */
   invalidateCatalog(): void {
-    this.modelsCache = undefined
-    this.modelsPromise = undefined
+    this.feedCache = undefined
+    this.feedPromise = undefined
     this.usageCache = undefined
     this.usagePromise = undefined
   }
@@ -512,6 +612,7 @@ export class ClineClient {
    *
    * The token is exchanged immediately: storing an unverified token would let
    * the UI show an account that can never carry a request.
+   * @param refreshToken - refresh token the session rotates with.
    */
   async addAccountFromRefreshToken(refreshToken: string): Promise<void> {
     const token = refreshToken.trim()
@@ -522,7 +623,9 @@ export class ClineClient {
     await this.upsertAccount(refreshed, { adopt: true })
   }
 
-  /** Start a WorkOS device login; the caller renders the code and polls. */
+  /** Start a WorkOS device login; the caller renders the code and polls. 
+   * @returns the cline Device Login.
+   */
   async startDeviceLogin(): Promise<ClineDeviceLogin> {
     const response: Response = await fetch(WORKOS_DEVICE_URL, {
       method: 'POST',
@@ -561,7 +664,10 @@ export class ClineClient {
    * One poll per call, so the Settings page owns the cadence and the Host never
    * holds a five-minute request open.
    */
-  /** `true` while the user has not finished authorizing in the browser. */
+  /** `true` while the user has not finished authorizing in the browser. 
+   * @param deviceCode - the device code the sign-in flow issued.
+   * @returns true once the device authorized the login.
+   */
   async pollDeviceLogin(deviceCode: string): Promise<boolean> {
     const code = deviceCode.trim()
     if (code === '') throw new Error('CLINE_LOGIN_FAILED: device code is required')
@@ -591,7 +697,11 @@ export class ClineClient {
     throw new Error(`CLINE_LOGIN_FAILED: ${redact(description)}`)
   }
 
-  async removeAccount(accountId: string): Promise<void> {
+    /**
+   * Forget one Cline account locally, leaving the others usable.
+   * @param accountId - id of the account to remove.
+   */
+async removeAccount(accountId: string): Promise<void> {
     const store = await this.readStore()
     const accounts = store.accounts.filter(account => account.id !== accountId)
     const activeAccountId = activeAccountIdAfterRemoval(accounts, store.activeAccountId)
@@ -606,7 +716,10 @@ export class ClineClient {
     this.invalidateUsage()
   }
 
-  /** Refresh one account (or all) and report which ones still work. */
+  /** Refresh one account (or all) and report which ones still work. 
+   * @param accountId - account this operation is scoped to.
+   * @returns the cline Account Info rows, in backend order.
+   */
   async refreshAccounts(accountId?: string): Promise<readonly ClineAccountInfo[]> {
     const store = await this.readStore()
     const targets = accountId === undefined ? store.accounts : store.accounts.filter(account => account.id === accountId)
@@ -625,7 +738,11 @@ export class ClineClient {
     return this.accounts()
   }
 
-  /** Stream one chat completion, rotating accounts on auth and rate failures. */
+  /** Stream one chat completion, rotating accounts on auth and rate failures. 
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the response.
+   * @param body - the serialized request body.
+   */
   async chat(body: string, signal?: AbortSignal): Promise<Response> {
     const store = await this.readStore()
     if (store.accounts.length === 0) throw new Error('CLINE_LOGIN_REQUIRED: add a Cline account first')
@@ -1001,17 +1118,14 @@ function safeJson(raw: string): unknown {
 /**
  * Map Cline failures onto the shared LLM error vocabulary.
  *
- * Only `401` says the sign-in itself is dead. `402/403/429` are the free tier's
- * budget and plan gates: the credential is fine, one route is out of money, and
- * reporting that as `AUTH` made the UI tell users their API key was invalid
- * while every credential the pool held was still good.
+ * The status policy is the shared one (`upstreamStatusCategory`): only `401` says
+ * the sign-in itself is dead, while `402/403/429` are the free tier's budget and
+ * plan gates whose credential is still good. This module used to write that ladder
+ * out itself, and the copy in the generic gateway adapter drifted the other way.
  */
 function clineLlmError(error: unknown): LlmError {
   if (error instanceof ClineUpstreamError) {
-    const code = error.status === 401 ? 'AUTH'
-      : error.status === 402 || error.status === 403 || error.status === 429 ? 'RATE_LIMIT'
-        : error.status >= 500 ? 'SERVER'
-          : `HTTP_${error.status}`
+    const code = llmCodeForUpstreamStatus(error.status)
     return new LlmError(clineFailureMessage(error), code, { status: error.status })
   }
   if (error instanceof Error && error.message.startsWith('CLINE_')) {
@@ -1061,7 +1175,10 @@ export class ClineAdapter extends LlmAdapter {
   }
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    const models = await this.client.freeModels()
+    // Both halves of the feed. A subscription route is a route the user may
+    // deliberately pay for, and this list is what the settings checklist draws
+    // from — a route that never reached it could never be switched on.
+    const models = await this.client.allModels()
     // Budgets are per model: a route is unavailable only when no account can
     // carry *that* route, so a capped model never greys out the rest.
     const pool = await this.client.poolAvailability()
@@ -1071,13 +1188,7 @@ export class ClineAdapter extends LlmAdapter {
         provider,
         id: model.id,
         name: model.name,
-        // Every row on this feed is a free route: the account's per-model promo
-        // budget pays for it. The picker derives its FREE tag from an `x0` in
-        // this string, and Cline's feed sends prose with no rate at all, so
-        // without stating the rate here the free routes render as unpriced. The
-        // rate leads the string so an upstream note that happens to mention a
-        // multiplier cannot shadow it.
-        description: 'Cline · ×0 · 官方免费模型',
+        description: clineModelDescription(model.free),
         inputModalities: ['text'] as const,
         ...servable
           ? { availability: 'available' as const }
@@ -1087,7 +1198,9 @@ export class ClineAdapter extends LlmAdapter {
   }
 
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
-    const known = (await this.client.freeModels()).find(candidate => candidate.id === model)
+    // The whole feed, so a subscription route the user switched on resolves to
+    // its own display name and description instead of the bare id.
+    const known = (await this.client.allModels()).find(candidate => candidate.id === model)
     return {
       provider,
       id: model,

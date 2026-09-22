@@ -85,6 +85,9 @@ const grepOutput = Array.from({ length: 6 }, (_v, f) =>
 
 const log = timestampedLog()
 
+/** The same lines as a terminal would paint them: SGR colour on every row. */
+const colour = (text: string, code: number): string => text.split('\n').map(line => `\u001b[${code}m${line}\u001b[0m`).join('\n')
+
 describe('headroom log routing', () => {
   it('a timestamped log is not claimed by the search detector', () => {
     // The detector's own verdict is the authority, and the exported predicate has
@@ -99,6 +102,66 @@ describe('headroom log routing', () => {
     // fragments) must not touch the `path:line:content` shape the branch exists for.
     expect(detectContentType(grepOutput).contentType).toBe('search')
     expect(looksLikeSearchOutput(grepOutput)).toBe(true)
+  })
+
+  it('colour does not flip a log into the search compressor', async () => {
+    // The guard this file is about is "a line that *starts* with a clock or a date
+    // is a log line", and a coloured line starts with `\x1b[32m` — so the escapes
+    // have to be read as decoration. Two predicates decide this payload's route and
+    // both read raw lines, so each normalises its own input: the detector at its
+    // entry point and `looksLikeSearchOutput` before its proportion test. Measured
+    // before either did: the coloured log below was typed `search` at confidence
+    // 1.0, the predicate said true, and the search branch claimed a payload whose
+    // `path:line:` reading was `\x1b[32m2026-09-19T09` — the same misrouting as the
+    // cases above, arriving through a spelling none of them carried.
+    const coloured = colour(log.text, 32)
+    expect(detectContentType(coloured).contentType).toBe('log')
+    // Control, so this is a rule about colour and not "ANSI suppresses search":
+    // genuine grep output stays search output when it is coloured, because the
+    // escapes were never what distinguishes the two shapes.
+    const colouredGrep = colour(grepOutput, 35)
+    expect(detectContentType(colouredGrep).contentType).toBe('search')
+    expect(looksLikeSearchOutput(colouredGrep)).toBe(true)
+    // And the route the model sees on that fixture: the log compressor answers,
+    // with every fatal line, and the search branch is never reached.
+    const h = harness(settings)
+    const result = await h.run('bash', coloured, { command: 'cat /var/log/app.log' })
+    expect(result.kind).toBe('accept')
+    const delivered = result.content?.[0]?.text ?? ''
+    const status = h.runtime.status()
+    expect(status.logCompressions).toBe(1)
+    expect(status.searchCompressions).toBe(0)
+    for (const canary of log.canaries) expect(delivered).toContain(canary)
+  })
+
+  it('colour does not make a log stream satisfy the search proportion either', async () => {
+    // The second predicate, and it needs a fixture without stack frames to show:
+    // `looksLikeSearchOutput` asks whether ≥0.8 of the non-empty lines look like
+    // `path:line:`, and a plain stream of coloured log records satisfies that
+    // reading while the frames above dilute it below the threshold either way. So
+    // this is the same payload family the runtime's search branch is dangerous for
+    // — every line a match, none of them a match.
+    const stream: string[] = []
+    for (let i = 0; i < 40; i += 1) stream.push(`2026-09-20T10:${String(i % 60).padStart(2, '0')}:01.000Z INFO worker[${i}] request id=req-${i} handled in ${i % 90}ms`)
+    for (let e = 0; e < 4; e += 1) stream.push(`2026-09-20T10:3${e}:02.000Z ERROR handler[${e}] upstream refused after retrying detail=FATAL_CANARY_${e} endpoint=/api/v${e}/items/${e}`)
+    const plain = stream.join('\n')
+    const coloured = colour(plain, 32)
+    expect(detectContentType(plain).contentType).toBe('log')
+    expect(detectContentType(coloured).contentType).toBe('log')
+    expect(looksLikeSearchOutput(plain)).toBe(false)
+    expect(looksLikeSearchOutput(coloured)).toBe(false)
+    // Through the seam: the search branch stays out, so the payload the model gets
+    // is the log fold's (the compressor refuses this one — the case below) and its
+    // fatal lines are present verbatim rather than selected by a grep budget.
+    const h = harness(settings)
+    const result = await h.run('bash', coloured, { command: 'cat /var/log/app.log' })
+    expect(result.kind).toBe('accept')
+    const delivered = result.content?.[0]?.text ?? ''
+    const status = h.runtime.status()
+    expect(status.searchCompressions).toBe(0)
+    expect(status.losslessCompressions).toBe(1)
+    expect(delivered).not.toContain('\u001b[')
+    for (let e = 0; e < 4; e += 1) expect(delivered).toContain(`FATAL_CANARY_${e}`)
   })
 
   it('routes a timestamped log through the log compressor and keeps every fatal line', async () => {

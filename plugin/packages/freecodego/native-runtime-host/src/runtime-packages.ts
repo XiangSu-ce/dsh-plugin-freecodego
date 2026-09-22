@@ -24,6 +24,9 @@ const claudeIntegrity: Readonly<Record<NativeRuntimePlatform, string>> = {
 
 const platforms = Object.keys(codexIntegrity) as NativeRuntimePlatform[]
 
+/**
+ * Official Codex runtime packages, one per published platform.
+ */
 export const codexRuntimePackages: readonly RuntimeDownloadSpec[] = platforms.map(platform => ({
   id: `codex:${platform}:${CODEX_VERSION}`,
   engine: 'codex',
@@ -37,6 +40,9 @@ export const codexRuntimePackages: readonly RuntimeDownloadSpec[] = platforms.ma
   maxArchiveBytes: 512 * 1024 * 1024,
 }))
 
+/**
+ * Official Claude Agent SDK runtime packages, one per published platform.
+ */
 export const claudeRuntimePackages: readonly RuntimeDownloadSpec[] = platforms.map(platform => ({
   id: `claude:${platform}:${CLAUDE_SDK_VERSION}`,
   engine: 'claude',

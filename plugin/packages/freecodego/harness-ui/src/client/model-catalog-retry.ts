@@ -5,6 +5,9 @@ interface RetryState {
   readonly error: string | null
 }
 
+/**
+ * The slice of the native model directory the retry layer observes.
+ */
 export interface RetriableModelDirectory {
   load(): Promise<unknown>
   readonly store: {
@@ -20,7 +23,11 @@ const retryDelays = [60_000, 10 * 60_000, 30 * 60_000] as const
 // silently throws away the only handle that can remove one.
 const installed = new WeakMap<object, () => void>()
 
-/** Retry transient catalog transport failures in the background, retaining the last good rows. */
+/**
+ * Retry transient catalog transport failures in the background, retaining the last good rows.
+ * @param directory - the model directory to watch for transient failures.
+ * @returns a disposer that clears any scheduled retry.
+ */
 export function installModelCatalogRetry(directory: RetriableModelDirectory): () => void {
   const existing = installed.get(directory)
   if (existing !== undefined) return existing

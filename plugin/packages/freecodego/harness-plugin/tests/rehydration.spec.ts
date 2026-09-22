@@ -1,7 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
 import { installRehydration, latestTodos, rehydrationText } from '../src/rehydration.ts'
+import { describeMemoryAge, memoryFreshnessNote } from '../src/memory/memory-age.ts'
+import { memoryDocumentAgeNote } from '../src/memory/memory-document.ts'
 
 type FakeEvent = { readonly type: string; readonly data: unknown }
+
+/** One recalled memory record, as the recall path hands it to rehydration. */
+function record(createdAt: number, id: string): { readonly id: string; readonly title: string; readonly kind: string; readonly trust: string; readonly projectId: string; readonly createdAt: number; readonly detailTokens: number } {
+  return { id, title: 'Retry decision', kind: 'decision', trust: 'reviewed', projectId: 'p', createdAt, detailTokens: 10 }
+}
+
+/** The line rehydration renders for one record. */
+function lineFor(text: string, body: string): string {
+  const line = text.split('\n').find(candidate => candidate.includes(`: ${body}`))
+  if (line === undefined) throw new Error(`no rendered line for ${body}`)
+  return line
+}
 
 describe('latestTodos', () => {
   it('returns the latest whole-list snapshot and tolerates absent writes', () => {
@@ -106,6 +120,61 @@ describe('rehydrationText', () => {
   it('omits the arc section when it is empty', () => {
     const text = rehydrationText({ todos: [{ content: 'ship it', status: 'pending' }], arcText: '' })
     expect(text).not.toContain('### Goals')
+  })
+})
+
+describe('the age caveat comes from the shared freshness vocabulary', () => {
+  // Relative to the real clock: `rehydrationText` reads `Date.now()` itself, so a
+  // pinned timestamp would put the fixtures in its future and every record would
+  // clamp to "just now" — the assertion would pass for the wrong reason.
+  const ago = (count: number): number => Date.now() - count * 86_400_000
+
+  const rendered = (offsetDays: number): string => rehydrationText({
+    memory: { projectId: 'p', tokenBudget: 1000, usedTokens: 10, records: [record(ago(offsetDays), 'mem_a')] } as never,
+    memoryBodies: new Map([['mem_a', 'body']]),
+  })
+
+  it('flags a record the memory surfaces call recent, and says it in their words', () => {
+    // The defect this pins: this file carried its own seven-day threshold, so a
+    // three-day-old record reached the prompt with no caveat while
+    // `engineering_memory_search` and the memory document both labelled the same
+    // record "re-check anything that may have changed since". Two vocabularies for
+    // one fact, and the prompt was the surface that said nothing.
+    const threeDays = describeMemoryAge(ago(3), Date.now())
+    expect(threeDays.freshness).toBe('recent')
+    const note = memoryFreshnessNote(threeDays)
+    expect(note).toBeDefined()
+    const line = lineFor(rendered(3), 'body')
+    expect(line).toContain(note!)
+    // The caller may add its own instruction, but not its own sentence about age.
+    // The shared note appears once, and it is the only thing on the line that
+    // speaks about age at all — a second, locally-worded threshold would add
+    // another duration (`… days ago`) beside it, which is what this counts.
+    expect(line.split(note!).length - 1).toBe(1)
+    expect(line.match(/\bago\b/giu) ?? []).toHaveLength(1)
+    // And what this caller adds is its own instruction, not an age claim.
+    expect(line).toContain('Recent conversation takes precedence over a conflicting memory.')
+  })
+
+  it('leaves a fresh record alone and still flags an ancient one', () => {
+    expect(lineFor(rendered(0), 'body')).not.toContain('Recorded ')
+    expect(lineFor(rendered(400), 'body')).toContain(memoryFreshnessNote(describeMemoryAge(ago(400), Date.now()))!)
+  })
+
+  it('and the memory document reads the same record the same way', () => {
+    // Cross-surface, which is the whole point of one vocabulary: the age term and
+    // the duration the document comment carries are the document's own, so this
+    // asserts what the two must agree about — the *band* and the *label* — rather
+    // than the two renderings being identical (one is a prompt line, the other an
+    // HTML comment).
+    const createdAt = ago(3)
+    const age = describeMemoryAge(createdAt, Date.now())
+    // The document record carries a body and tags the recall projection does not;
+    // the two share the id, title, kind, trust and timestamp this asserts on.
+    const document = { id: 'mem_a', title: 'Retry decision', body: 'body', kind: 'decision', trust: 'reviewed', createdAt, tags: [] }
+    expect(memoryDocumentAgeNote(document, Date.now())).toContain(`${age.freshness} (${age.label})`)
+    const line = lineFor(rendered(3), 'body')
+    expect(line).toContain(age.label)
   })
 })
 

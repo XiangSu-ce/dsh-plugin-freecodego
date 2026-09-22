@@ -71,12 +71,68 @@ function destroyElement(element: StripeElement | undefined, host: HTMLElement | 
 }
 interface StripeInstance {
   elements(options: { clientSecret: string; appearance?: Record<string, unknown> }): StripeElements
-  confirmPayment(options: Record<string, unknown>): Promise<{ error?: { message?: string } }>
+  // `type` is what separates a message written for the cardholder from one
+  // written for a developer: see `stripeConfirmCopy`.
+  confirmPayment(options: Record<string, unknown>): Promise<{ error?: { message?: string; type?: string; code?: string } }>
 }
 type StripeFactory = (publishableKey: string) => StripeInstance
 
 const STRIPE_JS_URL = 'https://js.stripe.com/v3/'
 let stripeJsPromise: Promise<StripeFactory> | undefined
+
+/** Why the card form itself could not be put on screen. */
+type CardFormLoadReason = 'no-document' | 'factory-missing' | 'script-blocked'
+
+/**
+ * Mark a loader failure with what went wrong, without saying it in the message.
+ *
+ * The message is the developer's sentence and stays one: it is logged, never
+ * printed. It used to be printed, which handed the customer
+ * `Stripe.js loaded without exposing the Stripe factory` — our plumbing, in a
+ * sentence nobody outside this file can act on. `reason` is the half the dialog
+ * can word, and it travels beside the message so the two cannot drift.
+ */
+function cardFormLoadError(reason: CardFormLoadReason, detail: string): Error {
+  const error = new Error(detail)
+  ;(error as { cardFormReason?: CardFormLoadReason }).cardFormReason = reason
+  return error
+}
+
+/**
+ * What to print for a card form that could not be drawn.
+ *
+ * Only two outcomes are worth telling apart. `script-blocked` is the one a
+ * customer can act on — the page never fetched the payment script, which a
+ * network, a proxy or a content blocker explains. Everything else (a session the
+ * processor refused, a factory the script never exposed, a frame that never
+ * arrived) is answered with one sentence, because the difference is ours to
+ * investigate rather than theirs to fix. The full failure is logged either way:
+ * this dialog is the only place it surfaces, so the log is where the developer's
+ * half of it belongs.
+ */
+export function describeCardFormFailure(cause: unknown, zh: boolean): string {
+  const reason = typeof cause === 'object' && cause !== null ? (cause as { cardFormReason?: CardFormLoadReason }).cardFormReason : undefined
+  console.warn('[freecodego] card form unavailable', cause)
+  return reason === 'script-blocked'
+    ? (zh ? '支付组件加载失败，请检查网络、代理或内容拦截器后重试。' : 'The payment form could not be loaded; check the network, a proxy or a content blocker and try again.')
+    : (zh ? '支付表单暂时无法显示，请稍后重试或改用其他支付方式。' : 'The payment form cannot be shown right now; try again later or use another payment method.')
+}
+
+/**
+ * What to print when `confirmPayment` answers with an error.
+ *
+ * The processor's `card_error` and `validation_error` messages are addressed to
+ * whoever holds the card ("Your card was declined.") and are the only account of
+ * *why* the payment failed, so replacing them with a generic line would take
+ * away the one thing the customer can act on. Its request-level failures are not
+ * that — an expired session or a rejected key reads as our own stack — so those
+ * are logged and worded like every other form failure.
+ */
+function stripeConfirmCopy(error: { message?: string; type?: string }, zh: boolean): string {
+  const cardholderFacing = error.type === 'card_error' || error.type === 'validation_error'
+  const message = error.message?.trim() ?? ''
+  return cardholderFacing && message !== '' ? message : describeCardFormFailure(error, zh)
+}
 
 /**
  * Load Stripe.js once per page.
@@ -91,16 +147,16 @@ export function loadStripeJs(): Promise<StripeFactory> {
   stripeJsPromise ??= new Promise<StripeFactory>((resolve, reject) => {
     const existing = (globalThis as { Stripe?: StripeFactory }).Stripe
     if (existing !== undefined) { resolve(existing); return }
-    if (typeof document === 'undefined') { reject(new Error('Stripe.js requires a browser document')); return }
+    if (typeof document === 'undefined') { reject(cardFormLoadError('no-document', 'Stripe.js requires a browser document')); return }
     const script = document.createElement('script')
     script.src = STRIPE_JS_URL
     script.async = true
     script.onload = () => {
       const factory = (globalThis as { Stripe?: StripeFactory }).Stripe
-      if (factory === undefined) reject(new Error('Stripe.js loaded without exposing the Stripe factory'))
+      if (factory === undefined) reject(cardFormLoadError('factory-missing', 'Stripe.js loaded without exposing the Stripe factory'))
       else resolve(factory)
     }
-    script.onerror = () => { reject(new Error('Stripe.js could not be loaded; check the network or any content blocker')) }
+    script.onerror = () => { reject(cardFormLoadError('script-blocked', 'Stripe.js could not be loaded; check the network or any content blocker')) }
     document.head.appendChild(script)
   })
   return stripeJsPromise
@@ -295,11 +351,31 @@ export function stripeFieldOptions(receiptEmail: string | undefined): Record<str
   return { billingDetails: { name: 'never', phone: 'never', address: 'never' } }
 }
 
-/** The backend's order states, said in the reader's language. */
-function orderStateLabel(state: string, zh: boolean): string {
+/**
+ * The backend's order states, said in the reader's language.
+ *
+ * Shared with the receipt list rather than kept private: the dialog and the list
+ * render the same vocabulary, and two tables would eventually disagree about one
+ * state — which is the kind of disagreement a payer reads as a contradiction.
+ * A state the table does not know is printed as the backend spelled it, so an
+ * unknown token still reaches the reader instead of being swallowed.
+ *
+ * It maps the backend's vocabulary, not this product's offer: `refunded` has a
+ * spelling here even though this product sells no refunds and never requests the
+ * refund family, because the dialog renders whatever state the backend reports
+ * for an order. An admin refund (`POST /api/v1/admin/payment/orders/:id/refund`)
+ * is the one way such a row can exist, and a mapping that omitted it would print
+ * a raw `REFUNDED` at the reader instead.
+ */
+export function orderStateLabel(state: string, zh: boolean): string {
   const table: Record<string, readonly [string, string]> = {
     pending: ['待支付', 'Awaiting payment'],
     paid: ['已支付', 'Paid'],
+    // The middle of the lifecycle this panel asks for (`paid` → `recharging` →
+    // `completed`): the money arrived and the credits are being applied. It was
+    // the one state the table did not know while the order list requested it, so
+    // an order being credited printed a raw `RECHARGING`.
+    recharging: ['额度到账中', 'Applying credit'],
     completed: ['已完成', 'Completed'],
     success: ['已支付', 'Paid'],
     settled: ['已结算', 'Settled'],
@@ -389,7 +465,7 @@ export function PaymentDialog(props: PaymentDialogProps): ReactNode {
     // or a corporate network. Left unhandled, both of those render an empty box
     // that looks like a loading state forever, which is the one outcome the
     // dialog must never produce.
-    const report = (error: unknown): void => { if (!disposed) setStripeError(error instanceof Error ? error.message : String(error)) }
+    const report = (error: unknown): void => { if (!disposed) setStripeError(describeCardFormFailure(error, zh)) }
     void loadStripeJs().then((factory) => {
       if (disposed || elementHost.current === null) return
       try {
@@ -484,7 +560,7 @@ export function PaymentDialog(props: PaymentDialogProps): ReactNode {
       },
     }).then((result) => {
       if (result.error !== undefined) {
-        setStripeError(result.error.message ?? (zh ? '支付未完成。' : 'The payment did not complete.'))
+        setStripeError(stripeConfirmCopy(result.error, zh))
         return
       }
       void loadOrderRef.current(order.orderId).then((latest) => {
@@ -492,7 +568,7 @@ export function PaymentDialog(props: PaymentDialogProps): ReactNode {
         setLiveState(latest.state)
         if (claimPaidAnnouncement(paidRef, order.orderId, latest.state)) onPaidRef.current()
       }, () => undefined)
-    }, (error: unknown) => { setStripeError(error instanceof Error ? error.message : String(error)) }).finally(() => { setConfirming(false) })
+    }, (error: unknown) => { setStripeError(describeCardFormFailure(error, zh)) }).finally(() => { setConfirming(false) })
   }
 
   const qr = order.qrCode?.trim() ?? ''
@@ -535,15 +611,15 @@ export function PaymentDialog(props: PaymentDialogProps): ReactNode {
 
       {paid ? <div className={css.payDialogPaid} role="status">{zh ? '支付已完成，额度已到账。' : 'Payment received; the credit has been applied.'}</div> : null}
       {paid && receiptEmail !== undefined && receiptEmail.trim() !== '' ? <small className={css.sectionMeta}>{zh
-        ? `Stripe 已把付款凭证发送至 ${receiptEmail.trim()}，也可用下方按钮直接下载收据。`
-        : `Stripe sent the payment documentation to ${receiptEmail.trim()}; you can also download the receipt below.`}</small> : null}
+        ? `付款凭证已发送至 ${receiptEmail.trim()}，也可用下方按钮直接下载收据。`
+        : `The payment documentation went to ${receiptEmail.trim()}; you can also download the receipt below.`}</small> : null}
 
-      {flow === 'stripe' ? <>
+      {flow === 'stripe' ? <div className={css.payDialogSlot}>
         <div className={css.payDialogElement} ref={elementHost} />
         {stripeError === undefined ? null : <div className={css.paymentNotice} role="alert">{stripeError}</div>}
-      </> : null}
+      </div> : null}
 
-      {flow === 'qr' ? <div className={css.payDialogQr}>
+      {flow === 'qr' ? <div className={`${css.payDialogSlot} ${css.payDialogQr}`}>
         <small className={css.sectionMeta}>{zh ? '用支付宝 / 微信扫码完成付款，付款后本窗口会自动更新。' : 'Scan with Alipay or WeChat; this window updates itself once paid.'}</small>
         {qrKind === 'image'
           ? <img className={css.qr} src={qr} alt={zh ? '支付二维码' : 'Payment QR code'} />
@@ -551,8 +627,8 @@ export function PaymentDialog(props: PaymentDialogProps): ReactNode {
       </div> : null}
 
       {flow === 'stripe' ? <small className={css.sectionMeta}>{zh
-        ? '支持 Visa / Mastercard / Amex / JCB / Discover 等国际信用卡；卡号只提交给 Stripe 加密处理，本机不留存。'
-        : 'Visa, Mastercard, Amex, JCB and Discover are accepted; the card number goes straight to Stripe and is never stored here.'}</small> : null}
+        ? '支持 Visa / Mastercard / American Express / JCB / Discover 等国际信用卡；卡号在传输中加密，本机不留存。'
+        : 'Visa, Mastercard, American Express, JCB and Discover are accepted; the card number is encrypted in transit and is never stored here.'}</small> : null}
 
       {/* The mainland-only wallet channels reject overseas exits, so this note
           belongs to them. The card channel has no such restriction, and repeating
@@ -561,14 +637,14 @@ export function PaymentDialog(props: PaymentDialogProps): ReactNode {
         ? '支付成功即刻到账；若长时间无法完成，请先关闭代理或 VPN 后重试，或改用银行卡支付。'
         : 'Credit is applied as soon as the payment succeeds. If it will not go through, turn off any proxy or VPN and retry, or pay by card.'}</small>}
 
-      {flow === 'link' ? <div className={css.payDialogLink}>
-        <small className={css.sectionMeta}>{zh ? '该通道只返回了支付页地址。若你在海外或开着代理，易支付页面可能被拒绝访问；大陆网络下可正常打开。' : 'This channel returned only a payment page URL. 易支付 refuses overseas traffic, so a proxy or a non-mainland network may block it.'}</small>
+      {flow === 'link' ? <div className={css.payDialogSlot}>
+        <small className={css.sectionMeta}>{zh ? '该通道只返回了支付页地址。若你在海外或开着代理，支付页可能拒绝访问；中国大陆网络下通常可以正常打开。' : 'This channel returned a payment page URL only. Overseas traffic or a proxy may be refused by that page; a mainland China network usually opens it.'}</small>
         <a className={css.button} href={linkUrl} target="_blank" rel="noreferrer">{zh ? '在浏览器打开支付页' : 'Open the payment page'}</a>
       </div> : null}
 
       {flow === 'unavailable' ? <div className={css.paymentNotice} role="alert">{zh
-        ? '服务端没有返回可用于支付的信息（既没有卡支付会话，也没有二维码或支付页地址）。请刷新订单后重试。'
-        : 'The backend returned nothing this dialog can pay with — no card session, no QR code, and no payment URL. Refresh the order and try again.'}</div> : null}
+        ? '这笔订单暂时没有可用的支付方式：没有卡支付表单、二维码或支付页地址。请重新打开订单后再试，或换一种支付方式。'
+        : 'Nothing here can take the payment yet — no card form, no QR code and no payment link. Reopen the order and try again, or use another payment method.'}</div> : null}
     </div>
   </Modal>
 }

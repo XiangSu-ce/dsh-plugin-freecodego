@@ -46,12 +46,16 @@ const OWNERSHIP_MARKER = 'freecodego-agent-preset'
  * `.agent-presets/` is Host-owned (the Host re-scans it), so this resolves
  * against the harness home rather than `FREECODEGO_HOME` — the single resolver
  * in `data-home.ts` is what keeps that distinction in one place.
+ * @param presetId - the preset id whose roster directory to resolve.
+ * @returns the roster directory path.
  */
 export function agentPresetDirectory(presetId: string): string {
   return join(harnessHomeDirectory(), '.agent-presets', presetId)
 }
 
-/** The FreeCodeGo preset's roster directory (kept for callers keyed to one id). */
+/** The FreeCodeGo preset's roster directory (kept for callers keyed to one id).
+ * @returns the FreeCodeGo preset's roster directory path.
+ */
 export function freeCodeGoAgentPresetDirectory(): string {
   return agentPresetDirectory(FREECODEGO_AGENT_PRESET_ID)
 }

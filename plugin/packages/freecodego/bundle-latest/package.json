@@ -6,7 +6,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/XiangSu-ce/dsh-freecodego.git",
+    "url": "git+https://github.com/XiangSu-ce/dsh-plugin-freecodego.git",
     "directory": "packages/freecodego/bundle-latest"
   },
   "keywords": [
@@ -17,7 +17,8 @@
     "freecodego"
   ],
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.1.6-alpha.2"
   },
   "type": "module",
   "main": "./dist/bootstrap.js",
@@ -78,7 +79,12 @@
     "eventsource-parser": "^3.1.0",
     "js-yaml": "^4.2.0",
     "tar": "7.5.2",
+    "typescript": "^6.0.3",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-freecodego-agent-engine-router": "workspace:^",
+    "@deepseek-ai/dsh-freecodego-harness-plugin": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
@@ -88,6 +94,7 @@
     "@deepseek-ai/dsh-api-remotes": "*",
     "@deepseek-ai/dsh-atomic-write": "*",
     "@deepseek-ai/dsh-attachment": "*",
+    "@deepseek-ai/dsh-brand": "*",
     "@deepseek-ai/dsh-client-locale": "*",
     "@deepseek-ai/dsh-client-ui-conversation": "*",
     "@deepseek-ai/dsh-client-ui-primitives": "*",
@@ -99,15 +106,19 @@
     "@deepseek-ai/dsh-llm": "*",
     "@deepseek-ai/dsh-llm-deepseek": "*",
     "@deepseek-ai/dsh-mcp-client": "*",
+    "@deepseek-ai/dsh-permission-presets": "*",
     "@deepseek-ai/dsh-sandbox-policy": "*",
     "@deepseek-ai/dsh-scope": "*",
     "@deepseek-ai/dsh-session": "*",
     "@deepseek-ai/dsh-settings": "*",
     "@deepseek-ai/dsh-skill-filesystem": "*",
+    "@deepseek-ai/dsh-subagent": "*",
     "@deepseek-ai/dsh-token-meter": "*",
+    "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/dsh-typert-protocol": "*",
     "@deepseek-ai/dsh-user-approval": "*",
     "@deepseek-ai/dsh-user-questions": "*",
+    "@deepseek-ai/dsh-util-values": "*",
     "@deepseek-ai/schemastery": "*",
     "react": "*"
   }

@@ -45,11 +45,17 @@
 
 import { redactCredentialShapes } from './secret-scan.ts'
 
+/**
+ * What the policy decided about one command.
+ */
 export type PolicyDecision = 'allow' | 'prompt' | 'forbidden'
 
 /** One ordered token position: a literal, or a set of alternatives. */
 export type PolicyToken = string | readonly string[]
 
+/**
+ * One ordered-token rule in a policy document.
+ */
 export interface CommandPolicyRule {
   /** Ordered tokens. Element 0 matches the program's basename. */
   readonly pattern: readonly PolicyToken[]
@@ -65,17 +71,26 @@ export interface CommandPolicyRule {
   readonly pipesToShell?: boolean
 }
 
+/**
+ * A host executable and the absolute paths it may be found at.
+ */
 export interface HostExecutable {
   readonly name: string
   readonly paths: readonly string[]
 }
 
+/**
+ * A policy document as loaded from disk.
+ */
 export interface CommandPolicyDocument {
   readonly version?: number
   readonly rules?: readonly CommandPolicyRule[]
   readonly hostExecutables?: readonly HostExecutable[]
 }
 
+/**
+ * Why a rule or the document was rejected by the compiler.
+ */
 export type PolicyDiagnosticCode =
   | 'invalid-document'
   | 'empty-pattern'
@@ -88,6 +103,9 @@ export type PolicyDiagnosticCode =
   | 'example-stolen-by-earlier-rule'
   | 'invalid-host-executable'
 
+/**
+ * One compiler diagnostic for a rejected rule.
+ */
 export interface PolicyDiagnostic {
   /** Index of the offending rule in the input document, or -1 for document-level. */
   readonly rule: number
@@ -103,6 +121,9 @@ interface CompiledRule {
   readonly pipesToShell: boolean
 }
 
+/**
+ * A validated policy ready to evaluate commands.
+ */
 export interface CompiledCommandPolicy {
   /** Rules that passed their own examples, in document order. */
   readonly rules: readonly CompiledRule[]
@@ -111,6 +132,9 @@ export interface CompiledCommandPolicy {
   readonly hostExecutables: ReadonlyMap<string, readonly string[]>
 }
 
+/**
+ * The policy's decision about one command line.
+ */
 export interface PolicyEvaluation {
   readonly decision: PolicyDecision
   /** Index into the *input* document, when a rule decided this. */
@@ -273,6 +297,8 @@ const WINDOWS_PATH_START = /^(?:[A-Za-z]:|\\)/u
  * `find . -name '*.log' -exec rm -rf {} \;` still needs `\;` to stay one literal
  * token, or the `;` would split the segment and the `-exec` operand would be
  * judged as its own command.
+ * @param command - command line the worker is started with.
+ * @returns the command's tokens.
  */
 export function tokenizeCommand(command: string): readonly string[] {
   const tokens: string[] = []
@@ -304,7 +330,11 @@ export function tokenizeCommand(command: string): readonly string[] {
   return tokens
 }
 
-/** Programs that appear in a shell pipeline as interpreters. */
+/**
+ * Programs that appear in a shell pipeline as interpreters.
+ * @param tokens - the tokenized command.
+ * @returns whether the command pipes into a shell interpreter anywhere.
+ */
 export function pipesIntoShell(tokens: readonly string[]): boolean {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]!
@@ -333,6 +363,8 @@ export function pipesIntoShell(tokens: readonly string[]): boolean {
  *
  * Exported because "each command in the line is judged separately" is the
  * property that makes the policy unskippable, and it is worth testing directly.
+ * @param argv - the tokenized command.
+ * @returns the segment token lists, in order.
  */
 export function commandSegments(argv: readonly string[]): readonly (readonly string[])[] {
   const segments: string[][] = []
@@ -459,7 +491,10 @@ function decidingRule(rules: readonly CompiledRule[], argv: readonly string[]): 
   return best
 }
 
-/** Validate and compile a policy document; rejected rules are dropped, not repaired. */
+/** Validate and compile a policy document; rejected rules are dropped, not repaired. 
+ * @returns the compiled Command Policy.
+ * @param document - the untyped policy document.
+ */
 export function compileCommandPolicy(document: unknown): CompiledCommandPolicy {
   const diagnostics: PolicyDiagnostic[] = []
   if (document === null || typeof document !== 'object' || Array.isArray(document)) {
@@ -747,6 +782,9 @@ export function commandProgramIndexes(tokens: readonly string[], from = 0): read
  * program hide from a rule anchored at token 0. The decision that matters is the
  * most restrictive one; ties keep the first one found, which makes the result
  * deterministic for a given rule order.
+ * @param command - command line the worker is started with.
+ * @returns the policy Evaluation.
+ * @param policy - the compiled policy to evaluate against.
  */
 export function evaluateCommandPolicy(policy: CompiledCommandPolicy, command: string): PolicyEvaluation {
   const argv = tokenizeCommand(command)
@@ -770,6 +808,8 @@ export function evaluateCommandPolicy(policy: CompiledCommandPolicy, command: st
  * rather than the rule's `id` is what a reader needs, because a dropped rule has
  * no compiled form left to look up — the document's own array index is the only
  * handle that still points at it.
+ * @param diagnostics - the diagnostics to render.
+ * @returns the one-line description.
  */
 export function describePolicyDiagnostics(diagnostics: readonly PolicyDiagnostic[]): string {
   return diagnostics.map(entry => `rule ${entry.rule === -1 ? '(document)' : String(entry.rule)}: ${entry.code} — ${entry.message}`).join('; ')
@@ -1177,6 +1217,9 @@ export const COMPILED_BUILT_IN_COMMAND_POLICY = compileCommandPolicy(BUILT_IN_CO
  * Only `forbidden` becomes a denial here: the guard it feeds is a monotonic
  * denial with no way back to an approval prompt, so a `prompt` decision is left
  * to the approval layer that can actually ask.
+ * @param command - command line the worker is started with.
+ * @param policy - the compiled policy to evaluate against.
+ * @returns the denial text, or `undefined` when the command may proceed.
  */
 export function commandPolicyDenial(policy: CompiledCommandPolicy, command: string): string | undefined {
   const evaluation = evaluateCommandPolicy(policy, command)

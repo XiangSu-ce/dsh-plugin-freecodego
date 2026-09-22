@@ -15,6 +15,8 @@ kind: "package-reference"
 
 - [请求与事件词表](#request-and-event-vocabulary)
 - [来源](#provenance)
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
 
 -----
@@ -37,8 +39,25 @@ worker 实现必须把本协议与 Harness 自有的工具、审批、凭据与�
 
 -----
 
+<a id="model-experience"></a>
+## Model Experience
+
+间接地，经由使用它的 host 与 worker；协议本身不渲染任何内容。
+
+#### KV Cache 影响
+
+分帧、关联 id 与序号校验都不在请求路径上，因此不影响已缓存的 prefix。
+
+## 已知限制与延期工作
+<a id="known-limitations-and-deferred-work"></a>
+
+- **worker 必须使用 Harness 拥有的工具、审批、凭据与资源限制** —— 协议承载的是请求，而不是策略。
+- **帧是严格的** —— 畸形或携带密钥形状的帧会被拒绝，而不是被部分解释。
+- **事件携带关联 id 与严格递增的序号** —— 出现缺口是协议错误，而不是重排。
+- **协议不拥有传输层** —— 进程、分帧与生命周期都由 host 拥有。
+
 <a id="dev-note"></a>
-## 开发备注
+### 开发备注
 
 <details>
 <summary>维护者的工作上下文——点击展开</summary>

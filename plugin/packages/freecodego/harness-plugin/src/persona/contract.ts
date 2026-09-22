@@ -36,6 +36,7 @@
 /** Where a persona was found, in increasing order of precedence. */
 export const PERSONA_SOURCES = ['bundled', 'user', 'project', 'inline'] as const
 
+/** Where a persona was found, drawn from {@link PERSONA_SOURCES}. */
 export type PersonaSource = typeof PERSONA_SOURCES[number]
 
 /**

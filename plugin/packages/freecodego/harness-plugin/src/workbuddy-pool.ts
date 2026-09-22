@@ -90,7 +90,9 @@ export class WorkBuddyPoolService {
     return this.sweepTask !== undefined
   }
 
-  /** Run one sweep over the pool, or join the one already running. */
+  /** Run one sweep over the pool, or join the one already running. 
+   * @returns the work Buddy Sweep Result rows, in backend order.
+   */
   run(): Promise<readonly WorkBuddySweepResult[]> {
     const inFlight = this.sweepTask
     if (inFlight !== undefined) return inFlight

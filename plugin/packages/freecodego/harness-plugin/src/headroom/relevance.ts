@@ -27,6 +27,10 @@ const MATCH_FLOOR = 0.3
 /** Additional boost when ≥2 distinct query terms match (original hybrid boost). */
 const MULTI_MATCH_BONUS = 0.2
 
+/**
+ * One item's relevance to the query: a 0–1 score and the query terms that
+ * matched it.
+ */
 export interface RelevanceScore {
   readonly score: number
   readonly matchedTerms: readonly string[]
@@ -76,6 +80,9 @@ function bm25Score(
  * per-query-term IDF is computed from document frequencies across the batch
  * (rare discriminative tokens — IDs, UUIDs — outrank common ones), exactly
  * like the original `score_batch`.
+ * @param items - the items to score, in order.
+ * @param context - the query text scored against.
+ * @returns the relevance scores, one per item, in item order.
  */
 export function scoreBatch(items: readonly string[], context: string): readonly RelevanceScore[] {
   const queryTokens = tokenize(context)
@@ -108,7 +115,11 @@ export function scoreBatch(items: readonly string[], context: string): readonly 
   })
 }
 
-/** Words from the query used for the search compressor's context scoring. */
+/**
+ * Words from the query used for the search compressor's context scoring.
+ * @param query - the query text to match.
+ * @returns the distinct query words of at least three characters, in order.
+ */
 export function contextWords(query: string): readonly string[] {
   const seen = new Set<string>()
   const words: string[] = []

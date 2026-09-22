@@ -5,6 +5,9 @@ import { basename, dirname, join } from 'node:path'
 import { extract } from 'tar'
 import type { NativeRuntimePlatform } from './manifest.ts'
 
+/**
+ * One official npm tarball this Host knows how to fetch and verify.
+ */
 export interface RuntimeDownloadSpec {
   readonly id: string
   readonly engine: 'codex' | 'claude'
@@ -18,6 +21,9 @@ export interface RuntimeDownloadSpec {
   readonly maxArchiveBytes: number
 }
 
+/**
+ * One install-surface row: a package, its platform, and whether it can be installed here.
+ */
 export interface RuntimePackageOption {
   readonly id: string
   readonly platform: string
@@ -30,7 +36,11 @@ export interface RuntimePackageOption {
   readonly downloadURL: string
 }
 
-/** Download and verify one immutable official npm tarball into the runtime cache. */
+/** Download and verify one immutable official npm tarball into the runtime cache. 
+ * @param spec - the package to fetch, with its integrity and size bound.
+ * @param downloadDirectory - the cache folder the archive is kept in.
+ * @returns the path of the verified archive.
+ */
 export async function downloadRuntimeArchive(spec: RuntimeDownloadSpec, downloadDirectory: string): Promise<string> {
   await mkdir(downloadDirectory, { recursive: true })
   const archive = join(downloadDirectory, `${safePackageName(spec.id)}.tgz`)
@@ -54,7 +64,11 @@ export async function downloadRuntimeArchive(spec: RuntimeDownloadSpec, download
   throw lastError instanceof Error ? lastError : new Error(`Failed to download ${spec.label}`)
 }
 
-/** Extract a verified tarball into a new private staging directory. */
+/** Extract a verified tarball into a new private staging directory. 
+ * @param archive - a verified tarball.
+ * @param stagingDirectory - private directory the archive is unpacked into.
+ * @returns the `package` directory inside the staging root.
+ */
 export async function extractRuntimeArchive(archive: string, stagingDirectory: string): Promise<string> {
   await rm(stagingDirectory, { recursive: true, force: true })
   await mkdir(stagingDirectory, { recursive: true })
@@ -62,7 +76,10 @@ export async function extractRuntimeArchive(archive: string, stagingDirectory: s
   return join(stagingDirectory, 'package')
 }
 
-/** Preserve a verified archive across the atomic runtime-directory swap. */
+/** Preserve a verified archive across the atomic runtime-directory swap. 
+ * @param archive - the verified tarball to carry over.
+ * @param temporaryRuntimeRoot - the runtime root being assembled, which keeps the archive.
+ */
 export async function preserveRuntimeArchive(archive: string, temporaryRuntimeRoot: string): Promise<void> {
   const destination = join(temporaryRuntimeRoot, '.downloads', basename(archive))
   await mkdir(dirname(destination), { recursive: true })

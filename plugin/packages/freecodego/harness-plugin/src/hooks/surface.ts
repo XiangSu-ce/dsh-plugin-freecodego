@@ -50,6 +50,8 @@
  */
 
 import { redactCredentialShapes } from '../secret-scan.ts'
+import { isRecord } from '../untrusted-json.ts'
+/** Every hook event a project's configuration may register a handler for. */
 export const HOOK_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
@@ -68,6 +70,7 @@ export const HOOK_EVENTS = [
   'SessionEnd',
 ] as const
 
+/** One named hook event, drawn from {@link HOOK_EVENTS}. */
 export type HookEvent = typeof HOOK_EVENTS[number]
 
 const HOOK_EVENT_SET: ReadonlySet<string> = new Set(HOOK_EVENTS)
@@ -390,11 +393,6 @@ export const MAX_HOOK_TIMEOUT_MS = 2_147_483_647
  */
 export function defaultHookTimeoutMs(event: HookEvent): number {
   return event === 'Stop' || TOOL_SEAM_EVENTS.has(event) ? GATING_HOOK_TIMEOUT_MS : DEFAULT_HOOK_TIMEOUT_MS
-}
-
-/** Raised for a document we refuse rather than partly understand. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Read a string field, or undefined when absent or of another type. */

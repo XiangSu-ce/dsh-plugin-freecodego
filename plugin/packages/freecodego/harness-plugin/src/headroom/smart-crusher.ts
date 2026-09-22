@@ -14,14 +14,17 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/headroom/smart-crusher
  */
 
-import type { CcrStore } from './ccr.ts'
-import { computeKey } from './ccr.ts'
+import { computeKey, stagedWrites, type CcrStore } from './ccr.ts'
 import { computeOptimalK } from './adaptive-sizer.ts'
 import { scoreBatch } from './relevance.ts'
 import { omitRecordKey } from '../record-utils.ts'
 import { tokensFromChars } from '../token-estimate.ts'
 import { decodeConcatenatedObjects, findBulkJsonSpan, findJsonSpan } from './json-span.ts'
 
+/**
+ * Tunables for the tabular crusher: when compaction is attempted, how buckets
+ * are split, which cells count as opaque, and how far the lossy path may cut.
+ */
 export interface SmartCrusherConfig {
   /** Minimum item count to attempt tabular compaction. */
   minItems: number
@@ -52,6 +55,7 @@ export interface SmartCrusherConfig {
   enableCcrMarker: boolean
 }
 
+/** Default smart-crusher tunables, matching the analyzer's shipped values. */
 export const SMART_CRUSHER_DEFAULTS: SmartCrusherConfig = {
   minItems: 5,
   coreFieldFraction: 0.8,
@@ -76,6 +80,7 @@ export const SMART_CRUSHER_DEFAULTS: SmartCrusherConfig = {
 
 type JsonScalar = null | boolean | number | string
 type JsonValue = JsonScalar | { readonly [key: string]: JsonValue } | readonly JsonValue[]
+/** A JSON value that is an object map, as the crusher's parsers produce. */
 export type JsonObject = { readonly [key: string]: JsonValue }
 
 type OpaqueKind = 'base64' | 'string' | 'html'
@@ -91,6 +96,10 @@ interface FieldSpec {
   readonly nullable: boolean
 }
 
+/**
+ * A compacted array rendered as one table: the field specs that form the
+ * schema declaration, the cell rows, and the pre-compaction item count.
+ */
 export interface Table {
   readonly kind: 'table'
   readonly fields: readonly FieldSpec[]
@@ -163,8 +172,15 @@ function classifyValue(value: JsonValue, cfg: SmartCrusherConfig, store: CcrStor
       // the crusher emits (the 12-char hashOpaque variant could never be
       // retrieved — the retrieve tool validates 24 hex chars).
       const hash = computeKey(value)
-      store?.put(hash, value)
-      return { kind: 'opaque', hash, size: Buffer.byteLength(value, 'utf8'), opaqueKind: classified.opaqueKind }
+      // A refused write means this attempt has already queued as many entries as
+      // the store holds (`StagedCcrStore.put`), and the next one would be evicted by
+      // the writes that follow it — leaving this cell's marker pointing at nothing.
+      // The value is then rendered verbatim: a cell that cannot be offloaded is
+      // still a cell, and the table gets larger instead of wrong.
+      if (store?.put(hash, value) === true) {
+        return { kind: 'opaque', hash, size: Buffer.byteLength(value, 'utf8'), opaqueKind: classified.opaqueKind }
+      }
+      return { kind: 'scalar', value }
     }
     if (classified.kind === 'json') {
       const parsed = classified.value
@@ -354,6 +370,15 @@ function flattenUniformNested(table: Table, cfg: SmartCrusherConfig): Table {
   return { ...table, fields, rows }
 }
 
+/**
+ * Compact an array of JSON objects into a table, or into discriminator buckets
+ * when the rows are heterogeneous. Arrays below `cfg.minItems`, or holding any
+ * non-object entry, fall back to a single-column `value` table.
+ * @param items - the array items to compact.
+ * @param cfg - the smart-crusher settings to apply.
+ * @param store - the CCR store used to offload opaque cells, when mounted.
+ * @returns the compacted table or bucketed table.
+ */
 export function compactArray(items: readonly JsonObject[], cfg: SmartCrusherConfig, store: CcrStore | undefined): Table | Buckets {
   if (items.length < cfg.minItems || !items.every(item => typeof item === 'object' && item !== null && !Array.isArray(item))) {
     return { kind: 'table', fields: [{ name: 'value', typeTag: 'json', nullable: false }], rows: items.map(item => [{ kind: 'scalar', value: item }]), originalCount: items.length }
@@ -401,6 +426,14 @@ function formatTable(table: Table): string {
   return lines.join('\n')
 }
 
+/**
+ * Render a compaction as the CSV-schema form: a `[n]{field:type,...}`
+ * declaration line followed by one line per row, or `__buckets:`/`__key:`
+ * prefixed sections when the compaction is bucketed.
+ * @param compaction - the table or bucketed table to render.
+ * @param cfg - the smart-crusher settings to apply.
+ * @returns the rendered compaction text.
+ */
 export function formatCompaction(compaction: Table | Buckets, cfg: SmartCrusherConfig): string {
   if (compaction.kind === 'table') return formatTable(compaction)
   const lines = [`__buckets:${compaction.discriminator}`]
@@ -579,6 +612,10 @@ function detectStructuralOutliers(items: readonly JsonObject[], fieldStats: read
   return outliers
 }
 
+/**
+ * Whether an array may be compacted at all, and the human-readable reason
+ * behind the decision.
+ */
 export interface CrushabilityVerdict {
   readonly crushable: boolean
   readonly reason: string
@@ -623,6 +660,9 @@ function detectScoreField(stats: FieldStats, items: readonly JsonObject[]): { is
  * Decide whether an array is safe to sample at all (original
  * `analyze_crushability` decision tree). Fully-unique entity arrays with no
  * preservation signal are refused; repetitive or low-uniqueness data passes.
+ * @param items - the array items to analyze.
+ * @param cfg - the smart-crusher settings to apply.
+ * @returns the crushability verdict.
  */
 export function analyzeCrushability(items: readonly JsonObject[], cfg: SmartCrusherConfig): CrushabilityVerdict {
   const fieldStats = [...new Set(items.flatMap(item => Object.keys(item)))].map(name => analyzeField(name, items, cfg))
@@ -689,6 +729,10 @@ function itemHasErrorKeyword(item: JsonObject): boolean {
   return ERROR_KEYWORDS.some(keyword => serialized.includes(keyword))
 }
 
+/**
+ * Outcome of the lossy sampling path: the rendering to send, plus how many
+ * items survived and how many were offloaded to the CCR store.
+ */
 export interface LossySampleResult {
   /** JSON rendering of the kept items plus the `_ccr_dropped` sentinel. */
   readonly output: string
@@ -704,6 +748,11 @@ export interface LossySampleResult {
  * Dropped rows are summarized by a
  * `<<ccr:HASH N_rows_offloaded>>` sentinel whose hash retrieves the full
  * array from the CCR store.
+ * @param items - the array items to sample.
+ * @param cfg - the smart-crusher settings to apply.
+ * @param store - the store to read, when one is mounted.
+ * @param query - the caller's query, used to pin relevance-scored rows.
+ * @returns the sampled rendering, or undefined when nothing would be dropped.
  */
 export function lossySampleArray(items: readonly JsonObject[], cfg: SmartCrusherConfig, store: CcrStore | undefined, query = ''): LossySampleResult | undefined {
   const itemStrings = items.map(item => JSON.stringify(item))
@@ -770,14 +819,15 @@ export function lossySampleArray(items: readonly JsonObject[], cfg: SmartCrusher
   const dropped = items.length - keptItems.length
   if (dropped === 0) return undefined
 
-  let sentinel: JsonObject = {}
+  // The marker-less form is the fallback for two cases that are the same case: no
+  // store to write to, and no room left in the one attempt (`StagedCcrStore.put`
+  // refuses rather than let the commit evict this attempt's own earlier writes).
+  // Either way the summary still reports the count — it just cannot name a hash.
+  let sentinel: JsonObject = { _ccr_dropped: `<<${dropped} rows offloaded>>` }
   if (cfg.enableCcrMarker && store !== undefined) {
     const canonical = `[${itemStrings.join(',')}]`
     const hash = computeKey(canonical)
-    store.put(hash, canonical)
-    sentinel = { _ccr_dropped: `<<ccr:${hash} ${dropped}_rows_offloaded>>` }
-  } else {
-    sentinel = { _ccr_dropped: `<<${dropped} rows offloaded>>` }
+    if (store.put(hash, canonical) === true) sentinel = { _ccr_dropped: `<<ccr:${hash} ${dropped}_rows_offloaded>>` }
   }
   const output = JSON.stringify([...keptItems, sentinel])
   return { output, kept: keptItems.length, dropped }
@@ -837,6 +887,10 @@ function detectScoreFieldInItems(items: readonly JsonObject[]): string | undefin
 
 // ─── Document-level entry point ───────────────────────────────────────────
 
+/**
+ * Result of crushing one JSON document: the text to send downstream and
+ * whether the compressed rendering was accepted.
+ */
 export interface SmartCrusherResult {
   /** Compressed rendering, or the original text when compaction declined. */
   readonly output: string
@@ -848,6 +902,11 @@ export interface SmartCrusherResult {
  * Compress one pure-JSON text. Falls back to the original whenever the
  * rendering does not save enough, JSON parsing fails, the payload is under
  * the token floor, or the array is not crushable.
+ * @param text - the text to process.
+ * @param cfg - the smart-crusher settings to apply.
+ * @param store - the store to read, when one is mounted.
+ * @param query - the caller's query, used to pin relevance-scored rows.
+ * @returns the crushing result.
  */
 export function crushJson(text: string, cfg: SmartCrusherConfig, store: CcrStore | undefined, query = ''): SmartCrusherResult {
   let parsed: JsonValue
@@ -887,19 +946,25 @@ function crushParsed(parsed: JsonValue, cfg: SmartCrusherConfig, store: CcrStore
       // Stage 1 — lossless tabular compaction (ungated: it keeps every row,
       // so the crushability refusal does not apply — matches the Rust
       // pipeline where compaction runs before the Skip check).
-      const compaction = compactArray(objects, cfg, store)
-      const tableOutput = formatCompaction(compaction, cfg)
+      // The table's opaque cells are writes, so they belong to a stage that is
+      // only committed if the table is the rendering that ships.
+      const compaction = stagedWrites(store, stage => formatCompaction(compactArray(objects, cfg, stage), cfg))
+      const tableOutput = compaction.value
       const savings = 1 - Buffer.byteLength(tableOutput, 'utf8') / Math.max(1, Buffer.byteLength(text, 'utf8'))
-      if (savings >= cfg.minSavingsRatio) return tableOutput
+      if (savings >= cfg.minSavingsRatio) {
+        compaction.commit()
+        return tableOutput
+      }
       // Stage 2 — lossy sampling: gated by the crushability analysis (fully
       // unique entity arrays with no preservation signal are refused), then
       // sampled by anchors + error rows + information budget.
       if (!analyzeCrushability(objects, cfg).crushable) {
         return useMinified ? minified : undefined
       }
-      const lossy = lossySampleArray(objects, cfg, store, query)
-      if (lossy !== undefined && lossy.output.length < (useMinified ? minified.length : text.length)) {
-        return lossy.output
+      const lossy = stagedWrites(store, stage => lossySampleArray(objects, cfg, stage, query))
+      if (lossy.value !== undefined && lossy.value.output.length < (useMinified ? minified.length : text.length)) {
+        lossy.commit()
+        return lossy.value.output
       }
     }
     return useMinified ? minified : undefined
@@ -915,19 +980,27 @@ function crushParsed(parsed: JsonValue, cfg: SmartCrusherConfig, store: CcrStore
     const objects = value as readonly JsonObject[]
     // Lossless tabular compaction first (ungated — keeps every row), then the
     // crushability gate for the lossy sampling fallback.
-    const inner = compactArray(objects, cfg, store)
-    const rendered = omitRecordKey(parsed as JsonObject, key)
-    const remaining = JSON.stringify(rendered)
-    const tableOutput = `${remaining}\n${key}:\n${formatCompaction(inner, cfg)}`
-    const savings = 1 - Buffer.byteLength(tableOutput, 'utf8') / Math.max(1, Buffer.byteLength(text, 'utf8'))
-    if (savings >= cfg.minSavingsRatio) return tableOutput
+    const compaction = stagedWrites(store, stage => {
+      const inner = compactArray(objects, cfg, stage)
+      const remaining = JSON.stringify(omitRecordKey(parsed as JsonObject, key))
+      return `${remaining}\n${key}:\n${formatCompaction(inner, cfg)}`
+    })
+    const remaining = JSON.stringify(omitRecordKey(parsed as JsonObject, key))
+    const savings = 1 - Buffer.byteLength(compaction.value, 'utf8') / Math.max(1, Buffer.byteLength(text, 'utf8'))
+    if (savings >= cfg.minSavingsRatio) {
+      compaction.commit()
+      return compaction.value
+    }
     if (!analyzeCrushability(objects, cfg).crushable) {
       return useMinified ? minified : undefined
     }
-    const lossy = lossySampleArray(objects, cfg, store, query)
-    if (lossy !== undefined) {
-      const lossyOutput = `${remaining}\n${key}:\n${lossy.output}`
-      if (lossyOutput.length < (useMinified ? minified.length : text.length)) return lossyOutput
+    const lossy = stagedWrites(store, stage => lossySampleArray(objects, cfg, stage, query))
+    if (lossy.value !== undefined) {
+      const lossyOutput = `${remaining}\n${key}:\n${lossy.value.output}`
+      if (lossyOutput.length < (useMinified ? minified.length : text.length)) {
+        lossy.commit()
+        return lossyOutput
+      }
     }
     return useMinified ? minified : undefined
   }
@@ -965,11 +1038,15 @@ function renderSpan(chunk: string, cfg: SmartCrusherConfig, store: CcrStore | un
     const parsed = JSON.parse(chunk) as JsonValue
     if (typeof parsed !== 'object' || parsed === null) return undefined
     if (!hasRoutableArray(parsed)) return undefined
-    const out = crushParsed(parsed, cfg, store, chunk, query)
+    // One span, one stage: a span whose rendering loses the price comparison
+    // leaves nothing behind for a marker that never reached the model.
+    const attempt = stagedWrites(store, stage => crushParsed(parsed, cfg, stage, chunk, query))
+    const out = attempt.value
     if (out === undefined || out === chunk) return undefined
     // Priced through the shared estimator, so "did this help?" is asked in the
     // same units the caller's budget is expressed in.
     if (tokensFromChars(out.length) >= tokensFromChars(chunk.length)) return undefined
+    attempt.commit()
     return out
   } catch {
     return undefined
@@ -981,6 +1058,11 @@ function renderSpan(chunk: string, cfg: SmartCrusherConfig, store: CcrStore | un
  * runs, harness-wrapped JSON bodies (≥60% bulk), and embedded routable spans
  * spliced in place. Everything is result-driven — only strictly smaller
  * renderings are accepted.
+ * @param text - the text to process.
+ * @param cfg - the smart-crusher settings to apply.
+ * @param store - the store to read, when one is mounted.
+ * @param query - the caller's query, used to pin relevance-scored rows.
+ * @returns the crushing result.
  */
 export function crushJsonDocument(text: string, cfg: SmartCrusherConfig, store: CcrStore | undefined, query = ''): SmartCrusherResult {
   const pure = crushJson(text, cfg, store, query)
@@ -991,8 +1073,10 @@ export function crushJsonDocument(text: string, cfg: SmartCrusherConfig, store: 
   if (stripped.startsWith('{')) {
     const items = decodeConcatenatedObjects(stripped)
     if (items !== undefined) {
-      const out = crushParsed(items, cfg, store, stripped, query)
+      const attempt = stagedWrites(store, stage => crushParsed(items, cfg, stage, stripped, query))
+      const out = attempt.value
       if (out !== undefined && Buffer.byteLength(out, 'utf8') < Buffer.byteLength(stripped, 'utf8')) {
+        attempt.commit()
         return { output: out, applied: true }
       }
     }
@@ -1009,9 +1093,10 @@ export function crushJsonDocument(text: string, cfg: SmartCrusherConfig, store: 
     if (!slice.includes('<<ccr:')) {
       const parsed = wrapped.value
       if (typeof parsed === 'object' && parsed !== null) {
-        const out = crushParsed(parsed, cfg, store, slice, query)
-        if (out !== undefined && out !== slice) {
-          return { output: `${text.slice(0, a)}${out}${text.slice(b)}`, applied: true }
+        const attempt = stagedWrites(store, stage => crushParsed(parsed, cfg, stage, slice, query))
+        if (attempt.value !== undefined && attempt.value !== slice) {
+          attempt.commit()
+          return { output: `${text.slice(0, a)}${attempt.value}${text.slice(b)}`, applied: true }
         }
       }
     }

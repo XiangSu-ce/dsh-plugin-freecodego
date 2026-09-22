@@ -11,50 +11,87 @@ kind: "package-reference"
 
 面向 FreeCodeGo root-engine 清单与 Host 配置表面的可安装 Cordis bundle。
 
-本 bundle 挂载 `dsh-agent-engine`，并发布一个标准 DeepSeek 引擎描述符以及 Codex 与 Claude 描述符。只有当原生引擎已校验的产物清单、摘要、协议 ABI、worker 路径与状态目录同时提供时，它才会被接纳。配套路由器是唯一的 Harness `AgentFactory`；请求的原生引擎绝不会回退到 DeepSeek。
+它挂载 `dsh-agent-engine`，发布 DeepSeek、Codex 与 Claude 描述符，并且只有当原生引擎已校验的清单、摘要、协议 ABI、worker 路径与状态目录同时提供时才予以接纳。它的路由器是唯一的 Harness `AgentFactory`，因此请求的原生引擎绝不会回退到 DeepSeek。
 
-`setDefaultEngine` 改变未来会话使用的引擎。挂载了 `ctx.settings` 时，该选择持久化在 `freecodego-harness` 命名空间中；已有会话仍钉在其持久引擎计划上。Claude 凭据在拉起私有 worker 之前立即从 `ctx.credentials` 解析，绝不经过 Remote 或原生 JSONL 协议。
+`setDefaultEngine` 与 `setDefaultModel` 决定新会话以什么开始，通过 `ctx.settings` 持久化在 `freecodego-harness` 命名空间中，并让已有会话仍钉在其持久计划上。
 
-`setDefaultModel` 与引擎一起持久化一个兼容的受管模型 id；新会话默认值同时包含两者，而已有会话仍保持钉住。
-
-本 README 只要点名一个决策，该决策就是契约：某个功能由它点名的设置开关把关，与 Harness 的归属冲突一律以 Harness 为准，本插件不实现的能力会写明为延期，而不是以沉默暗示。
+本 README 只要点名一个决策，该决策就是契约。
 
 ## 目录
 
 - [文档](#documentation)
 - [Subagent 模型路由](#subagent-model-routing)
+- [免费模型](#free-models)
 - [Advisor 评审回路](#advisor-review-loop)
 - [Engineering 增强](#engineering-enhancement)
+- [代码审查](#code-review)
 - [上下文压缩（Headroom）](#context-compression-headroom)
+- [提示词构成](#prompt-composition)
+- [压缩后补灌](#post-compaction-rehydration)
+- [项目记忆](#project-memory)
 - [上下文纪律、命令策略与 Plan Mode](#context-discipline-command-policy-and-plan-mode)
 - [已知限制与延期工作](#known-limitations-and-deferred-work)
 - [插件冲突保护](#plugin-conflict-protection)
-- [NPM 更新](#npm-updates)
+- [发布更新](#release-updates)
 - [Zcode GLM-5.3 Flash 推广](#zcode-glm-53-flash-promotion)
 - [MCP 与 Skills](#mcp-and-skills)
+- [可选的本体能力](#optional-harness-capabilities)
 - [第三方插件工具](#third-party-plugin-tools)
 - [媒体默认值](#media-defaults)
+- [模型选择器与供应商账号](#model-picker-and-provider-accounts)
 - [设置迁移：孤儿 Engineering 键](#settings-migration-orphan-engineering-keys)
 - [社区插件](#community-plugins)
 - [开发备注](#dev-note)
 
 -----
 
+<a id="documentation"></a>
 ## 文档
 
 本 README 是顶层文档：它描述插件挂载的每一项功能、它做出什么决策，以及为什么。有两个主题大到需要单独成文，且都以中文撰写：
 
 - [`docs/free-providers.zh.md`](docs/free-providers.zh.md) — 免费模型提供方集成（Cline、WorkBuddy International）：上游契约、账号池，以及两个适配器共同实现的轮换语义。
-- [`freecodego-api/docs/backend-contract.zh.md`](../freecodego-api/docs/backend-contract.zh.md) — 本插件与 FreeCodeGo 后端之间逐 endpoint 的契约，包括哪个字段决定路由结果与计费。
+- [`freecodego-api/docs/backend-contract.zh.md`](../freecodego-api/docs/backend-contract.zh.md) — 本插件与 FreeCodeGo 后端之间逐 endpoint 的契约，包括哪个字段决定路由结果。
 
 其余内容都在 `packages/freecodego/` 下的包 README 里：设置表面见 `harness-ui`，后端客户端见 `freecodego-api`，路由选择见 `agent-engine-router`，原生引擎见 `root-agent` 以及 `runtime-codex` / `runtime-claude` / `native-runtime-host` / `native-runtime-protocol`，发布组装见 `bundle-latest`。
 
+<a id="subagent-model-routing"></a>
 ## Subagent 模型路由
 
 启用 `autoSubagentModelSelection`（默认开启）时，Host 会把每条实时 text-model 路由同步进 Harness 的 `subagent-model-selection` 设置。因此新的顶层会话会获得标准的 `subagent` 字段 `provider`、`model` 与 `reasoning_effort`，以及按需的 `list_subagent_models` 发现工具，而不需要用户维护一份复选框清单。暂时失败的提供方会保留它最后获批的路由，直到其 catalog 恢复。
 
 被拉起的子会话继承父会话的 FreeCodeGo 执行引擎，并可以按单次委派覆盖确切的 LLM 路由。DeepSeek 在官方 AgentLoop 中执行子会话；Codex 与 Claude 保留其原生运行时，但把所选模型经 Host 桥接取路由。已有会话保留其持久 Subagent 策略；获批 catalog 变化后请新建对话。
 
+<a id="free-models"></a>
+## 免费模型
+
+<!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
+下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-09-23 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
+
+| 提供商 | 免费模型 | 目录 |
+|---|---|---|
+| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free` | 76 行中的 12 行；公开，无需登录 |
+| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`inclusionai/ling-3.0-flash-vl:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nex-agi/nex-n2.5-mini:free`、`nex-agi/nex-n2.5-pro:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free`、`z-ai/glm-5.2:free` | 385 行中的 21 行；公开，每个出口 IP 每小时 200 次 |
+| **Logfare** | 对话 `deepseek-v3.2`、`deepseek-v4-pro-0813`、`gemma-4-26b`、`gemma-4-31b-it`、`glm-5`、`glm-5.3`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`kimi-k2.6`、`kimi-k2.7-code`、`logfare/auto`、`moondream3.1`、`qwen-3.8-27b`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`；音频 `melotts`、`whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nova-3`、`phoenix-1.0` | 26 行；18 行需要训练数据授权，其余 8 行不需要 |
+| **Qoder** | `Qwen 3.8 Flash`（路由 `qmodel_38flash`） | 免费 flash 路由，另有每日签到活动 |
+| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（82 行）中 | 调用需要 API key；核对于 2026-09-23 |
+| **SenseNova** | `deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k3`、`sensenova-6.8-flash-lite` —— 均为 1M 上下文 / 128K 输出 | 名单随 bundle 内置；需要 API key |
+| **TRAE** | 其目录列出的那些行 | 免费额度每日重置，按账号 |
+| **Cline** | 目录标记 `×0 · 官方免费模型` 的那些行 | 账号池 |
+| **WorkBuddy 国际版** | 积分包标记 `x0` 的那些行 | 设备登录，可放多个账号 |
+| **Agnes** | 对话与图片/视频行 | 控制面账号 |
+| **VyceAI** | 没有免费名单 | 每日签到额度支付其计量行 |
+| **Groq** | `whisper-large-v3-turbo` | 仅转写，不是对话路由 |
+
+这些清单跟随各自的目录：上游下架的路由会在下次读取时从表中消失 —— 这正是本表由 `scripts/generate-free-model-tables.ts` 生成、而不是凭记忆维护的原因。
+
+TRAE、Cline、WorkBuddy 国际版、Agnes 不公布固定名单，因此它们的行在到达时计数，而不在此列名。
+
+Logfare 有 18 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+
+<!-- generated:free-models:end -->
+
+<a id="advisor-review-loop"></a>
 ## Advisor 评审回路
 
 独立的 Advisor 在公开的 `freecodego/hy3` 路由上默认启用。它以独立的模型上下文评审持久轮次事件，并且只拥有有界、只读的工作区工具（`read`、`glob` 与 `grep`）。它的结论与 token 用量被追加到 Harness 会话；凭据、隐藏推理与不受限的主 Agent 工具绝不复制进评审上下文。
@@ -63,6 +100,7 @@ kind: "package-reference"
 
 会话删除对陈旧的侧栏行是幂等的：当会话日志已被移除但缓存的投影仍列出该 id 时，Host 清除其工作区关联并返回成功，而不是留下一个无法删除的 Ungrouped 行。活动或正在运行的会话仍必须在删除前关闭。
 
+<a id="engineering-enhancement"></a>
 ## Engineering 增强
 
 ### 多引擎 Engineering 团队
@@ -72,35 +110,6 @@ Engineering 团队让当前 root Agent 留在它选定的引擎上，同时为�
 团队可以在前台运行，也可以返回 `council_*` id 供 `engineering_team_status` 轮询；`engineering_team_cancel` 取消所有子 Agent。父 Session 恢复之后，完成的报告仍可通过 `engineering_team_report` 与 `engineeringTeamReports` Host Remote 获取。把 `engineeringCouncilAutoRun` 设为在获批的 `exit_plan_mode` 计划之后自动运行一次评审；它默认关闭，以便用户保留显式控制权。
 
 完成的报告是证据，不是编辑许可。实施之前，用户必须通过 engineering 团队批准命令或 `engineeringTeamDecision` Remote 明确批准或拒绝它。只有获批的报告才能运行 engineering 团队验证；默认运行会在父 Session 中记录 `scope`、`build`、`types`、`lint` 与 `tests` 结果。
-
-#### 多成员团队
-
-`engineeringTeamEnabled`（默认开启）补上团队要「不止是同一目录里的几个 agent」所需的运行时：
-
-| 表面 | 工具 | 它保证什么 |
-|---|---|---|
-| 任务看板 | `engineering_team_board`、`engineering_team_plan`、`engineering_team_claim`、`engineering_team_task_update` | 每个任务一个所有者，依赖关系把可用性把关，可用性按 id 顺序，只有所有者能关闭任务 |
-| 成员 | `engineering_team_member_start`、`engineering_team_member_stop`、`engineering_team_recover` | 每个成员都是真实的子 Agent，带按角色限定的工具允许清单；成员关系持久在磁盘上，存活状态实时读取且从不镜像 |
-| 合并 | `engineering_team_merge` | 有冲突的合并在被报告之前就已中止，且冲突路径会在报告中点名 |
-| 上下文 | `engineering_context_compact`、`engineering_context_snip`、`engineering_context_budget` | 压缩可以按需进行，而不只在压力下进行；模型可以先问自己的窗口有多满，再决定怎么做 |
-
-**等人是一个状态，不是一个结论。** 需要人类决定的成员此前只有两条路，而两条都是谎言：`failed` 声称工作是坏的（并把每一个下游任务变成阻塞），而停在 `claimed` 则什么都没说。`needs-review` 把它记下来——在等谁、从何时起、属于哪一次认领——看板把它单独算作一个桶并点名这些被挂起的任务，答案到了之后由它的所有者用 `resume` 收回，`rerun` 则在同一个 id 下重开一个失败或取消的任务，而不是让 `create` 造一个新 id 并丢掉尝试次数。每一次状态变化都由唯一的写入者追加进该任务的账本，因为最新的 `note` 回答不了后来真正重要的问题：上一步为什么发生。
-
-**看板是主干**。任务按 id 顺序分发，依赖未完成的任务绝不会被提供，认领也不能被抢走：一次拒绝会点名是谁持有该任务，或它在等什么，因为这两种情况需要不同的修法。只有当前所有者可以完成或标记任务失败，这才使看板成为「谁做了什么」的审计记录，而不是一张愿望清单。被失败依赖阻塞的任务是*推导*出来的、不存储，因此重试该依赖就能解除阻塞，无须状态迁移。
-
-**每个写入方都有自己的 git worktree**，位于自己的分支上，由 `git worktree add` 创建在 `.freecodego/worktrees/<member>` 之下（并加进 `.git/info/exclude`，因此这份隔离不会变成未跟踪的噪音）。共享树只在 `engineering_team_merge` 时变化，而有冲突的合并会在冲突被报告*之前*就执行 git merge abort——隔离只有在失败留在本地时才有价值。分支会跨发布存活；只有在它被合并之后才会删除。
-
-**只有在能够授予时才授予隔离，只有在安全时才收回。** 这对动词上有三条规则。仍持有未提交改动的 worktree 会被*保留*——`release` 会报告它找到的路径，并在丢弃任何东西之前要求 `acknowledgeLostWorktree: true`，因为一次静默销毁成员唯一副本的清理，是本模块里唯一可能丢工作的步骤。删除失败时登记会保持 `active` 并如实说明，而不是在目录仍在磁盘上时把条目标为 abandoned——那正是一个 worktree 对之后所有清理都变得不可见的方式。而 `allocate` 会拒绝**脏工作区**：写入方从 `HEAD` 切分支，所以没有任何未提交编辑进入副本，但那棵脏树*正是*之后合并要落上的状态，而「合并进一棵带着改动的树」没有确定的基线——`allowDirtyWorkspace` 是明确表示这一点已被理解的方式。已经存在、干净、且在该成员自己分支上的副本会被直接交回而不是报错（`git worktree add` 会拒绝一个已被检出的路径），而路径或分支与约定不符的登记会被点名拒绝，而不是被复用。
-
-**隔离事实是被存储的，不是被重建的。** `engineering_team_recover` 通过一组锁定字段报告每个存活 worktree——`workspaceMode`、`worktreeMode`、`teamStateRoot`、`workingDir`、`worktreeRepoRoot`、`worktreePath`、`worktreeBranch`、`worktreeDetached`、`worktreeCreated`、`worktreeState`——它们读自持久记录，而不是从目录名反推，因为一旦出现第二种命名约定，被反推出来的东西正是会静默不一致的那个。报告选取的就是同一份列表（`LOCKED_ISOLATION_FIELDS`），测试也钉住这份列表，因此加进记录却忘了加进报告的字段会是一个失败的测试。该记录是从条目派生的，而不是在旁边另存一份：`path`、`branch`、`strategy`、`createdAt` 本来就持久在那里，而同一个事实的第二份存储拷贝就是一个有两个主人的不变式。
-
-**角色是数据**（`team/roles.ts`，可按项目在 `.freecodego/team-roles.json` 中覆盖）。每个角色携带目的、能力、工具允许／拒绝清单、模型、轮次上限、沙箱模式、报告契约，以及——维持职责分离的那一行——明确的*不负责什么*。允许清单会与能力集合取交集，因此不能写入的角色不会因为点名某个工具就拿到写工具，`explorer` 与 `verifier` 按构造即只读。成员的 brief 由其角色记录生成，因此新增角色就是新增一条记录，而不是加一个提示词分支。
-
-**成员关系持久；存活状态不镜像。** 看板按成员 id 记录所有者，写入方的 worktree 也登记在某个成员名下，因此两者都能在创建它们的进程之后存活。由于看板与成员注册表都在磁盘上，`engineering_team_recover` 可以在重启之后回答当时在飞的是什么：哪个成员停了、它握着哪个任务，以及哪个 worktree 的工作仍在磁盘上。关于成员的其他一切——它是否还在运行、它说过什么——都从活动子 Agent 读取，而不是复制进文件，因为对另一个进程状态的镜像只可能是错的。
-
-**上下文控制既可手动也可自动。** Harness 在压力下压缩，而它的自动 pruner 与 compactor 随包投放时是关闭的。这里的两个工具让模型能对最先注意到的一件事采取行动——某个区域已经用完——并且当引擎找不到可安全替换的内容时，它们报告 `changed: false` 并给出原因，而不是宣称一次并未发生的压缩。Snipping 会校验工具调用配对；不平衡的边界会被拒绝，而不是被静默加宽。
-
-每个 `engineering_team_*` 与 `engineering_context_*` 名称都符合延迟工具前缀规则，因此这些都不消耗一个从未用到它们的请求。
 
 #### 验证证据与对抗式探针
 
@@ -124,7 +133,7 @@ Engineering 团队让当前 root Agent 留在它选定的引擎上，同时为�
 
 Engineering Memory 是 `DSH_HOME/freecodego/engineering/memory` 下的本地 SQLite 状态。Agent 可以保存草稿，并使用只针对已评审内容的 `Search -> Timeline -> Get` 流程。只有面向用户的 Remote 可以批准、拒绝、导出、清除或删除记录。草稿绝不进入自动召回，记忆操作通过一个以工作区为后端的打开会话来限定作用域。
 
-插件私有状态——记忆、检查点、Code Graph 与 Graphify 运行时、任务、plan mode 与团队——通过一个 helper 而不是各模块各自解析其根：`FREECODEGO_HOME` 被设为非空值时用它，否则用 `DSH_HOME`，否则用 `~/.dsh`。下文每个 `DSH_HOME/...` 路径都按这条规则理解，因此设置 `FREECODEGO_HOME` 会一次性移动它们全部。Host 自有的文件（`.credentials.yaml`、`settings.yaml`、`profiles/`、`runtimes/`、`state/`、`.agent-presets/`、`skills/`）绝不跟随该覆盖：这些由 Host 读写，第二个根会让设置表面与凭据服务对「哪个文件才是真源」产生分歧。
+插件私有状态——记忆、检查点、Code Graph 与 Graphify 运行时、任务与 plan mode——通过一个 helper 而不是各模块各自解析其根：`FREECODEGO_HOME` 被设为非空值时用它，否则用 `DSH_HOME`，否则用 `~/.dsh`。下文每个 `DSH_HOME/...` 路径都按这条规则理解，因此设置 `FREECODEGO_HOME` 会一次性移动它们全部。Host 自有的文件（`.credentials.yaml`、`settings.yaml`、`profiles/`、`runtimes/`、`state/`、`.agent-presets/`、`skills/`）绝不跟随该覆盖：这些由 Host 读写，第二个根会让设置表面与凭据服务对「哪个文件才是真源」产生分歧。
 
 Code Graph 提供两个可互换的引擎，并且只挂载一个 Agent 工具族，由 `engineeringGraphEngine` 设置选择（`auto` 偏好无 Python 的引擎，`graphify`／`codegraph` 表示就是该引擎或什么都不挂）。
 
@@ -144,6 +153,46 @@ CodeGraph 引擎在 SHA-256 校验之后下载针对当前 OS/CPU 的官方自�
 
 `engineering_inspect` 把这次选择作为 `scan` 段报告：分母、每一条带理由的排除、运行会读到的字节与 token 合计，以及所有大小未检查的文件名。该段**有意不受**文件夹信任门禁约束，差别在于它读什么——大小与路径名，从不读内容。字节数不是指令，而把它门禁掉，会让一份在“没人信任过的检出”上**仍然可用**的诊断也消失。账本的**对账**那一半——运行时究竟交代了哪些被选中的文件——尚未实现，因为本插件还没有任何地方记录**逐文件的扫描结果**：council 与 advisor 报告携带的是发现，而不是它们覆盖过的文件集合。
 
+<a id="code-review"></a>
+## 代码审查
+
+一个引擎上的四个工具：把 OCR 风格（open-code-review）的改动审查重建为 Host 自有机制，外加一个可选的收尾门禁。流水线在 `src/review/`，组装根是 `review/install.ts` —— 宿主文件只增加一个 import、一次调用与一次注册，而不必自己拥有八个协作者。
+
+| 工具 | 回答的问题 |
+|---|---|
+| `engineering_code_review` | 审查这次改动（`mode: workspace \| range \| commit`，输出 `text \| json \| sarif`） |
+| `engineering_review_rules` | 会审查什么、按哪条规则 —— 不花模型调用 |
+| `engineering_review_status` | 现在在跑什么 |
+| `engineering_review_report` | 把上一次结果按另一位读者重新渲染 |
+
+`engineering_review_rules` 之所以是工具而不是开关，是因为它是整条流水线里不含模型调用的确定性那一半：调用方要自己去做审查时需要它，而"我的 exclude 模式生效了吗"也不必花掉一次审查的预算才知道。每个工具返回文本而不是对象，是因为三种格式的区别在于**谁来读** —— 人、另一个 Agent、或扫描集成 —— 所以格式是参数，答案到达时已经渲染好。
+
+**审查什么是决定，不是 `git diff | head`。** 在第一次模型调用之前有三项决定，每一项都是审查可能悄悄小于它声称覆盖的那份改动的地方：
+
+- **对比哪些引用。** 工作区审查意味着已暂存**加**未暂存**加**未跟踪；未跟踪那一半是朴素 diff 永远看不到的，而新文件最严重的缺陷正好住在里面。范围审查从 **merge base** 开始 diff，而不是从 `from`，否则基线分支上的每个提交都会变成审查者的问题。提交审查对比它自己的第一父提交。
+- **跳过了什么，以及为什么。** 二进制内容没有行可审；过大的文件会把整份预算花在一个 diff 上；被排除的模式是项目已经做过的决定。每条跳过都连同原因与**类型**一起记录（`ReviewSkipReason` 是封闭并集），因此报告可以给跳过分组而不是打印自由文本，而一个没有原因就消失的文件也无法与一次被遗忘的文件区分。
+- **覆盖面。** 进入一次运行的文件都会留下交代（`pending` / `reviewed` / `skipped` / `failed`），只要还有东西停在 `pending`，这次运行就不能结束 —— 检查会点名缺失的文件，而不是让分母悄悄缩小。覆盖面是结果集上的纯函数，所以测试不必跑一次审查就能断言这套算术。
+
+**一份报告，三种渲染。** `text` 给人，`json` 给 Agent，`sarif` 给扫描集成，三者渲染同一份组装好的报告，所以同一次运行不会在文本里说出 SARIF 里没有的结论，也不会两种格式给出不同的覆盖率。被事实核查否掉、或被裁定驳回的结论会从 `text` 与 `sarif` 中扣下 —— 注释格式承载不了丢掉它的理由 —— 并留在 `json` 里带上原因；因此 `text` 会声明它扣下了多少条，因为一份静默省略结论的报告会教会读者把那个数字当成全部真相。所有严重级都会渲染，包括 `low`：上游 CLI 也是这样，它把那套 skill 交给**展示方 Agent** 去丢弃琐碎项 —— 而这个渲染器就是展示方，替读者丢掉一条结论不是一份报告可以悄悄做的决定。
+
+**规则分四层解析，命中的第一层胜出。** `custom`（本次运行传入的规则文件）→ `project` → `global`（`~/.opencodereview/rule.json`，仓库无法自己撰写的那一层）→ `system`（随本插件发布）。是命中的**层**胜出，而不是跨层命中第一个模式，这正是项目覆盖能成为覆盖的原因：用户级规则不能被静默合并进一个已经决定了自己标准的仓库的每个 TypeScript 文件。项目的标准放在 `.opencodereview/rule.json`、`.dsh/review.json` 或 `.freecodego/review.json`，按此顺序尝试，存在的第一个就是**那个**项目层 —— 合并两份会让生效标准变成一份没人写过、也没人能预测的文档。用户规则默认替换该文件随插件发布的规则，除非条目设置 `mergeSystemRule`（那会同时纳入基线）；没有这个显式选择，一个只新增一条检查的项目会丢掉所有基线检查且不会被通知。出处随答案传递（`source` + 命中的 `pattern`），分组按这三者取键，因此一个分组报告的出处对组内每个文件都为真。格式错误或不可读的规则文件会产生一条点名它的警告，绝不静默回退：一个以为标准正在生效、而文件里多了一个尾逗号的项目，比从没写过规则文件的项目处境更差。
+
+**高危结论会被对抗性复核**（`reviewEscalation`，默认关）。上游有一个审查者和一个刻意很弱的事实核查者，后者只能移除 diff **证明**为错的东西；这对一般评论是合适的取舍，而对审查者最没能力判断自己的那两类结论是错的。因此达到严重级的结论会被独立裁定者复核，且被要求**反驳**而不是同意 —— 这是一个不对称的问题，因为"确认"是偷懒答案的默认，"反驳"不是。被驳回（有针对该结论的 diff 证据，且确认票未达法定数）会保留结论、置为 `filtered` 状态并附上驳回理由，这是唯一会移除结论的路径，也是这一级**朝保留方向失败**的地方；被确认则连同裁定记录一起发布；未定则原样发布，因为一次没有结论的检查不构成对结论的反证。这个端口刻意只有一个方法：最强实现是本插件自己的多引擎 council，而随插件发布的是单路由对抗复核。
+
+**深度审查**（`reviewDeep`，默认关）会用每个被审查文件各自的只读子 Agent 去读它，可以搜索调用方、打开某个测试覆盖的实现，而不是只凭 diff 判断。默认关，因为它对每个文件开一个子 Agent —— 这是一个有代价的决定，而不是更好的默认值。
+
+**收尾审查是可选的，而且只有一遍。** `reviewMode` 取 `off`（零成本）、`record`（跑这一遍，结论成为持久会话事件，所以"那次审查说了什么"以后不必重跑就能回答）、或 `gate`（同一遍在 `reviewCooldownTurns` 冷却已过后，把达到 `reviewThreshold` 的结论注入回会话）。逐回合审查与收尾门禁听起来是两个功能，其实是同一个审查：分开跑会各自读同一份改动集的同一份 diff，付两次钱，并可能对同一棵工作树给出互相矛盾的结论。三条规则约束成本，每条都有测试：
+
+1. 没有任何改动的回合绝不审查，所以一次纯对话回合不产生任何 git 调用。
+2. 同一个改动集只审一次，闩锁在改动路径的指纹**与**工作区修订上 —— 已被修改的文件再改一次不改变任何路径，只看路径会把两个不同状态当成同一个。
+3. 一次运行只限于这一回合碰过的东西（`include` 携带这一回合自己的改动路径），因此本来就已经是脏的文件不会被重审，它们的结论也不会被报成这一回合的。这一回合的路径优先取自 Host 自己的逐回合记录，没有时回退到工作区未提交的改动集（`review/turn-scope.ts`，它同时拥有"拒绝收窄"的那些理由）。
+
+投递方式是一条注入消息，这是 Harness 在收尾时刻提供的机制：它会继续这一回合，所以 Agent 必须回应这个结论才能结束。这就是它成为门禁而不是通知的原因，也是 `verify-on-stop` 用的同一种形状。
+
+**路由用的是本插件的第二模型路由**（`advisorProvider` / `advisorModel`，默认落到 OpenCode 的虚拟 `auto`），而不是新增一对设置：两者都是"本插件替自己调用的那个模型"，那一对已经由用户配置、由界面编辑，再加一对只会让同一个意图有两个地方可以设置并互相矛盾。路由按请求解析，所以改设置无需重载即可生效；全新安装开箱就能审查，而不是第一次调用就失败。
+
+**界面侧**的审查 Remote 是发起即返回：一次运行按文件花模型调用、可能跑上几分钟，所以调用只启动运行并回传当下的运行状态，调用方用同一个 Remote 轮询。同一工作区的第二次并发运行会被拒绝，并用一句话点名占着名额的那次运行，而不是排进一个看起来像卡死的队列。每个 Remote 都接收会话 id 并据此解析工作目录 —— 用路径参数就会让浏览器问起一个会话从未打开过的目录。设置页显示模式、阈值、冷却、深度审查与对抗复核，并连同覆盖面算术一起渲染报告。
+
 ## Hunk 级变更追踪
 
 检查点回答的是「那次调用之前工作区长什么样」，粒度是文件；它回答不了*哪次*调用引入了某一行，也没法只撤销一次调用的改动而保留其他调用的改动。Hunk 追踪为每一次会写文件的工具调用记录它改动的连续行区间，并把这些区间归属到本体自己的 `callId` 上，再依据文件**当前**内容回退某个 hunk。
@@ -157,6 +206,7 @@ Agent 用 `engineering_hunks` 读这份日志（有界的元数据加五行预�
 
 参数来自模型，所以一次调用所命名的文件如果解析到工作区之外就会被拒绝：读 `../../id_rsa` 的前像等于把凭据内容放进一个模型之后可以查询的日志里。
 
+<a id="context-compression-headroom"></a>
 ## 上下文压缩（Headroom）
 
 Headroom 在模型看到之前压缩过大的工具输出。持久会话日志保留完整原文，压缩后的文本携带 `hash=<24 hex>` 标记，模型获得 `headroom_retrieve` 以取回任何被省略的文本——线上有损，端到端无损。每种策略都按*形态*路由（log、JSON、diff、search、table、config、prose），且每条策略只在确实缩小了自己的输入时才运行。
@@ -173,9 +223,9 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 
 关掉开关即恢复逐字节读取。read-fold 旋钮与此无关：它把无损折叠应用到那些恰好看起来像 search 或 log 输出的 read 上。
 
-### 延迟工具 schema
+### 按需工具 schema
 
-工具块是另一项固定成本：同一样本中，每个请求有 45.7-47.4 KB（11,700-12,130 token）是工具 JSONSchema，而 61-74 个工具里有 37 个是本插件的——14,380 字符，占该块的 27%，在每个轮次的每一步都被重发。一个只改设置的轮次永远不会碰图查询、记忆 CRUD、检查点恢复、团队编排或媒体生成。
+工具块是另一项固定成本：同一样本中，每个请求有 45.7-47.4 KB（11,700-12,130 token）是工具 JSONSchema，而 61-74 个工具里有 37 个是本插件的——14,380 字符，占该块的 27%，在每个轮次的每一步都被重发。一个只改设置的轮次永远不会碰图查询、记忆 CRUD、检查点恢复、议会编排或媒体生成。
 
 `deferredToolSchemasEnabled`（默认开启）让这些工具保持注册但扣住它们的 schema。在 `agent/session-start` 上，插件在一次绝不会阻塞会话的尝试中用 `deny: [...deferred]` 限定 agent 的工具作用域；Harness 从可见集合推导线上 schema，而被拒绝的名称会让一次直接调用以 `UNKNOWN_TOOL` 失败——可见性与可调用性读自同一个真源，因此模型既不能调用没被展示给它的东西，也看不到自己不能调用的工具。`tool_search` 随后为它返回的工具解除该拒绝，因此在一次发现调用之后，一个延迟工具与一个立即工具一样可用。查询语法刻意跟随 Claude Code 的 `ToolSearch`：`select:A,B` 用于精确名称，`+term rest` 要求名称中含某个词，裸关键词用于排序。
 
@@ -187,6 +237,7 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 
 该工具的描述是**静态的**，并且刻意不点名任何延迟工具。那里的动态索引会在每次设置变化时改动工具块，并使它之后所有内容的 prompt-cache 前缀作废，这正是 Claude Code 自己的源码记录下的失效模式（约占其机群 cache-creation token 的 10.2%）：损失远大于省下的定义。索引改为由一次无参数的 `tool_search` 调用返回。
 
+<a id="context-discipline-command-policy-and-plan-mode"></a>
 ## 上下文纪律、命令策略与 Plan Mode
 
 这些机制共享同一个想法：只以散文形式存在的规则无法被执行、测试或评审——而模型看不到的成本，就是它无法规避的成本。
@@ -209,10 +260,6 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 
 **注入表面锁**（`surface-lock.ts`）。`engineering_surface_report` 度量本插件注入了多少字节的工具 schema 与指导文本，并把该值与一份经评审的锁做 diff（`added` / `removed` / `changed` 分别报告），因此改提示词是一个可见的 diff 而不是不可见的。token 数字在它出现的每一处都被标注为估算——`approximateTokens` *不是*分词器计数，也不是一个任务的成本。
 
-**任务看板修订号**（`team/board.ts`）。每个任务都携带一个在每次变更时前进的修订号，因此 `claim` 可以要求调用方最后读到的那个修订号，竞争的失败方会干净地失败，而不是覆盖一个决策。一次认领还会铸出一个**认领令牌**，而严格闸门（`transition`）要求出示它：一个在重启后仍存在的所有者名字，不是同一个成员仍然持有这份工作的证据。`complete`／`fail` 仍是单进程团队的仅所有权路径，并被文档标注为较弱的那一条。`approve` 在任务上记录决策，因此看板就是审计记录。
-
-由于严格闸门是默认值，令牌必须能到达：为某任务启动的成员会在其 brief 中收到该任务的认领令牌，并被告知在关闭任务时出示它。扣下它等同于把一份成员在结构上无法完成的工作交给它——它只能停滍或请父级代它关闭——因此 `member_start` 会把它传递下去，并且有一个测试钉住这次交接。
-
 **缓存冷清除**（`cache-cold.ts`）。第二条更窄的压缩路径，只有一条规则：当距上一条主循环 assistant 消息超过一小时时，提供方的 prompt cache 肯定已过期，整个前缀无论如何都会被重写——因此在下一个请求*之前*清除较旧的工具结果，恰好缩小那部分已经确定会被重新计费的内容。理由不是这些内容旧了。一小时阈值位于所有已公布的 TTL 之外，因此该机制无法制造一次本不会发生的未命中；而清除标记是按会话的，因此同一段内容绝不会被处理两次：清除按构造幂等，而不是靠调用方记得。
 
 **请求形态指纹**（`request-shape.ts`）。上面的缓存未命中归因是对台账做算术；这里的是因果的那一半。每个请求之前都会对线上形态取哈希——system 文本、工具集、**每个工具各自的 schema**、模型、betas、预算档位——下一个响应的 cache-read 下降会被归因到一个具名变化。逐工具哈希之所以存在，是因为现实中占主导的情形是工具*集合*未变而某个工具的描述移了位，而任何增／减计数都看不到这种情况；那种情形会被点名到具体移位的那个工具。那些曾在对话中途翻转并使前缀作废的 flag 改为粘性开启：不再要紧的 flag 会被保持开启，而不允许它翻回去，因为第二次翻转才是昂贵的那次。
@@ -225,24 +272,55 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 
 **隔离报告**（`isolation-report.ts`）。成员的受限被报告为*请求*了什么、实际把它缩窄的是哪个机制（`tool-scope`、`harness-policy`、`both` 或 `none`），以及一个供调用方分支的 `restricted` 标志——它从**解析后的工具集**与沙箱模式回读计算得出，绝不从角色的意图得出。「我们要了只读」与「只读正在生效」是两个不同的事实，而把两者混为一谈的 brief 正是把一个可写成员误认为受限成员的途径。唯一绝不静默的结果是只读请求上的 `enforcedBy: none`：它携带 `fallbackReason`，而处于自己 worktree 中的 `workspace-write` 成员被报告为*已被围隔*而不是受限，因为私有 worktree 实际买到的就是围隔。
 
-## 已知限制与延期工作
+<a id="prompt-composition"></a>
+## 提示词构成
 
-验证历史是进程本地的，尚未公开持久化任务或取消。团队成员尚未支持进程内恢复：重启后的 Host 会从持久看板与成员注册表报告当时在飞的是什么，但成员本身必须重新启动（它的 worktree 与分支会存活，因此它的工作不会丢）。角色库随包投放五个角色；角色记录的形状就是扩展点。上下文预算依赖已挂载的 token meter；没有它时，组合会把压力报告为不可度量而不是零，因此那里根本没有那段片段。缓存浪费只从本地台账归因——网关 endpoint 报告的是计费总额，不是逐请求前缀——而只有在范围内携带费率时才归因到金额，因为一个无价格可依的数字比没有更差。动作评审器（`action-review.ts`）是一套完整策略但没有接上评审器：在逐工具热路径上跑模型评审会为每次工具调用增加一个请求，而那正是本插件存在以减少的成本，因此在评审值得这笔开销之前它保持未绑定。档位选择从*变更路径*而非覆盖率插桩推断覆盖，因此它说的是「这次改动伴随了一个测试文件改动」，而绝不是「这些测试覆盖了这次改动」；知道真实覆盖率的调用方应当直接传入它。旁路通道阈值推导自 `compaction-basic` 的默认比例，因此覆盖该比例的组合会使这个数字变成近似值——这就是该检查只警告、绝不拒绝的原因。缓存冷清除只从请求中删除旧工具结果；它无法编辑服务器上已被缓存的前缀，而那会是同一想法的更强版本。凭据扫描器是经过挑选的子集，不是通用密钥探测器，而且它只筛查记忆写入——引擎审计摘要与导出的 bundle 仍依赖它们自己的按字段脱敏。Code Graph 目前调用官方 CLI 完成仅代码构建、增量更新与有界只读查询；内部 Graphify MCP sidecar、持久化构建队列、用户取消、依赖哈希锁、运行时更新渠道与 Canvas 适配器仍是发布门槛。CodeGraph 引擎没有 Canvas 适配器（有界的 Canvas 投影仍仅限 Graphify），也没有 `overview` 工具，因为它的 CLI 不提供 hub 排序或全图导出命令；两个引擎的新鲜度都来自轮次后的自动更新 hook 与用户的显式操作，而不是后台 watcher，并且 `codegraph` 在不带守护进程的情况下运行，因此查询绝不会与第二个写入方争抢。
+`context-budget.ts` 说窗口有多**满**；`cache-attribution.ts` 说一次未命中**花了多少**。两者都不说这些 token **由什么构成** —— 而这正是平台大多数真实决策背后的疑问：延迟 schema 这项工作之所以存在，是因为工具定义占了一个 13,454 token 固定块中的 45.7–47.4 KB，而那个数字来自一次离线测量，而不是模型或用户在运行时可问的任何东西。没有这份拆解，"提示词很大"就没有下一步 —— 模型分不清是工具块臃肿（延迟、或关掉某个包）、是对话太长（压缩）、还是累积的规则与 Skills（改设置）。
 
+`engineering_context_prompt` 以树的形式回答它，一次一个节点：系统文本、工具块、常驻指引、Skills、注入片段与对话，每个都带自己的体积。快照按会话保留并在拆卸时清理，而该工具在 `tool-manifest.ts` 里被分类为只读，所以"问一下提示词花了多少"不是一个改动过工作区的回合。与 `engineering_context_budget` 一样，它被延迟：不问就不花成本。
+
+<a id="post-compaction-rehydration"></a>
+## 压缩后补灌
+
+只有摘要会丢掉那些从来不属于对话语义内容的常驻上下文。当 Harness 的压缩器遮蔽一段范围后，`rehydrationEnabled`（默认开）会把它原本承载的东西重新注入：持久项目记忆、最新待办列表、最新工程检查点 —— 工作是继续下去，而不是模型"忘掉"了一个从未进入摘要的计划。
+
+一切都从会话已经记录的数据回放（待办与写入事件、记忆召回、检查点事件），因此回放不可能与它恢复的历史互相矛盾。补灌内容刻意既不携带凭据也不携带推理内容，因为它们既不是待办也不是检查点。`rehydrationArcEnabled`（默认关）提供可选的对话弧变体，以同样方式折叠目标与决策。这对应 Claude Code 的补灌经验；机制是片段日志，所以一个区段消失时发出的是移除通知，而不是让过期的限制继续生效。
+
+<a id="project-memory"></a>
+## 项目记忆
+
+按项目持久化的记忆是 `DSH_HOME/freecodego/engineering/memory` 下的本地 SQLite 状态。召回是仅限已审核记录的 `Search → Timeline → Get` 流程 —— 草稿永远不进入自动召回 —— 而召回注入有围栏与预算（`engineeringMemoryContextTokenBudget`，默认 1,200 token），标签被中和，所以仓库文本无法伪装成记忆。凭据筛查发生在写入路径上：带标签或带厂商前缀的凭据会直接拒绝该条目，只匹配形状的会被就地脱敏，而发现结论永远不返回密钥本身 —— 只有四字符前缀与长度。
+
+其中有五件事容易被忽略，所以在这里写明。
+
+**整合（"dream"）是分阶段放量，因为它会写入。** 一次整合拿的是**带租约的锁**而不是互斥锁 —— 一个带过期时间的锁文件，因此崩掉的整合天然可恢复，而**活着的**租约会被报成 `lease-held` 而不是被重试，因为两次整合同一批观察会各自写入一个对方不知道的主题。接着它读取开始时已存在的**冻结快照**，忽略之后的到达：那些是下一轮的输入，而让运行中的整合看见新到达会让它的产出取决于它跑了多久，从而使一次糟糕的整合无法复现。随后在快照上跑一次不含工具调用的模型调用，并原子地写入主题。因此 `memoryRollout` 是四个阶段而不是一个开关 —— `off`、`record_only`、`shadow`、`active` —— 而 `shadow` 正是让这个功能可以安全打开的那个阶段：它完整跑完包括模型调用的整合但什么都不提交，操作者可以先读到模型**本来会**写什么，再决定是否让它写。关闭该流水线是 fail closed 的。
+
+**`MEMORY.md` 是一份有界的绝对路径索引。** 路径是绝对的，因为相对指针要针对某个作用域根解析，而那个根取决于索引是在哪里被找到的；一个把这个推理重构错的模型不会报告路径坏了，而会报告什么都没找到。溢出时整行丢弃并说明丢了多少，因为截断描述会让索引声称在描述一条它已经不再描述的记录 —— 读者分不清"摘要很短"和"被截断了" —— 而丢掉一行是可见的，数量是可行动的。
+
+**遗忘要凭证据，绝不凭模式。** "忘掉你知道的关于 X 的一切"是这个子系统唯一不能靠把 X 变成一组文件来回答的请求：那是一次相关性判断，判宽一点就以没有撤销的方式删掉了用户想保留的记录，而这个存储的全部价值就在于它记得。所以调用方要做只有调用方能做的事 —— 读出打算删除的字节并连同哈希交出来 —— 而这个模块只做机械工作：用磁盘上的文件核对证据，然后精确删除那个文件。目录或通配符会被拒绝，因为"这底下的一切"又是一次判断，而它的证据不是调用方读得到的东西；哈希不匹配以及另外四种形状同样是拒绝而不是警告，每次拒绝都会说明是哪一种。
+
+**记忆有管理面。** 设置面板可以按需整合、重建索引、导出已审核记忆、创建备份、清理过期内容，全部限定在一个打开且绑定工作区的会话内。只有面向用户的 Remotes 可以批准、拒绝、导出、清空或删除记录，而记忆也可以毕业为 `.freecodego/skill-drafts/` 下的 Skill 草稿。
+
+**遥测是 schema，不是约定。** 遥测是一个功能里最容易泄漏它知道什么的地方：记忆流水线看得到用户陈述、主题、关键词、文件路径与模型输出，所以一个看似无害的 `{ topic: slug }` 字段会把私人笔记的精炼版本永久送进任何收集指标的容器，无法撤回。因此每个事件都由同一个构造器**构造**，它拒绝未知字段，也拒绝不是该字段声明取值之一的字符串 —— 自由文本字段不可能被误加，因为没有形状会接受它 —— 并且这种拒绝是抛错而不是丢弃，所以一个以为自己在收集指标的开发者会在测试里失败，而不是静悄悄地失败。
+
+<a id="plugin-conflict-protection"></a>
 ## 插件冲突保护
 
 `freecodego-harness` 设置命名空间默认启用插件冲突保护。`dsh` profile launcher 在 Loader 启动 profile 树之前安装该守卫，随后 FreeCodeGo 静态扫描每个后续条目的模块与本地 import，查找字面重复的 Tool 名称、命令名称、设置命名空间、HTTP 路由、模型 Provider id 与 UI Slot id。当它发现某个独占资源已被一个活动条目持有时，它保留较早的条目，在较晚的条目运行之前将其禁用，并为设置页保存一条修复记录。浏览器通知会点名两个条目与该重复资源。
 
 扫描器绝不执行第三方代码，并刻意忽略动态或计算出的注册。它防止的是可靠的重复注册，而不是仅仅提供相似面向用户功能的无关插件。
 
-## NPM 更新
+<a id="release-updates"></a>
+## 发布更新
 
-更新服务跟踪已发布的 `freecodego` 入口包，而不是孤立地更新某一个 Host 组件。它在启动后以及每天检查 npm，支持 `latest`、`next` 与 `canary` dist-tag，并把所选版本暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康；设置页可以在确认之前恢复它。更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
+更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.1.6-alpha.2` 构建的 `freecodego-0.1.6-alpha.2.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
 
+<a id="zcode-glm-53-flash-promotion"></a>
 ## Zcode GLM-5.3 Flash 推广
 
 只有当 Host 为当前 Z.AI 账号持有 Coding Plan 凭据时，Zcode 模型目录才会标注 `glm-5.3-flash`。限免窗口按 `Asia/Shanghai` 计算：每月 20 日之前，从 23:00 到次日 09:00，请求显示为不消耗 token。该模型在窗口之外仍然可用，但 UI 会明确报告限免期未生效；任何客户端时钟或账号声明都无法授予该权益。
 
+<a id="mcp-and-skills"></a>
 ## MCP 与 Skills
 
 `freecodego-harness` 设置命名空间存储开关、第三方 MCP 服务器与额外的 Skill 根。两个开关默认关闭。被启用的 MCP 服务器由 Host 连接一次，并注册为 DeepSeek 引擎的 Harness 工具。Claude 通过其进程内 `freecodego-host` MCP 服务器收到已发现的 schema 并调用 Host 桥接，而 Codex 在其插件自有的 app-server 配置中收到同一套已启用服务器定义。
@@ -251,16 +329,90 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 
 内嵌社区页通过 Host Remote 读取有界、分页的 MCP.so 与 skills.sh 元数据。只有当 MCP 条目的已发布详情包含一个可由共享 registry 表示的 HTTP endpoint 或 stdio 命令，且没有未解析的环境变量或 header 值时，它才可以一键安装；需要凭据的条目留在手动配置中，而不是报告一次不可用的安装。Skill 条目只从经过校验的 GitHub 源仓库把匹配的 `SKILL.md` 导入由 Host 持有的社区 Skill 根。
 
+Skill 的安装是一条可核对的记录，而不是一次复制：来源按 `owner/repo#ref&path:…` 这样的写法解析，载荷先暂存再原子晋升，`skill-lock.json` **最后**写入并钉住内容真正来自的那个 commit；卡片会显示这个 pin，而当目录已落地、记录却没写成时，界面会如实那样说。同名冲突在任何字节落盘前被拒绝并点名双方来源；移除走同一条记录，先删目录再删条目，因此记录永远不会描述已经不存在的文件。
+
+安装还可以选择落在哪里。投放矩阵是 `--agent` × `--scope`（`harness`/`agents` × `project`/`user`），按本 Host 所运行的那个文件夹解析，其中项目一层要求文件夹已授信：这道门在**路径算出来之前**先跑，因为一个未授信检出里的 `.agents/skills` 正是那个仓库能控制的目录。页面会把整张矩阵摊开显示，包括不可用那一行携带的原因，因此“未授信”不会看起来像“这个组合不存在”；用户选中的两个轴会传到 Host，由它在自己这一侧重新解析一次——两次读取之间，文件夹可能已经失去授信。每一种投放挂载各自独立的受管根 id，因为复用社区根的 id 会把页面读取自身列表的那个根卸下来；而移除会搜索每一个受管根，所以被投放出去的 Skill 仍能在当初添加它的那张卡片上移除。
+
+这个投放位置会被记住，而“记在哪里”是刻意选择的：选择写入 `freecodego-harness` 设置文档（`preferredSkillPlacement`，两个轴 —— 绝不存它解析出的根目录，因为那个路径由工作区、`$DSH_HOME` 与 home 三者共同决定，存档下来会比三者都活得久）。因此它能跨重启保留、与其他开关一起在设置文件里可读可改，并且由本 Host 的每一个客户端共享，而不是躺在某个浏览器的 localStorage 里。如果记住的那一行在当前文件夹不可用，它依然会被如实上报并原样发出去：安装会带着矩阵自己的原因被拒绝，而不是悄悄落到社区目录——一个会静默改道的偏好，比一个说清楚自己为什么无法被满足的偏好更糟。
+
+<a id="optional-harness-capabilities"></a>
+## 可选的本体能力
+
+浏览器控制、桌面控制与会话历史检索是 Harness 自己的能力，而没有任何 bundle 挂载它们：本 bundle 在 `bundle-latest/cordis.patch.yml` 里携带它们的行并置为 `disabled: true`，因此需要其中某一项的部署，是在管理其他 Loader 条目的地方把它打开，而不是去改 `node_modules` 里的文件。三行全部关闭，出于两条对每一项都成立的理由。
+
+那些包没有一个在本 bundle 的 `peerDependencies`（也就是安装契约）里，因此一条 enabled 的行会点名一个 Harness 并不必须提供的包。而一条解析不到的行，失败粒度取决于它被挂在哪一层：携带这种行的 preset 会被报告为损坏并变为不可选，而 Host 平面的一行只死那一个条目，因为 Loader 会捕获 import 错误、记录它，并让树里其余部分继续运行。所以 Host 平面是唯一能承载“可选能力”的平面。
+
+能力本身是 Harness 的；它背后的引擎不一定。下面这张表是部署实际在同意的东西，连同每个依赖携带的许可证：
+
+| 能力 | 挂载的行 | 实际驱动 | 许可证 |
+|---|---|---|---|
+| 浏览器控制 | `browser-use`、`browser-use-playwright-mcp` | [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Apache-2.0 |
+| 桌面控制 | `computer-use`、`computer-use-cua-driver-native` | [Cua Driver](https://github.com/trycua/cua) | MIT |
+| 会话历史检索 | `tool-session-query` | Harness 之外没有任何东西 | MIT |
+
+### 浏览器控制
+
+两行都要开。`mode` 必填且没有默认值：行里带的是 `mode: launch` 与 `headless: true`；`mode: attach` 配合 `endpoint` 则驱动一个你已经打开的浏览器，并保留它的标签页与登录态。服务只有一个 provider 槽位并拒绝第二次注册，因此 Chrome DevTools MCP 与 Stagehand 是替换而不是追加。
+
+先决条件是上游运行时能启动的浏览器；已有的 Chromium 用 `executablePath` 指定。启动出来的浏览器属于那个活着的 Agent 与 Session、在同一个会话的多个轮次间复用、并随会话运行时一起销毁——重新加载或 fork 会从全新状态开始，日志里不会恢复任何 cookie 或页面。挂接式（attach）的浏览器仍属外部所有，且被保留给一个会话。初始化在创建或恢复完成之前完成，因此一个起不来的 provider 会拒绝那次创建，而不是在没有浏览器的情况下继续；而一次被取消的调用也无法撤销已经送达浏览器的动作。
+
+有一个配置陷阱值得从上游带过来：当系统提示词配置了 `toolOrder` 时，浏览器工具必须留在 `<unlisted-tools>` 之下——把它们显式列出来，会让那些没有浏览器连接的会话在组装提示词时失败。本 bundle 不设置 `toolOrder`。
+
+### 桌面控制
+
+启用 `computer-use` 与 `computer-use-cua-driver-native`。原生 provider 没有任何配置项，并加载紧挨着它声明的那一个精确的 Cua Driver npm 版本。替代方案是 `computer-use-cua-driver-mcp`：它通过 MCP 驱动一个已经装好的 `cua-driver` 可执行文件——当应该由一个独立应用持有桌面权限与执行权时选它，代价是要装那一个。
+
+先决条件属于机器而不属于部署：平台二进制通过 npm optional dependencies 到达，因此那些必须保持启用；启动 Host 的那个应用需要获得桌面权限授权。原生运行时与 Host 共享同一进程，它自己的文档把话说得很直白——原生崩溃可能终止 Host。截图还需要附件存储与一条声明了图像输入的模型路由。
+
+一个已注册的 provider 并不会为某个会话保留桌面，因此调用方要自行协调完整的“观察—操作—验证”流程；而一次被取消的调用也无法撤销桌面已经收到的输入。
+
+### 会话历史检索
+
+这一项只有一行，且不需要装任何依赖：`tool-session-query` 注入的服务由基础组合已经挂载，因此把它打开就是这五个工具本身的全部 opt-in。
+
+内容搜索是第二个开关，而这部分容易漏。基础组合刻意以 `openAt: never` 挂载 `session-query-sqlite`：查询服务保持可用（精确读取、标题、血缘），而 SQLite 从不打开。因此在没有下面这段覆盖的情况下打开工具，会得到五个工具里三个能用、两个永远回答 `SESSION_QUERY_SEARCH_DISABLED`，而 Web 侧栏依旧只匹配标题与工作区名。本 bundle 的 patch 文件正是基础组合点名的“后来的 patch 层”，所以这一对应该放在一起：
+
+```yaml
+- id: session-query-sqlite
+  config:
+    path: !!js dshHomePath('session-index.db')
+    openAt: first-search
+```
+
+这五个工具是只读的，跨会话访问按调用逐次授权，判据是与调用方自己会话的 `cwd` 精确相等。代价是提示词表面：启用该包会给每个模型请求加上一段固定引导与五个工具 schema，`engineering_surface_report` 会把它作为注入字节对照已审阅的锁报告出来。
+
+<a id="third-party-plugin-tools"></a>
 ## 第三方插件工具
 
 原生 Codex 与 Claude 会话会投影出 Harness 向 DeepSeek 暴露的同一套 Agent 作用域 Tool schema。这包括由后续第三方插件注册的工具，例如 canvas 或领域特定的工作流工具；FreeCodeGo 不维护名称允许清单。调用经 Host ToolRuntime 返回，因此原插件仍然拥有校验、权限、审计事件、取消与执行。MCP 与 Skill 能力也可以保留其专门的原生集成，但这个通用投影绝不会仅仅因为名字就隐藏一个第三方工具。
 
 Codex 在每次提示词之前刷新这份清单，Claude 为每次查询重建其进程内 MCP 服务器。因此安装、禁用或限制一个插件会在下一个原生轮次生效，而无须重建对话。只有 `ctx.tools.schemas(agent)` 中可见的 schema 会被投影；被 Host 或作用域隐藏的工具绝不跨过原生桥接。
 
+<a id="media-defaults"></a>
 ## 媒体默认值
 
 Host 为 DeepSeek、Codex 与 Claude 注册 `freecodego_generate_image`、`freecodego_generate_video` 与 `freecodego_generate_audio`。每次执行都从 `freecodego-harness.mediaDefaults` 读取实时的图像／视频／音频默认值；面向模型的 schema 刻意没有模型覆盖项。网关请求复用 Host vault 账号令牌与所选模型的路由键。Agnes 默认值复用既有的 Agnes Host 客户端。Base64 图像响应被接纳进 Harness 附件存储并作为 image 内容块返回；音频字节保存到活动工作区的 `.freecodego/generated-media` 目录下。
 
+<a id="model-picker-and-provider-accounts"></a>
+## 模型选择器与供应商账号
+
+用户真正读到的模型列表是 Harness 原生菜单，而 Host 会把所有可服务的适配器都注册进去。有六个机制塑造这份菜单显示什么、以及怎么表现。
+
+**浏览器代理的 OAuth 登录。** 本插件既没有窗口接收浏览器 fragment，也没有 `freecodego://` 协议处理器，因此它直接走既有的 `/auth/oauth/{provider}/start` 流程，带 `redirect=/oauth/desktop?state=<ours>&plugin=1`。后端回调把它签发的凭据对存在该 state 下（并给用户一个普通确认页而不是深链），而这一侧轮询 `GET /auth/oauth/desktop/poll` 直到凭据对到达，再把它收进 Host 凭据保险库。同一张卡片还能完成 MFA、绑定或创建账号，并经由 Host Remotes 发送验证码。
+
+**选择器显示什么，是用户的决定。** 账号与供应商页面是用户唯一能说"我不想要模型列表里有 WorkBuddy"的地方，因为 Host 会把所有可服务的适配器都注册进去。存储是**反向**的 —— 除非明确记录为隐藏，否则可见 —— 并带两条声明的例外：按量计费供应商的有价行默认隐藏，精选供应商的未命名行默认隐藏。只有与默认不一致的决定才会被存储，这带来三条值得写下的结果：从没打开过这些开关的用户不会看到变化；供应商之后新增的模型到达时是可见的；而新增的**有价**模型不会自己打开。价格是按行而不是按供应商询问的，因为按量计费供应商的名单通常两者都有。这份决定由选择器装饰层读取，所以答案会立刻作用于旁边已经打开的那份菜单；面板持有自己的存储订阅，因为这个设置属于供应商，而不属于恰好渲染它的那个页面。
+
+**原生菜单只做标注，不做替换。** 官方选择器仍然是选择、焦点、滚动与推理档位的所有者；这一层只对符合稳定 ARIA 菜单契约的模型行追加非交互标签（来源、价格类别、供应商健康）。于是用户能知道哪些行免费、按量还是降级，而不必存在第二个会漂移失同步的选择器。
+
+**被拒绝的选择不会读成已应用的选择。** 只监听异常的包装层会把一次拒绝当成已应用的选择，并清掉它刚写下的原因，所以回显检查的是目录发布出来的**结果**（`status: 'error'` 加消息），抛异常分支只保留给会话完全无法选择的情况。
+
+**短暂重连不会清空菜单。** 另有一层重试观察该目录，识别传输性失败（`failed to fetch`、`carrier offline`、`remote event generation ended`、被中止的 remote 调用），按 1 分钟 / 10 分钟 / 30 分钟退避重新加载，且不清空上一次可用的目录。断连时已经打开的菜单会恢复而不是变空，而重复安装只保留一个订阅，而不是每次渲染再加一个。
+
+**冷启动的目录从秒级降到毫秒级。** Host 构建模型目录时会同时向每个已注册路由要模型列表、等最慢的那个、再为拿到的每个模型解析元数据。这个部署 13 个路由里有 12 个属于本插件，而它们是唯一必须读网络目录的 —— 每个连接器都通过自己的端点轮换账号，预算以秒计。以重启后的 Host 实测：首次目录 5,528 ms，热态 12 ms；那 5.5 秒里菜单没有任何供应商分组可画，这正是"打开选择器像没打开"的来源。因此 FreeCodeGo 那一半改由这个部署已经知道的目录（`known-provider-catalog.ts`）直接回答，而不是再跑一轮供应商读取。
+
+**一张失败表，三种决策。** 同一个失败从每个路由来时的形状都不一样 —— `fetch` 拒绝、自定义错误对象上的状态码、abort 引发的 DOMException、适配器自带的机器码、供应商自己的措辞 —— 而在每个调用点按消息文本分支，正是"限流被无限重试、上下文溢出被重试到额度耗尽"的来源。`provider-error-classify.ts` 把所有失败汇入一张表，每种对应一个决策：重试、让账号冷却、或让这一回合失败。
+
+<a id="settings-migration-orphan-engineering-keys"></a>
 ## 设置迁移：孤儿 Engineering 键
 
 一个 DSH home 可能被本插件的多个构建写过。已发布的 alpha 包会写入四个本仓库从不读取的键——`engineeringProfile`、`engineeringTelemetryEnabled`、`engineeringLearningDraftsEnabled` 与 `engineeringTelemetryRetentionDays`——因此被两个构建都用过的 home 最终会携带死设置：没有任何代码路径读它们，设置页从不显示它们，也不会有任何东西失败，而这恰恰是它们值得被点名的原因。
@@ -269,17 +421,18 @@ Host 为 DeepSeek、Codex 与 Claude 注册 `freecodego_generate_image`、`freec
 
 | 被移除的键 | 在本仓库中的状态 |
 | --- | --- |
-| `engineeringLearningDraftsEnabled` | 该行为作为 `engineering_skill_draft` 工具存在，它只从用户已经评审过的记忆中推导草稿。目前不可开关。 |
+| `engineeringLearningDraftsEnabled` | 该行为存在，但不是工具：设置里的 Skills 区块通过 `engineeringSkillDraft` Host Remote 推导草稿，把它们从用户已经评审过的记忆写入 `.freecodego/skill-drafts/`。目前不可开关。 |
 | `engineeringProfile` | 不存在 profile 分级；各个独立开关就是契约。 |
 | `engineeringTelemetryEnabled` / `engineeringTelemetryRetentionDays` | 这个构建中不存在任何遥测采集或保留。 |
 
 如果某个 alpha profile 仍在 `profiles/freecodego-alpha` 下使用，它自己的设置文档是独立的；从共享 home 中移除这些键不会碰它，而 alpha 构建会在下次运行时重新加回它需要的任何东西。
 
+<a id="community-plugins"></a>
 ## 社区插件
 
 社区插件页读取活动 profile 的依赖与 bundle 列表以显示已安装插件。FreeCodeGo 记录每次安装返回的源 URL 与直接包名，因此 GitHub 安装与多包安装仍然可识别。卸载会先禁用匹配的 Loader 条目，再从 profile 中移除直接依赖与 bundle 激活；下一次 Harness 启动无法加载被移除的插件。
 
-配置了 `gateway` 时，bundle 为移动端认证、bootstrap／模型状态、quota、运行时健康、模型价格、套餐、结账与订单轮询复用现有的 FreeCodeGo v1 路由。浏览器 Remote 只收到脱敏状态。UI 中不暴露任何提供方特定的凭据。
+配置了 `gateway` 时，bundle 为移动端认证、bootstrap／模型状态、quota、运行时健康与模型价格复用现有的 FreeCodeGo v1 路由。浏览器 Remote 只收到脱敏状态。UI 中不暴露任何提供方特定的凭据。
 
 `gateway.baseUrl` 默认为 `https://freecodego.com`，并且必须是 HTTPS 部署地址。本插件不使用 HTTP loopback 网关。
 
@@ -306,11 +459,81 @@ Agnes AI 是一个独立的 `agnes` 提供方。它仅限 Host 的账号流程�
             maxTokens: 16384
 ```
 
-设置页显示账号／配额／用量详情、选择支付方式与套餐、打开结账链接、轮询订单，并显示实时的模型价格表。支付校验／取消与收据邮件投递已经接通。提供方特定的支付确认、二进制收据下载、完整的运行时产物覆盖、干净 profile 安装与组装后的 Web E2E 仍是发布门槛。
+设置页覆盖账号相关内容：配额、用量与实时的模型价格表。
 
 -----
 
-## 开发备注
+<a id="model-experience"></a>
+## Model Experience
+
+### 提示词分区
+
+#### 模型看到什么
+
+本插件写入带序号的 `ctx.systemPrompt.section` 分区，而不是改动 Harness 拥有的文本：Plan Mode 规则、上下文纪律规则，以及它挂载的每个复合工具附带的说明各占一行。分区只在对应开关打开时存在，因此关闭 Plan Mode 或未挂载 token meter 的组合不会为此贡献任何分区。
+
+##### 复合编辑工具说明
+
+```markdown
+Use edit_and_run when a change and the check that proves it are one step: give the edit and the verification command together. The command runs only if the edit landed, and both results come back in one call.
+```
+
+#### Token 影响
+
+每个已挂载的分区在该会话的每一次请求中都要计费。Plan Mode 规则与上下文纪律规则是最长的两段；每个工具附带的说明只有一句，而未挂载的分区不产生任何开销。
+
+#### KV Cache 影响
+
+固定文本位于固定的 `order` 值上，因此会跨轮次留在已缓存的 prefix 内。挂载或卸载某个分区的设置变更会移动其后所有分区，从该点起使 prefix 失效。
+
+### Advisor 与 Engineering 工具
+
+#### 模型看到什么
+
+`advisor_status`、`advisor_review` 与 `advisor_notes` 暴露独立的 Advisor：它的路由、一次有界评审，以及它已记录的持久结论。Engineering 套件（`engineering_status`、`engineering_inspect`、`engineering_context_budget`、`engineering_context_compact`、`engineering_context_snip`、`engineering_context_prompt`、`engineering_surface_report`、`engineering_plan_mode`、`engineering_team_*` 系列动词，以及 `engineering_memory_*`、`engineering_graph_*`、`engineering_codegraph_*` 与 `engineering_checkpoint_*` 家族）暴露持久看板、记忆、仓库图与检查点。媒体生成只有在媒体提供方获授权时才会以 `agnes_generate_image` 与 `agnes_generate_video` 出现。以上每一个名字都只在 `tool-manifest.ts` 声明一次，并同时声明持有它需要什么能力、以及 Plan Mode 是否可以调用它。这张表就是 Plan Mode 围栏与验证门禁所读的东西，且有测试按注册字面量双向核对——因此本页写了而插件并未注册的工具会让测试失败，而不是让这段文字继续错下去。
+
+#### Token 影响
+
+每个已注册工具都要在请求中付出其描述与参数 schema 的代价，这正是这份清单保持封闭、且最大条目按需获取的原因：`tool_search` 取回延迟的工具描述，`headroom_retrieve` 只在模型主动索取时取回已溢出的结果。
+
+#### KV Cache 影响
+
+注册顺序稳定，因此工具块位于已缓存的 prefix 内。挂载或卸载某个工具家族会重写该块，并从该工具起使 prefix 失效。
+
+### 注入的引导
+
+#### 模型看到什么
+
+Advisor 引导以后续轮次抵达，绝不重写此前的消息：已结束的评审以 `record`、注入轮次或 steer 投递，Agent 在承载它的那一轮读到它。Plan Mode 规则以独立分区陈述，而不是塞进工具描述里。
+
+#### Token 影响
+
+已投递的结论只在承载它的那一轮计费一次。持久的 `advisor/note`、`advisor/delivery` 与 `advisor/state` 记录是 log-only 的，绝不进入请求。
+
+#### KV Cache 影响
+
+注入追加在已缓存的 prefix 之后，因此已投递的结论不会破坏此前的缓存 —— 这正是存在这条通道、而不是改写提示词的原因。
+
+## 已知限制与延期工作
+<a id="known-limitations-and-deferred-work"></a>
+
+这些限制界定了本插件在何时需要特别的运维照料。它们是当前的约束，而不是待办清单。
+
+- **验证历史是进程本地的** —— 持久化任务与取消尚未公开。
+- **上下文预算需要挂载 token meter** —— 没有它时压力读作“不可测量”而不是零，该片段因此缺席。
+- **缓存浪费只按本地账本归因** —— 网关报告的是计费总额，而不是逐轮请求前缀，且只有区间带费率时才归因金额，因为未定价的数字比没有更糟。
+- **动作评审器是完整策略但没有评审者挂载** —— `action-review.ts` 在逐工具热路径上保持未绑定，因为模型评审会为每次工具调用增加一次请求，而这正是本插件存在的意义所要削减的成本。
+- **等级选择从变更路径推断覆盖** —— 它只能说“这次变更伴随了测试文件改动”，绝不能说“这些测试覆盖了本次变更”；知道真实覆盖率的调用方应直接传入。
+- **旁路阈值派生自 `compaction-basic` 的默认比例** —— 覆写该比例的组合会让数值变成近似值，因此该检查只警告、绝不拒绝。
+- **冷缓存清理只改动请求本身** —— 它无法删除服务器上的已缓存前缀。
+- **凭据扫描器是精选子集** —— 它不是通用密钥探测器，且只筛查记忆写入；引擎审计摘要与导出 bundle 仍依赖各自的字段键脱敏。
+- **Code Graph 通过官方 CLI 调用** —— 仅支持纯代码构建、增量更新与有界只读查询。
+- **Graphify 的各个 sidecar 仍是发布门禁** —— 内部 MCP sidecar、持久化构建队列、用户取消、依赖哈希锁、运行时更新通道与 Canvas 适配器均未随包提供。
+- **CodeGraph 没有 Canvas 适配器，也没有 `overview` 工具** —— 它的 CLI 未提供 hub 排名或全图导出命令，因此有界 Canvas 投影仍然只属于 Graphify。
+- **新鲜度来自钩子，而不是后台监听** —— 两个引擎都通过轮次后自动更新钩子与用户显式操作更新，且 `codegraph` 不启动其 daemon，因此查询永不与第二个写入者争用。
+
+<a id="dev-note"></a>
+### 开发备注
 
 <details>
 <summary>维护者的工作上下文——点击展开</summary>

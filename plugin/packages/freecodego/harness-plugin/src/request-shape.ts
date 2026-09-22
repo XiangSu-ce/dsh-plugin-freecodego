@@ -66,8 +66,23 @@ export interface RequestShape {
   readonly maxTokens?: number | undefined
 }
 
+/**
+ * The single loudest reason a request's shape moved.
+ *
+ * One label for callers that need one, chosen in the order of what invalidates the
+ * most: a model change matters more than a tool change, which matters more than the
+ * system text. `initial` and `none` are answers too — a first request has nothing to
+ * compare against, and a panel row that said "changed" for either would be wrong.
+ */
 export type ShapeChangeKind = 'initial' | 'none' | 'system' | 'tools' | 'model' | 'effort' | 'max-tokens'
 
+/**
+ * What moved between two request shapes, and whether it costs a cache miss.
+ *
+ * `causes` carries every reason rather than only the loudest one, because a request
+ * that changed both its model and its tools has two independent fixes; `kind` is the
+ * one-label answer for callers that cannot render a list.
+ */
 export interface ShapeChange {
   readonly kind: ShapeChangeKind
   /** Every cause that fired, in the order the reasons read best. */
@@ -118,6 +133,8 @@ export interface RequestHeaderLike {
  *
  * Tool entries carry name, description and parameters — the three parts a
  * provider renders into the cached tool block.
+ * @param header - the folded request header, or `undefined` before any request ran.
+ * @returns The shape to compare against the next request's.
  */
 export function fingerprintRequest(header: RequestHeaderLike | undefined): RequestShape {
   const config = header?.config
@@ -151,6 +168,9 @@ export function fingerprintRequest(header: RequestHeaderLike | undefined): Reque
  * `kind` is the single loudest cause for callers that need one label; `causes`
  * carries all of them, because a request that changed both its model and its
  * tools has two independent fixes and collapsing it to one hides the other.
+ * @param previous - the shape recorded for this conversation, when there is one.
+ * @param next - the shape just fingerprinted.
+ * @returns The reasons, the affected tool names, and whether a cache can be affected.
  */
 export function diffRequestShape(previous: RequestShape | undefined, next: RequestShape): ShapeChange {
   const changedTools: string[] = []
@@ -218,7 +238,11 @@ export function diffRequestShape(previous: RequestShape | undefined, next: Reque
   }
 }
 
-/** One-line explanation for a log line or a panel row. */
+/**
+ * One-line explanation for a log line or a panel row.
+ * @param change - the diff to describe.
+ * @returns A sentence naming every cause, or that nothing changed.
+ */
 export function describeShapeChange(change: ShapeChange): string {
   if (change.kind === 'initial') return 'first request for this conversation; nothing to compare'
   if (change.kind === 'none') return 'request shape unchanged'
@@ -237,7 +261,16 @@ export class RequestShapeLog {
 
   constructor(private readonly maxEntries = 10) {}
 
-  /** Diff against the stored shape and store the new one. */
+  /**
+   * Diff against the stored shape and store the new one.
+   *
+   * The key is re-inserted on every record so eviction drops the conversation that
+   * has gone longest without a request, not the one created first — a long-lived
+   * session must not lose its shape because it started early.
+   * @param key - the conversation this request belongs to.
+   * @param next - the shape just fingerprinted.
+   * @returns What changed since that conversation's last request.
+   */
   record(key: string, next: RequestShape): ShapeChange {
     const change = diffRequestShape(this.shapes.get(key), next)
     // Re-insert so the newest key is last, then evict the oldest beyond the cap.
@@ -251,15 +284,24 @@ export class RequestShapeLog {
     return change
   }
 
-  /** Last recorded shape for a key, without recording. */
+  /**
+   * Last recorded shape for a key, without recording.
+   * @param key - the conversation to look up.
+   * @returns Its last shape, or `undefined` when none was recorded.
+   */
   peek(key: string): RequestShape | undefined {
     return this.shapes.get(key)
   }
 
+  /**
+   * Drop one conversation's shape, so its next request is read as a first one.
+   * @param key - the conversation whose memory is being dropped.
+   */
   forget(key: string): void {
     this.shapes.delete(key)
   }
 
+  /** Drop every remembered shape. */
   clear(): void {
     this.shapes.clear()
   }

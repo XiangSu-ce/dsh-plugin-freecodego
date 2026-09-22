@@ -37,7 +37,35 @@ interface CommunityApi {
   readonly communityUninstall?: ((url: string) => Promise<RemoteResult<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }>>) | undefined
   readonly capabilityMarketplace: (input: CapabilityMarketplaceRequest) => Promise<RemoteResult<CapabilityMarketplacePage>>
   readonly mcpPresetInstall: (id: string) => Promise<RemoteResult<unknown>>
-  readonly skillPresetInstall: (id: string) => Promise<RemoteResult<unknown>>
+  /**
+   * Install one Skills.sh entry, optionally into a chosen destination.
+   *
+   * The placement is the second argument rather than a separate call, because a
+   * destination is a property of *this* install, not of the page: choosing one and
+   * then adding a Skill are one action, and a second entry point would let the two
+   * disagree about which was meant.
+   */
+  readonly skillPresetInstall: (id: string, placement?: SkillPlacementChoice) => Promise<RemoteResult<unknown>>
+  /**
+   * Removal of an installed Skill, optional so a Host that does not declare the
+   * Remote still renders the page — the Remove affordance simply is not offered.
+   */
+  readonly skillPresetRemove?: ((id: string) => Promise<RemoteResult<unknown>>) | undefined
+  /**
+   * The Skill placement matrix, optional like the removal above: a Host that does
+   * not declare it installs into the community root, which is what every install
+   * before placements did, and the destination selector is simply not rendered.
+   */
+  readonly skillPlacements?: (() => Promise<RemoteResult<SkillPlacementsPayload>>) | undefined
+  /**
+   * Remember the chosen destination, or clear it when no axes are named.
+   *
+   * Separate from the install because the destination outlives any one install: the
+   * request is "remember what I picked", and a user who picks a destination and then
+   * closes the panel has still chosen one. Optional like the matrix above, so a Host
+   * that does not declare it still renders the page — the choice simply is not kept.
+   */
+  readonly skillPlacementPrefer?: ((placement?: SkillPlacementChoice) => Promise<RemoteResult<unknown>>) | undefined
   readonly language: 'zh' | 'en'
 }
 
@@ -58,9 +86,159 @@ interface CapabilityMarketplaceItem {
 }
 interface CapabilityMarketplacePage { readonly kind: 'mcp' | 'skill'; readonly total: number; readonly offset: number; readonly limit: number; readonly query?: string; readonly categories: readonly { readonly id: string; readonly label: string; readonly count?: number }[]; readonly items: readonly CapabilityMarketplaceItem[] }
 
+/**
+ * What a Skill install recorded, as the snapshot carries it.
+ *
+ * Restated structurally rather than imported from the plugin's host types: this
+ * module renders in the browser, and the type's own home is beside the install
+ * path. Only the fields the notice below reads are named.
+ */
+interface SkillInstallNotice {
+  readonly name: string
+  readonly resolvedCommit: string
+  readonly locked: boolean
+  readonly idempotent: boolean
+  readonly lockfileWarning?: string
+  readonly verification: readonly { readonly name: string; readonly reason: string }[]
+  readonly collisions: readonly { readonly name: string }[]
+  /**
+   * Where the install landed, when a destination was chosen.
+   *
+   * Absent for a community-root install: that is the default, and reporting it as if
+   * it were a choice would make "default" and "chosen default" the same answer.
+   */
+  readonly placement?: { readonly root: string; readonly provenance: string }
+}
+
+/** What a Skill removal took away, as the snapshot carries it. */
+interface SkillRemoveNotice {
+  readonly name: string
+  readonly recorded: boolean
+  readonly verification: readonly { readonly name: string; readonly reason: string }[]
+}
+
+/** The two axes one install destination is chosen over. */
+interface SkillPlacementChoice {
+  readonly agent: 'harness' | 'agents'
+  readonly scope: 'project' | 'user'
+}
+
+/** One row of the resolved placement matrix, as this page reads it. */
+interface SkillPlacementRow {
+  readonly agent: 'harness' | 'agents' | 'custom'
+  readonly scope: 'project' | 'user'
+  /** False when this combination has no destination here; `reason` says why. */
+  readonly ok: boolean
+  readonly root?: string
+  readonly provenance?: string
+  readonly reason?: string
+}
+
+/** The matrix, and the folder it was resolved against. */
+interface SkillPlacementsPayload {
+  readonly workspace: string
+  readonly projectTrusted: boolean
+  readonly defaultRoot: string
+  readonly rows: readonly SkillPlacementRow[]
+  /**
+   * The destination the user chose last time, when there was one.
+   *
+   * Reported beside the rows rather than as one of them: a row says whether a
+   * destination *can* be used here, and this says which one was asked for. A
+   * remembered choice whose row is currently unusable still arrives, so the control
+   * can show what was chosen and why it cannot be honoured.
+   */
+  readonly preferred?: SkillPlacementChoice
+}
+
+/**
+ * One destination named the way its axes read, not the way the table stores them.
+ *
+ * The keys are the Host's vocabulary and the label is the user's: a selector whose
+ * options said "harness/project" would be asking the user to hold the table in their
+ * head, which is the opposite of what showing the matrix is for.
+ * @param row - the resolved row.
+ * @param isZh - whether the page is Chinese.
+ * @returns the option label.
+ */
+function placementLabel(row: SkillPlacementRow, isZh: boolean): string {
+  const agent = row.agent === 'harness'
+    ? (isZh ? 'Harness 原生' : 'Harness native')
+    : row.agent === 'agents' ? (isZh ? '共享 agents' : 'Shared agents') : (isZh ? '自定义' : 'Custom')
+  const scope = row.scope === 'project' ? (isZh ? '项目' : 'project') : (isZh ? '用户' : 'user')
+  return `${agent} · ${scope}`
+}
+
 interface CapabilityToggleSnapshot {
   readonly mcpEnabled: boolean
   readonly skillEnabled: boolean
+  /** Absent for an MCP install, which records nothing beside a skills root. */
+  readonly skillInstall?: SkillInstallNotice
+  readonly skillRemove?: SkillRemoveNotice
+}
+
+/**
+ * What a Skill install did, in one line — including when it did not record it.
+ *
+ * The install's whole improvement over the copy it replaced is the record, and the
+ * record is invisible unless something shows it: "added" with no pin, no
+ * verification and no collision list would look identical whether the install was
+ * recorded or silently lost. The two answers that matter are therefore stated here
+ * rather than left to the log — whether the record was written, and whether the
+ * root still matches it.
+ * @param report - the install report the remote returned.
+ * @param isZh - whether the page is Chinese, so the sentence is in the user's language.
+ * @returns one line naming what was pinned and everything that is wrong with it.
+ */
+function skillInstallNote(report: SkillInstallNotice, isZh: boolean): string {
+  const pinned = report.resolvedCommit.slice(0, 7)
+  const where = report.placement === undefined
+    ? ''
+    : isZh ? `，安装到${report.placement.provenance}` : `, installed into ${report.placement.provenance}`
+  const headline = isZh
+    ? `已添加 Skill「${report.name}」，版本锁定 ${pinned}${where}${report.idempotent ? '（与已安装版本内容相同）' : ''}`
+    : `Added Skill "${report.name}", pinned ${pinned}${where}${report.idempotent ? ' (same content as the installed version)' : ''}`
+  const problems: string[] = []
+  if (!report.locked) {
+    problems.push(isZh
+      ? `未能写入安装记录（${report.lockfileWarning ?? '原因未知'}），当前版本无法校验，请重新添加`
+      : `it could not be recorded (${report.lockfileWarning ?? 'reason unknown'}), so it cannot be verified — add it again`)
+  }
+  if (report.verification.length > 0) {
+    const names = report.verification.map(entry => entry.name).join(isZh ? '、' : ', ')
+    problems.push(isZh ? `有 ${String(report.verification.length)} 个已安装 Skill 与记录不符：${names}` : `${String(report.verification.length)} installed Skill(s) no longer match the record: ${names}`)
+  }
+  if (report.collisions.length > 0) {
+    const names = report.collisions.map(collision => collision.name).join(isZh ? '、' : ', ')
+    problems.push(isZh ? `同名冲突：${names}` : `same-name collisions: ${names}`)
+  }
+  return problems.length === 0 ? headline : `${headline}${isZh ? '；' : '; '}${problems.join(isZh ? '；' : '; ')}`
+}
+
+/**
+ * What a Skill removal did, in one line.
+ *
+ * Two answers matter here and neither is visible from the grid: whether anything
+ * had recorded the Skill (a directory removed with no record is a removal nothing
+ * can confirm afterwards), and whether the Skills that remain still match the
+ * record — a removal is also a moment when drift elsewhere becomes worth saying.
+ * @param report - the removal report the remote returned.
+ * @param isZh - whether the page is Chinese, so the sentence is in the user's language.
+ * @returns one line naming what was removed and anything left to know about it.
+ */
+function skillRemoveNote(report: SkillRemoveNotice, isZh: boolean): string {
+  const headline = isZh ? `已移除 Skill「${report.name}」` : `Removed Skill "${report.name}"`
+  const problems: string[] = []
+  if (!report.recorded) {
+    problems.push(isZh
+      ? '它没有安装记录，只删除了目录'
+      : 'it had no install record, so only its directory was removed')
+  }
+  if (report.verification.length > 0) {
+    const names = report.verification.map(entry => entry.name).join(isZh ? '、' : ', ')
+    problems.push(isZh ? `剩下有 ${String(report.verification.length)} 个 Skill 与记录不符：${names}` : `${String(report.verification.length)} remaining Skill(s) no longer match the record: ${names}`)
+  }
+  return problems.length === 0 ? headline : `${headline}${isZh ? '；' : '; '}${problems.join(isZh ? '；' : '; ')}`
 }
 
 const CATEGORY_ZH: Readonly<Record<string, string>> = {
@@ -247,7 +425,7 @@ function remoteValue<T>(result: RemoteResult<T>): T {
   return result.value
 }
 
-export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, language }: CommunityApi): ReactNode {
+export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, language }: CommunityApi): ReactNode {
   const isZh = language === 'zh'
   const text = isZh ? {
     installed: '已安装插件', popular: '社区热门插件', installedIntro: '管理已通过社区页加入当前 Profile 的插件，可在此直接卸载。', marketIntro: '根据市场下载量与 Stars 动态排行，安装由本机 Harness 安全完成。', updatedAt: '目录更新于', refresh: '刷新', categories: '社区能力分类', plugin: '插件', backToCommunity: '返回社区', searchInstalled: '搜索已安装插件', searchMarket: '搜索社区插件', searchPlaceholder: '名称、作者、功能、npm 包名', noPnpm: '未检测到 pnpm，当前电脑环境无法安装社区插件，请先安装 pnpm 后刷新。', marketError: '插件市场服务不可用：', capabilityError: '添加失败：', loading: '正在读取精选插件…', restartNotice: '插件安装或卸载后，部分改动需要重启 Harness 才会生效。', restartNow: '立即重启', emptyMarket: '精选目录暂时没有可用条目。', emptyInstalled: '当前 Profile 尚未安装可识别的社区插件。', featureCount: (count: number) => `包含 ${count} 个同仓库功能`, terminalOnly: '仅支持 TUI Profile', installing: '安装中', uninstalling: '卸载中', install: '一键安装', uninstall: '卸载', installedCount: (count: number) => `已安装插件 ${count} 个`, marketCount: (count: number) => `当前显示 ${count} 个社区条目`, marketTruncated: (total: number, shown: number) => `（目录共 ${total} 个，此处按下载量排行显示前 ${shown} 个）`, searchCount: (count: number) => `搜索结果 ${count} 个`, usableCount: (count: number) => `，其中 ${count} 个可用于 Web/Host。`, close: '关闭', modalFeatureCount: '同仓库功能：', openProject: '打开项目主页', readmeLoading: '正在读取完整功能介绍…', readmeChinese: '已优先显示上游中文说明。', readmeEmpty: '暂无 README 内容。', readmeError: '暂时无法读取插件 README，请打开项目主页查看完整说明。',
@@ -268,9 +446,24 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
    *  own error banner: that banner names the marketplace service, and an install
    *  that failed after the marketplace answered is not the marketplace being down. */
   const [capabilityError, setCapabilityError] = useState<string | undefined>(undefined)
+  /** What the last install recorded, kept apart from the failure banner above it. */
+  const [capabilityNote, setCapabilityNote] = useState<string | undefined>(undefined)
   const [marketplaceCategory, setMarketplaceCategory] = useState('')
   const [marketplaceOffset, setMarketplaceOffset] = useState(0)
   const [capabilityBusy, setCapabilityBusy] = useState<string | undefined>(undefined)
+  /** Where the next Skill install lands; `''` is the Marketplace's own root. */
+  const [placementKey, setPlacementKey] = useState('')
+  const [placements, setPlacements] = useState<SkillPlacementsPayload | undefined>(undefined)
+  /** Why the chosen destination could not be remembered. Never the install's own banner. */
+  const [placementError, setPlacementError] = useState<string | undefined>(undefined)
+  /**
+   * Whether this page already has an answer of its own.
+   *
+   * A ref rather than state, because it guards a write that arrives from outside: the
+   * remembered choice may land after the user has picked a destination, and moving the
+   * control under them would be the read overwriting the newer decision.
+   */
+  const placementTouched = useRef(false)
   const [selectedCapability, setSelectedCapability] = useState<CapabilityMarketplaceItem | undefined>(undefined)
   // Upstream README for the plugin dialog, Chinese first when the UI is Chinese.
   const readme = usePluginReadme(selectedPlugin?.url, language)
@@ -334,6 +527,27 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
   }
 
   useEffect(() => { void load() }, [])
+
+  // Read the placement matrix when the Skills view is first opened, not on mount:
+  // its rows depend on the folder this Host runs in, and the plugin catalog the page
+  // opens on has no use for them. A failure becomes absence rather than an error —
+  // the selector simply is not rendered and an install goes to the community root,
+  // which is what every install did before the matrix existed — and a matrix that was
+  // read once is kept, so switching tabs does not re-resolve it on every visit.
+  useEffect(() => {
+    if (filter !== 'skill' || skillPlacements === undefined || placements !== undefined) return
+    let active = true
+    void skillPlacements().then(remoteValue).then((payload) => {
+      if (!active) return
+      setPlacements(payload)
+      // The remembered choice becomes the selection only if nothing has been chosen on
+      // this page yet.
+      if (!placementTouched.current && payload.preferred !== undefined) {
+        setPlacementKey(`${payload.preferred.agent}/${payload.preferred.scope}`)
+      }
+    }, () => undefined)
+    return () => { active = false }
+  }, [filter, placements, skillPlacements])
 
   // A Host restart can happen while this page remains mounted. In that case
   // the initial snapshot still contains the pre-restart banner, so poll the
@@ -464,14 +678,57 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
 
   const restart = (): void => { globalThis.location.reload() }
 
+  /**
+   * The destination the user chose, or `undefined` for the community root.
+   *
+   * Resolved back through the matrix rather than kept as a row: the choice is two
+   * axes, and a cached row would carry a path that a re-read of the matrix could have
+   * changed — the folder can stop being trusted between the read and the install, and
+   * the Host resolves the axes again on the other side for exactly that reason.
+   * @returns the two axes, or `undefined` when the default was chosen.
+   */
+  const chosenPlacement = (): SkillPlacementChoice | undefined => {
+    if (placementKey === '') return undefined
+    const row = placements?.rows.find(candidate => `${candidate.agent}/${candidate.scope}` === placementKey)
+    if (row === undefined || row.agent === 'custom') return undefined
+    // A row that is currently unusable is still sent. The alternative — quietly
+    // installing into the community root instead — is the silent redirection the whole
+    // matrix exists to prevent, and the Host refuses with the reason the page is already
+    // showing. The axes are also all this side sends: the root is the Host's to resolve,
+    // because the folder can lose its trust between this read and that install.
+    return { agent: row.agent, scope: row.scope }
+  }
+
+  /**
+   * Remember one destination, or forget it when `key` is the default.
+   *
+   * A failure is reported on its own line rather than through the install banner: the
+   * choice still applies to this page, so what did not happen is the *remembering*, and
+   * an error that read "adding failed" would name the wrong thing.
+   * @param key - `agent/scope` for a destination, or `''` for the community root.
+   */
+  const choosePlacement = (key: string): void => {
+    placementTouched.current = true
+    setPlacementKey(key)
+    setPlacementError(undefined)
+    if (skillPlacementPrefer === undefined) return
+    const row = placements?.rows.find(candidate => `${candidate.agent}/${candidate.scope}` === key)
+    const placement = key === '' || row === undefined || row.agent === 'custom' ? undefined : { agent: row.agent, scope: row.scope }
+    void skillPlacementPrefer(placement).then(() => undefined, (reason: unknown) => {
+      setPlacementError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
   const installCapability = async (item: CapabilityMarketplaceItem): Promise<void> => {
     setCapabilityBusy(item.id)
     setCapabilityError(undefined)
+    setCapabilityNote(undefined)
     try {
       const result = item.kind === 'mcp'
         ? await mcpPresetInstall(item.id)
-        : await skillPresetInstall(item.id)
+        : await skillPresetInstall(item.id, chosenPlacement())
       const snapshot = remoteValue(result) as CapabilityToggleSnapshot
+      setCapabilityNote(snapshot.skillInstall === undefined ? undefined : skillInstallNote(snapshot.skillInstall, isZh))
       globalThis.dispatchEvent(new CustomEvent<CapabilityToggleSnapshot>('freecodego:capability-change', { detail: snapshot }))
       setMarketplace(previous => previous === undefined ? previous : { ...previous, items: previous.items.map(current => current.id === item.id ? { ...current, installed: true } : current) })
       // The grid behind the dialog now shows "added"; keeping a stale dialog open
@@ -483,6 +740,33 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
       setCapabilityBusy(undefined)
     }
   }
+
+  const removeCapability = async (item: CapabilityMarketplaceItem): Promise<void> => {
+    if (skillPresetRemove === undefined) return
+    setCapabilityBusy(item.id)
+    setCapabilityError(undefined)
+    setCapabilityNote(undefined)
+    try {
+      const snapshot = remoteValue(await skillPresetRemove(item.id)) as CapabilityToggleSnapshot
+      setCapabilityNote(snapshot.skillRemove === undefined ? undefined : skillRemoveNote(snapshot.skillRemove, isZh))
+      globalThis.dispatchEvent(new CustomEvent<CapabilityToggleSnapshot>('freecodego:capability-change', { detail: snapshot }))
+      // Flips the card back to an installable entry in place: the page's own list
+      // is what the user is looking at, and re-reading the whole directory to learn
+      // one row changed would be a round trip for a fact this call just returned.
+      setMarketplace(previous => previous === undefined ? previous : { ...previous, items: previous.items.map(current => current.id === item.id ? { ...current, installed: false } : current) })
+    } catch (error) {
+      setCapabilityError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCapabilityBusy(undefined)
+    }
+  }
+
+  /** The reason the currently selected destination cannot be used here, when it cannot. */
+  const placementRefusal = (() => {
+    if (placementKey === '') return undefined
+    const row = placements?.rows.find(candidate => `${candidate.agent}/${candidate.scope}` === placementKey)
+    return row === undefined || row.ok ? undefined : row.reason
+  })()
 
   const installedPlugins = useMemo(() => mergeRepositoryEntries(state.catalog)
     .filter(plugin => installedName(plugin, state.installed, state.installedSources) !== undefined), [state.catalog, state.installed, state.installedSources])
@@ -514,12 +798,17 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
     </div>
     {filter === 'plugin' ? <label className={css.communitySearch}><span>{pluginView === 'installed' ? text.searchInstalled : text.searchMarket}</span><input className={css.input} type="search" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value) }} placeholder={text.searchPlaceholder} /></label> : <section className={css.capabilityCommunity} aria-label={`${filter} marketplace`}>
       <div className={css.capabilityCommunityHeader}><div><div className={css.kicker}>{filter === 'mcp' ? 'MCP.SO DIRECTORY' : 'SKILLS.SH DIRECTORY'}</div><strong className={css.sectionName}>{filter === 'mcp' ? (isZh ? 'MCP 社区目录' : 'MCP Community Directory') : (isZh ? 'Skills 社区目录' : 'Skills Community Directory')}</strong></div><small className={css.sectionMeta}>{marketplace === undefined ? (isZh ? '正在连接社区目录…' : 'Connecting to the community directory…') : `${marketplace.total.toLocaleString()} ${isZh ? '个条目' : 'entries'}`}</small></div>
-      <div className={css.marketplaceControls}><input className={css.input} type="search" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setMarketplaceOffset(0) }} placeholder={filter === 'mcp' ? (isZh ? '搜索 MCP 名称、用途或作者' : 'Search MCP names, uses, or authors') : (isZh ? '搜索 Skills 名称或主题' : 'Search skills or topics')} /><select className={css.select} value={marketplaceCategory} onChange={(event) => { setMarketplaceCategory(event.target.value); setMarketplaceOffset(0) }}><option value="">{isZh ? '全部分类' : 'All categories'}</option>{marketplace?.categories.map(category => <option key={category.id} value={category.id}>{localizeCategory(category.label, language)}{category.count === undefined ? '' : ` (${category.count.toLocaleString()})`}</option>)}</select></div>
+      <div className={css.marketplaceControls}><input className={css.input} type="search" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setMarketplaceOffset(0) }} placeholder={filter === 'mcp' ? (isZh ? '搜索 MCP 名称、用途或作者' : 'Search MCP names, uses, or authors') : (isZh ? '搜索 Skills 名称或主题' : 'Search skills or topics')} /><select className={css.select} value={marketplaceCategory} onChange={(event) => { setMarketplaceCategory(event.target.value); setMarketplaceOffset(0) }}><option value="">{isZh ? '全部分类' : 'All categories'}</option>{marketplace?.categories.map(category => <option key={category.id} value={category.id}>{localizeCategory(category.label, language)}{category.count === undefined ? '' : ` (${category.count.toLocaleString()})`}</option>)}</select>{filter === 'skill' && placements !== undefined ? <select className={css.select} value={placementKey} onChange={(event) => { choosePlacement(event.target.value) }} aria-label={isZh ? '安装位置' : 'Install location'} title={(isZh ? `安装到哪里。项目范围需要文件夹已授信；当前工作区：${placements.workspace}` : `Where an install lands. The project scope needs a trusted folder; this workspace: ${placements.workspace}`)}><option value="">{isZh ? '默认位置（社区目录）' : 'Default (community root)'}</option>{placements.rows.map((row) => { const key = `${row.agent}/${row.scope}`; return row.ok
+  ? <option key={key} value={key} title={row.root}>{placementLabel(row, isZh)}</option>
+  : <option key={key} value={key} disabled title={row.reason}>{placementLabel(row, isZh)}{isZh ? '（不可用）' : ' (unavailable)'}</option> })}</select> : null}</div>
       {marketplaceLoading ? <p className={css.loading}>{isZh ? '正在读取社区目录…' : 'Loading community directory…'}</p> : null}
       {!marketplaceLoading && marketplaceError !== undefined ? <div className={css.alert} role="alert">{text.marketError}{marketplaceError}</div> : null}
       {capabilityError === undefined ? null : <div className={css.alert} role="alert">{text.capabilityError}{capabilityError}</div>}
+      {capabilityNote === undefined ? null : <div className={css.sectionMeta} role="status">{capabilityNote}</div>}
+      {placementRefusal === undefined ? null : <div className={css.alert} role="alert">{isZh ? `当前选择的安装位置在此文件夹不可用：${placementRefusal}` : `The selected destination is unavailable in this folder: ${placementRefusal}`}</div>}
+      {placementError === undefined ? null : <div className={css.alert} role="alert">{isZh ? `安装位置偏好未能保存：${placementError}（本次选择仍在本页生效）` : `The destination preference could not be saved: ${placementError} (your choice still applies on this page)`}</div>}
       {!marketplaceLoading && marketplaceError === undefined && marketplace !== undefined && marketplace.items.length === 0 ? <div className={css.emptyCapability}><strong>{isZh ? '没有找到匹配条目' : 'No matching entries'}</strong><small>{isZh ? '修改搜索词或选择其他分类后重试。' : 'Change the search or select another category.'}</small></div> : null}
-      <div className={css.marketplaceGrid}>{marketplace?.items.map((item, index) => <article className={css.capabilityCommunityCard} key={item.id}><div className={css.capabilityCommunityTop}><div className={css.marketplaceIdentity}><CapabilityIcon item={item} /><span className={css.capabilityCommunityKind}>{item.kind === 'mcp' ? 'MCP' : 'SKILL'}</span></div><span className={`${css.badge} ${item.installed ? css.badgeLive : ''}`}>{item.installed ? (isZh ? '已添加' : 'Added') : `#${(marketplace.offset + index + 1).toLocaleString()}`}</span></div><strong>{item.title}</strong><p>{item.description}</p><small>{item.author ?? localizeCategory(item.category, language)} · {item.kind === 'mcp' ? '★' : '↓'} {item.popularity.toLocaleString()}</small><div className={css.accountActions}><button className={css.marketplaceLink} type="button" onClick={() => { setSelectedCapability(item) }}>{capabilityText(language).details}</button><button className={`${css.button} ${css.buttonPrimary}`} type="button" disabled={item.installed || !item.installable || capabilityBusy !== undefined} onClick={() => { void installCapability(item) }}>{capabilityBusy === item.id ? (isZh ? '添加中…' : 'Adding…') : item.installed ? (isZh ? '已添加' : 'Added') : item.installable ? (isZh ? '一键添加' : 'Add') : (isZh ? '需手动配置' : 'Manual setup')}</button></div></article>)}</div>
+      <div className={css.marketplaceGrid}>{marketplace?.items.map((item, index) => <article className={css.capabilityCommunityCard} key={item.id}><div className={css.capabilityCommunityTop}><div className={css.marketplaceIdentity}><CapabilityIcon item={item} /><span className={css.capabilityCommunityKind}>{item.kind === 'mcp' ? 'MCP' : 'SKILL'}</span></div><span className={`${css.badge} ${item.installed ? css.badgeLive : ''}`}>{item.installed ? (isZh ? '已添加' : 'Added') : `#${(marketplace.offset + index + 1).toLocaleString()}`}</span></div><strong>{item.title}</strong><p>{item.description}</p><small>{item.author ?? localizeCategory(item.category, language)} · {item.kind === 'mcp' ? '★' : '↓'} {item.popularity.toLocaleString()}</small><div className={css.accountActions}><button className={css.marketplaceLink} type="button" onClick={() => { setSelectedCapability(item) }}>{capabilityText(language).details}</button><button className={`${css.button} ${css.buttonPrimary}`} type="button" disabled={item.installed || !item.installable || capabilityBusy !== undefined} onClick={() => { void installCapability(item) }}>{capabilityBusy === item.id ? (isZh ? '添加中…' : 'Adding…') : item.installed ? (isZh ? '已添加' : 'Added') : item.installable ? (isZh ? '一键添加' : 'Add') : (isZh ? '需手动配置' : 'Manual setup')}</button>{item.kind === 'skill' && item.installed && skillPresetRemove !== undefined ? <button className={css.button} type="button" disabled={capabilityBusy !== undefined} onClick={() => { void removeCapability(item) }}>{capabilityBusy === item.id ? (isZh ? '移除中…' : 'Removing…') : (isZh ? '移除' : 'Remove')}</button> : null}</div></article>)}</div>
       {marketplace !== undefined && marketplace.total > marketplace.limit ? <div className={css.marketplacePagination}><button className={css.button} type="button" disabled={marketplaceLoading || marketplace.offset === 0} onClick={() => { setMarketplaceOffset(current => Math.max(0, current - marketplace.limit)) }}>{isZh ? '上一页' : 'Previous'}</button><span>{isZh ? '第' : 'Page '} {Math.floor(marketplace.offset / marketplace.limit) + 1} / {Math.max(1, Math.ceil(marketplace.total / marketplace.limit))}</span><button className={css.button} type="button" disabled={marketplaceLoading || marketplace.offset + marketplace.items.length >= marketplace.total} onClick={() => { setMarketplaceOffset(current => current + marketplace.limit) }}>{isZh ? '下一页' : 'Next'}</button></div> : null}
     </section>}
     {state.environmentReady === false ? <div className={css.communityRestart}><span>{text.noPnpm}</span></div> : null}

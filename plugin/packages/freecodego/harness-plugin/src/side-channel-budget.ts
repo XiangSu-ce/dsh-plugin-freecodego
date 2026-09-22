@@ -43,6 +43,13 @@ import { tokensFromChars } from './token-estimate.ts'
  */
 export const SIDE_CHANNEL_WARN_RATIO = 0.8
 
+/**
+ * The three sizes an invariant check needs, all already known to the caller.
+ *
+ * Nothing is measured here: the point of the check is to compare numbers the path
+ * already has, and a probe that measured its own path would be the most expensive
+ * thing in it.
+ */
 export interface SideChannelBudgetInput {
   /** Current request pressure of the conversation being judged. */
   readonly mainLoopTokens: number
@@ -52,8 +59,21 @@ export interface SideChannelBudgetInput {
   readonly channelTokens: number
 }
 
+/**
+ * How a side channel stands relative to the compaction threshold.
+ *
+ * `unknown` is a state rather than a missing value: a channel whose size could not
+ * be measured has not passed the check, and calling it `fits` would be the one
+ * answer the check exists to avoid.
+ */
 export type SideChannelBudgetState = 'fits' | 'narrow' | 'exceeds' | 'unknown'
 
+/**
+ * The verdict for one side-channel call, with the numbers it was reached from.
+ *
+ * `detail` names the consequence rather than restating the ratio, because this is
+ * what a member is shown when it is about to overflow its own context.
+ */
 export interface SideChannelBudgetVerdict {
   readonly state: SideChannelBudgetState
   /** Channel minus main loop; positive means the side channel is the larger one. */
@@ -73,6 +93,8 @@ export interface SideChannelBudgetVerdict {
  * overflows. Comparing only against the current main-loop size would call a
  * channel safe in exactly the situation that breaks it — a large channel in a
  * session that has not grown yet.
+ * @param input - the conversation's pressure, the threshold, and the channel's size.
+ * @returns The state, the delta and ratio it was read from, and the consequence.
  */
 export function evaluateSideChannelBudget(input: SideChannelBudgetInput): SideChannelBudgetVerdict {
   const threshold = input.compactionThresholdTokens
@@ -105,6 +127,13 @@ export function evaluateSideChannelBudget(input: SideChannelBudgetInput): SideCh
   }
 }
 
+/**
+ * One side-channel call that actually happened, as the ledger keeps it.
+ *
+ * The channel and session are recorded beside the sizes so a warning can name the
+ * call it is about — a ratio with no channel attached tells a member nothing about
+ * which of its own calls to stop making.
+ */
 export interface SideChannelObservation extends SideChannelBudgetInput {
   readonly channel: string
   readonly sessionId: string
@@ -138,6 +167,8 @@ export class SideChannelLedger {
    * a channel that is called every turn must not leave this map — it is the same
    * map `warnings()` and `totalTokens()` read, so eviction decides whether an
    * active channel is reported at all.
+   * @param observation - the call to record, with what it measured.
+   * @returns The verdict for this call, as `warnings()` would report it.
    */
   record(observation: SideChannelObservation): SideChannelBudgetVerdict {
     const verdict = evaluateSideChannelBudget(observation)
@@ -152,7 +183,11 @@ export class SideChannelLedger {
     return verdict
   }
 
-  /** Worst recorded footprint for a channel. */
+  /**
+   * Worst recorded footprint for a channel.
+   * @param channel - the channel name to look up.
+   * @returns Its largest recorded observation, or `undefined` when it has none.
+   */
   worst(channel: string): SideChannelObservation | undefined {
     return this.worstByChannel.get(channel)
   }
@@ -163,6 +198,8 @@ export class SideChannelLedger {
    * Deliberately excludes `unknown`: a channel whose size could not be measured is
    * not evidence of a problem, and reporting it as one would train the reader to
    * ignore the list.
+   * @param compactionThresholdTokens - the threshold to judge the recorded sizes against.
+   * @returns The channels at or past the warning line, worst ratio first.
    */
   warnings(compactionThresholdTokens: number): readonly { readonly channel: string; readonly verdict: SideChannelBudgetVerdict }[] {
     const out: { channel: string; verdict: SideChannelBudgetVerdict }[] = []
@@ -173,21 +210,33 @@ export class SideChannelLedger {
     return out.sort((left, right) => (right.verdict.ratio ?? 0) - (left.verdict.ratio ?? 0))
   }
 
-  /** Sum of the worst footprint per channel: the session's standing side-channel tax. */
+  /**
+   * Sum of the worst footprint per channel: the session's standing side-channel tax.
+   * @returns The total tokens the recorded channels add on every turn.
+   */
   totalTokens(): number {
     let total = 0
     for (const observation of this.worstByChannel.values()) total += Math.max(0, observation.channelTokens)
     return total
   }
 
+  /**
+   * The channels currently recorded, in use order.
+   * @returns Their names, least recently used first.
+   */
   channels(): readonly string[] {
     return [...this.worstByChannel.keys()]
   }
 
+  /**
+   * Drop one channel's record.
+   * @param channel - the channel to forget.
+   */
   forget(channel: string): void {
     this.worstByChannel.delete(channel)
   }
 
+  /** Drop every record, for a session that has ended or been compacted away. */
   clear(): void {
     this.worstByChannel.clear()
   }
@@ -199,6 +248,8 @@ export class SideChannelLedger {
  * The ~4-chars-per-token convention the plugin's other spend probes use. Kept
  * here as a documented estimate rather than a tokenizer count, because an
  * invariant check must not be the most expensive thing in the path it checks.
+ * @param text - the prepared prompt to estimate.
+ * @returns Its approximate token count, at the plugin's documented convention.
  */
 export function approximateChannelTokens(text: string): number {
   return tokensFromChars(text.length)

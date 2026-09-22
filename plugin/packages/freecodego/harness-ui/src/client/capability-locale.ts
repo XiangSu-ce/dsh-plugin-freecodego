@@ -73,7 +73,11 @@ export function localizedSkillDescription(name: string, description: string, lan
   return BUILTIN_SKILL_ZH[name] ?? description
 }
 
-/** Whether this Skill name has an authored Chinese description. */
+/**
+ * Whether this Skill name has an authored Chinese description.
+ * @param name - skill identifier, matched against the built-in catalog.
+ * @returns whether a Chinese description is authored for this name.
+ */
 export function hasLocalizedSkillDescription(name: string): boolean {
   return BUILTIN_SKILL_ZH[name] !== undefined
 }
@@ -81,6 +85,8 @@ export function hasLocalizedSkillDescription(name: string): boolean {
 /**
  * Third-party directory entries carry English only. The UI states that plainly
  * rather than letting a Chinese page present untranslated text as finished.
+ * @param language - locale the returned labels are written in.
+ * @returns the hint text in the active language.
  */
 export function upstreamEnglishHint(language: 'zh' | 'en'): string {
   return language === 'zh' ? '上游目录只提供英文简介，以下保留原文。' : 'The upstream directory publishes this entry in English only.'

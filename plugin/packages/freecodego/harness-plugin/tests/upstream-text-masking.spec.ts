@@ -59,6 +59,26 @@ interface Boundary {
 
 const BOUNDARIES: readonly Boundary[] = [
   {
+    file: 'src/trae-intl.ts',
+    contains: 'const detail = redactCredentialShapes(error.detail).trim()',
+    reason: 'The turn error the SOLO adapter reports quotes the upstream body, and the call it reports carried the account access token in its headers. Masked here rather than at the throw, because this is where that text becomes the message a turn carries.',
+  },
+  {
+    file: 'src/qoder-intl.ts',
+    contains: 'const detail = redactCredentialShapes(error.detail).trim()',
+    reason: 'The same quote on the Qoder connector, which had the same gap: its chat call sends the account device token, so an upstream echoing the refused request would name it in the turn error.',
+  },
+  {
+    file: 'src/trae-intl.ts',
+    contains: 'message: redactCredentialShapes(error instanceof Error ? error.message : String(error))',
+    reason: 'The check-in report is what crosses to the browser, and a refused claim surfaces the upstream error the class built out of the response body — the one path on which that text would have reached the settings card.',
+  },
+  {
+    file: 'src/qoder-intl.ts',
+    contains: 'message: redactCredentialShapes(error instanceof Error ? error.message : String(error))',
+    reason: 'The same report boundary on the Qoder pool: the campaign calls carry the account bearer token, and every failure line in a run is rendered in the card.',
+  },
+  {
     file: 'src/read-document.ts',
     contains: 'not a Jupyter notebook: ${redactCredentialShapes(',
     reason: 'The JSON parser quotes a window of the text it rejected, and the text it rejected is a document the model did not write: a notebook with a key in a cell would print that key in the refusal.',
@@ -144,11 +164,6 @@ const BOUNDARIES: readonly Boundary[] = [
     reason: 'A provider that echoes a rejected key sends it back in whichever shape the key has; this chain knew bearer, keyword and `sk-`.',
   },
   {
-    file: 'src/team/worktree.ts',
-    contains: 'redactCredentialShapes(boundedTeamText(retry.stderr || retry.stdout, 500))',
-    reason: 'Git prints the URL it failed against, which for an authenticated remote is the URL with the token in it; this text is git\'s own output.',
-  },
-  {
     file: 'src/worktree/creator.ts',
     contains: 'const stderr = redactCredentialShapes(result.stderr.trim())',
     reason: 'The fallback reason quotes git\'s own output to explain what the caller got instead of a worktree, and git prints the URL it failed against.',
@@ -197,6 +212,11 @@ const BOUNDARIES: readonly Boundary[] = [
     file: 'src/engine-council.ts',
     contains: 'return redactCredentialShapes(error instanceof Error ? error.message : String(error))',
     reason: 'Every engine failure in the council funnels through this one helper, and the text does not stop at a log: it becomes a participant\'s `error`, the report\'s `finalRecommendation`, and the peer block the handoff injects into the model\'s own context. The engines authenticate to providers, so their failures are the credential-bearing text the provider adapters mask at their exits.',
+  },
+  {
+    file: 'src/capabilities.ts',
+    contains: 'cannot be read: ${redactCredentialShapes(location.reason)}',
+    reason: 'The reason is the Skill provider\'s own wording — a resource URL, an opaque provider description, or a `kind` from a newer Harness — and it reaches a message the user reads, so it is masked at the boundary that quotes it. The upstream here is an installed third-party Skill package as much as the Harness: a provider is free to put a credential-shaped string in its own description.',
   },
   {
     file: 'src/index.ts',
@@ -259,30 +279,30 @@ const EXEMPTIONS: readonly Exemption[] = [
     reason: 'The same boundary a third time, in the consolidating planner: it reports the assembler\'s own failure and quotes no upstream text itself, so the masking that matters is the one every adapter and both wire layers apply before an `LlmError` carries it.',
   },
   {
+    file: 'src/community-remotes.ts',
+    // The classifier reads a parameter named `reason` as a channel for upstream text,
+    // and this one is the opposite: the sentence is this repository's own refusal from
+    // the placement table (`skills/placement.ts`), built from constants, and it is
+    // deliberately the same sentence the page already showed on the disabled option —
+    // masking it here would be masking our own copy. The one input the matrix takes from
+    // outside this module is a `custom` root, and that is judged by the folder-trust gate
+    // *before* the path is built (`resolveSkillPlacement`) rather than quoted here.
+    contains: '(row.reason)',
+    reason: 'The refusal sentence is this repository\'s own, written by the placement table and already shown on the page; masking it here would be masking our own copy.',
+  },
+  {
     file: 'src/skills/installer.ts',
     contains: '${parsed.issue.reason}',
     reason: 'A parse issue raised by this module\'s own lockfile reader about the shape of a file it read; the text is written here, not taken from an upstream response.',
   },
-  {
-    file: 'src/team/worktree.ts',
-    contains: "${usable.reason ?? 'worktrees are unavailable'}",
-    reason: '`reason` is this module\'s own account of why isolation is unavailable, so the text is written here.',
-  },
-  {
-    file: 'src/community-catalog-utils.ts',
-    contains: 'could not be staged, so the installed version was left untouched: ${detail(error)}',
-    reason: '`detail` reads the message `fs.cp` built for a copy that stayed inside the Skill root: it names a path this module chose plus the errno, so no upstream text is quoted. The payload\'s own names were screened by `assertSkillPayloadHasNoLinks` before the copy ran, and a name the repository picked can only quote itself.',
-  },
-  {
-    file: 'src/community-catalog-utils.ts',
-    contains: 'could not be moved aside, so the payload was not promoted: ${detail(error)}',
-    reason: 'The same channel one step later: `fs.rename`\'s message about two paths inside the profile, which reports an errno rather than anything a package authored.',
-  },
-  {
-    file: 'src/community-catalog-utils.ts',
-    contains: "the Skill could not be promoted${moved ? '; the previously installed version was restored' : ''}: ${detail(error)}",
-    reason: 'The same channel for the promotion move, with this module\'s own recovery sentence beside it; the error is `fs.rename`\'s and quotes nothing upstream.',
-  },
+  // Three exemptions lived here: the staging, "moved aside" and promotion failures of
+  // `community-catalog-utils.ts`'s `promoteSkillDirectory`, whose messages interpolated
+  // an `fs.cp`/`fs.rename` error (an errno plus a path this package chose, never an
+  // upstream body). That function is gone — the Marketplace install now runs through
+  // `skills/installer.ts`, whose equivalent failures are *returned refusals* rather
+  // than thrown errors — so the sites this scanner classifies no longer exist. The
+  // decision they recorded still holds, and it is now carried by the installer's own
+  // refusal texts; what this array lists is what the scanner finds in an `Error`.
 ]
 
 /**
@@ -553,8 +573,8 @@ describe('what a transport failure can carry', () => {
  *   of the same decision.
  *
  * One site in that set was real and is fixed: the worktree creator's fallback
- * reason quotes git's own output, which is the channel the team worktree report
- * is masked for — see the boundary entry for `src/worktree/creator.ts`.
+ * reason quotes git's own output — see the boundary entry for
+ * `src/worktree/creator.ts`.
  *
  * A later redaction round went back through the same set and masked every site
  * whose text can be produced by something that holds a credential, rather than
@@ -669,7 +689,7 @@ describe('every site that quotes upstream text is classified', () => {
     // inventory and pass, which is the failure mode that looks like success.
     const masked = sites.filter(site => site.masked)
     expect(masked.length).toBeGreaterThanOrEqual(8)
-    for (const file of ['src/openai-wire.ts', 'src/anthropic-wire.ts', 'src/openai-compatible-adapter.ts', 'src/team/worktree.ts', 'src/community-remotes.ts']) {
+    for (const file of ['src/openai-wire.ts', 'src/anthropic-wire.ts', 'src/openai-compatible-adapter.ts', 'src/community-remotes.ts']) {
       expect(masked.some(site => site.file === file), file).toBe(true)
     }
   })

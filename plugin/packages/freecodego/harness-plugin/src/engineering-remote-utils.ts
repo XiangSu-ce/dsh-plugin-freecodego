@@ -1,5 +1,6 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { FreeCodeGoEngineeringCouncilDecision, FreeCodeGoEngineeringCouncilEngine, FreeCodeGoEngineeringCouncilRequest, FreeCodeGoEngineeringMemoryReviewDecision, FreeCodeGoEngineeringMemoryTrust, FreeCodeGoEngineeringVerificationStage, JsonValue } from './types.ts'
+import { maybeRecord as recordOf } from './untrusted-json.ts'
 
 /**
  * The trust states durable engineering memory may carry, in review order.
@@ -18,6 +19,16 @@ const ENGINEERING_MEMORY_TRUST_NAMES = new Set<FreeCodeGoEngineeringMemoryTrust>
 export const ENGINEERING_MEMORY_REVIEW_DECISIONS: readonly FreeCodeGoEngineeringMemoryReviewDecision[] = ['reviewed', 'rejected', 'superseded']
 const ENGINEERING_MEMORY_REVIEW_DECISION_NAMES = new Set<FreeCodeGoEngineeringMemoryReviewDecision>(ENGINEERING_MEMORY_REVIEW_DECISIONS)
 
+/**
+ * Read the trust filter, page size and cursor of a memory list request.
+ *
+ * Every field is optional and an absent request is a valid one, which is what lets
+ * the listing tool be called with no arguments. Bounds are enforced here rather
+ * than by the schema, because a Remote caller does not pass through the model's
+ * schema at all.
+ * @param input - the request as it arrived from the caller.
+ * @returns Only the fields that were supplied, each validated.
+ */
 export function validateEngineeringMemoryListRequest(input: unknown): { readonly trusts?: readonly FreeCodeGoEngineeringMemoryTrust[]; readonly limit?: number; readonly cursor?: string } {
   if (input === undefined) return {}
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('engineering memory list request is invalid')
@@ -35,6 +46,15 @@ export function validateEngineeringMemoryListRequest(input: unknown): { readonly
   }
 }
 
+/**
+ * Read the id and neighbour counts of a memory timeline request.
+ *
+ * The id shape is checked, not just its type: these ids address records in a durable
+ * store, and a request naming something else must fail here rather than resolve to
+ * an empty timeline that looks like "this memory has no history".
+ * @param input - the request as it arrived from the caller.
+ * @returns The validated id and whichever neighbour counts were supplied.
+ */
 export function validateEngineeringMemoryTimelineRequest(input: unknown): { readonly id: string; readonly before?: number; readonly after?: number } {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('engineering memory timeline request is invalid')
   const value = input as Record<string, unknown>
@@ -46,6 +66,15 @@ export function validateEngineeringMemoryTimelineRequest(input: unknown): { read
   return { id: value.id, ...(value.before === undefined ? {} : { before: value.before as number }), ...(value.after === undefined ? {} : { after: value.after as number }) }
 }
 
+/**
+ * Read the id and outcome of a memory review decision.
+ *
+ * The outcome must be one of the review decisions rather than any trust state: the
+ * states a record can be *found* in are wider than the ones a reviewer can move it
+ * to, and accepting the wider set would let a caller file a record as `captured`.
+ * @param input - the request as it arrived from the caller.
+ * @returns The validated id and the decision to apply.
+ */
 export function validateEngineeringMemoryReviewRequest(input: unknown): { readonly id: string; readonly decision: FreeCodeGoEngineeringMemoryReviewDecision } {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('engineering memory review request is invalid')
   const value = input as Record<string, unknown>
@@ -54,6 +83,16 @@ export function validateEngineeringMemoryReviewRequest(input: unknown): { readon
   return { id: value.id, decision: value.decision as FreeCodeGoEngineeringMemoryReviewDecision }
 }
 
+/**
+ * Read a Graphify runtime install request.
+ *
+ * Choosing the managed runtime and choosing an existing interpreter are different
+ * requests, so the second one requires a path: without it the install would fall
+ * back to whichever interpreter happens to be on `PATH`, which is the situation
+ * this option exists to avoid.
+ * @param input - the request as it arrived from the caller.
+ * @returns The chosen package and, when one was given, the trimmed interpreter path.
+ */
 export function validateEngineeringGraphRuntimeInstall(input: unknown): { readonly packageId: 'managed-uv-python' | 'existing-python'; readonly pythonPath?: string } {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('engineering Graphify Runtime install request is invalid')
   const value = input as Record<string, unknown>
@@ -77,6 +116,15 @@ export function validateEngineeringGraphRuntimeInstall(input: unknown): { readon
  */
 export const VERIFICATION_STAGES: readonly FreeCodeGoEngineeringVerificationStage[] = ['scope', 'build', 'types', 'lint', 'tests']
 
+/**
+ * Read a verification stage selection, deduplicated.
+ *
+ * An absent selection stays absent rather than becoming "all stages": the caller
+ * that omits it is asking for the tier table's default, and substituting a list
+ * here would take that decision away from the one place that makes it.
+ * @param input - the stages the caller named, if any.
+ * @returns The stages in caller order with duplicates removed, or `undefined`.
+ */
 export function validateEngineeringVerificationStages(input: unknown): readonly FreeCodeGoEngineeringVerificationStage[] | undefined {
   if (input === undefined) return undefined
   const allowed = new Set<FreeCodeGoEngineeringVerificationStage>(VERIFICATION_STAGES)
@@ -116,8 +164,13 @@ export function validateEngineeringVerificationStages(input: unknown): readonly 
 export const COUNCIL_ENGINES: readonly FreeCodeGoEngineeringCouncilEngine[] = ['deepseek', 'codex', 'claude']
 const COUNCIL_ENGINE_NAMES = new Set<FreeCodeGoEngineeringCouncilEngine>(COUNCIL_ENGINES)
 
+/** Longest objective a council request may carry, in characters. */
 export const COUNCIL_MAX_OBJECTIVE_CHARS = 8_000
+
+/** Longest plan a council request may carry, in characters. */
 export const COUNCIL_MAX_PLAN_CHARS = 16_000
+
+/** Longest single constraint a council request may carry, in characters. */
 export const COUNCIL_MAX_CONSTRAINT_CHARS = 1_000
 
 /**
@@ -154,6 +207,15 @@ export function councilPeersFor(parentEngine: FreeCodeGoEngineeringCouncilEngine
   return COUNCIL_ENGINES.filter(engine => engine !== parentEngine)
 }
 
+/**
+ * Bring a council request to the shape the council actually runs on.
+ *
+ * Trimming and deduplicating happen here rather than at the call site, so two
+ * callers cannot submit the same request in two shapes — and so an engine named
+ * twice costs one participant rather than two.
+ * @param input - the request as the caller built it.
+ * @returns The trimmed request, with only the fields the caller supplied.
+ */
 export function normalizeEngineeringCouncilRequest(input: FreeCodeGoEngineeringCouncilRequest): FreeCodeGoEngineeringCouncilRequest {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('engineering council request is required')
   const objective = typeof input.objective === 'string' ? input.objective.trim() : ''
@@ -178,6 +240,15 @@ export function normalizeEngineeringCouncilRequest(input: FreeCodeGoEngineeringC
   }
 }
 
+/**
+ * Read a decision applied to one council job.
+ *
+ * The outcome is one of two rather than any council state: a caller may approve or
+ * reject a parked review, and may not move a job into a state the council itself
+ * only reaches by working.
+ * @param input - the request as it arrived from the caller.
+ * @returns The validated job id and the decision to apply.
+ */
 export function validateEngineeringCouncilDecisionRequest(input: unknown): { readonly id: string; readonly decision: FreeCodeGoEngineeringCouncilDecision['state'] } {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('engineering council decision request is invalid')
   const value = input as { readonly id?: unknown; readonly decision?: unknown }
@@ -186,6 +257,11 @@ export function validateEngineeringCouncilDecisionRequest(input: unknown): { rea
   return { id: value.id, decision: value.decision }
 }
 
+/**
+ * Read a request to verify one council job's work.
+ * @param input - the request as it arrived from the caller.
+ * @returns The validated job id and whichever stages were named.
+ */
 export function validateEngineeringCouncilVerificationRequest(input: unknown): { readonly id: string; readonly stages?: readonly FreeCodeGoEngineeringVerificationStage[] } {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('engineering council verification request is invalid')
   const value = input as { readonly id?: unknown; readonly stages?: unknown }
@@ -194,6 +270,15 @@ export function validateEngineeringCouncilVerificationRequest(input: unknown): {
   return { id: value.id, ...(stages === undefined ? {} : { stages }) }
 }
 
+/**
+ * The workspace a verification runs against, or a refusal.
+ *
+ * A conversation without a working directory cannot be verified, and saying so here
+ * rather than running the scripts in the process's own directory is what keeps a
+ * report from describing a tree nobody asked about.
+ * @param agent - the agent whose session is being verified.
+ * @returns Its working directory.
+ */
 export function workspaceForAgent(agent: Agent): string {
   const cwd = agent.session.header.cwd
   if (typeof cwd !== 'string' || cwd.trim() === '') throw new Error('engineering verification requires a workspace-backed conversation')
@@ -204,7 +289,10 @@ export function workspaceForAgent(agent: Agent): string {
  * executor event. Automatic council uses this to delegate the other engines,
  * leaving the parent Agent as the decision-maker. The return type is the council
  * roster rather than a second spelling of it, because the only caller feeds it to
- * `councilPeersFor`. */
+ * `councilPeersFor`.
+ * @param events - the session's durable event log, oldest first.
+ * @returns The engine driving the session, or `undefined` when none was recorded.
+ */
 export function latestSessionEngine(events: readonly { readonly type: string; readonly data: unknown }[]): FreeCodeGoEngineeringCouncilEngine | undefined {
   const selected = [...events].reverse().find(event => event.type === 'agent-engine/selected')
   const executor = [...events].reverse().find(event => event.type === 'freecodego/engine-executor')
@@ -260,6 +348,9 @@ export type AutoCouncilSkipReason = 'reviewed' | 'in-flight' | 'cancelled' | 'ex
  *   failure to retry — a deadline is not a cancellation (see the council's own
  *   `stopReason`), so an expired deadline is retryable while a cancelled one is not;
  * - the attempt budget above, which is what bounds the retry.
+ * @param events - the session's durable event log, which this reads rather than memory.
+ * @param plan - the approved plan text, whose attempts are looked up by exact match.
+ * @returns Why the automatic council must not start, or `undefined` when it may.
  */
 export function autoCouncilSkipReason(
   events: readonly { readonly type: string; readonly data: unknown }[],
@@ -323,11 +414,6 @@ function councilAttemptOutcome(
   return latestState !== undefined && AUTO_COUNCIL_HOLDING_STATES.has(latestState) ? 'holding' : 'nothing'
 }
 
-/** An object as a plain record, or `undefined` for anything else. */
-function recordOf(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
-}
-
 /**
  * The call a `tool/result` answers: `message.source.callId`.
  *
@@ -343,6 +429,16 @@ function toolResultCallId(data: unknown): string | undefined {
   return typeof callId === 'string' ? callId : undefined
 }
 
+/**
+ * The most recent plan a user actually approved.
+ *
+ * Read through the tool result rather than the call, because "a plan was proposed"
+ * and "a plan was approved" are different questions: only a result that came back
+ * without an error block is an approval, and a plan that is not Markdown-headed is
+ * not one this path will review.
+ * @param events - the session's durable event log, oldest first.
+ * @returns The approved plan text, or `undefined` when no approval is the latest one.
+ */
 export function latestApprovedPlan(events: readonly { readonly type: string; readonly data: unknown }[]): string | undefined {
   const latestStart = [...events].reverse().find(event => event.type === 'turn/start')
   const currentTurn = latestStart !== undefined && typeof latestStart.data === 'object' && latestStart.data !== null && !Array.isArray(latestStart.data) && typeof (latestStart.data as { readonly turn?: unknown }).turn === 'number' ? (latestStart.data as { readonly turn: number }).turn : undefined

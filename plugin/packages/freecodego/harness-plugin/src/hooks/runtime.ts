@@ -371,6 +371,7 @@ export async function httpHookRunner(
   }
 }
 
+/** Runs project hook handlers on the Harness's events, with timeouts and audit. */
 export class FreeCodeGoHookRuntime {
   private readonly options: HookRuntimeOptions
   private readonly fetchImpl: typeof fetch
@@ -508,7 +509,11 @@ export class FreeCodeGoHookRuntime {
     return { ...result, warnings: [...result.warnings] }
   }
 
-  /** The timeout a handler would get, exposed for `doctor` and for tests. */
+  /** The timeout a handler would get, exposed for `doctor` and for tests.
+   * @param event - the hook event the handler runs on.
+   * @param handler - the handler whose own timeout, when it set one, wins.
+   * @returns the effective timeout in milliseconds.
+   */
   timeoutFor(event: HookEvent, handler?: HookHandler): number {
     return handler?.timeoutMs ?? defaultHookTimeoutMs(event)
   }

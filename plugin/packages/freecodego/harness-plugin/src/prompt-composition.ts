@@ -70,6 +70,7 @@ export const PROMPT_COMPOSITION_CATEGORIES = [
   { id: 'conversation', label: 'Conversation' },
 ] as const
 
+/** Id of one prompt-composition category, drawn from the catalog below. */
 export type PromptCompositionCategoryId = typeof PROMPT_COMPOSITION_CATEGORIES[number]['id']
 
 /**
@@ -98,6 +99,8 @@ const LABELS = new Map<string, string>(PROMPT_COMPOSITION_CATEGORIES.map(categor
  * Re-exported rather than implemented here so that this module cannot drift from
  * `token-estimate.ts`: the plugin has exactly one `/ 4` and this is a caller of
  * it.
+ * @param chars - the character count to estimate from.
+ * @returns the estimated token count.
  */
 export function estimateTokensFromChars(chars: number): number {
   return tokensFromChars(chars)
@@ -106,6 +109,7 @@ export function estimateTokensFromChars(chars: number): number {
 /** Raw text per category, as the caller collected it from the real request. */
 export type PromptCompositionSources = Readonly<Partial<Record<PromptCompositionCategoryId, readonly string[]>>>
 
+/** One category's exact character count and its apportioned token figure. */
 export interface PromptCompositionCategory {
   readonly id: PromptCompositionCategoryId
   readonly label: string
@@ -119,6 +123,7 @@ export interface PromptCompositionCategory {
   readonly share?: number | undefined
 }
 
+/** One request's prompt breakdown, measured or estimated, with its rows. */
 export interface PromptCompositionSnapshot {
   /** Sum of the rows; equals `measuredPromptTokens` whenever one was supplied. */
   readonly totalTokens: number
@@ -134,6 +139,7 @@ export interface PromptCompositionSnapshot {
   readonly categories: readonly PromptCompositionCategory[]
 }
 
+/** Everything one composition call needs: the raw sources and the prior snapshot. */
 export interface PromptCompositionInput {
   readonly sources: PromptCompositionSources
   /**
@@ -146,7 +152,10 @@ export interface PromptCompositionInput {
   readonly previous?: PromptCompositionSnapshot | undefined
 }
 
-/** Character count per category, always exact even when tokens are not. */
+/** Character count per category, always exact even when tokens are not.
+ * @param sources - the raw per-category text the caller collected.
+ * @returns the exact character count for every category.
+ */
 export function countCategoryChars(sources: PromptCompositionSources): Readonly<Record<PromptCompositionCategoryId, number>> {
   const counts = {} as Record<PromptCompositionCategoryId, number>
   for (const category of PROMPT_COMPOSITION_CATEGORIES) {
@@ -360,6 +369,8 @@ const percent = (fraction: number): string => `${(fraction * 100).toFixed(1)}%`
  * whether the figure is the provider's measurement or a lexical estimate — the
  * distinction the whole module is built around is worthless if the text drops
  * it. Rows that are empty are omitted, so a short prompt stays short.
+ * @param snapshot - the breakdown to render.
+ * @returns the model-facing text block.
  */
 export function describePromptComposition(snapshot: PromptCompositionSnapshot): string {
   const lines: string[] = []
@@ -409,6 +420,7 @@ export interface PromptUsageItem {
   readonly redacted?: boolean | undefined
 }
 
+/** One node of the prompt-usage tree: a category, an item, or a call/result pair. */
 export interface PromptUsageNode {
   readonly id: string
   readonly parentId?: string | undefined
@@ -425,6 +437,7 @@ export interface PromptUsageNode {
   readonly content?: { readonly kind: 'inline'; readonly text: string; readonly truncated: boolean } | { readonly kind: 'blob'; readonly ref: string } | undefined
 }
 
+/** The bounded usage tree and the accounting of what it left out. */
 export interface PromptUsageTree {
   readonly nodes: readonly PromptUsageNode[]
   /** Entries the node budget or a redaction removed; never silently dropped. */

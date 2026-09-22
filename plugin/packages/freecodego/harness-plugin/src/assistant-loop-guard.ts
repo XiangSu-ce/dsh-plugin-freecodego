@@ -390,7 +390,9 @@ export class AssistantLoopGuard {
 
   constructor(private readonly deps: AssistantLoopGuardDeps) {}
 
-  /** Current activity counters. */
+  /** Current activity counters. 
+   * @returns the assistant Loop Guard Stats.
+   */
   stats(): AssistantLoopGuardStats {
     return { detections: this.detections, reminders: this.reminders, stops: this.stops, unaudited: this.unaudited }
   }
@@ -410,6 +412,7 @@ export class AssistantLoopGuard {
    * The detector is the entry worth releasing — it holds the attempt's accumulated
    * text — and a session disposed mid-attempt never delivers the `end` frame that
    * would have dropped it.
+   * @param sessionId - the Harness session this operation acts on.
    */
   forget(sessionId: string): void {
     this.detectors.delete(sessionId)
@@ -510,7 +513,10 @@ export class AssistantLoopGuard {
   }
 }
 
-/** Whether a line is a drawn border rather than content. */
+/** Whether a line is a drawn border rather than content.
+ * @param line - the line to inspect.
+ * @returns true when the line is a drawn border.
+ */
 export function isBoxBorderLine(line: string): boolean {
   let drawn = 0
   let visible = 0

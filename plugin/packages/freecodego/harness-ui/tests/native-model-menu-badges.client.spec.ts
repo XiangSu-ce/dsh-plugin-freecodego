@@ -2,13 +2,42 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installNativeModelMenuBadges } from '../src/client/native-model-menu-badges.ts'
+import { EMPTY_MODEL_PICKER_VISIBILITY, readModelPickerVisibility, setModelVisible, setProviderVisible, writeModelPickerVisibility } from '../src/client/model-picker-visibility.ts'
 
-afterEach(() => { document.head.innerHTML = ''; document.body.innerHTML = '' })
+/**
+ * Every install a case made, disposed after it.
+ *
+ * The decorator watches the document, so a leaked install keeps decorating the
+ * *next* case's fixture — with its own snapshot, and its own group order. That is
+ * how a case that installs twice left a collapse toggle bound to a later case's
+ * sections, and how a stale order was re-imposed on a menu it no longer owned.
+ */
+const installs: (() => void)[] = []
+
+/**
+ * Install the decorator and remember it for {@link cleanupInstalls}.
+ * @param options - the decorator's runtime dependencies.
+ * @returns the disposer, still safe to call early.
+ */
+function install(options: Parameters<typeof installNativeModelMenuBadges>[0]): () => void {
+  const dispose = installNativeModelMenuBadges(options)
+  installs.push(dispose)
+  return dispose
+}
+
+afterEach(() => {
+  for (const dispose of installs.splice(0)) dispose()
+  document.head.innerHTML = ''
+  document.body.innerHTML = ''
+  // jsdom keeps `localStorage` for the whole file, so a visibility decision
+  // written by one case would otherwise hide a section in the next one.
+  globalThis.localStorage.clear()
+})
 
 describe('native model menu badges', () => {
   it('decorates native model rows without replacing their controls', async () => {
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="freecodego"><div id="freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="GLM-5.3 Flash"><span class="optionCopy">GLM-5.3 Flash</span></button><button type="button" role="menuitemradio" title="Kimi K3"><span class="optionCopy">Kimi K3</span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [{ id: 'freecodego', name: 'FreeCodeGo', models: [
         { id: 'glm-flash', name: 'GLM-5.3 Flash', description: 'FreeCodeGo · ×0 · health:operational|uptime:100|success:100|traffic:60|latency:18|window:7d|probe:gateway' },
@@ -37,7 +66,7 @@ describe('native model menu badges', () => {
 
   it('keeps training-data classification while exposing an unknown directory probe', async () => {
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="mystery"><div id="mystery">Mystery Provider</div><button type="button" role="menuitemradio" title="Auto"><span class="optionCopy">Auto</span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [{ id: 'logfare', name: 'Mystery Provider', models: [
         { id: 'auto', name: 'Auto', description: 'Mystery Provider · ×0 · tag:training · health:unknown|uptime:12.5|success:0|traffic:1|latency:7|window:1h' },
@@ -54,7 +83,7 @@ describe('native model menu badges', () => {
 
   it('leaves a free route\u2019s row free of a badge the picker already shows', async () => {
     document.body.innerHTML = '<div data-composer-card><button type="button" aria-haspopup="menu"><span>GLM 5.3 Flash</span></button></div><div role="menu"><section role="group" aria-labelledby="vyce"><div id="vyce">VyceAI</div><button type="button" role="menuitemradio" title="GLM 5.3 Flash"><span class="optionCopy"><span class="modelName">GLM 5.3 Flash</span></span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ current: { provider: 'vyce', model: 'vyce/glm-5.3-flash' }, groups: [{ id: 'vyce', name: 'VyceAI', models: [{ id: 'vyce/glm-5.3-flash', name: 'GLM 5.3 Flash', description: 'VyceAI · ×0 · 免费模型' }] }] }),
     })
@@ -67,7 +96,7 @@ describe('native model menu badges', () => {
 
   it('hides Logfare Claude rows and strips the provider prefix from visible labels', async () => {
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="mystery"><div id="mystery">Mystery Provider</div><button type="button" role="menuitemradio" title="logfare/claude-opus-4-6"><span class="optionCopy">logfare/claude-opus-4-6</span></button><button type="button" role="menuitemradio" title="logfare/auto"><span class="optionCopy">logfare/auto</span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [{ id: 'logfare', name: 'Mystery Provider', models: [
         { id: 'claude-opus-4-6', name: 'logfare/claude-opus-4-6', description: 'Mystery Provider · ×0' },
@@ -85,9 +114,13 @@ describe('native model menu badges', () => {
     dispose()
   })
 
-  it('collapses provider rows by default and toggles them from their headings', async () => {
+  it('collapses provider rows by default and expands them from their headings', async () => {
+    // Collapsed is the default for every provider the user is not on, and the
+    // toggle is what keeps that a list rather than a dead end — a heading that
+    // cannot expand leaves the models unreachable. No `current` is reported here,
+    // so no provider is the active one and all of them start shut.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="active"><div id="active">Active</div><button type="button" role="menuitemradio" aria-checked="true" title="A"><span class="optionCopy">A</span></button></section><section role="group" aria-labelledby="other"><div id="other">Other</div><button type="button" role="menuitemradio" title="B"><span class="optionCopy">B</span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [
         { id: 'active', name: 'Active', models: [{ id: 'a', name: 'A', description: 'Active · ×0' }] },
@@ -97,6 +130,7 @@ describe('native model menu badges', () => {
     await new Promise(resolve => requestAnimationFrame(resolve))
     const other = document.getElementById('other')!
     expect(other.getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById('active')!.getAttribute('aria-expanded')).toBe('false')
     expect(other.closest('section')?.getAttribute('data-fcg-provider-collapsed')).toBe('true')
     expect(other.querySelector('[data-fcg-provider-count]')).toBeNull()
     expect(other.querySelector('[data-fcg-provider-chevron]')?.getAttribute('data-open')).toBe('false')
@@ -111,7 +145,7 @@ describe('native model menu badges', () => {
   it('disables a credential-gated native row and gives the user the required setup', async () => {
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="sensenova"><div id="sensenova">SenseNova</div><button type="button" role="menuitemradio" title="SenseNova 6.8 Flash Lite"><span class="optionCopy">SenseNova 6.8 Flash Lite</span></button></section></div>'
     const availability = new Map([['sensenova\u0000sensenova-6.8-flash-lite', { available: false, reason: 'SENSENOVA_API_KEY_REQUIRED' }]])
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       availability: () => availability,
       snapshot: () => ({ groups: [{ id: 'sensenova', name: 'SenseNova', models: [
@@ -142,7 +176,7 @@ describe('native model menu badges', () => {
     // to the generic "unavailable", while the sibling provider named its own key.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="nvidia"><div id="nvidia">NVIDIA</div><button type="button" role="menuitemradio" title="Kimi K3"><span class="optionCopy">Kimi K3</span></button></section></div>'
     const availability = new Map([['nvidia\u0000moonshotai/kimi-k3', { available: false, reason: 'NVIDIA_API_KEY_REQUIRED' }]])
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       availability: () => availability,
       snapshot: () => ({ groups: [{ id: 'nvidia', name: 'NVIDIA', models: [
@@ -170,7 +204,7 @@ describe('native model menu badges', () => {
     ]
     // Each install is disposed in a `finally`: a leaked decorator keeps
     // listening for availability updates and rewrites the rows of the next test.
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       availability: () => availability,
       snapshot: () => ({ groups }),
@@ -190,7 +224,7 @@ describe('native model menu badges', () => {
       dispose()
     }
 
-    const english = installNativeModelMenuBadges({
+    const english = install({
       language: () => 'en',
       availability: () => availability,
       snapshot: () => ({ groups }),
@@ -216,7 +250,7 @@ describe('native model menu badges', () => {
     // (which names the consent switch) can never be reached. The tooltip is the
     // only place that can say what to do, and the generic "unavailable" wording
     // sends them looking for a key that is already configured.
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       availability: () => availability,
       snapshot,
@@ -231,7 +265,7 @@ describe('native model menu badges', () => {
       dispose()
     }
 
-    const english = installNativeModelMenuBadges({
+    const english = install({
       language: () => 'en',
       availability: () => availability,
       snapshot,
@@ -248,7 +282,7 @@ describe('native model menu badges', () => {
   it('marks a Cline route that spent its free budget as limited, not as needing setup', async () => {
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="cline"><div id="cline">Cline</div><button type="button" role="menuitemradio" title="DeepSeek V4 Flash"><span class="optionCopy">DeepSeek V4 Flash</span></button></section></div>'
     const availability = new Map([['cline\u0000deepseek/deepseek-v4-flash', { available: false, reason: 'CLINE_MODEL_RATE_LIMITED' }]])
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       availability: () => availability,
       snapshot: () => ({ groups: [{ id: 'cline', name: 'Cline', models: [
@@ -288,7 +322,7 @@ describe('native model menu badges', () => {
       ['freecodego\u0000gpt-5.6@group:1', { available: true }],
       ['freecodego\u0000gpt-5.6@group:2', { available: false, reason: 'FREECODEGO_GROUP_LOCKED' }],
     ])
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       availability: () => availability,
       snapshot: () => ({ groups: [{ id: 'freecodego', name: 'FreeCodeGo', models: [
@@ -318,7 +352,7 @@ describe('native model menu badges', () => {
       ['logfare\u0000glm-5.3', { available: false, reason: 'MODEL_PROVIDER_DEGRADED' }],
       ['opencode\u0000kimi-k2.6', { available: false, reason: 'OPENCODE_MODEL_UNAVAILABLE' }],
     ])
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       availability: () => availability,
       snapshot: () => ({ groups: [
@@ -354,7 +388,7 @@ describe('native model menu badges', () => {
 
   it('does nothing when a native row cannot be mapped uniquely', async () => {
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="freecodego"><div id="freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="Duplicate"><span class="optionCopy">Duplicate</span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'en',
       snapshot: () => ({ groups: [
         { id: 'one', name: 'One', models: [{ id: 'one', name: 'Duplicate', description: 'One · ×0' }] },
@@ -368,10 +402,10 @@ describe('native model menu badges', () => {
 
   it('binds one collapse toggle per resolvable provider', async () => {
     // A section resolves to its provider by the heading id suffix first, so two
-    // distinct providers each get their own toggle. Both groups are collapsed,
+    // distinct providers each get their own toggle. Both groups start collapsed,
     // and clicking a heading expands only that one.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="gpt 5.6 terra"><span class="optionCopy">gpt 5.6 terra</span></button></section><section role="group" aria-labelledby="m-agnes"><div id="m-agnes">Agnes AI</div><button type="button" role="menuitemradio" title="agnes-model"><span class="optionCopy">agnes-model</span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [
         { id: 'freecodego', name: 'FreeCodeGo', models: [{ id: 'gpt-5.6-terra', name: 'gpt 5.6 terra', description: 'FreeCodeGo · ×0.04' }] },
@@ -399,7 +433,7 @@ describe('native model menu badges', () => {
     // row never said which group it bills through. Splitting is scoped to the
     // gateway provider: every other provider keeps its label verbatim.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="claude sonnet 5 · Claude-AWS"><span class="optionCopy"><span class="modelName">claude sonnet 5 · Claude-AWS</span></span></button></section><section role="group" aria-labelledby="m-sensenova"><div id="m-sensenova">SenseNova</div><button type="button" role="menuitemradio" title="hy3 · Pro"><span class="optionCopy"><span class="modelName">hy3 · Pro</span></span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [
         { id: 'freecodego', name: 'FreeCodeGo', models: [{ id: 'claude-sonnet-5', name: 'claude sonnet 5 · Claude-AWS', description: 'Claude-AWS · ×0.1' }] },
@@ -411,13 +445,32 @@ describe('native model menu badges', () => {
     const gatewayName = gatewayRow.querySelector<HTMLElement>('[data-fcg-model-visible-label], [class*=modelName]')!
     const gatewayGroup = gatewayRow.querySelector<HTMLElement>('[data-fcg-model-group]')
     expect(gatewayName.textContent).toBe('claude sonnet 5')
-    expect(gatewayGroup?.textContent).toBe('Claude-AWS')
+    // The group line carries the group's rate: the name says which line the row
+    // bills through, the rate says what that line costs.
+    expect(gatewayGroup?.textContent).toBe('Claude-AWS · ×0.1')
     // The tooltip keeps the full identity, so hover still names the group.
     expect(gatewayRow.title).toBe('claude sonnet 5 · Claude-AWS')
     // Another provider's label is untouched end to end.
     const otherRow = document.querySelector<HTMLElement>('button[title="hy3 · Pro"]')!
     expect(otherRow.querySelector('[data-fcg-model-group]')).toBeNull()
     expect(otherRow.querySelector<HTMLElement>('[class*=modelName]')!.textContent).toBe('hy3 · Pro')
+    dispose()
+  })
+
+  it('leaves the rate off a gateway group line the Host could not rate', async () => {
+    // The Host composes `倍率未知` when the backend never reported a rate, and
+    // that string carries no `×` token — so the group line stays the group name
+    // rather than gaining a placeholder that reads like a price.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="glm-5.3 · Claude-AWS"><span class="optionCopy"><span class="modelName">glm-5.3 · Claude-AWS</span></span></button></section></div>'
+    const dispose = install({
+      language: () => 'zh',
+      snapshot: () => ({ groups: [
+        { id: 'freecodego', name: 'FreeCodeGo', models: [{ id: 'glm-5-3', name: 'glm-5.3 · Claude-AWS', description: 'Claude-AWS · 倍率未知' }] },
+      ] }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    const row = document.querySelector<HTMLElement>('button[title="glm-5.3 · Claude-AWS"]')!
+    expect(row.querySelector<HTMLElement>('[data-fcg-model-group]')?.textContent).toBe('Claude-AWS')
     dispose()
   })
 
@@ -430,7 +483,7 @@ describe('native model menu badges', () => {
       ['vyce\u0000vyce/deepseek-v4.1', { available: true }],
       ['sensenova\u0000sensenova/hy3', { available: false, reason: 'SENSENOVA_API_KEY_REQUIRED' }],
     ])
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       availability: () => availability,
       snapshot: () => ({ groups: [
@@ -456,6 +509,58 @@ describe('native model menu badges', () => {
     dispose()
   })
 
+  it('draws an accent for a provider nobody curated, so the newest one is a landmark too', async () => {
+    // The regression: the curated table only ever named the providers someone
+    // remembered to add, so TRAE, Qoder, DeepSeek and Kilo — added after this file —
+    // rendered in the same ink as their own models, which is the problem accents
+    // exist for. An uncurated provider is drawn from the palette instead.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-trae"><div id="m-trae">TRAE</div><button type="button" role="menuitemradio" title="trae/glm-5.3"><span class="optionCopy">GLM-5.3</span></button></section><section role="group" aria-labelledby="m-qoder"><div id="m-qoder">Qoder</div><button type="button" role="menuitemradio" title="qoder/qmodel_38flash"><span class="optionCopy">Auto</span></button></section></div>'
+    const availability = new Map([
+      ['trae\u0000glm-5.3', { available: true }],
+      ['qoder\u0000qmodel_38flash', { available: true }],
+    ])
+    install({
+      language: () => 'zh',
+      availability: () => availability,
+      snapshot: () => ({ groups: [
+        { id: 'trae', name: 'TRAE', models: [{ id: 'glm-5.3', name: 'GLM-5.3' }] },
+        { id: 'qoder', name: 'Qoder', models: [{ id: 'qmodel_38flash', name: 'Auto' }] },
+      ] }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    const trae = document.getElementById('m-trae') as HTMLElement
+    const qoder = document.getElementById('m-qoder') as HTMLElement
+    const accentOf = (heading: HTMLElement) => heading.style.getPropertyValue('--fcg-provider-accent')
+    expect(accentOf(trae)).toMatch(/^#[0-9a-f]{6}$/u)
+    expect(accentOf(qoder)).toMatch(/^#[0-9a-f]{6}$/u)
+    // Distinguishable from each other and from the ink their rows use.
+    expect(accentOf(trae)).not.toBe(accentOf(qoder))
+    expect(accentOf(trae)).not.toContain('label-primary')
+    expect(accentOf(qoder)).not.toContain('label-primary')
+  })
+
+  it('opens the provider that owns the selected model and keeps the rest shut', async () => {
+    // Collapsing everything opened the picker on provider names alone and read as
+    // "the model list is gone". The active provider is the one group that has to
+    // be open on arrival, because it is the one the user is looking at.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" aria-checked="true" title="a"><span class="optionCopy">a</span></button></section><section role="group" aria-labelledby="m-agnes"><div id="m-agnes">Agnes AI</div><button type="button" role="menuitemradio" title="b"><span class="optionCopy">b</span></button></section></div>'
+    const dispose = install({
+      language: () => 'zh',
+      snapshot: () => ({
+        current: { provider: 'agnes', model: 'b' },
+        groups: [
+          { id: 'freecodego', name: 'FreeCodeGo', models: [{ id: 'a', name: 'a', description: 'FreeCodeGo · ×1' }] },
+          { id: 'agnes', name: 'Agnes AI', models: [{ id: 'b', name: 'b', description: 'Agnes AI · ×0' }] },
+        ],
+      }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    expect(document.getElementById('m-agnes')!.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById('m-agnes')!.closest('section')?.getAttribute('data-fcg-provider-collapsed')).toBe('false')
+    expect(document.getElementById('m-freecodego')!.getAttribute('aria-expanded')).toBe('false')
+    dispose()
+  })
+
   it('binds no toggle when a duplicated display name is the only way to resolve a section', async () => {
     // Fallback resolution is by display name, and a duplicate name is genuinely
     // ambiguous. The guard has to skip those sections rather than assert one of
@@ -463,7 +568,7 @@ describe('native model menu badges', () => {
     // the user did not touch. The heading ids here are deliberately unresolvable
     // so the name lookup is the only path left.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-one"><div id="m-one">FreeCodeGo</div><button type="button" role="menuitemradio" title="first-model"><span class="optionCopy">first-model</span></button></section><section role="group" aria-labelledby="m-two"><div id="m-two">FreeCodeGo</div><button type="button" role="menuitemradio" title="second-model"><span class="optionCopy">second-model</span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [
         { id: 'alpha', name: 'FreeCodeGo', models: [{ id: 'first-model', name: 'first-model', description: 'FreeCodeGo · ×1' }] },
@@ -481,7 +586,7 @@ describe('native model menu badges', () => {
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="active"><div id="active">Active</div><button type="button" role="menuitemradio" title="A very long model name that would widen the menu"><span class="optionCopy">A very long model name</span></button></section></div>'
     const menu = document.querySelector<HTMLElement>('[role="menu"]')!
     vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({ width: 264 } as DOMRect)
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [{ id: 'active', name: 'Active', models: [
         { id: 'a', name: 'A very long model name', description: 'Active · ×0' },
@@ -491,9 +596,17 @@ describe('native model menu badges', () => {
     expect(menu.style.width).toBe('264px')
     expect(menu.dataset.fcgWidthPinned).toBe('true')
 
-    document.getElementById('active')!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    // A whole toggle cycle, because the pin has to hold through both directions:
+    // the default is collapsed, so the first click expands and the second one
+    // puts the headings-only view back.
+    const active = document.getElementById('active')!
+    active.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     await new Promise(resolve => requestAnimationFrame(resolve))
-    expect(document.getElementById('active')!.getAttribute('aria-expanded')).toBe('true')
+    expect(active.getAttribute('aria-expanded')).toBe('true')
+    expect(menu.style.width).toBe('264px')
+    active.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    expect(active.getAttribute('aria-expanded')).toBe('false')
     expect(menu.style.width).toBe('264px')
     dispose()
   })
@@ -502,7 +615,7 @@ describe('native model menu badges', () => {
     document.body.innerHTML = '<div role="menu"><button type="button" role="menuitem" title="Plain action">Plain action</button></div>'
     const menu = document.querySelector<HTMLElement>('[role="menu"]')!
     const measure = vi.spyOn(menu, 'getBoundingClientRect')
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [] }),
     })
@@ -517,7 +630,7 @@ describe('native model menu badges', () => {
     // The picker renders groups in adapter registration order, so a custom
     // provider registered before the built-ins used to sit above FreeCodeGo.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-kira"><div id="m-kira">基拉</div><button type="button" role="menuitemradio" title="kira-model"><span class="optionCopy">kira-model</span></button></section><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="gateway-model"><span class="optionCopy">gateway-model</span></button></section><section role="group" aria-labelledby="m-sensenova"><div id="m-sensenova">SenseNova</div><button type="button" role="menuitemradio" title="sensenova-model"><span class="optionCopy">sensenova-model</span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [
         { id: 'kira', name: '基拉', models: [{ id: 'kira-model', name: 'kira-model', description: '基拉 · ×0' }] },
@@ -526,9 +639,72 @@ describe('native model menu badges', () => {
       ] }),
     })
     await new Promise(resolve => requestAnimationFrame(resolve))
-    const order = [...document.querySelectorAll('[role="menu"] > section[role="group"]')]
+    const sections = [...document.querySelectorAll<HTMLElement>('[role="menu"] > section[role="group"]')]
+    // The order is expressed with the `order` property, so the DOM order stays
+    // exactly what React rendered. That is the point of the assertion below:
+    // re-appending these sections left React's child pointers stale, and the
+    // next commit threw against a moved sibling and tore the open menu down.
+    expect(sections.map(section => section.getAttribute('aria-labelledby')))
+      .toEqual(['m-kira', 'm-freecodego', 'm-sensenova'])
+    const container = sections[0]!.parentElement!
+    expect(container.dataset.fcgGroupOrdered).toBe('true')
+    const effective = [...sections]
+      .sort((left, right) => Number(left.style.order) - Number(right.style.order))
       .map(section => section.getAttribute('aria-labelledby'))
-    expect(order).toEqual(['m-freecodego', 'm-sensenova', 'm-kira'])
+    expect(effective).toEqual(['m-freecodego', 'm-sensenova', 'm-kira'])
+    dispose()
+  })
+
+  it('hides the provider section the user switched off, and only that one', async () => {
+    // The switches on the provider cards have to reach the menu, which is what
+    // this asserts end to end: a written decision, read by the decorator, lands
+    // as one attribute on React's section — never as a removed node.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-workbuddy"><div id="m-workbuddy">WorkBuddy</div><button type="button" role="menuitemradio" title="wb-free"><span class="optionCopy">wb-free</span></button></section><section role="group" aria-labelledby="m-vyce"><div id="m-vyce">VyceAI</div><button type="button" role="menuitemradio" title="vyce-model"><span class="optionCopy">vyce-model</span></button></section></div>'
+    writeModelPickerVisibility(setProviderVisible(EMPTY_MODEL_PICKER_VISIBILITY, 'workbuddy', false))
+    const dispose = install({
+      language: () => 'zh',
+      visibility: readModelPickerVisibility,
+      snapshot: () => ({ groups: [
+        { id: 'workbuddy', name: 'WorkBuddy', models: [{ id: 'wb-free', name: 'wb-free' }] },
+        { id: 'vyce', name: 'VyceAI', models: [{ id: 'vyce-model', name: 'vyce-model' }] },
+      ] }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    const sections = [...document.querySelectorAll<HTMLElement>('section[role="group"]')]
+    expect(sections[0]?.dataset.fcgProviderHidden).toBe('true')
+    expect(sections[1]?.dataset.fcgProviderHidden).toBeUndefined()
+    // The rows are untouched, not unmounted: switching the provider back on is
+    // clearing an attribute rather than rebuilding a menu React owns.
+    expect(sections[0]?.querySelectorAll('button[role="menuitemradio"]').length).toBe(1)
+
+    // And the change event is what wakes a menu that is already open.
+    writeModelPickerVisibility(setProviderVisible(readModelPickerVisibility(), 'workbuddy', true))
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    expect(sections[0]?.dataset.fcgProviderHidden).toBeUndefined()
+    expect(sections[1]?.dataset.fcgProviderHidden).toBeUndefined()
+    dispose()
+  })
+
+  it('hides every group row of a model the user unchecked, gateway pins included', async () => {
+    // The gateway serves one row per (model, group). Hiding the model has to
+    // mean all of its rows, or the user unchecks the name they saw and it comes
+    // back under another group's rate.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="claude-fable-5@group:4"><span class="optionCopy">claude-fable-5@group:4</span></button><button type="button" role="menuitemradio" title="claude-fable-5@group:7"><span class="optionCopy">claude-fable-5@group:7</span></button><button type="button" role="menuitemradio" title="kimi-k3@group:4"><span class="optionCopy">kimi-k3@group:4</span></button></section></div>'
+    writeModelPickerVisibility(setModelVisible(EMPTY_MODEL_PICKER_VISIBILITY, 'freecodego', 'claude-fable-5@group:4', false))
+    const dispose = install({
+      language: () => 'zh',
+      visibility: readModelPickerVisibility,
+      snapshot: () => ({ groups: [{ id: 'freecodego', name: 'FreeCodeGo', models: [
+        { id: 'claude-fable-5@group:4', name: 'claude-fable-5@group:4' },
+        { id: 'claude-fable-5@group:7', name: 'claude-fable-5@group:7' },
+        { id: 'kimi-k3@group:4', name: 'kimi-k3@group:4' },
+      ] }] }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    const rows = [...document.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]')]
+    expect(rows[0]?.dataset.fcgModelHidden).toBe('true')
+    expect(rows[1]?.dataset.fcgModelHidden).toBe('true')
+    expect(rows[2]?.dataset.fcgModelHidden).toBeUndefined()
     dispose()
   })
 
@@ -537,7 +713,7 @@ describe('native model menu badges', () => {
     // nor a multiplier may be asserted for its rows. The picker derives those
     // labels from the description; the decorator clears the lane it renders.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-kira"><div id="m-kira">基拉</div><button type="button" role="menuitemradio" title="glm-5.3-free"><span class="optionCopy">glm-5.3-free</span><span class="optionMeta"><span class="modelRate modelFree">FREE</span></span></button></section></div>'
-    const dispose = installNativeModelMenuBadges({
+    const dispose = install({
       language: () => 'zh',
       snapshot: () => ({ groups: [
         { id: 'kira', name: '基拉', models: [{ id: 'glm-5.3-free', name: 'glm-5.3-free', description: '基拉 · ×0' }] },

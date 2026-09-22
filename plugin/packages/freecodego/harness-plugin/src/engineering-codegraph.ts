@@ -29,6 +29,9 @@ import { childProcessEnvironment, linkedController, projectIdFor, runProcess } f
 import { BuildTracker, downloadVerifiedAsset, ensurePrivateDirectory as ensurePrivateRuntimeDirectory, readRuntimeManifest, replaceVerifiedRuntimeDirectory, writeRuntimeManifest } from './engineering-runtime-store.ts'
 import type { FreeCodeGoEngineeringCodeGraphProjectStatus, FreeCodeGoEngineeringCodeGraphRuntimePackage, FreeCodeGoEngineeringCodeGraphRuntimeStatus } from './types.ts'
 
+/**
+ * The CodeGraph release this plugin installs and verifies against.
+ */
 export const CODEGRAPH_VERSION = '1.6.0'
 /** Per-workspace index directory CodeGraph creates inside the workspace root. */
 export const CODEGRAPH_DIR_NAME = '.codegraph-freecodego'
@@ -63,7 +66,13 @@ const BUNDLE_ARCHIVES: Readonly<Record<string, BundleArchive>> = {
   'linux-arm64': { format: 'tar.gz', asset: 'codegraph-linux-arm64.tar.gz', digest: '6dc935a7b8f1a61e688a578b98ea34680eb2e36d7b91db079d64f4011f1a668f' },
 }
 
-/** Pure platform resolver exercised in CI for every supported desktop target. */
+/**
+ * Pure platform resolver exercised in CI for every supported desktop target.
+ * @param os - the operating system id; defaults to the running host.
+ * @param architecture - the CPU architecture; defaults to the running host.
+ * @param libc - the Linux libc, when the caller knows it.
+ * @returns the platform id, whether it is supported, and the reason.
+ */
 export function codegraphPlatformSupport(os = platform(), architecture = process.arch, libc?: 'gnu' | 'musl'): { readonly id: string; readonly supported: boolean; readonly detail: string } {
   const arch = architecture === 'arm64' ? 'arm64' : architecture === 'x64' ? 'x64' : undefined
   const id = `${os}-${arch ?? architecture}`
@@ -83,6 +92,10 @@ export function codegraphPlatformSupport(os = platform(), architecture = process
  * second (bring-your-own-interpreter) mode, and no platform matrix to choose
  * from: the row describes THIS platform and carries the resolver's explanation
  * when there is no verified bundle for it (musl Linux, an unknown CPU).
+ * @returns the engineering Code Graph Runtime Package rows, in backend order.
+ * @param os - the operating system id; defaults to the running host.
+ * @param architecture - the CPU architecture; defaults to the running host.
+ * @param libc - the Linux libc, when the caller knows it.
  */
 export function codegraphPlatformPackages(os = platform(), architecture = process.arch, libc?: 'gnu' | 'musl'): readonly FreeCodeGoEngineeringCodeGraphRuntimePackage[] {
   const active = codegraphPlatformSupport(os, architecture, libc)
@@ -95,6 +108,13 @@ export function codegraphPlatformPackages(os = platform(), architecture = proces
   }]
 }
 
+/**
+ * The verified archive for a platform, or `undefined` when none is published.
+ * @param os - the operating system id; defaults to the running host.
+ * @param architecture - the CPU architecture; defaults to the running host.
+ * @param libc - the Linux libc, when the caller knows it.
+ * @returns the archive row, or `undefined` for an unsupported platform.
+ */
 export function codegraphArchive(os = platform(), architecture = process.arch, libc?: 'gnu' | 'musl'): BundleArchive | undefined {
   const support = codegraphPlatformSupport(os, architecture, libc)
   return support.supported ? BUNDLE_ARCHIVES[support.id] : undefined
@@ -102,7 +122,13 @@ export function codegraphArchive(os = platform(), architecture = process.arch, l
 
 /** `tar` is the only external tool this engine uses. bsdtar (Windows 10+) reads
  *  both `.zip` and `.tar.gz`, and the archive is digest-verified before unpacking
- *  so the unpacker is never trusted with unverified input. */
+/**
+ * so the unpacker is never trusted with unverified input.
+ * @param archivePath - the verified archive on disk.
+ * @param destination - the directory the archive is unpacked into.
+ * @param format - the archive format.
+ * @returns the arguments that unpack the archive into the destination.
+ */
 export function codegraphExtractArguments(archivePath: string, destination: string, format: BundleArchive['format']): readonly string[] {
   return format === 'zip'
     ? ['-xf', archivePath, '-C', destination, '--strip-components=1']
@@ -116,6 +142,10 @@ export function codegraphExtractArguments(archivePath: string, destination: stri
  * app entry directly. Both paths keep tree-sitter's WASM `--liftoff-only`
  * (Node's turboshaft tier OOMs compiling grammars) and mute `node:sqlite`'s
  * per-thread experimental warning, which would otherwise shred query output.
+ * @param bundleDirectory - the installed bundle directory.
+ * @param args - the CodeGraph CLI arguments.
+ * @param os - the operating system id; defaults to the running host.
+ * @returns the command and full argument list to spawn.
  */
 export function codegraphLaunch(bundleDirectory: string, args: readonly string[], os = platform()): { readonly command: string; readonly args: readonly string[] } {
   if (os === 'win32') {
@@ -132,6 +162,8 @@ export function codegraphLaunch(bundleDirectory: string, args: readonly string[]
  * drops host credentials; the CodeGraph-specific entries make the runtime local
  * and quiet: no anonymous telemetry, no background daemon, no self-download from
  * the network, and the plugin-specific index directory name.
+ * @param overrides - entries merged over the CodeGraph defaults.
+ * @returns the child-process environment.
  */
 export function codegraphEnvironment(overrides: Readonly<Record<string, string>> = {}): NodeJS.ProcessEnv {
   return childProcessEnvironment({
@@ -144,9 +176,20 @@ export function codegraphEnvironment(overrides: Readonly<Record<string, string>>
   })
 }
 
+/**
+ * The audited read-only CodeGraph query commands.
+ */
 export type CodeGraphQueryCommand = 'search' | 'explore' | 'symbol' | 'path' | 'impact'
 
-/** Fixed argument shapes for the audited read-only CodeGraph CLI surface. */
+/**
+ * Fixed argument shapes for the audited read-only CodeGraph CLI surface.
+ * @param command - the query command to build arguments for.
+ * @param values - the command's text or node names.
+ * @param workspace - the workspace the index belongs to.
+ * @param depth - the traversal depth, for the impact command.
+ * @param budget - the row or file budget, for the result-bearing commands.
+ * @returns the fixed argument list.
+ */
 export function codegraphQueryArguments(command: CodeGraphQueryCommand, values: readonly string[], workspace: string, depth: number | undefined, budget: number | undefined): readonly string[] {
   if (command === 'explore') {
     const query = values.join(' ')
@@ -177,6 +220,10 @@ export class CodeGraphRuntimeManager {
     this.rootDirectory = resolve(rootDirectory)
   }
 
+/**
+ * Report the installed runtime's state and version.
+ * @returns the runtime status.
+ */
   async status(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
     if (this.installTask !== undefined) return { state: 'installing', installed: false, version: CODEGRAPH_VERSION, runtimeDirectory: this.runtimeDirectory() }
     const manifest = await this.readManifest()
@@ -194,10 +241,18 @@ export class CodeGraphRuntimeManager {
     return { state: 'ready', installed: true, version: CODEGRAPH_VERSION, runtimeDirectory: this.runtimeDirectory(), binaryPath, bundleDigest: manifest.bundleDigest }
   }
 
+/**
+ * List the installation sources this engine offers.
+ * @returns the runtime package rows.
+ */
   async packages(): Promise<readonly FreeCodeGoEngineeringCodeGraphRuntimePackage[]> {
     return codegraphPlatformPackages()
   }
 
+/**
+ * Install the official bundle, deduplicating concurrent calls.
+ * @returns the runtime status after the install.
+ */
   async install(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
     if (this.installTask !== undefined) return this.installTask
     const task = this.installOfficialBundle()
@@ -205,12 +260,21 @@ export class CodeGraphRuntimeManager {
     try { return await task } finally { this.installTask = undefined }
   }
 
+/**
+ * Delete the installed runtime and report the resulting status.
+ * @returns the runtime status after removal.
+ */
   async remove(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
     if (this.installTask !== undefined) throw new Error('CodeGraph Runtime 安装仍在进行，无法删除。')
     await rm(this.runtimeDirectory(), { recursive: true, force: true })
     return this.status()
   }
 
+/**
+ * Report whether the workspace index exists and how fresh it is.
+ * @param cwd - the workspace to inspect.
+ * @returns the workspace's CodeGraph index status.
+ */
   async projectStatus(cwd: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     const workspace = resolve(cwd)
     const projectId = projectIdFor(workspace)
@@ -231,6 +295,9 @@ export class CodeGraphRuntimeManager {
    * initialized (`init` also builds the full graph in the same step); an
    * existing index is refreshed incrementally unless `force` asks for the full
    * rebuild, because `codegraph index` recreates the database from scratch.
+   * @returns the engineering Code Graph Project Status.
+   * @param cwd - working directory the command runs in.
+ * @param options - whether to force a full rebuild and a signal to cancel with.
    */
   async build(cwd: string, options: { readonly force?: boolean; readonly signal?: AbortSignal } = {}): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     const workspace = resolve(cwd)
@@ -262,7 +329,11 @@ export class CodeGraphRuntimeManager {
     return this.projectStatus(workspace)
   }
 
-  /** Incrementally absorb file changes; cheap enough to run after edits. */
+  /** Incrementally absorb file changes; cheap enough to run after edits. 
+   * @param signal - aborts the request when the caller cancels.
+   * @returns the engineering Code Graph Project Status.
+   * @param cwd - working directory the command runs in.
+   */
   async sync(cwd: string, signal?: AbortSignal): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     const workspace = resolve(cwd)
     const project = await this.projectStatus(workspace)
@@ -270,7 +341,10 @@ export class CodeGraphRuntimeManager {
     return this.build(workspace, signal === undefined ? {} : { signal })
   }
 
-  /** Abort the plugin-owned CodeGraph process tree for the current workspace. */
+  /** Abort the plugin-owned CodeGraph process tree for the current workspace. 
+   * @param cwd - working directory the command runs in.
+ * @returns whether a running build was cancelled.
+   */
   cancel(cwd: string): { readonly cancelled: boolean } {
     return this.builds.cancel(projectIdFor(cwd))
   }
@@ -280,6 +354,8 @@ export class CodeGraphRuntimeManager {
    * path the plugin deletes INSIDE a user workspace, so it must be exactly the
    * plugin's own data directory directly under the workspace root — never a
    * symlink, never a parent, never a `.codegraph` a user created themselves.
+   * @returns the engineering Code Graph Project Status.
+   * @param cwd - working directory the command runs in.
    */
   async clearProject(cwd: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     const workspace = resolve(cwd)
@@ -291,7 +367,11 @@ export class CodeGraphRuntimeManager {
     return this.projectStatus(workspace)
   }
 
-  /** Run a read-only CodeGraph query against the workspace's plugin-owned index. */
+  /** Run a read-only CodeGraph query against the workspace's plugin-owned index. 
+   * @param cwd - working directory the command runs in.
+ * @param input - the command, its values, and optional depth and budget.
+ * @returns the query output and the workspace status it ran against.
+   */
   async query(cwd: string, input: { readonly command: CodeGraphQueryCommand; readonly values?: readonly string[]; readonly depth?: number; readonly budget?: number }): Promise<{ readonly output: string; readonly project: FreeCodeGoEngineeringCodeGraphProjectStatus }> {
     const workspace = resolve(cwd)
     const project = await this.projectStatus(workspace)

@@ -26,6 +26,13 @@
 # repository instead of only from a maintainer's working copy.
 !/README.i18n.yaml
 !/COMPATIBILITY.md
+# The community listing is a claim about this repository that someone else
+# reads: `awesome-dsh-plugin` takes one YAML entry naming a subpackage URL and
+# a pinned release tarball, and its maintainers check the description against
+# the source. The file that records which values those are travels with the
+# tree they describe -- each new Harness line refreshes one field of it, and
+# that is an edit here rather than a fact remembered by whoever submitted it.
+!/AWESOME_DSH_PLUGIN.md
 # License and legal documents must ship with the open-source repository.
 !/LICENSE
 !/TRADEMARK.md
@@ -147,8 +154,10 @@
 # (`client-build-environment`, `pnpm-invocation`) are whitelisted there too.
 !/scripts/build.ts
 
-# The published FreeCodeGo bundle's `prepack` runs this assembly script, so a
-# clone that lacks it cannot build the public npm artifact.
+# The published FreeCodeGo bundle's `prepack` runs this assembly script, and
+# `release:pack` runs `pnpm pack`, so a clone that lacks it cannot build the
+# tarball a release publishes. (`prepack` is npm's lifecycle, not npm's
+# publication: the artifact is the release asset now.)
 !/scripts/build-freecodego-bundle.mjs
 # License compliance gates must ship with the repository so CI can enforce them.
 # The in-package vendored-source spec ships with its gate: the disclosure table is
@@ -191,6 +200,16 @@
 # The generator the gate above compares against. Without it the gate has
 # nothing to compare to, and `build:freecodego`'s verify step cannot run.
 !/scripts/gen-freecodego-test-tsconfig.ts
+# The free-model tables in the published READMEs are generated, and the markers
+# around them name this script by path. Left out of the repository, the published
+# front page would credit a file a clone does not have, and the two
+# `generate-free-model-tables` / `verify-free-model-tables` entries in the
+# published `package.json` would name a missing module — the same "an omitted
+# helper fails on its own imports" shape as the entries above. Its spec ships
+# with it: the region-replacement and rendering rules are what make a stale table
+# detectable, and a check no clone can run is not a check.
+!/scripts/generate-free-model-tables.ts
+!/scripts/generate-free-model-tables.spec.ts
 # The private sync overlay itself. `sync:harness` replaces whole upstream
 # package directories, tests included, so the specs covering the private seams
 # live here as `.tpl` and are copied back on every sync. They were previously
@@ -220,11 +239,13 @@
 !/scripts/release/publish.ts
 !/scripts/release/verify.ts
 !/scripts/release/verify-packed-install.ts
+!/scripts/release/verify-published.ts
 !/scripts/release/process.ts
 !/scripts/release/tarball.ts
 # Helper modules the published scripts above import. The release workflow in
-# `.github/workflows/release-freecodego.yml` runs `release:verify`,
-# `release:pack`, and `release:verify-packed-install`, and the notices generator
+# `../.github/workflows/release-freecodego.yml` runs `release:verify`,
+# `release:pack`, `release:verify-packed-install`, `release:publish`, and
+# `release:verify-published`, and the notices generator
 # resolves the browser-bundled inputs through `browser-bundled-externals`; an
 # omitted helper fails the published pipeline on its own imports.
 !/scripts/browser-bundled-externals.ts
@@ -232,22 +253,21 @@
 !/scripts/pnpm-invocation.ts
 !/scripts/publication-payload.ts
 !/scripts/release/installed-product-isolation.ts
-# GitHub metadata ships only where this repository still has a consumer: the
-# release workflow, the localized issue and pull-request templates, and
-# Dependabot. The upstream tree's CI policy notes, pull-request approval policy,
-# preview sizing policy, and issue-management bot all document or drive
-# workflows this repository does not publish — and the issue bot's config names
-# the upstream organization's Projects board — so publishing them would ship
-# instructions for automation that is not here.
-!/.github/
-/.github/*
-!/.github/ISSUE_TEMPLATE/
-!/.github/ISSUE_TEMPLATE/*
-!/.github/dependabot.yml
-!/.github/pull_request_template.md
-!/.github/workflows/
-/.github/workflows/*
-!/.github/workflows/release-freecodego.yml
+# `.github/` is deliberately absent from this allowlist, and the reason is a
+# location rather than a choice: GitHub resolves workflows, issue and
+# pull-request templates and Dependabot against `<repository root>/.github`
+# only, so the copy that shipped here was published without ever being loaded.
+# The release workflow was the expensive half of that — it is what creates the
+# release asset the community listing's entry pins, so it was inert exactly
+# where it mattered. The metadata now lives at the repository root, where the
+# root `.gitignore` names it (`!/.github/`, `!/.github/**`) for the same reason
+# this file once had to name it here.
+#
+# The upstream tree's CI policy notes, pull-request approval policy, preview
+# sizing policy, and issue-management bot stay unpublished: they document or
+# drive workflows this repository does not publish — and the issue bot's config
+# names the upstream organization's Projects board — so publishing them would
+# ship instructions for automation that is not here.
 
 # Generated output and installed dependencies remain excluded even inside the
 # explicitly included FreeCodeGo package tree. These rules follow the

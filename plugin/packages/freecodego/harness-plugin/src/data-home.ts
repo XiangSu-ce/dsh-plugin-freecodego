@@ -4,7 +4,7 @@
  * Why one resolver
  * ----------------
  * The plugin keeps its private state — engineering memory, checkpoints, the
- * code-graph and graphify runtimes, jobs, plan-mode, teams — under
+ * code-graph and graphify runtimes, jobs, and plan-mode — under
  * `<home>/freecodego/**`, where `<home>` is the harness home: `$DSH_HOME` when
  * the Host sets it, `~/.dsh` otherwise. Seven modules used to re-derive that
  * path by hand, so one rule lived in seven places and could drift in seven
@@ -41,6 +41,7 @@ import { expandHomePath, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
  *
  * Delegates to the harness's own resolver so a configured home is expanded and
  * normalized identically on both sides of the plugin boundary.
+ * @returns the resolved harness home directory.
  */
 export function harnessHomeDirectory(): string {
   return resolveDshHome()
@@ -53,10 +54,11 @@ export function harnessHomeDirectory(): string {
  * The override gets the harness's own tilde treatment before it is returned.
  * Handing back the raw value reintroduced exactly the defect this module exists
  * to remove: `FREECODEGO_HOME=~/data` would name a literal `~` directory *under
- * the process's current working directory*, so memory, checkpoints and team
+ * the process's current working directory*, so memory, checkpoints and plan
  * state landed in different trees depending on where the harness was launched —
  * and nowhere near the user's home. Relative overrides are left as configured,
  * which is how they already behaved for every caller.
+ * @returns the plugin-private data root.
  */
 export function freeCodeGoDataHome(): string {
   const override = process.env.FREECODEGO_HOME?.trim()

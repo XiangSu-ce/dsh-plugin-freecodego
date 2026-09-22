@@ -42,6 +42,7 @@ import { isAbsolute, resolve } from 'node:path'
 import { compileCommandPolicy, describePolicyDiagnostics, type CompiledCommandPolicy } from './command-policy.ts'
 import type { ProjectConfigReadResult } from './project-config.ts'
 import type { FreeCodeGoMcpServer, FreeCodeGoSkillRoot } from './types.ts'
+import { isRecord } from './untrusted-json.ts'
 
 /** Prefix every project-declared entry id carries, so it cannot shadow a user's. */
 export const PROJECT_ENTRY_ID_PREFIX = 'project:'
@@ -73,10 +74,6 @@ export interface ProjectTier {
   readonly hooks?: unknown
   /** One line per entry that was set aside, and why. Empty when everything was used. */
   readonly notes: readonly string[]
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Read an array of strings, or undefined when the value is not one. */

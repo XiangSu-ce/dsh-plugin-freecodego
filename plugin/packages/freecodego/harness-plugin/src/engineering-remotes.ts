@@ -39,6 +39,9 @@ import type { SessionEventsPersistence } from './session-storage-utils.ts'
 // own ids. Media membership follows the live directory via the shared keyword
 // heuristic instead of a pinned id list, so newly added Agnes image/video
 // models are classified without a plugin update.
+/**
+ * Agnes model ids the plugin's text routes use.
+ */
 export const AGNES_TEXT_MODEL_IDS = new Set(['agnes-3.0-flash'])
 function isAgnesMediaModelId(id: string): boolean { return agnesMediaCategory(id) !== undefined }
 
@@ -79,6 +82,9 @@ function requireLiveAgent(host: EngineeringRemotesHost, sessionId: string): Agen
  * Exported because two unrelated surfaces need the identical rule and the
  * identical error text: a caller should not be able to tell whether the missing
  * workspace was reported by the memory Remote or the Skill-draft Remote.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the workspace root engineering operations for that session act on.
  */
 export function engineeringMemoryCwd(host: EngineeringRemotesHost, sessionId: string): string {
   if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('engineering memory session id is invalid')
@@ -101,7 +107,10 @@ async function engineeringStatusSnapshot(host: EngineeringRemotesHost): Promise<
   }
 }
 
-/** List text-capable managed routes suitable for an independent Advisor call. */
+/** List text-capable managed routes suitable for an independent Advisor call. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the advisor Model rows, in backend order.
+ */
 export async function advisorModels(host: EngineeringRemotesHost): Promise<readonly FreeCodeGoAdvisorModel[]> {
   // Start from the live Harness registry. This is the source of truth for
   // newly added provider/model routes; hand-maintained catalogs below are
@@ -196,7 +205,11 @@ export async function advisorModels(host: EngineeringRemotesHost): Promise<reado
   return [...models.values()].sort((left, right) => left.displayName.localeCompare(right.displayName, 'zh-Hans-CN'))
 }
 
-/** Ask the Advisor to review the latest durable facts of one live session. */
+/** Ask the Advisor to review the latest durable facts of one live session. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the advisor Status.
+ */
 export function advisorReviewNow(host: EngineeringRemotesHost, sessionId: string): FreeCodeGoAdvisorStatus {
   if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('advisor session id is invalid')
   const agent = host.ctx.get('agents')?.get(SessionId(sessionId))
@@ -205,7 +218,11 @@ export function advisorReviewNow(host: EngineeringRemotesHost, sessionId: string
   return host.advisor.status()
 }
 
-/** Request architecture, security, and testing perspectives without steering the main Agent. */
+/** Request architecture, security, and testing perspectives without steering the main Agent. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the advisor Council Report.
+ */
 export function engineeringCouncilReview(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoAdvisorCouncilReport> {
   if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('engineering Council session id is invalid')
   if (!host.engineering.councilEnabled()) throw new Error('Advisor Council is disabled in engineering settings')
@@ -214,7 +231,11 @@ export function engineeringCouncilReview(host: EngineeringRemotesHost, sessionId
   return host.advisor.councilReviewNow(agent)
 }
 
-/** Read the most recent durable Council reports for a live or restored session. */
+/** Read the most recent durable Council reports for a live or restored session. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the advisor Council Report rows, in backend order.
+ */
 export async function engineeringCouncilReports(host: EngineeringRemotesHost, sessionId: string): Promise<readonly FreeCodeGoAdvisorCouncilReport[]> {
   if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('engineering Council session id is invalid')
   const live = host.ctx.get('sessions') as { get?(id: string): ({ readonly id: unknown } & HostSessionEvents) | undefined } | undefined
@@ -226,13 +247,22 @@ export async function engineeringCouncilReports(host: EngineeringRemotesHost, se
   return advisorCouncilReportsFromSession({ id: sessionId, snapshotEvents: () => restored.events })
 }
 
-/** Start a bounded three-engine engineering council for one live parent Agent. */
+/** Start a bounded three-engine engineering council for one live parent Agent. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @param request - the request this call projects from.
+ * @returns the engineering Council Job.
+ */
 export function engineeringTeamStart(host: EngineeringRemotesHost, sessionId: string, request: FreeCodeGoEngineeringCouncilRequest): FreeCodeGoEngineeringCouncilJob {
   const agent = requireLiveAgent(host, sessionId)
   return host.engineCouncil.start(agent, normalizeEngineeringCouncilRequest(request))
 }
 
-/** Read one live engineering council task. */
+/** Read one live engineering council task. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Council Job.
+ * @param id - id of the council job to read.
+ */
 export async function engineeringTeamJob(host: EngineeringRemotesHost, id: string): Promise<FreeCodeGoEngineeringCouncilJob> {
   if (typeof id !== 'string' || !/^council_[a-f0-9]{32}$/i.test(id)) throw new Error('engineering council job id is invalid')
   try { return host.engineCouncil.job(id) } catch (error) {
@@ -262,7 +292,11 @@ export async function engineeringTeamJob(host: EngineeringRemotesHost, id: strin
   }
 }
 
-/** Read durable council reports from one live parent Agent. */
+/** Read durable council reports from one live parent Agent. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Council Report rows, in backend order.
+ */
 export async function engineeringTeamReports(host: EngineeringRemotesHost, sessionId: string): Promise<readonly FreeCodeGoEngineeringCouncilReport[]> {
   if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('engineering council session id is invalid')
   // `ctx.agents` only holds live Agents; a disposed session must fall through
@@ -274,7 +308,12 @@ export async function engineeringTeamReports(host: EngineeringRemotesHost, sessi
   return councilReportsFromEvents((await readPersistedEvents(persistence, SessionId(sessionId))).events)
 }
 
-/** Record the user's explicit approval or rejection of a completed engineering council. */
+/** Record the user's explicit approval or rejection of a completed engineering council. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Council Decision.
+ * @param request - the council id and the decision to record.
+ */
 export async function engineeringTeamDecision(
   host: EngineeringRemotesHost,
   sessionId: string,
@@ -318,6 +357,10 @@ export async function engineeringTeamDecision(
  * Gated on approval for the same reason verification is: an unreviewed plan is a
  * proposal, and writing it into the repository would present it as a decision
  * the project has already made.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Spec Bundle.
+ * @param request - the council report id to export.
  */
 export async function engineeringSpecExport(
   host: EngineeringRemotesHost,
@@ -334,7 +377,12 @@ export async function engineeringSpecExport(
   return await writeSpecArtifacts(engineeringMemoryCwd(host, sessionId), report)
 }
 
-/** Run declared verification after the user approved a completed engineering council. */
+/** Run declared verification after the user approved a completed engineering council. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Verification Result.
+ * @param request - the council id and the verification stages to run.
+ */
 export async function engineeringTeamVerify(
   host: EngineeringRemotesHost,
   sessionId: string,
@@ -369,7 +417,12 @@ export async function engineeringTeamVerify(
   return result
 }
 
-/** Mark an approved plan as implemented before running verification. */
+/** Mark an approved plan as implemented before running verification. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Council Implementation.
+ * @param request - the council id and the implementation summary.
+ */
 export async function engineeringTeamImplementation(host: EngineeringRemotesHost, sessionId: string, request: { readonly id: string; readonly summary: string }): Promise<FreeCodeGoEngineeringCouncilImplementation> {
   if (typeof sessionId !== 'string' || sessionId.trim() === '') throw new Error('engineering council session id is invalid')
   const agent = requireLiveAgent(host, sessionId)
@@ -389,19 +442,30 @@ export async function engineeringTeamImplementation(host: EngineeringRemotesHost
   return implementation
 }
 
-/** Browser-safe engineering enhancement state; modules remain isolated from account loading. */
+/** Browser-safe engineering enhancement state; modules remain isolated from account loading. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Status.
+ */
 export async function engineeringStatus(host: EngineeringRemotesHost): Promise<FreeCodeGoEngineeringStatus> {
   return engineeringStatusSnapshot(host)
 }
 
-/** Enable or disable every engineering enhancement resource without affecting MCP or user Skills. */
+/** Enable or disable every engineering enhancement resource without affecting MCP or user Skills. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param enabled - whether this capability is switched on.
+ * @returns the engineering Status.
+ */
 export async function engineeringSetEnabled(host: EngineeringRemotesHost, enabled: boolean): Promise<FreeCodeGoEngineeringStatus> {
   if (typeof enabled !== 'boolean') throw new Error('engineering enabled must be a boolean')
   await host.engineering.setEnabled(enabled)
   return engineeringStatusSnapshot(host)
 }
 
-/** Persist an explicitly bounded engineering settings patch. */
+/** Persist an explicitly bounded engineering settings patch. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Status.
+ * @param input - the bounded engineering settings patch.
+ */
 export async function engineeringSettingsUpdate(host: EngineeringRemotesHost, input: Partial<FreeCodeGoEngineeringSettings>): Promise<FreeCodeGoEngineeringStatus> {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('engineering settings update must be an object')
   await host.engineering.update(input)
@@ -414,63 +478,114 @@ export async function engineeringSettingsUpdate(host: EngineeringRemotesHost, in
  * Separate from the settings patch on purpose: the loop's goal belongs to the
  * session, not to the settings document, and it changes without anyone touching
  * a switch — the round driver creates and blocks goals on its own.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Loop Status.
  */
 export function engineeringLoopStatus(host: EngineeringRemotesHost, sessionId: string): FreeCodeGoEngineeringLoopStatus {
   return host.engineering.goalLoopStatus(requireLiveAgent(host, sessionId))
 }
 
-/** Let the current goal's round driver continue without a user turn. */
+/** Let the current goal's round driver continue without a user turn. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Loop Status.
+ */
 export function engineeringLoopArm(host: EngineeringRemotesHost, sessionId: string): FreeCodeGoEngineeringLoopStatus {
   return host.engineering.goalLoopArm(requireLiveAgent(host, sessionId))
 }
 
-/** Stop unattended continuation for the current goal, leaving the goal itself. */
+/** Stop unattended continuation for the current goal, leaving the goal itself. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Loop Status.
+ */
 export function engineeringLoopStop(host: EngineeringRemotesHost, sessionId: string): FreeCodeGoEngineeringLoopStatus {
   return host.engineering.goalLoopStop(requireLiveAgent(host, sessionId))
 }
 
-/** List compact local memories for the selected workspace without exposing drafts to Agents. */
+/** List compact local memories for the selected workspace without exposing drafts to Agents. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Memory Page.
+ * @param request - the trust filter, page size, and cursor.
+ */
 export function engineeringMemoryList(host: EngineeringRemotesHost, sessionId: string, request?: { readonly trusts?: readonly FreeCodeGoEngineeringMemoryTrust[]; readonly limit?: number; readonly cursor?: string }): FreeCodeGoEngineeringMemoryPage {
   return host.engineering.memoryList(engineeringMemoryCwd(host, sessionId), validateEngineeringMemoryListRequest(request))
 }
 
-/** Search reviewed historical knowledge for the selected workspace. */
+/** Search reviewed historical knowledge for the selected workspace. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Memory Index rows, in backend order.
+ * @param searchText - the text to match.
+ * @param limit - the maximum number of records to return.
+ */
 export function engineeringMemorySearch(host: EngineeringRemotesHost, sessionId: string, searchText?: string, limit?: number): readonly FreeCodeGoEngineeringMemoryIndex[] {
   if (searchText !== undefined && (typeof searchText !== 'string' || searchText.length > 500)) throw new Error('engineering memory query is invalid')
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20)) throw new Error('engineering memory search limit is invalid')
   return host.engineering.memorySearch(engineeringMemoryCwd(host, sessionId), { ...(searchText === undefined ? {} : { query: searchText }), ...(limit === undefined ? {} : { limit }) })
 }
 
-/** Preview the bounded reviewed-memory index that is injected only at session start. */
+/** Preview the bounded reviewed-memory index that is injected only at session start. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Memory Recall.
+ */
 export function engineeringMemoryRecall(host: EngineeringRemotesHost, sessionId: string): FreeCodeGoEngineeringMemoryRecall {
   return host.engineering.memoryRecall(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Read a bounded time neighborhood around a user-selected local memory record. */
+/** Read a bounded time neighborhood around a user-selected local memory record. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Memory Timeline.
+ * @param request - the record id and the time window around it.
+ */
 export function engineeringMemoryTimeline(host: EngineeringRemotesHost, sessionId: string, request: { readonly id: string; readonly before?: number; readonly after?: number }): FreeCodeGoEngineeringMemoryTimeline {
   const input = validateEngineeringMemoryTimelineRequest(request)
   return host.engineering.memoryTimeline(engineeringMemoryCwd(host, sessionId), input)
 }
 
-/** Read selected local memory details for human review. */
+/** Read selected local memory details for human review. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Memory Detail rows, in backend order.
+ * @param ids - ids of the records to read.
+ */
 export function engineeringMemoryGet(host: EngineeringRemotesHost, sessionId: string, ids: readonly string[]): readonly FreeCodeGoEngineeringMemoryDetail[] {
   if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20 || ids.some(id => typeof id !== 'string')) throw new Error('engineering memory ids are invalid')
   return host.engineering.memoryGetForReview(engineeringMemoryCwd(host, sessionId), ids)
 }
 
-/** User-only review decision. Agent tools cannot call this path. */
+/** User-only review decision. Agent tools cannot call this path. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Memory Detail.
+ * @param request - the record id and the review decision.
+ */
 export function engineeringMemoryReview(host: EngineeringRemotesHost, sessionId: string, request: { readonly id: string; readonly decision: FreeCodeGoEngineeringMemoryReviewDecision }): FreeCodeGoEngineeringMemoryDetail {
   const input = validateEngineeringMemoryReviewRequest(request)
   return host.engineering.memoryReview(engineeringMemoryCwd(host, sessionId), input.id, input.decision)
 }
 
-/** Permanently delete one local memory selected by the user. */
+/** Permanently delete one local memory selected by the user. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @param id - id of the record to delete.
+ * @returns true once the record is gone.
+ */
 export function engineeringMemoryDelete(host: EngineeringRemotesHost, sessionId: string, id: string): { readonly deleted: true } {
   if (typeof id !== 'string') throw new Error('engineering memory id is invalid')
   return host.engineering.memoryDelete(engineeringMemoryCwd(host, sessionId), id)
 }
 
-/** Clear non-reviewed records by default; reviewed knowledge needs an explicit opt-in. */
+/** Clear non-reviewed records by default; reviewed knowledge needs an explicit opt-in. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @param request - whether reviewed knowledge is included in the purge.
+ * @returns how many records were deleted.
+ */
 export function engineeringMemoryPurgeProject(host: EngineeringRemotesHost, sessionId: string, request?: { readonly includeReviewed?: boolean }): { readonly deleted: number } {
   if (request !== undefined && (request === null || typeof request !== 'object' || Array.isArray(request) || (request.includeReviewed !== undefined && typeof request.includeReviewed !== 'boolean'))) throw new Error('engineering memory purge request is invalid')
   return host.engineering.memoryPurgeProject(engineeringMemoryCwd(host, sessionId), request?.includeReviewed)
@@ -484,105 +599,192 @@ export function engineeringMemoryPurgeProject(host: EngineeringRemotesHost, sess
  * `records` could not tell a project holding five reviewed memories from one
  * holding five hundred. Naming it here keeps the UI axis from re-hiding what the
  * store just stopped hiding.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the reviewable records, with drafts and rejected entries omitted.
  */
 export function engineeringMemoryExport(host: EngineeringRemotesHost, sessionId: string): { readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly FreeCodeGoEngineeringMemoryDetail[]; readonly omitted: number } {
   return host.engineering.memoryExportReviewed(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Produce a consistent plugin-private SQLite backup without exposing its path. */
+/** Produce a consistent plugin-private SQLite backup without exposing its path. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Memory Backup.
+ */
 export function engineeringMemoryBackup(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoEngineeringMemoryBackup> {
   engineeringMemoryCwd(host, sessionId)
   return host.engineering.memoryBackup()
 }
 
-/** Trim only stale generated/rejected memory and completed Outbox entries. */
+/** Trim only stale generated/rejected memory and completed Outbox entries. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Memory Retention Result.
+ * @param retentionDays - age in days beyond which stale records are trimmed.
+ */
 export function engineeringMemoryRetentionSweep(host: EngineeringRemotesHost, sessionId: string, retentionDays?: number): FreeCodeGoEngineeringMemoryRetentionResult {
   engineeringMemoryCwd(host, sessionId)
   if (retentionDays !== undefined && (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 365)) throw new Error('engineering memory retention days are invalid')
   return host.engineering.memoryRetentionSweep(retentionDays ?? ENGINEERING_MEMORY_DEFAULT_RETENTION_DAYS)
 }
 
-/** Capture a checkpoint of the workspace's tracked source files. */
+/** Capture a checkpoint of the workspace's tracked source files. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Checkpoint.
+ * @param label - the label to record with the entry.
+ */
 export async function engineeringCheckpointCapture(host: EngineeringRemotesHost, sessionId: string, label: string): Promise<FreeCodeGoEngineeringCheckpoint> {
   if (typeof label !== 'string' || label.trim() === '' || label.length > 160) throw new Error('engineering checkpoint label is invalid')
   return host.engineering.checkpointCapture(engineeringMemoryCwd(host, sessionId), label)
 }
 
-/** List this workspace's checkpoints, newest first. */
+/** List this workspace's checkpoints, newest first. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Checkpoint rows, in backend order.
+ */
 export function engineeringCheckpointList(host: EngineeringRemotesHost, sessionId: string): readonly FreeCodeGoEngineeringCheckpoint[] {
   return host.engineering.checkpointList(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Restore the workspace to a checkpoint. */
+/** Restore the workspace to a checkpoint. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Checkpoint Restore Result.
+ * @param id - id of the checkpoint to restore.
+ */
 export async function engineeringCheckpointRestore(host: EngineeringRemotesHost, sessionId: string, id: string): Promise<FreeCodeGoEngineeringCheckpointRestoreResult> {
   if (typeof id !== 'string' || !/^ckpt_[a-f0-9]{24}$/u.test(id)) throw new Error('engineering checkpoint id is invalid')
   return host.engineering.checkpointRestore(engineeringMemoryCwd(host, sessionId), id)
 }
 
-/** Preview what restoring one checkpoint would change, without touching files. */
+/** Preview what restoring one checkpoint would change, without touching files. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Checkpoint Diff.
+ * @param id - id of the checkpoint to preview.
+ */
 export function engineeringCheckpointDiff(host: EngineeringRemotesHost, sessionId: string, id: string): FreeCodeGoEngineeringCheckpointDiff {
   if (typeof id !== 'string' || !/^ckpt_[a-f0-9]{24}$/u.test(id)) throw new Error('engineering checkpoint id is invalid')
   return host.engineering.checkpointDiff(engineeringMemoryCwd(host, sessionId), id)
 }
 
-/** Pin or unpin one checkpoint; pinned ones survive the retention cap. */
+/** Pin or unpin one checkpoint; pinned ones survive the retention cap. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @param id - id of the checkpoint to pin or unpin.
+ * @param pinned - the pin state to store.
+ * @returns the pin state now stored.
+ */
 export function engineeringCheckpointSetPinned(host: EngineeringRemotesHost, sessionId: string, id: string, pinned: boolean): { readonly pinned: boolean } {
   if (typeof id !== 'string' || !/^ckpt_[a-f0-9]{24}$/u.test(id)) throw new Error('engineering checkpoint id is invalid')
   if (typeof pinned !== 'boolean') throw new Error('engineering checkpoint pin flag is invalid')
   return host.engineering.checkpointSetPinned(engineeringMemoryCwd(host, sessionId), id, pinned)
 }
 
+/**
+ * Delete one checkpoint manifest.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @param id - id of the checkpoint to delete.
+ * @returns true once the manifest is gone.
+ */
 export function engineeringCheckpointRemove(host: EngineeringRemotesHost, sessionId: string, id: string): { readonly deleted: true } {
   if (typeof id !== 'string' || !/^ckpt_[a-f0-9]{24}$/u.test(id)) throw new Error('engineering checkpoint id is invalid')
   return host.engineering.checkpointRemove(engineeringMemoryCwd(host, sessionId), id)
 }
 
-/** Status for the fixed official Graphify Runtime. This check does not start Python. */
+/** Status for the fixed official Graphify Runtime. This check does not start Python. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Graph Runtime Status.
+ */
 export function engineeringGraphRuntimeStatus(host: EngineeringRemotesHost): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
   return host.engineering.graphRuntimeStatus()
 }
 
-/** Supported private Graphify Runtime installation sources for this platform. */
+/** Supported private Graphify Runtime installation sources for this platform. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Graph Runtime Package rows, in backend order.
+ */
 export function engineeringGraphRuntimePackages(host: EngineeringRemotesHost): Promise<readonly FreeCodeGoEngineeringGraphRuntimePackage[]> {
   return host.engineering.graphRuntimePackages()
 }
 
-/** Install the fixed official Graphify Wheel into a plugin-private Python environment. */
+/** Install the fixed official Graphify Wheel into a plugin-private Python environment. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Graph Runtime Status.
+ * @param input - the Python package to install, and the interpreter when an existing one is reused.
+ */
 export function engineeringGraphRuntimeInstall(host: EngineeringRemotesHost, input: { readonly packageId: 'managed-uv-python' | 'existing-python'; readonly pythonPath?: string }): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
   return host.engineering.graphRuntimeInstall(validateEngineeringGraphRuntimeInstall(input))
 }
 
-/** Remove only the plugin-owned Graphify Runtime; project graphs remain preserved. */
+/** Remove only the plugin-owned Graphify Runtime; project graphs remain preserved. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Graph Runtime Status.
+ */
 export function engineeringGraphRuntimeRemove(host: EngineeringRemotesHost): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
   return host.engineering.graphRuntimeRemove()
 }
 
-/** Read the current workspace's Graphify output state without scanning the workspace. */
+/** Read the current workspace's Graphify output state without scanning the workspace. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Graph Project Status.
+ */
 export function engineeringGraphProjectStatus(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
   return host.engineering.graphProjectStatus(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Build the official Graphify code graph into DSH_HOME, never into the workspace. */
+/** Build the official Graphify code graph into DSH_HOME, never into the workspace. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Graph Project Status.
+ * @param request - whether the existing graph is rebuilt by force.
+ */
 export function engineeringGraphBuild(host: EngineeringRemotesHost, sessionId: string, request?: { readonly force?: boolean }): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
   if (request !== undefined && (request === null || typeof request !== 'object' || Array.isArray(request) || (request.force !== undefined && typeof request.force !== 'boolean'))) throw new Error('engineering code graph build request is invalid')
   return host.engineering.graphBuild(engineeringMemoryCwd(host, sessionId), request?.force === true)
 }
 
+/**
+ * Refresh this workspace's Graphify graph from what changed since the last build.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the graph project status.
+ */
 export function engineeringGraphUpdate(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
   return host.engineering.graphUpdate(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Abort only the plugin-owned Graphify process tree associated with this workspace. */
+/** Abort only the plugin-owned Graphify process tree associated with this workspace. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns true once the plugin-owned build process tree was aborted.
+ */
 export function engineeringGraphCancel(host: EngineeringRemotesHost, sessionId: string): { readonly cancelled: boolean } {
   return host.engineering.graphCancel(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Provide a bounded graph projection to compatible Canvas plugins without leaking raw graph JSON. */
+/** Provide a bounded graph projection to compatible Canvas plugins without leaking raw graph JSON. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Canvas Graph.
+ * @param request - the node budget for this projection.
+ */
 export function engineeringGraphCanvas(host: EngineeringRemotesHost, sessionId: string, request?: { readonly maxNodes?: number }): Promise<FreeCodeGoEngineeringCanvasGraph> {
   if (request !== undefined && (request === null || typeof request !== 'object' || Array.isArray(request) || (request.maxNodes !== undefined && (!Number.isInteger(request.maxNodes) || request.maxNodes < 1 || request.maxNodes > 400)))) throw new Error('engineering graph canvas request is invalid')
   return host.engineering.graphCanvas(engineeringMemoryCwd(host, sessionId), request?.maxNodes)
 }
 
+/**
+ * Drop this workspace's Graphify graph and its caches.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the graph project status.
+ */
 export function engineeringGraphClearProject(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
   return host.engineering.graphClearProject(engineeringMemoryCwd(host, sessionId))
 }
@@ -594,48 +796,81 @@ export function engineeringGraphClearProject(host: EngineeringRemotesHost, sessi
  * environment, and it exposes no `existing-python`/path-based source.
  */
 
-/** Status for the self-contained CodeGraph Runtime. This check starts no process. */
+/** Status for the self-contained CodeGraph Runtime. This check starts no process. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Code Graph Runtime Status.
+ */
 export function engineeringCodeGraphRuntimeStatus(host: EngineeringRemotesHost): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
   return host.engineering.codeGraphRuntimeStatus()
 }
 
-/** The verified CodeGraph platform bundle for this OS/CPU, when one exists. */
+/** The verified CodeGraph platform bundle for this OS/CPU, when one exists. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Code Graph Runtime Package rows, in backend order.
+ */
 export function engineeringCodeGraphRuntimePackages(host: EngineeringRemotesHost): Promise<readonly FreeCodeGoEngineeringCodeGraphRuntimePackage[]> {
   return host.engineering.codeGraphRuntimePackages()
 }
 
-/** Download, SHA-256 verify, and install the official CodeGraph bundle into a plugin-private directory. */
+/** Download, SHA-256 verify, and install the official CodeGraph bundle into a plugin-private directory. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Code Graph Runtime Status.
+ */
 export function engineeringCodeGraphRuntimeInstall(host: EngineeringRemotesHost): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
   return host.engineering.codeGraphRuntimeInstall()
 }
 
-/** Remove only the plugin-owned CodeGraph Runtime; every workspace index is left in place. */
+/** Remove only the plugin-owned CodeGraph Runtime; every workspace index is left in place. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the engineering Code Graph Runtime Status.
+ */
 export function engineeringCodeGraphRuntimeRemove(host: EngineeringRemotesHost): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
   return host.engineering.codeGraphRuntimeRemove()
 }
 
-/** Read this workspace's CodeGraph index state without scanning the workspace. */
+/** Read this workspace's CodeGraph index state without scanning the workspace. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Code Graph Project Status.
+ */
 export function engineeringCodeGraphProjectStatus(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
   return host.engineering.codeGraphProjectStatus(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Initialize or refresh the workspace index; `force` asks for the full rebuild instead of an incremental sync. */
+/** Initialize or refresh the workspace index; `force` asks for the full rebuild instead of an incremental sync. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Code Graph Project Status.
+ * @param request - whether the existing index is rebuilt by force.
+ */
 export function engineeringCodeGraphBuild(host: EngineeringRemotesHost, sessionId: string, request?: { readonly force?: boolean }): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
   if (request !== undefined && (request === null || typeof request !== 'object' || Array.isArray(request) || (request.force !== undefined && typeof request.force !== 'boolean'))) throw new Error('engineering CodeGraph build request is invalid')
   return host.engineering.codeGraphBuild(engineeringMemoryCwd(host, sessionId), request?.force === true)
 }
 
-/** Incrementally absorb file changes into an existing workspace index. */
+/** Incrementally absorb file changes into an existing workspace index. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Code Graph Project Status.
+ */
 export function engineeringCodeGraphSync(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
   return host.engineering.codeGraphSync(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Abort only the plugin-owned CodeGraph process tree associated with this workspace. */
+/** Abort only the plugin-owned CodeGraph process tree associated with this workspace. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns true once the plugin-owned indexing process tree was aborted.
+ */
 export function engineeringCodeGraphCancel(host: EngineeringRemotesHost, sessionId: string): { readonly cancelled: boolean } {
   return host.engineering.codeGraphCancel(engineeringMemoryCwd(host, sessionId))
 }
 
-/** Delete only this workspace's plugin-owned CodeGraph index directory. */
+/** Delete only this workspace's plugin-owned CodeGraph index directory. 
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param sessionId - the Harness session this operation acts on.
+ * @returns the engineering Code Graph Project Status.
+ */
 export function engineeringCodeGraphClearProject(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
   return host.engineering.codeGraphClearProject(engineeringMemoryCwd(host, sessionId))
 }

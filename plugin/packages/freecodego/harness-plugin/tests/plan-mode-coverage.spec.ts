@@ -1,6 +1,6 @@
 /**
- * Coverage: every plugin tool is classified for Plan Mode, and every entry names
- * a tool that exists.
+ * Coverage: the fence answers for every tool, and the default that catches the
+ * rest is still a refusal.
  *
  * Why this file exists
  * --------------------
@@ -16,194 +16,73 @@
  * two most direct ways to learn what a workspace actually contains — were both
  * unclassified, so Plan Mode refused exactly the tools its own guidance tells the
  * model to use. Nothing failed: the fence worked, the tests passed, and the
- * behaviour was wrong. What was missing was a check that the three lists cover
- * the tools that exist, which the module header claimed and no test performed.
+ * behaviour was wrong.
  *
- * The two directions are both load-bearing:
- *
- *  - **Every discovered tool must be classified.** An omission is a refusal the
- *    user did not ask for (read-only tool) or a fence that only holds by accident
- *    (mutating tool).
- *  - **Every classified name must be a discovered tool.** A typo in the allow
- *    list means the real tool is refused; a typo in the deny list means a mutating
- *    tool is refused only because unclassified ones are. Neither is visible
- *    without this direction.
+ * Where the completeness is proven has since moved. The names live in
+ * `src/tool-manifest.ts`, and `tests/tool-manifest.spec.ts` is what holds that table
+ * against the registration literals discovered in this package — in both
+ * directions, so a tool with no row and a row with no tool are both failures.
+ * What is left to check *here* is the fence's own reading: that a classified name
+ * produces the answer the classification states, for every row, and that a name
+ * nobody classified still falls into the refusal rather than past it.
  *
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/tests/plan-mode-coverage
  */
-
-import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { describe, expect, test } from 'vitest'
 
 import {
   PLAN_MODE_ALLOWED_PLUGIN_TOOLS,
   PLAN_MODE_MUTATING_PLUGIN_TOOLS,
-  PLAN_MODE_PLUGIN_TOOL_PREFIXES,
-  PLAN_MODE_UNPREFIXED_PLUGIN_TOOLS,
   planModeRefusal,
 } from '../src/plan-mode.ts'
+import { PLUGIN_TOOL_MANIFEST, pluginToolsWithPlanMode } from '../src/tool-manifest.ts'
 
-const sourceRoot = fileURLToPath(new URL('../src', import.meta.url))
-
-/**
- * Plugin-prefixed string literals that are deliberately *not* tool names.
- *
- * Enumerated rather than pattern-matched, so a new one has to be a decision
- * someone wrote down instead of a name the probe quietly skipped. Each entry says
- * where it comes from, because that is what makes it checkable.
- */
-const NOT_TOOLS: Readonly<Record<string, string>> = {
-  // A model id in the evaluation corpus, not a tool.
-  agnes_video_v3: 'a media model id in engineering-eval.ts',
-  // MCP tool names offered to the native engines, which never pass through the
-  // plugin's tool registry and so are not the fence's subject.
-  freecodego_skill_discover: 'an MCP tool name rendered for the Claude runtime',
-  freecodego_skill_load: 'an MCP tool name rendered for the Claude runtime',
-  // A harness tool this plugin does not register. Its rule on the allow list is
-  // inert — the fence only consults that list for names it recognises as the
-  // plugin's own — but it is kept because it states the intent, and the reverse
-  // direction below has to know that it names nothing this plugin owns.
-  tool_search: 'a Harness tool (deferred tool schemas), not one this plugin registers',
-}
-
-/** Every `.ts` file under a directory, recursively. */
-async function sources(directory: string): Promise<readonly string[]> {
-  const entries = await readdir(directory, { withFileTypes: true })
-  const files: string[] = []
-  for (const entry of entries) {
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) files.push(...await sources(path))
-    else if (entry.name.endsWith('.ts')) files.push(path)
-  }
-  return files
-}
-
-/**
- * The tool names this plugin registers, discovered from its own source.
- *
- * Discovered rather than imported because the definitions are not exported in one
- * place: they are literals spread across the modules that own them, and several
- * are constants referenced by name. Scanning the literals is what makes a missing
- * entry in either list a failure rather than something a reviewer has to notice.
- * @returns the plugin-prefixed names, sorted, with the documented exceptions removed.
- */
-async function discoveredTools(): Promise<readonly string[]> {
-  const pattern = new RegExp(`'(${PLAN_MODE_PLUGIN_TOOL_PREFIXES.map(prefix => prefix.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('|')})[a-z0-9_]+'`, 'gu')
-  const found = new Set<string>()
-  for (const file of await sources(sourceRoot)) {
-    const text = await readFile(file, 'utf8')
-    for (const match of text.matchAll(pattern)) found.add(match[0].slice(1, -1))
-  }
-  // Tools named through a constant carry no literal at the definition site, so
-  // the prefix scan cannot see them. Resolving `name: SOME_CONST` back to its
-  // initializer is what makes the one tool in that shape — `edit_and_run` —
-  // visible to this probe, and a fence that only reads prefixes invisible to it.
-  for (const file of await sources(sourceRoot)) {
-    const text = await readFile(file, 'utf8')
-    for (const match of text.matchAll(/^\s+name: ([A-Z][A-Z0-9_]*),/gmu)) {
-      const constant = match[1]
-      const definition = new RegExp(`(?:export )?const ${constant} = '([a-z0-9_]+)'`, 'u').exec(text)
-      if (definition?.[1] !== undefined) found.add(definition[1])
-    }
-  }
-  // Tools registered under a name with **no** plugin prefix carry no prefix to scan
-  // for, so the two passes above cannot see them. `edit_and_run` is reached by the
-  // constant resolution; `inspect`, `spill_recall` and `read_document` are literals
-  // in the registration shape and were reached by neither, which is how they sat
-  // outside every classification while being callable during planning. Swept here
-  // so a new unprefixed tool is a failure rather than an unlooked-at name.
-  for (const file of await sources(sourceRoot)) {
-    const text = await readFile(file, 'utf8')
-    for (const match of text.matchAll(/^\s+name: '([a-z0-9_]+)',/gmu)) {
-      const name = match[1]
-      if (name !== undefined) found.add(name)
-    }
-  }
-  for (const name of Object.keys(NOT_TOOLS)) found.delete(name)
-  return [...found].sort()
-}
-
-describe('Plan Mode classification covers every plugin tool', () => {
-  test('nothing is left unclassified', async () => {
-    const classified = new Set([...PLAN_MODE_ALLOWED_PLUGIN_TOOLS, ...PLAN_MODE_MUTATING_PLUGIN_TOOLS])
-    const unclassified = (await discoveredTools()).filter(name => !classified.has(name))
-    expect(unclassified, `unclassified plugin tools: ${unclassified.join(', ')}`).toEqual([])
-  })
-
-  test('every registered name carries a prefix the discovery can see', async () => {
-    // The discovery is prefix-driven, so a tool registered under a prefix that is
-    // not on the list is invisible to it — and invisible means *allowed* while
-    // planning, because the fence's "unclassified is refused" branch is reached by
-    // prefix in the first place. Today every literal name carries a declared
-    // prefix, and this keeps it that way rather than relying on the next author to
-    // remember the list. `edit_and_run` is registered without any prefix and is
-    // found through its constant by the resolution above, which is why the sweep
-    // below reads literals only.
-    const exempt = new Set(Object.keys(NOT_TOOLS))
-    const declared = new Set(PLAN_MODE_UNPREFIXED_PLUGIN_TOOLS)
-    const offenders: string[] = []
-    // The discovery's own answer, so a name registered through a constant is not
-    // mistaken for a stale declaration.
-    const seen = new Set(await discoveredTools())
-    for (const file of await sources(sourceRoot)) {
-      const text = await readFile(file, 'utf8')
-      for (const match of text.matchAll(/^\s+name: '([a-z0-9_]+)',/gmu)) {
-        const name = match[1]
-        if (name === undefined || exempt.has(name)) continue
-        if (PLAN_MODE_PLUGIN_TOOL_PREFIXES.some(prefix => name.startsWith(prefix))) continue
-        if (declared.has(name)) continue
-        offenders.push(`${name} (${file.slice(sourceRoot.length + 1).replaceAll('\\', '/')})`)
+describe('the fence answers for every classified tool', () => {
+  test('an allowed name runs while planning, and a refused name does not', () => {
+    // Read from the manifest rather than from the two exported lists, so this case
+    // checks the fence rather than restating the table: `planModeRefusal` is the
+    // one place the answer is produced, and every row has to come out of it.
+    for (const row of PLUGIN_TOOL_MANIFEST) {
+      const refusal = planModeRefusal({ mode: 'plan', tool: row.name })
+      if (row.planMode === 'allow') {
+        expect(refusal, `${row.name} is allowed by the manifest but refused by the fence`).toBeUndefined()
+      } else {
+        expect(refusal?.reason, `${row.name} is refused by the manifest but the fence answered ${refusal?.reason ?? 'nothing'}`).toBe('mutating-tool')
       }
+      // And the mode that is not fenced answers nothing at all for the same name,
+      // which is the half that keeps this from passing on a fence that refuses
+      // everything.
+      expect(planModeRefusal({ mode: 'execute', tool: row.name }), `${row.name} in execute mode`).toBeUndefined()
     }
-    expect(offenders, `registered names no prefix can discover: ${offenders.join(', ')}`).toEqual([])
-    // The other direction, so a declaration cannot outlive its tool: every name on
-    // the unprefixed list is a literal this sweep actually saw, and is classified.
-    const classified = new Set([...PLAN_MODE_ALLOWED_PLUGIN_TOOLS, ...PLAN_MODE_MUTATING_PLUGIN_TOOLS])
-    const stale = PLAN_MODE_UNPREFIXED_PLUGIN_TOOLS.filter(name => !seen.has(name) || !classified.has(name))
-    expect(stale, `unprefixed names with no registered tool, or none classified: ${stale.join(', ')}`).toEqual([])
+    // The control: neither list is empty, so the loop above cannot pass vacuously.
+    expect(PLAN_MODE_ALLOWED_PLUGIN_TOOLS.length).toBeGreaterThan(5)
+    expect(PLAN_MODE_MUTATING_PLUGIN_TOOLS.length).toBeGreaterThan(5)
+    expect(pluginToolsWithPlanMode('allow').length + pluginToolsWithPlanMode('refuse').length).toBe(PLUGIN_TOOL_MANIFEST.length)
   })
 
-  test('every classified name is a tool that exists', async () => {
-    const discovered = new Set(await discoveredTools())
-    const exempt = new Set(Object.keys(NOT_TOOLS))
-    const stale = [...PLAN_MODE_ALLOWED_PLUGIN_TOOLS, ...PLAN_MODE_MUTATING_PLUGIN_TOOLS]
-      .filter(name => !discovered.has(name) && !exempt.has(name))
-    expect(stale, `classified names with no registered tool: ${stale.join(', ')}`).toEqual([])
-  })
-
-  test('a tool is never on both sides of the fence', () => {
-    const mutating = new Set(PLAN_MODE_MUTATING_PLUGIN_TOOLS)
-    expect(PLAN_MODE_ALLOWED_PLUGIN_TOOLS.filter(name => mutating.has(name))).toEqual([])
-    expect(new Set(PLAN_MODE_ALLOWED_PLUGIN_TOOLS).size).toBe(PLAN_MODE_ALLOWED_PLUGIN_TOOLS.length)
-    expect(new Set(PLAN_MODE_MUTATING_PLUGIN_TOOLS).size).toBe(PLAN_MODE_MUTATING_PLUGIN_TOOLS.length)
-  })
-
-  test('the exceptions are still real, and still not tools', async () => {
-    // Not vacuous: an entry in `NOT_TOOLS` that no longer appears anywhere would
-    // be an exemption nobody needs, and exemptions accumulate silently.
-    const pattern = new RegExp(`'(${Object.keys(NOT_TOOLS).join('|')})'`, 'gu')
-    const seen = new Set<string>()
-    for (const file of await sources(sourceRoot)) {
-      const text = await readFile(file, 'utf8')
-      for (const match of text.matchAll(pattern)) {
-        // `noUncheckedIndexedAccess`: a capture group is possibly absent by type, and
-        // the pattern is built from the keys above, so an absent one would mean the
-        // regex changed rather than the file did.
-        const captured = match[1]
-        if (captured !== undefined) seen.add(captured)
-      }
-    }
-    expect([...seen].sort()).toEqual(Object.keys(NOT_TOOLS).sort())
+  test('a prefixed tool nobody classified is still refused', () => {
+    // The default has to keep working: this is the property that makes the manifest
+    // safe to maintain, because a tool added without a row is refused loudly rather
+    // than callable silently.
+    expect(planModeRefusal({ mode: 'plan', tool: 'engineering_brand_new' })?.reason).toBe('unclassified-tool')
+    // The other shape is deliberately *not* refused, and the difference is worth
+    // stating because it looks like a hole: a name with no declared prefix is not
+    // something this fence can attribute to the plugin, so `brand_new_tool` falls
+    // through the way any Harness tool does. What protects that shape is the suite
+    // rather than the default — `tests/tool-manifest.spec.ts` reads the registration
+    // literals and fails on a tool with no row, so a new unprefixed tool cannot ship
+    // as an unclassified one, and the manifest is what makes it the plugin's own.
+    // Relying on this fence for it is what left `inspect`, `spill_recall` and
+    // `read_document` callable while planning for as long as nobody read the file.
+    expect(planModeRefusal({ mode: 'plan', tool: 'brand_new_tool' })).toBeUndefined()
   })
 })
 
 describe('the tools the finding was about', () => {
   test('a mutating tool with no plugin prefix is still refused', () => {
-    // The hole this closes: the fence found tools by prefix, so `edit_and_run` —
-    // which edits a file and runs a command — was callable while planning.
+    // The hole this closes: the fence found tools by prefix, so `edit_and_run` — which
+    // edits a file and runs a command — was callable while planning.
     expect(planModeRefusal({ mode: 'plan', tool: 'edit_and_run' })?.reason).toBe('mutating-tool')
     expect(planModeRefusal({ mode: 'execute', tool: 'edit_and_run' })).toBeUndefined()
   })
@@ -218,11 +97,5 @@ describe('the tools the finding was about', () => {
     const refusal = planModeRefusal({ mode: 'plan', tool: 'engineering_hunk_revert' })
     expect(refusal?.reason).toBe('mutating-tool')
     expect(refusal?.message).toContain('Plan Mode')
-  })
-
-  test('a tool nobody classified is still refused', () => {
-    // The default has to keep working: this is the property that makes the allow
-    // list safe to maintain.
-    expect(planModeRefusal({ mode: 'plan', tool: 'engineering_brand_new' })?.reason).toBe('unclassified-tool')
   })
 })

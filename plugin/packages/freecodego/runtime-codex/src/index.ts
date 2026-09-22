@@ -12,6 +12,9 @@ export interface CodexWorkerLaunchOptions {
   readonly stateDirectory: string
 }
 
+/**
+ * Launch options for the Codex root runtime, including the package-resolved worker entry.
+ */
 export interface CodexRootRuntimeOptions extends CodexWorkerLaunchOptions {
   /** Package-resolved worker entry, never a path from user settings. */
   readonly workerPath: string
@@ -19,7 +22,11 @@ export interface CodexRootRuntimeOptions extends CodexWorkerLaunchOptions {
   readonly capabilitiesForTurn?: () => unknown
 }
 
-/** Open one real Codex root session through the plugin-owned worker sidecar. */
+/** Open one real Codex root session through the plugin-owned worker sidecar. 
+ * @param runtime - worker launch options and the per-turn capability source.
+ * @param options - the Host's root-agent create options, minus the engine it fixes here.
+ * @returns the opened native agent session, configured for each turn when a capability source was given.
+ */
 export async function openCodexRootRuntime(
   runtime: CodexRootRuntimeOptions,
   options: Omit<NativeRootAgentCreateOptions, 'engine'>,

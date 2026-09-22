@@ -20,7 +20,16 @@ CodeGraph is licensed under MIT. Runtime installation preserves the license and 
 
 ## Matt Pocock's Skills
 
-`assets/engineering/skills` vendors 21 Skill directories from [mattpocock/skills](https://github.com/mattpocock/skills) at commit `3cca18b368ae95cdbdebbff572ccafa662551015`: `ask-matt`, `code-review`, `codebase-design`, `domain-modeling`, `grill-me`, `grill-with-docs`, `grilling`, `handoff`, `implement`, `improve-codebase-architecture`, `prototype`, `resolving-merge-conflicts`, `setup-matt-pocock-skills`, `to-questionnaire`, `to-spec`, `to-tickets`, `triage`, `wait-what`, `wayfinder`, `wizard`, and `writing-for-agents`. Four upstream Skills are deliberately not vendored because they duplicate the bundled `engineering-tdd`, `engineering-debug`, and `research` Skills, or (`teach`) sit outside the engineering scope; `ask-matt` and `implement` carry a local edit repointing those references, and every other vendored file is byte-for-byte upstream.
+This package vendors 21 Skill directories from [mattpocock/skills](https://github.com/mattpocock/skills) at commit `3cca18b368ae95cdbdebbff572ccafa662551015`: `ask-matt`, `code-review`, `codebase-design`, `domain-modeling`, `grill-me`, `grill-with-docs`, `grilling`, `handoff`, `implement`, `improve-codebase-architecture`, `prototype`, `resolving-merge-conflicts`, `setup-matt-pocock-skills`, `to-questionnaire`, `to-spec`, `to-tickets`, `triage`, `wait-what`, `wayfinder`, `wizard`, and `writing-for-agents`. Four upstream Skills are deliberately not vendored because they duplicate the bundled `engineering-tdd`, `engineering-debug`, and `research` Skills, or (`teach`) sit outside the engineering scope.
+
+Sixteen of those directories ship under `assets/engineering/skills`; the five the default-on starter pack mounts (`grill-me`, `grilling`, `handoff`, `to-questionnaire`, `wait-what`) ship under `assets/engineering/skills-starter`. The pack therefore spans two asset roots — re-vendoring has to touch both, and neither root on its own holds the whole pack.
+
+Local adaptations, all listed here so a future upstream sync can be diffed:
+
+- `ask-matt` and `implement` repoint the Skill references named above.
+- `grilling`'s round template prefixed each question with `❓` and each recommended answer with `➡️`. Bundled Skill text is rendered in the Skills page, copied into user workspaces, and read as prompt text, so emoji presentation is not something this product controls: on the terminals it runs in, `❓` arrives at double width or as a box. The question glyph is **dropped** — `**Q1** -` already labels the question — and the answer marker becomes `→`, a text-presentation arrow. `tests/engineering.spec.ts` sweeps every bundled asset for `\p{Emoji_Presentation}` so a future sync cannot quietly put them back.
+
+Every other vendored file is byte-for-byte upstream.
 
 Copyright (c) 2026 Matt Pocock. Licensed under the MIT License:
 
@@ -43,6 +52,7 @@ Local adaptations, all listed here so a future upstream sync can be diffed:
 - `subagent-driven-development` keeps upstream's three git-only helper scripts (`scripts/sdd-workspace`, `scripts/task-brief`, `scripts/review-package`), normalized from CRLF to LF so they run as scripts. They write to git-ignored scratch inside the user's repository and touch nothing else.
 - `subagent-driven-development`'s final-review reference points at the verbatim `final-reviewer-prompt.md` (copied from upstream's `requesting-code-review/code-reviewer.md`) instead of a Skill this package does not ship.
 - One sentence describing workspace cleanup was reworded to avoid a recursive-delete command literal, which the bundled asset audit treats as a blocking finding.
+- Verdict markers were spelled out: `✅`/`❌`/`⚠️` became `PASS`/`FAIL`/`UNVERIFIABLE` (and `❌ WRONG:`/`✅ RIGHT:` became `WRONG:`/`RIGHT:`) in `receiving-code-review`, `dispatching-parallel-agents`, `subagent-driven-development`, and that Skill's `task-reviewer-prompt.md`. The summary verdict is the one line a reader acts on, and an emoji-presentation glyph is exactly the character a terminal may draw as a box or at double width; the reviewer template now defines the vocabulary in the same edit, so the Skill and its template still agree. `tests/engineering.spec.ts` fails if any bundled asset ships one again.
 
 Copyright (c) 2025-2026 Jesse Vincent and the Superpowers contributors. Licensed under the MIT License:
 

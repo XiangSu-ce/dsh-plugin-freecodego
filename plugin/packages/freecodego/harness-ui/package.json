@@ -5,7 +5,7 @@
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/XiangSu-ce/dsh-freecodego.git",
+    "url": "git+https://github.com/XiangSu-ce/dsh-plugin-freecodego.git",
     "directory": "packages/freecodego/harness-ui"
   },
   "type": "module",
@@ -67,6 +67,8 @@
     "@deepseek-ai/dsh-subagent": "workspace:^",
     "@deepseek-ai/dsh-typert-protocol": "workspace:^",
     "@types/react": "~18.3.1",
-    "react": "^18.2.0"
+    "@types/react-dom": "~18.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   }
 }

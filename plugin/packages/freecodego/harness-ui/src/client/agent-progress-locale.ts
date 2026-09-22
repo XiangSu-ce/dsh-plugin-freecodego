@@ -2,6 +2,9 @@
 
 export const NS = 'freecodego.agent-progress'
 
+/**
+ * The localized strings for delegated-Agent progress, keyed by message id.
+ */
 export interface ProgressDictionary {
   'summary.running': string
   'summary.finished': string
@@ -21,4 +24,7 @@ export interface ProgressDictionary {
   focusChain: string
 }
 
+/**
+ * The message ids a progress dictionary must carry.
+ */
 export type ProgressKey = keyof ProgressDictionary

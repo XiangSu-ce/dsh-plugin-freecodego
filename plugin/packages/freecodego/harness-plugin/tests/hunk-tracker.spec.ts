@@ -354,6 +354,31 @@ describe('placing a hunk that moved', () => {
     const result = tracker.revert(hunk?.id ?? '', '')
     expect(result.ok && result.text).toBe('a\nb\nc\n')
   })
+
+  it('gives each line it puts back the ending that line had', () => {
+    // One region can span lines that disagree about their endings, and restoring
+    // them was one separator's job: the hunk recorded only the *last* removed line's
+    // ending and spelled every line it put back with it. The lines are back either
+    // way, so this reads as a whole-file diff of the two lines the call touched.
+    const tracker = new HunkTracker()
+    tracker.record({ file: 'src/a.ts', callId: 'call-1', before: 'a\none\r\ntwo\nb\n', after: 'a\nb\n' })
+    const hunk = tracker.hunks()[0]
+    expect(hunk?.removedSeparators).toEqual(['\r\n', '\n'])
+    const result = tracker.revert(hunk?.id ?? '', 'a\nb\n')
+    expect(result.ok && result.text).toBe('a\none\r\ntwo\nb\n')
+  })
+
+  it('puts a CRLF tail back as CRLF', () => {
+    // The same defect on a file that is uniform about its endings, which is the
+    // shape a Windows checkout has: deleting the last lines of a CRLF file and
+    // undoing it used to return the lines with LF endings — a file whose every line
+    // differs from the pre-image in git's eyes, from an edit nobody made.
+    const tracker = new HunkTracker()
+    tracker.record({ file: 'src/a.ts', callId: 'call-1', before: 'a\r\nb\r\nc', after: 'a' })
+    const hunk = tracker.hunks()[0]
+    const result = tracker.revert(hunk?.id ?? '', 'a')
+    expect(result.ok && result.text).toBe('a\r\nb\r\nc')
+  })
 })
 
 describe('round trips over generated texts', () => {
@@ -386,31 +411,57 @@ describe('round trips over generated texts', () => {
 
   it('reproduces the pre-image from every generated edit', () => {
     const rand = stream(20260919)
+    // Every generated line's text is unique, and that is the one thing the
+    // generator keeps away from: two identical lines carrying different endings
+    // describe their two revisions twice over — "the first was removed" and "the
+    // second was removed" are both true of the same bytes — so a mismatch there
+    // would be this property's oracle failing rather than the tracker's answer
+    // being wrong. Endings stay mixed, because they are the axis it is about.
+    let serial = 0
+    const fresh = (): Spelled => {
+      serial += 1
+      return { text: `${pick(WORDS, rand)}${String(serial)}`, separator: pick(ENDINGS, rand) }
+    }
     const generated = (): readonly Spelled[] => {
-      const count = 1 + rand(4)
+      const count = 1 + rand(6)
       const entries: Spelled[] = []
-      for (let index = 0; index < count; index += 1) entries.push({ text: pick(WORDS, rand), separator: pick(ENDINGS, rand) })
-      entries.push({ text: pick(WORDS, rand), separator: rand(3) === 0 ? '' : pick(ENDINGS, rand) })
+      for (let index = 0; index < count; index += 1) entries.push(fresh())
+      const tail = fresh()
+      entries.push({ text: tail.text, separator: rand(3) === 0 ? '' : tail.separator })
       return mend(entries, rand)
     }
-    const edited = (entries: readonly Spelled[]): readonly Spelled[] => {
+    // The operations are the two shapes a single one could not reach. A **run** of
+    // removed lines is the only place a region's own lines can disagree about
+    // their endings — one line removed is one ending, which is what the tracker
+    // recorded before this covered a region. And a round that **replaces the tail**
+    // is the only place a line the call kept gains an ending, because the line that
+    // used to end the file no longer does.
+    const edited = (entries: readonly Spelled[], round: number): readonly Spelled[] => {
       const next = [...entries]
-      const at = rand(next.length)
-      const operation = rand(3)
-      if (operation === 0) next.splice(at, 0, { text: pick(WORDS, rand), separator: pick(ENDINGS, rand) })
-      else if (operation === 1) next.splice(at, 1, { text: pick(WORDS, rand), separator: pick(ENDINGS, rand) })
-      else {
-        next.splice(at, 1)
-        if (rand(2) === 0) next.splice(rand(next.length + 1), 0, { text: pick(WORDS, rand), separator: pick(ENDINGS, rand) })
+      for (let count = 0; count < 1 + rand(3); count += 1) {
+        const at = rand(next.length)
+        // The operation is taken from the round rather than from the stream: the
+        // stream's low bits are correlated enough that a drawn operation leaves
+        // whole shapes out — a measured run of 1,200 rounds produced no region of
+        // more than one removed line at all, which is the shape this property
+        // exists to check. Rotating it is what makes every shape appear.
+        const operation = (round + count) % 4
+        if (operation === 0) next.splice(at, 0, fresh())
+        else if (operation === 1) next.splice(at, 1, fresh())
+        else if (operation === 2 && next.length > 1) next.splice(at, Math.min(next.length - at, 1 + rand(3)))
+        else if (next.length > 1) {
+          next.splice(at, Math.min(next.length - at, 1 + rand(3)))
+          if (next.length > 0 && rand(2) === 0) next.splice(rand(next.length + 1), 0, fresh())
+        } else next.splice(at, 0, fresh())
       }
       return next.length === 0 ? next : mend(next, rand)
     }
 
     let rounds = 0
-    for (let round = 0; round < 400; round += 1) {
+    for (let round = 0; round < 1_200; round += 1) {
       const entries = generated()
       const before = respell(entries)
-      const after = respell(edited(entries))
+      const after = respell(edited(entries, round))
       if (before === after) continue
       const tracker = new HunkTracker()
       const hunks = tracker.record({ file: 'a.ts', callId: 'call-1', before, after })
@@ -447,7 +498,7 @@ describe('round trips over generated texts', () => {
 
     // A generator that stopped producing edits to check would satisfy every
     // assertion above while testing nothing.
-    expect(rounds).toBeGreaterThan(200)
+    expect(rounds).toBeGreaterThan(600)
   })
 })
 

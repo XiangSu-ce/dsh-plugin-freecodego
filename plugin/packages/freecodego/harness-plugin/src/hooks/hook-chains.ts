@@ -53,6 +53,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { isRecord } from '../untrusted-json.ts'
 
 /**
  * The depth of the chain being handled, carried along the async context.
@@ -77,6 +78,13 @@ export type HookChainEventName = 'PostToolUseFailure' | 'TaskCompleted'
 /** The remediation actions a rule may declare. */
 export type HookChainActionKind = 'spawn_fallback_agent' | 'notify_team' | 'warm_remote_capacity'
 
+/**
+ * Which events a rule fires on.
+ *
+ * Every field is a filter and every absent field matches everything, which is what
+ * lets a project write `{ outcomes: ['failed'] }` without having to enumerate the
+ * tools and statuses it does not care about.
+ */
 export interface HookChainCondition {
   /** Match only these tool names. Absent matches every tool. */
   readonly toolNames?: readonly string[]
@@ -86,6 +94,13 @@ export interface HookChainCondition {
   readonly outcomes?: readonly HookChainOutcome[]
 }
 
+/**
+ * One thing a rule does when it fires.
+ *
+ * `target` is deliberately free-form rather than typed per kind: the action kind
+ * decides how it is read, and a discriminated union here would only move the same
+ * validation into the parser's type instead of its body.
+ */
 export interface HookChainAction {
   readonly kind: HookChainActionKind
   /** Free-form target: an agent name, a team name, or a capacity hint. */
@@ -93,6 +108,13 @@ export interface HookChainAction {
   readonly message?: string
 }
 
+/**
+ * One declarative recovery rule.
+ *
+ * A rule states when it matches and what it does, and the guards it may override
+ * are per rule rather than global: one noisy tool needs a longer cooldown without
+ * changing how every other rule is timed.
+ */
 export interface HookChainRule {
   readonly id: string
   /** Per-rule kill switch; absent means enabled. */
@@ -105,6 +127,13 @@ export interface HookChainRule {
   readonly dedupWindowMs?: number
 }
 
+/**
+ * The document a project writes, before this module normalizes it.
+ *
+ * Every field is optional and every default is applied by `normalize`, so a project
+ * can write one rule and nothing else — the parsing of what it *meant* stays in one
+ * place, which is what lets the normalization be tested without a Host.
+ */
 export interface HookChainConfig {
   readonly version?: 1
   readonly enabled?: boolean
@@ -124,13 +153,25 @@ export interface NormalizedHookChainConfig {
   readonly rules: readonly HookChainRule[]
 }
 
+/** How deep a chain may be nested by default, before any project overrides it. */
 export const DEFAULT_MAX_CHAIN_DEPTH = 2
+
+/** How long a rule stays quiet after firing, unless the project overrides it. */
 export const DEFAULT_COOLDOWN_MS = 30_000
+
+/** How long an identical `(event, rule, action)` tuple is suppressed by default. */
 export const DEFAULT_DEDUP_WINDOW_MS = 30_000
+
+/** Hardest nesting a project may ask for; beyond it, a storm is the only outcome. */
 export const MAX_CHAIN_DEPTH = 10
+
 /** Ceiling shared with OpenClaude's config doc; a larger guard window is a typo. */
 export const MAX_GUARD_WINDOW_MS = 24 * 60 * 60 * 1_000
+
+/** Most rule cooldowns one runtime keeps; unbounded, this map is a slow leak. */
 export const MAX_COOLDOWN_ENTRIES = 5_000
+
+/** Most dedup entries one runtime keeps, capped the same way as the cooldowns. */
 export const MAX_DEDUP_ENTRIES = 20_000
 
 const EVENT_NAMES: ReadonlySet<string> = new Set(['PostToolUseFailure', 'TaskCompleted'])
@@ -140,6 +181,13 @@ const ACTION_KINDS: ReadonlySet<string> = new Set(['spawn_fallback_agent', 'noti
 /** Machine-readable reasons a dispatch did nothing. */
 export type HookChainBlockReason = 'disabled' | 'depth' | 'aborted'
 
+/**
+ * What one action did, or why it did nothing.
+ *
+ * A skip carries its reason because "this rule fired nothing" is not actionable:
+ * a cooldown that has not elapsed and a handler that cannot run need different
+ * responses from whoever is reading the dispatch result.
+ */
 export interface HookChainActionRecord {
   readonly ruleId: string
   readonly kind: HookChainActionKind
@@ -148,6 +196,14 @@ export interface HookChainActionRecord {
   readonly reason?: string
 }
 
+/**
+ * What one dispatch did, whether or not it fired anything.
+ *
+ * The result names every rule the dispatch considered, not only the ones it ran:
+ * a dispatch that fired nothing has to be able to say *which* rules it looked at,
+ * because "no recovery happened" is otherwise indistinguishable from "no rule
+ * matched this event".
+ */
 export interface HookChainDispatchResult {
   readonly enabled: boolean
   /** Rule ids that fired their actions in this dispatch. */
@@ -170,6 +226,14 @@ export interface HookChainDispatchResult {
   readonly chainDepth: number
 }
 
+/**
+ * One event being offered to the rules.
+ *
+ * The clock is injectable so the guard windows can be tested without waiting, and
+ * `chainDepth` is optional because the runtime already knows the depth of a nested
+ * dispatch — only a caller acting outside the handler's own async context has to
+ * say where it stands.
+ */
 export interface HookChainDispatchInput {
   readonly event: HookChainEventName
   readonly outcome: HookChainOutcome
@@ -215,12 +279,27 @@ export type HookChainActionHandler = (
 /** `undefined` means the handler acted; `{ skipped }` records why it did not. */
 export type HookChainActionOutcome = { readonly skipped: string } | undefined
 
+/**
+ * The handlers a composition provides, by action kind.
+ *
+ * Every one is optional, and that is a stated property rather than an oversight: a
+ * composition without a team or without a bridge still evaluates rules and reports
+ * them as skipped with a reason, because "fired nothing because it cannot" has to
+ * be visible instead of silently swallowed.
+ */
 export interface HookChainHandlers {
   readonly spawn_fallback_agent?: HookChainActionHandler
   readonly notify_team?: HookChainActionHandler
   readonly warm_remote_capacity?: HookChainActionHandler
 }
 
+/**
+ * What the status panel reports about the chain layer.
+ *
+ * The guard sizes and the counters travel together because they answer one
+ * question: whether this recovery layer is still doing bounded work, or is
+ * quietly accumulating entries while it fires nothing.
+ */
 export interface HookChainStatus {
   readonly enabled: boolean
   readonly ruleCount: number
@@ -237,10 +316,6 @@ function boundedInteger(value: unknown, fallback: number, min: number, max: numb
   const floored = Math.floor(value)
   if (floored < min) return fallback
   return floored > max ? max : floored
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function stringArray(value: unknown, label: string): readonly string[] | undefined {
@@ -337,6 +412,8 @@ function normalizeRule(value: unknown, index: number): HookChainRule {
  * An empty ruleset is valid and dispatch becomes a no-op: that lets a project
  * check in the hook-chains file, keep the feature switched off, and turn it on
  * later without editing the file.
+ * @returns the normalized Hook Chain Config.
+ * @param value - the value to interpret, of unknown shape.
  */
 export function normalizeHookChainConfig(value: unknown): NormalizedHookChainConfig {
   const record = isRecord(value) ? value : {}
@@ -362,7 +439,9 @@ export function normalizeHookChainConfig(value: unknown): NormalizedHookChainCon
   }
 }
 
-/** A config that does nothing, used before the first configure() and on failure. */
+/** A config that does nothing, used before the first configure() and on failure. 
+ * @returns the normalized Hook Chain Config.
+ */
 export function inertHookChainConfig(): NormalizedHookChainConfig {
   return { version: 1, enabled: false, maxChainDepth: DEFAULT_MAX_CHAIN_DEPTH, defaultCooldownMs: DEFAULT_COOLDOWN_MS, defaultDedupWindowMs: DEFAULT_DEDUP_WINDOW_MS, rules: [] }
 }
@@ -432,6 +511,8 @@ export class HookChainRuntime {
    * They are keyed by rule id, and the same id in two documents is two
    * different rules, so carrying a window across a replacement suppresses a
    * rule that never fired.
+   * @returns the normalized Hook Chain Config.
+   * @param value - the value to interpret, of unknown shape.
    */
   configure(value: unknown): NormalizedHookChainConfig {
     let next: NormalizedHookChainConfig
@@ -453,10 +534,18 @@ export class HookChainRuntime {
     this.dedups.clear()
   }
 
+  /**
+   * The configuration in force, defaults already applied.
+   * @returns The normalized config this runtime evaluates rules against.
+   */
   get configuration(): NormalizedHookChainConfig {
     return this.config
   }
 
+  /**
+   * The counters and guard sizes a status panel reads.
+   * @returns Rule count, guard occupancy, and how many actions ran or skipped.
+   */
   status(): HookChainStatus {
     return {
       enabled: this.config.enabled,
@@ -475,6 +564,8 @@ export class HookChainRuntime {
    *
    * Never throws: a handler failure is recorded, and the guard checks short
    * circuit before any action so an aborted or too-deep dispatch costs nothing.
+   * @param input - the event, its outcome, and the context a rule matches on.
+   * @returns Which rules fired, which did not and why, and what each action did.
    */
   async dispatch(input: HookChainDispatchInput): Promise<HookChainDispatchResult> {
     const now = input.now ?? Date.now()

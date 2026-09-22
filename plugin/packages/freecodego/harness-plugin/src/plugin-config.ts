@@ -4,8 +4,12 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/plugin-config
  */
 
-import z from '@deepseek-ai/schemastery'
-import { FREECODEGO_CLOUD_ORIGIN } from './engine-remotes.ts'
+// The runtime schema for `Config` is declared inline at the plugin class
+// (`FreeCodeGoHarnessPlugin.Config`) rather than here: a plugin-class schema must
+// be statically walkable, and only a local const or a workspace-package import
+// is, so a package-relative `const` is invisible to the generated config
+// catalog. This module keeps the declared type the schema and every reader
+// share.
 
 /** Bundle configuration for declared native runtime artifacts. */
 export interface Config {
@@ -35,25 +39,3 @@ export interface Config {
   /** Environment variable holding the token the update checker authenticates with. */
   readonly updateReleaseTokenEnv?: string
 }
-
-/**
- * Runtime schema for {@link Config}. Schemastery has no first-class
- * `.optional()`; the public Config type already types these as optional, so
- * the schema carries the same contract at runtime (absent input passes
- * through) without fighting the inferred builder types.
- */
-export const FreeCodeGoConfigSchema: z<Config> = z.object({
-  gateway: z.object({
-    baseUrl: z.string().default(FREECODEGO_CLOUD_ORIGIN),
-  }),
-  defaultModel: z.string(),
-  defaultEngine: z.union([z.const('deepseek'), z.const('codex'), z.const('claude')]).default('deepseek'),
-  codexRuntimeDirectory: z.string().default(''),
-  codexRuntimeSourceDirectory: z.string().default(''),
-  claudeRuntimeDirectory: z.string().default(''),
-  autoSubagentModelSelection: z.boolean().default(true),
-  autoAdvisorEnabled: z.boolean().default(true),
-  updatePackageName: z.string().default(''),
-  updateReleaseRepository: z.string().default(''),
-  updateReleaseTokenEnv: z.string().default(''),
-})

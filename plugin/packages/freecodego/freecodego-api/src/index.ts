@@ -13,13 +13,25 @@ export interface FreeCodeGoEngine {
   readonly reasons: readonly { readonly code: string; readonly retryable: boolean }[]
 }
 
+/**
+ * Any JSON-serializable value, as the backend returns it.
+ */
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
 
 /** HTTP failure with safe backend diagnostics retained for Host/UI reporting. */
 export class FreeCodeGoHttpError extends Error {
-  readonly status: number
-  readonly body: string | undefined
-  readonly requestId: string | undefined
+    /**
+   * HTTP status the backend answered with.
+   */
+readonly status: number
+    /**
+   * Response body retained for diagnostics, when the backend sent one.
+   */
+readonly body: string | undefined
+    /**
+   * Request id the backend echoed, for support correlation.
+   */
+readonly requestId: string | undefined
 
   constructor(message: string, status: number, body?: string, requestId?: string) {
     super(message)
@@ -132,6 +144,9 @@ export interface FreeCodeGoDesktopPaymentConfig {
   readonly paypalClientId?: string
 }
 
+/**
+ * One checkout order and its settlement state.
+ */
 export interface FreeCodeGoCheckoutOrder {
   readonly orderId: string
   /** Backend order status; values are owned by the existing payment service. */
@@ -156,6 +171,26 @@ export interface FreeCodeGoCheckoutOrder {
   readonly paymentType?: string
   readonly expiresAt?: string
   readonly entitlementRevision?: string
+  /**
+   * Whether the backend offers this order's commercial receipt.
+   *
+   * Carried by the two order reads that answer about *an existing* order —
+   * `GET .../payment/orders/:id` and `POST .../payment/orders/verify` — and
+   * absent from the create-order response, which cannot have a document for an
+   * order nobody has paid yet. Absent must stay absent: the panel falls back to
+   * its settled-state list only when no flag arrived, and a default here would
+   * override the backend's answer on the one order that matters.
+   */
+  readonly receiptAvailable?: boolean
+  /**
+   * Whether Stripe itself holds a receipt for this order.
+   *
+   * The same two reads carry it, and it is true only for a payment Stripe took,
+   * which is knowledge only the backend has: the panel must not infer it from
+   * {@link paymentType}, because a channel's spelling is not a claim about which
+   * issuer produced a document.
+   */
+  readonly stripeReceiptAvailable?: boolean
 }
 
 /** Server-accepted delivery result for an existing paid-order receipt. */
@@ -176,6 +211,16 @@ export interface FreeCodeGoReceiptDocument {
   readonly fileName: string
   readonly contentType: string
   readonly content: string
+  /**
+   * How `content` carries the document's bytes.
+   *
+   * Absent means the text itself, which is what the commercial receipt is: the
+   * backend renders HTML for it. Stripe's receipt is a PDF, and a PDF read as
+   * text arrives with every byte this runtime cannot decode replaced — so a
+   * binary document travels base64 encoded and the browser decodes it back into
+   * the same bytes before offering the file.
+   */
+  readonly encoding?: 'text' | 'base64'
 }
 
 /**
@@ -186,6 +231,9 @@ export interface FreeCodeGoReceiptDocument {
  * missing or unusable. Anything that could escape a download directory — path
  * separators, quotes, control characters — is stripped: the header is ours, but
  * a filename travels straight into the browser's save dialog.
+ * @param disposition - the `Content-Disposition` header, when the backend sent one.
+ * @param fallbackName - name to use when that header carries no usable filename.
+ * @returns the sanitized filename the receipt is saved under.
  */
 export function receiptFileName(disposition: string | null | undefined, fallbackName: string): string {
   const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition ?? '')
@@ -526,14 +574,23 @@ export class FreeCodeGoApiClient {
     return normalizeBootstrapCatalog(bootstrap)
   }
 
-  /** Read public gateway tariffs without accessing an account or its tokens. */
+  /** Read public gateway tariffs without accessing an account or its tokens. 
+   * @param language - locale the returned labels are written in.
+   * @returns the gateway Model Price rows, in backend order.
+   * @param options - per-call bounds such as an abort signal.
+   */
   async getPublicModelPricing(language: 'zh' | 'en', options: { readonly signal?: AbortSignal } = {}): Promise<readonly FreeCodeGoGatewayModelPrice[]> {
     const payload = object(await this.public('/api/v1/public/model-pricing/landing', language, options.signal === undefined ? {} : { signal: options.signal }), 'public model pricing')
     return normalizePublicModelPricing(payload)
   }
 
   /** Look up official prices for model IDs absent from the public landing
-   * catalog. This is intentionally public and returns only price fields. */
+   * catalog. This is intentionally public and returns only price fields. 
+   * @param language - locale the returned labels are written in.
+   * @param models - the model ids to look up.
+   * @param options - per-call bounds such as an abort signal.
+   * @returns one price lookup per requested model id, found or not.
+   */
   async getPublicModelPricingLookup(models: readonly string[], language: 'zh' | 'en' = 'en', options: { readonly signal?: AbortSignal } = {}): Promise<readonly {
     readonly model: string
     readonly found: boolean
@@ -575,7 +632,10 @@ export class FreeCodeGoApiClient {
     })
   }
 
-  /** Fetch the existing group-aware FreeCodeGo model options projection. */
+  /** Fetch the existing group-aware FreeCodeGo model options projection. 
+   * @param request - the request this call projects from.
+   * @returns the model Route Option rows, in backend order.
+   */
   async getModelOptions(request: FreeCodeGoCatalogRequest): Promise<readonly FreeCodeGoModelRouteOption[]> {
     return (await this.getModelOptionsSnapshot(request)).models
   }
@@ -588,6 +648,8 @@ export class FreeCodeGoApiClient {
    * needs the group list — to label a picker with the real group names, in the
    * backend's order, at the account's effective rate — would otherwise read the
    * same endpoint twice.
+   * @param request - the request this call projects from.
+   * @returns the model Options Snapshot.
    */
   async getModelOptionsSnapshot(request: FreeCodeGoCatalogRequest): Promise<FreeCodeGoModelOptionsSnapshot> {
     const root = object(await this.authorized('/api/v1/freecodego/models/options', request), 'model options')
@@ -679,7 +741,10 @@ export class FreeCodeGoApiClient {
     return { groups, models: optionRows }
   }
 
-  /** Fetch the existing managed FreeCodeGo bootstrap response. */
+  /** Fetch the existing managed FreeCodeGo bootstrap response. 
+   * @param request - the request this call projects from.
+   * @returns the projected record the caller renders.
+   */
   async getBootstrap(request: FreeCodeGoCatalogRequest): Promise<Record<string, unknown>> {
     return this.authorized('/api/v1/freecodego/agent/bootstrap', request, {
       method: 'POST',
@@ -691,7 +756,10 @@ export class FreeCodeGoApiClient {
     }) as Promise<Record<string, unknown>>
   }
 
-  /** Fetch the existing account profile route. */
+  /** Fetch the existing account profile route. 
+   * @param request - the request this call projects from.
+   * @returns the current User.
+   */
   async getCurrentUser(request: FreeCodeGoCatalogRequest): Promise<FreeCodeGoCurrentUser> {
     const root = object(await this.authorized('/api/v1/freecodego/auth/me', request), 'current user')
     const user = object(root.user ?? root.profile ?? root, 'current user')
@@ -710,6 +778,8 @@ export class FreeCodeGoApiClient {
    * List this account's desktop device sessions. `device_id` is sent as the
    * query parameter the backend uses to mark the caller's own row instead of
    * guessing from the newest active row.
+   * @param request - the request this call projects from.
+   * @returns the device Session List.
    */
   async getDeviceSessions(request: FreeCodeGoCatalogRequest): Promise<FreeCodeGoDeviceSessionList> {
     const query = request.deviceId === undefined || request.deviceId.trim() === '' ? '' : `?device_id=${encodeURIComponent(request.deviceId.trim())}`
@@ -736,7 +806,10 @@ export class FreeCodeGoApiClient {
     }
   }
 
-  /** Revoke one device session by id; the returned message is the backend's own. */
+  /** Revoke one device session by id; the returned message is the backend's own. 
+   * @param request - the device id to revoke, scoped to the account.
+   * @returns the backend's own confirmation message.
+   */
   async revokeDeviceSession(request: FreeCodeGoCatalogRequest & { readonly deviceId: string }): Promise<string> {
     const deviceId = request.deviceId.trim()
     if (deviceId === '') throw new Error('FreeCodeGo device id is required')
@@ -744,23 +817,35 @@ export class FreeCodeGoApiClient {
     return typeof payload.message === 'string' ? payload.message.trim() : ''
   }
 
-  /** Revoke every session of the account and return how many the backend revoked. */
+  /** Revoke every session of the account and return how many the backend revoked. 
+   * @param request - the request this call projects from.
+   * @returns how many sessions the backend revoked.
+   */
   async revokeAllSessions(request: FreeCodeGoCatalogRequest): Promise<number> {
     const payload = object(await this.authorized('/api/v1/freecodego/auth/revoke-all-sessions', request, { method: 'POST' }), 'revoke all sessions')
     return finiteOptionalNumber(payload.revoked_count) ?? 0
   }
 
-  /** Fetch quota through the existing FreeCodeGo endpoint. */
+  /** Fetch quota through the existing FreeCodeGo endpoint. 
+   * @param request - the request this call projects from.
+   * @returns the projected record the caller renders.
+   */
   async getQuota(request: FreeCodeGoCatalogRequest): Promise<Record<string, unknown>> {
     return this.authorized('/api/v1/freecodego/agent/quota', request) as Promise<Record<string, unknown>>
   }
 
-  /** Fetch runtime health through the existing FreeCodeGo endpoint. */
+  /** Fetch runtime health through the existing FreeCodeGo endpoint. 
+   * @param request - the request this call projects from.
+   * @returns the projected record the caller renders.
+   */
   async getRuntimeHealth(request: FreeCodeGoCatalogRequest): Promise<Record<string, unknown>> {
     return this.authorized('/api/v1/freecodego/agent/runtime/health', request) as Promise<Record<string, unknown>>
   }
 
-  /** Fetch the narrow Provider health projection reserved for FreeCodeGo Agents. */
+  /** Fetch the narrow Provider health projection reserved for FreeCodeGo Agents. 
+   * @param request - the request this call projects from.
+   * @returns the gateway Provider Health rows, in backend order.
+   */
   async getGatewayProviderHealth(request: FreeCodeGoCatalogRequest): Promise<readonly FreeCodeGoGatewayProviderHealth[]> {
     const payload = object(await this.authorized('/api/v1/freecodego/agent/channel-health', request), 'gateway channel health')
     return array(payload.items, 'gateway channel health.items').map((value, index) => {
@@ -776,18 +861,27 @@ export class FreeCodeGoApiClient {
     })
   }
 
-  /** Fetch usage through the existing FreeCodeGo endpoint. */
+  /** Fetch usage through the existing FreeCodeGo endpoint. 
+   * @returns the projected record the caller renders.
+   * @param request - the usage window to read.
+   */
   async getUsage(request: FreeCodeGoCatalogRequest & { readonly days?: number }): Promise<Record<string, unknown>> {
     const suffix = request.days === undefined ? '' : `?days=${encodeURIComponent(String(request.days))}`
     return this.authorized(`/api/v1/freecodego/agent/usage${suffix}`, request) as Promise<Record<string, unknown>>
   }
 
-  /** Fetch the account-scoped usage dashboard summary used by the FreeCodeGo client. */
+  /** Fetch the account-scoped usage dashboard summary used by the FreeCodeGo client. 
+   * @param request - the request this call projects from.
+   * @returns the projected record the caller renders.
+   */
   async getUsageDashboardStats(request: FreeCodeGoCatalogRequest): Promise<Record<string, unknown>> {
     return this.authorized('/api/v1/freecodego/usage/dashboard/stats', request) as Promise<Record<string, unknown>>
   }
 
-  /** Fetch account-scoped usage trend buckets. */
+  /** Fetch account-scoped usage trend buckets. 
+   * @returns the projected record the caller renders.
+   * @param request - the dashboard window to read.
+   */
   async getUsageDashboardTrend(request: FreeCodeGoCatalogRequest & { readonly startDate?: string; readonly endDate?: string; readonly granularity?: 'hour' | 'day' }): Promise<Record<string, unknown>> {
     const params = new URLSearchParams()
     if (request.startDate !== undefined) params.set('start_date', request.startDate)
@@ -797,7 +891,10 @@ export class FreeCodeGoApiClient {
     return this.authorized(`/api/v1/freecodego/usage/dashboard/trend${suffix}`, request) as Promise<Record<string, unknown>>
   }
 
-  /** Fetch account-scoped model usage rows. */
+  /** Fetch account-scoped model usage rows. 
+   * @returns the projected record the caller renders.
+   * @param request - the dashboard window to read.
+   */
   async getUsageDashboardModels(request: FreeCodeGoCatalogRequest & { readonly startDate?: string; readonly endDate?: string }): Promise<Record<string, unknown>> {
     const params = new URLSearchParams()
     if (request.startDate !== undefined) params.set('start_date', request.startDate)
@@ -806,7 +903,10 @@ export class FreeCodeGoApiClient {
     return this.authorized(`/api/v1/freecodego/usage/dashboard/models${suffix}`, request) as Promise<Record<string, unknown>>
   }
 
-  /** Fetch account-scoped cache and billing insights. */
+  /** Fetch account-scoped cache and billing insights. 
+   * @returns the projected record the caller renders.
+   * @param request - the dashboard window to read.
+   */
   async getUsageDashboardInsights(request: FreeCodeGoCatalogRequest & { readonly startDate?: string; readonly endDate?: string }): Promise<Record<string, unknown>> {
     const params = new URLSearchParams()
     if (request.startDate !== undefined) params.set('start_date', request.startDate)
@@ -821,7 +921,10 @@ export class FreeCodeGoApiClient {
   // fields the checkout UI reads, so a second channel reader would be a second
   // source of truth for the same money path.
 
-  /** Fetch the authenticated user's sanitized payment orders. */
+  /** Fetch the authenticated user's sanitized payment orders. 
+   * @returns the json Value.
+   * @param request - the order filters to read.
+   */
   async getPaymentOrders(request: FreeCodeGoCatalogRequest & { readonly status?: string }): Promise<JsonValue> {
     // Order records carry the same host-only fields as checkout responses
     // (e.g. `client_secret` for card flows). Rejecting them here would fail
@@ -835,7 +938,10 @@ export class FreeCodeGoApiClient {
     return toJsonValue(await this.authorized(`/api/v1/freecodego/payment/orders/my${query}`, request, {}, true))
   }
 
-  /** Fetch the same combined plans/methods payload used by FreeCodeGo's checkout UI. */
+  /** Fetch the same combined plans/methods payload used by FreeCodeGo's checkout UI. 
+   * @param request - the request this call projects from.
+   * @returns the payment Checkout Info.
+   */
   async getPaymentCheckoutInfo(request: FreeCodeGoCatalogRequest): Promise<FreeCodeGoPaymentCheckoutInfo> {
     // The existing web checkout is mounted on the shared authenticated
     // payment group, while FreeCodeGo's compatibility group exposes the
@@ -870,7 +976,10 @@ export class FreeCodeGoApiClient {
   }
 
   /** Read the desktop-safe payment configuration (see
-   * {@link FreeCodeGoDesktopPaymentConfig}). */
+   * {@link FreeCodeGoDesktopPaymentConfig}). 
+   * @param request - the request this call projects from.
+   * @returns the desktop Payment Config.
+   */
   async getDesktopPaymentConfig(request: FreeCodeGoCatalogRequest): Promise<FreeCodeGoDesktopPaymentConfig> {
     const payload = object(await this.authorized('/api/v1/freecodego/payment/config', request), 'payment config')
     const bool = (field: string): boolean | undefined => typeof payload[field] === 'boolean' ? payload[field] : undefined
@@ -917,7 +1026,12 @@ export class FreeCodeGoApiClient {
     }
   }
 
-  async createCheckout(request: FreeCodeGoCheckoutRequest): Promise<FreeCodeGoCheckoutOrder> {
+    /**
+   * Create a checkout order for one plan and payment method.
+   * @param request - the plan, payment type, and return URLs of the order.
+   * @returns the created order.
+   */
+async createCheckout(request: FreeCodeGoCheckoutRequest): Promise<FreeCodeGoCheckoutOrder> {
     const body: Record<string, unknown> = {
       return_url: request.returnUrl,
       payment_type: request.paymentType,
@@ -946,12 +1060,20 @@ export class FreeCodeGoApiClient {
     return parseOrder(object(payload, 'checkout'))
   }
 
-  async getCheckoutOrder(request: FreeCodeGoCatalogRequest & { readonly orderId: string }): Promise<FreeCodeGoCheckoutOrder> {
+    /**
+   * Read one checkout order's current state.
+   * @param request - the order id, scoped to the account.
+   * @returns the order as the backend reports it.
+   */
+async getCheckoutOrder(request: FreeCodeGoCatalogRequest & { readonly orderId: string }): Promise<FreeCodeGoCheckoutOrder> {
     const payload = await this.authorized(`/api/v1/freecodego/payment/orders/${encodeURIComponent(request.orderId)}`, request, {}, true)
     return parseOrder(object(payload, 'order'))
   }
 
-  /** Verify a payment through the existing out-trade-number endpoint. */
+  /** Verify a payment through the existing out-trade-number endpoint. 
+   * @returns the checkout Order.
+   * @param request - the out-trade number to re-verify with the payment provider.
+   */
   async verifyCheckoutOrder(request: FreeCodeGoCatalogRequest & { readonly outTradeNo: string }): Promise<FreeCodeGoCheckoutOrder> {
     // Verification asks the provider what it thinks of the out-trade number, so
     // it needs the provider budget for the same reason order creation does.
@@ -959,12 +1081,17 @@ export class FreeCodeGoApiClient {
     return parseOrder(object(payload, 'verified order'))
   }
 
-  /** Cancel a pending payment through the existing endpoint. */
+  /** Cancel a pending payment through the existing endpoint. 
+   * @param request - the order to cancel.
+   */
   async cancelCheckoutOrder(request: FreeCodeGoCatalogRequest & { readonly orderId: string }): Promise<void> {
     await this.authorized(`/api/v1/freecodego/payment/orders/${encodeURIComponent(request.orderId)}/cancel`, request, { method: 'POST' })
   }
 
-  /** Ask the existing backend to email the receipt; no receipt or token crosses Remote. */
+  /** Ask the existing backend to email the receipt; no receipt or token crosses Remote. 
+   * @returns the receipt Email Result.
+   * @param request - the order whose receipt is mailed.
+   */
   async emailCheckoutReceipt(request: FreeCodeGoCatalogRequest & { readonly orderId: string }): Promise<FreeCodeGoReceiptEmailResult> {
     const result = object(await this.authorized(`/api/v1/freecodego/payment/orders/${encodeURIComponent(request.orderId)}/receipt/email`, request, { method: 'POST' }), 'receipt email')
     return { email: string(result.email, 'receipt email.email'), ...(typeof result.message === 'string' ? { message: result.message } : {}) }
@@ -977,6 +1104,8 @@ export class FreeCodeGoApiClient {
    * this is not a call that waits on a payment provider. A rejected fetch throws
    * with the backend's own message, which the panel shows as "receipt is
    * available after payment is completed" for an order that has not settled.
+   * @returns the receipt Document.
+   * @param request - the order whose receipt is downloaded.
    */
   async downloadCheckoutReceipt(request: FreeCodeGoCatalogRequest & { readonly orderId: string }): Promise<FreeCodeGoReceiptDocument> {
     if (request.accessToken.trim() === '') throw new Error('FreeCodeGo access token is required')
@@ -991,6 +1120,40 @@ export class FreeCodeGoApiClient {
       fileName: receiptFileName(response.headers.get('content-disposition'), `freecodego-receipt-${request.orderId}.html`),
       contentType: response.headers.get('content-type') ?? 'text/html; charset=utf-8',
       content,
+    }
+  }
+
+  /**
+   * Fetch Stripe's own receipt for a paid Stripe order.
+   *
+   * A separate call rather than a flag on the receipt above, because it is a
+   * different document from a different issuer: the commercial receipt is the
+   * one this backend draws for every order, and this one is the PDF Stripe
+   * rendered for the charge. The backend fetches it so the buyer saves a file
+   * here instead of being sent to a hosted page that expires.
+   * @returns the receipt Document, with the PDF's bytes base64 encoded.
+   * @param request - the order whose Stripe receipt is downloaded.
+   */
+  async downloadCheckoutStripeReceipt(request: FreeCodeGoCatalogRequest & { readonly orderId: string }): Promise<FreeCodeGoReceiptDocument> {
+    if (request.accessToken.trim() === '') throw new Error('FreeCodeGo access token is required')
+    const path = `/api/v1/freecodego/payment/orders/${encodeURIComponent(request.orderId)}/stripe-receipt`
+    // The provider budget, unlike the receipt above: this backend has no document
+    // of its own to return, it has to ask Stripe for one first.
+    const response = await this.fetch(new URL(path, this.baseUrl), {
+      headers: { authorization: `Bearer ${request.accessToken}`, accept: 'application/pdf' },
+      signal: AbortSignal.timeout(this.budgetMs.provider),
+    })
+    // Bytes, not text: the body is a PDF, and `response.text()` would replace
+    // every byte that is not valid UTF-8 before it ever reached the browser. The
+    // rejected case is read through the same bytes because an error body is the
+    // backend's JSON, which this call still has to quote in its message.
+    const body = Buffer.from(await response.arrayBuffer())
+    if (!response.ok) throw new Error(`FreeCodeGo request ${path} failed with HTTP ${response.status}: ${body.toString('utf8').slice(0, 200)}`)
+    return {
+      fileName: receiptFileName(response.headers.get('content-disposition'), `freecodego-stripe-receipt-${request.orderId}.pdf`),
+      contentType: response.headers.get('content-type') ?? 'application/pdf',
+      content: body.toString('base64'),
+      encoding: 'base64',
     }
   }
 
@@ -1274,6 +1437,8 @@ function parseOrder(value: Record<string, unknown>): FreeCodeGoCheckoutOrder {
     ...(typeof value.payment_type === 'string' ? { paymentType: value.payment_type } : {}),
     ...(typeof value.expires_at === 'string' ? { expiresAt: value.expires_at } : {}),
     ...(typeof value.entitlement_revision === 'string' ? { entitlementRevision: value.entitlement_revision } : {}),
+    ...(typeof value.receipt_available === 'boolean' ? { receiptAvailable: value.receipt_available } : {}),
+    ...(typeof value.stripe_receipt_available === 'boolean' ? { stripeReceiptAvailable: value.stripe_receipt_available } : {}),
   }
 }
 
@@ -1305,6 +1470,9 @@ function nonNegativeOptionalNumber(value: unknown): number | undefined {
  * still honored so an older gateway never renders a free route as a priced
  * one. Pass the option choice plus its pricing blocks; never re-derive this
  * rule at a call site.
+ * @param row - the pricing row to classify.
+ * @param pricing - the pricing table the row belongs to.
+ * @returns true when the row describes a free route.
  */
 export function isFreeRouteRow(row: Record<string, unknown>, ...pricing: readonly Record<string, unknown>[]): boolean {
   if (finiteOptionalNumber(row.rate_multiplier) === 0) return true
@@ -1314,6 +1482,8 @@ export function isFreeRouteRow(row: Record<string, unknown>, ...pricing: readonl
 /**
  * The same free rule over an already-normalized row. Consumers holding a
  * normalized choice must use this instead of comparing fields themselves.
+ * @param route - the route to classify.
+ * @returns true when every price the route carries is zero.
  */
 export function isZeroPriceRoute(route: { readonly zeroPrice?: boolean; readonly rateMultiplier?: number }): boolean {
   return route.zeroPrice === true || route.rateMultiplier === 0
@@ -1394,6 +1564,8 @@ function normalizeModelOptionGroups(values: unknown): readonly FreeCodeGoModelOp
  * The backend reports an unusable group as `access: 'locked'` **and**
  * `unlock_required: true`; either signal alone means locked, so a partially
  * reported payload cannot leak a locked group into routing or a pin.
+ * @param route - the route to classify.
+ * @returns true when the route is locked for this account.
  */
 export function isLockedRoute(route: { readonly access?: string; readonly unlockRequired?: boolean }): boolean {
   return route.unlockRequired === true || (route.access ?? '').trim().toLowerCase() === 'locked'

@@ -36,13 +36,15 @@ export const FREECODEGO_UPDATE_PACKAGE = 'freecodego'
 /**
  * Repository whose releases are the update source.
  *
- * The convention this module depends on: a release is tagged `v<version>`, and
- * a release exists only for a Harness line, so `v0.1.3-alpha.1` means "the
- * bundle for Harness `0.1.3-alpha.1`". {@link bundleReleaseForHarness} reads the
- * version straight out of that tag, which is why a check needs no manifest and
- * no second request.
+ * The convention this module depends on: a release exists only for a Harness
+ * line, and its tag names the version, so `v0.1.3-alpha.1` means "the bundle for
+ * Harness `0.1.3-alpha.1`". {@link bundleReleaseForHarness} reads the version
+ * straight out of that tag, which is why a check needs no manifest and no second
+ * request. The release family prefixes its tags with `freecodego-` — one
+ * repository carries more than one family's releases — and the prefixed form is
+ * what the publishing workflow creates, so both spellings are read.
  */
-export const FREECODEGO_RELEASE_REPOSITORY = 'XiangSu-ce/dsh-freecodego'
+export const FREECODEGO_RELEASE_REPOSITORY = 'XiangSu-ce/dsh-plugin-freecodego'
 
 const GITHUB_RELEASES_PAGE_SIZE = 30
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000
@@ -53,7 +55,16 @@ const MAX_UNCONFIRMED_STARTUPS = 2
 /** Cap one install so a stalled package-manager run cannot leave the update stuck in `installing` forever. */
 const DSH_INSTALL_TIMEOUT_MS = 15 * 60_000
 const NPM_PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i
-const RELEASE_TAG_RE = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u
+/**
+ * A release tag that names a bundle version, with the family prefix optional.
+ *
+ * `freecodego-v0.1.6-alpha.2` is what `release:freecodego` tags and what the
+ * publishing workflow creates its release from; `v0.1.6-alpha.2` is accepted
+ * because a release created under the bare form is still a release for the same
+ * Harness line, and refusing it would hide an installable update. Any other
+ * prefix — another family's tag — is not this bundle.
+ */
+const RELEASE_TAG_RE = /^(?:freecodego-)?v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u
 
 /**
  * Settings persisted in the FreeCodeGo settings namespace.
@@ -184,13 +195,18 @@ export class FreeCodeGoPluginUpdateService {
     this.intervalTimer = undefined
   }
 
-  /** Return the latest redacted update state. */
+  /** Return the latest redacted update state. 
+   * @returns the plugin Update Status.
+   */
   status(): FreeCodeGoPluginUpdateStatus {
     const enabled = this.options.settings?.get()?.pluginUpdateChecksEnabled !== false
     return { ...this.statusValue, enabled }
   }
 
-  /** Persist the automatic-check switch. */
+  /** Persist the automatic-check switch. 
+   * @param enabled - whether this capability is switched on.
+   * @returns the plugin Update Status.
+   */
   async setEnabled(enabled: boolean): Promise<FreeCodeGoPluginUpdateStatus> {
     if (typeof enabled !== 'boolean') throw new Error('plugin update checks enabled must be a boolean')
     await this.options.settings?.update({ pluginUpdateChecksEnabled: enabled })
@@ -198,7 +214,10 @@ export class FreeCodeGoPluginUpdateService {
     return this.status()
   }
 
-  /** Check the release repository for a newer bundle built for this Harness. */
+  /** Check the release repository for a newer bundle built for this Harness. 
+   * @returns the plugin Update Status.
+ * @param manual - whether the user asked for the check, which ignores the enabled flag.
+   */
   async check(manual: boolean): Promise<FreeCodeGoPluginUpdateStatus> {
     await this.recoveryTask
     if (!manual && ! this.status().enabled) return this.status()
@@ -210,7 +229,9 @@ export class FreeCodeGoPluginUpdateService {
     }
   }
 
-  /** Install the selected release into the active profile. */
+  /** Install the selected release into the active profile. 
+   * @returns the plugin Update Status.
+   */
   async install(): Promise<FreeCodeGoPluginUpdateStatus> {
     await this.recoveryTask
     if (this.installTask !== undefined) return this.installTask
@@ -221,7 +242,9 @@ export class FreeCodeGoPluginUpdateService {
     }
   }
 
-  /** A successful Host initialization confirms the installed update and discards its recovery point. */
+  /** A successful Host initialization confirms the installed update and discards its recovery point. 
+   * @returns the plugin Update Status.
+   */
   async confirmStartup(): Promise<FreeCodeGoPluginUpdateStatus> {
     await this.recoveryTask
     const pending = readPendingUpdateMarker(this.profilePath)
@@ -248,7 +271,9 @@ export class FreeCodeGoPluginUpdateService {
     return this.status()
   }
 
-  /** Restore the previous profile manifests before the next restart. */
+  /** Restore the previous profile manifests before the next restart. 
+   * @returns the plugin Update Status.
+   */
   async rollback(): Promise<FreeCodeGoPluginUpdateStatus> {
     await this.recoveryTask
     const pending = readPendingUpdateMarker(this.profilePath)
@@ -693,9 +718,44 @@ function githubReleasesUrl(repository: string): string {
   return `https://api.github.com/repos/${repository}/releases`
 }
 
-/** Release asset name the publish step produces for one version. */
+/**
+ * The release asset name for one bundle version — the naming rule this plugin
+ * and its release tooling share.
+ *
+ * `<package name>-<version>.tgz`, with a scope flattened the way a packed
+ * tarball is named everywhere else in this repository: `@scope/name` becomes
+ * `scope-name`, not `name`.
+ * @param packageName - the package name, scoped or bare.
+ * @param version - the bundle version.
+ * @returns the release asset name.
+ */
 export function releaseAssetName(packageName: string, version: string): string {
-  return `${packageName.split('/').at(-1)}-${version}.tgz`
+  const unscoped = packageName.startsWith('@') ? packageName.slice(1).replace('/', '-') : packageName
+  return `${unscoped}-${version}.tgz`
+}
+
+/**
+ * The asset names one release may carry, most specific first.
+ *
+ * The published rule names the **Harness line**, because that is what a bundle
+ * is built for and what a user needs to see in the file name: a hotfix release
+ * tagged `v0.1.3-alpha.1.1` ships `freecodego-0.1.3-alpha.1.tgz` and takes its
+ * exact version from the tag. The release version is accepted as well, because
+ * that spelling is what `pnpm pack` writes and what an earlier publish step
+ * produced — refusing a release over which of the two names the publisher used
+ * is exactly the silent never-appearing update this lookup exists to avoid.
+ *
+ * With no Harness version in scope (a custom package name, whose line cannot be
+ * read from the profile) the two collapse into one, as they already do for a
+ * line's first release, where the version *is* the Harness version.
+ * @param packageName - the package name, scoped or bare.
+ * @param version - the release version.
+ * @param harnessVersion - the Harness line, when it can be read from the profile.
+ * @returns the acceptable asset names, most specific first.
+ */
+export function releaseAssetNames(packageName: string, version: string, harnessVersion: string | undefined): readonly string[] {
+  const byHarness = harnessVersion === undefined ? [] : [releaseAssetName(packageName, harnessVersion)]
+  return [...new Set([...byHarness, releaseAssetName(packageName, version)])]
 }
 
 /**
@@ -735,7 +795,7 @@ export function bundleReleaseForHarness(
     const version = RELEASE_TAG_RE.exec(tag)?.[1]
     if (version === undefined) continue
     if (harnessVersion !== undefined && !isVersionForHarness(version, harnessVersion)) continue
-    const tarballUrl = releaseAssetFor(release, version, packageName)
+    const tarballUrl = releaseAssetFor(release, version, packageName, harnessVersion)
     if (tarballUrl === undefined) continue
     candidates.push({
       version,
@@ -762,17 +822,19 @@ function isVersionForHarness(version: string, harnessVersion: string): boolean {
 /**
  * The installable tarball a release carries for one version, if any.
  *
- * The conventional name is preferred, but a single tarball under any other name
- * is still accepted: the URL comes from the release the check already selected,
- * so nothing is guessed, and refusing a release over an asset name would turn a
+ * {@link releaseAssetNames} is tried in order, so the Harness-line name wins
+ * over the release-version one. A single tarball under any other name is still
+ * accepted: the URL comes from the release the check already selected, so
+ * nothing is guessed, and refusing a release over an asset name would turn a
  * publisher's typo into an update that silently never appears.
  */
-function releaseAssetFor(release: GitHubRelease, version: string, packageName: string): string | undefined {
+function releaseAssetFor(release: GitHubRelease, version: string, packageName: string, harnessVersion: string | undefined): string | undefined {
   if (!Array.isArray(release.assets)) return undefined
   const assets = (release.assets as readonly GitHubReleaseAsset[]).filter(asset => typeof asset.browser_download_url === 'string')
-  const expected = releaseAssetName(packageName, version)
-  const named = assets.find(asset => asset.name === expected)
-  if (named !== undefined) return named.browser_download_url as string
+  for (const expected of releaseAssetNames(packageName, version, harnessVersion)) {
+    const named = assets.find(asset => asset.name === expected)
+    if (named !== undefined) return named.browser_download_url as string
+  }
   const tarballs = assets.filter(asset => typeof asset.name === 'string' && asset.name.endsWith('.tgz'))
   return tarballs.length === 1 ? tarballs[0]!.browser_download_url as string : undefined
 }
@@ -790,7 +852,12 @@ type PendingUpdateMarker = {
 
 function isSemver(value: string): boolean { return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value) }
 
-/** Compare semver versions used by package releases, including prereleases. */
+/**
+ * Compare semver versions used by package releases, including prereleases.
+ * @param left - the first version.
+ * @param right - the second version.
+ * @returns a negative, zero, or positive number when `left` sorts before, equal to, or after `right`.
+ */
 export function compareVersions(left: string, right: string): number {
   const parseVersion = (value: string): { numbers: readonly number[]; pre: readonly string[] } => {
     const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value)
@@ -826,6 +893,8 @@ export function compareVersions(left: string, right: string): number {
  * a different `dsh` earlier on `PATH` may be an older build that reconciles
  * differently. Falls back to a `PATH` lookup only when the entry point is not
  * identifiable (an embedded host whose argv[1] is not the CLI).
+ * @param entry - the CLI entry point, defaulting to this process's argv[1].
+ * @returns the file, arguments, cwd, and whether a shell is required.
  */
 export function dshArgv(entry: string | undefined = process.argv[1]): { readonly file: string; readonly args: readonly string[]; readonly cwd: string | undefined; readonly viaShell: boolean } {
   if (entry !== undefined && /[\\/](?:bin\.(?:js|ts)|dsh)$/.test(entry)) {
@@ -849,6 +918,10 @@ const CMD_METACHARS = /[\s"&|<>^()%!]/
  * while the same command works in their terminal. Appending the directories the
  * toolchain actually installs into is what makes the button work from a
  * double-clicked app.
+ * @param platform - the platform whose install locations are added.
+ * @param env - the environment the install locations are read from.
+ * @param home - the home directory, for the POSIX fallbacks.
+ * @returns the directories to append to a child's PATH.
  */
 export function toolSearchDirectories(platform: string = process.platform, env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string[] {
   const directories: string[] = []
@@ -875,6 +948,8 @@ export function toolSearchDirectories(platform: string = process.platform, env: 
  * any git-hosted dependency, reads only the standard variables and never npm
  * config. A value the caller already set for the consumer in question always
  * wins: this function fills silence rather than overwriting intent.
+ * @param env - the machine environment the proxy is read from.
+ * @returns the proxy vocabulary each consumer reads.
  */
 export function proxyEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const read = (...names: readonly string[]): string | null => {
@@ -894,7 +969,21 @@ export function proxyEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.P
   return output
 }
 
-async function runDsh(profile: string, args: readonly string[]): Promise<{ readonly code: number; readonly detail: string }> {
+/**
+ * Run one profile package operation through the Harness's own CLI.
+ *
+ * `dsh plugin` is the only writer of a profile manifest: it owns the dependency
+ * edit *and* the `dsh.profile.bundles` reconciliation, loads each newly mounted
+ * bundle's overlay patch, and reports through the one diagnostic log the CLI
+ * keeps. A plugin that ran `pnpm` itself and reconciled the bundle list by hand
+ * would be a second writer of the same file, and it would silently drift the
+ * moment those rules change — which is exactly what the hand-rolled copy did.
+ * @param profile - the profile name the operation edits.
+ * @param args - pnpm arguments after `plugin`, for example `['add', spec]`.
+ * @returns the exit code and the last output line, **unredacted**: a caller that
+ * stores or displays it must pass it through `redactCredentialShapes` first.
+ */
+export async function runDsh(profile: string, args: readonly string[]): Promise<{ readonly code: number; readonly detail: string }> {
   const plugin = ['plugin', '--profile', profile, ...args]
   const argv = dshArgv()
   // Built for every platform (it is pure) so the Windows command line is one

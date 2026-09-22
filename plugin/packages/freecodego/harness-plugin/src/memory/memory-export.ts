@@ -49,6 +49,7 @@ export const MEMORY_INDEX_FILENAME = 'INDEX.md'
 /** Why one record produced no document. Named, so a caller can explain a short export. */
 export type MemoryExportSkipReason = 'invalid-id' | 'carries-credential' | 'redacted' | 'unreadable' | 'invalid-date'
 
+/** One record an export left out, and why. */
 export interface MemoryExportSkip {
   /** The record's id as the store gave it, so the skip is traceable even when it is malformed. */
   readonly id: string
@@ -56,6 +57,7 @@ export interface MemoryExportSkip {
   readonly reason: MemoryExportSkipReason
 }
 
+/** One document an export would write, as its filename and text. */
 export interface MemoryExportFile {
   readonly name: string
   readonly text: string
@@ -138,6 +140,7 @@ export interface MemoryExportFailure {
   readonly message: string
 }
 
+/** What an export actually wrote, and what it could not. */
 export interface MemoryExportResult {
   readonly directory: string
   readonly written: readonly string[]

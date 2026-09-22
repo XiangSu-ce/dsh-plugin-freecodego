@@ -55,6 +55,7 @@ export const DEFAULT_REVIEW_BUDGET = 40
 const ENTRY_SEPARATOR = '\n---\n'
 const ENTRY_SEPARATOR_TOKENS = tokensFromChars(ENTRY_SEPARATOR.length)
 
+/** How far a previous review read, so the next one can send only the delta. */
 export interface ActionReviewCursor {
   /** History generation this cursor was taken from; a bump invalidates it. */
   readonly historyVersion: number
@@ -70,6 +71,7 @@ export interface ActionReviewCursor {
   readonly entryCount: number
 }
 
+/** One pending action offered to the reviewer, with the evidence to judge it on. */
 export interface ActionReviewRequest {
   readonly sessionId: string
   /** The action as the user would see it: a tool name and its arguments. */
@@ -82,6 +84,7 @@ export interface ActionReviewRequest {
   readonly historyVersion: number
 }
 
+/** The capped, rendered text the reviewer is actually shown, plus what it covers. */
 export interface ComposedReviewInput {
   readonly actionText: string
   readonly reasonText: string
@@ -95,12 +98,19 @@ export interface ComposedReviewInput {
   readonly truncated: boolean
 }
 
-/** Approximate token count at the plugin's single density, the same one the spend probes use. */
+/** Approximate token count at the plugin's single density, the same one the spend probes use.
+ * @param text - the text to measure.
+ * @returns the approximate token count.
+ */
 export function approximateTokens(text: string): number {
   return tokensFromChars(text.length)
 }
 
-/** Cut text to a token budget, announcing the cut rather than pretending it fits. */
+/** Cut text to a token budget, announcing the cut rather than pretending it fits.
+ * @param text - the text to cut.
+ * @param tokens - the token budget to fit within.
+ * @returns the capped text and whether it was truncated.
+ */
 export function capToTokens(text: string, tokens: number): { readonly text: string; readonly truncated: boolean } {
   const limit = Math.max(1, tokens) * 4
   if (text.length <= limit) return { text, truncated: false }
@@ -121,6 +131,9 @@ export function capToTokens(text: string, tokens: number): { readonly text: stri
  * A reusable cursor means only the entries the reviewer has not seen are sent;
  * anything else (a newer history version, a cursor past the end) degrades to a
  * full read, because reviewing a wrong slice is worse than paying for a right one.
+ * @param request - the request this call projects from.
+ * @param cursor - the previous review's cursor, when one may be reused.
+ * @returns the composed Review Input.
  */
 export function composeReviewInput(request: ActionReviewRequest, cursor?: ActionReviewCursor): ComposedReviewInput {
   // The cursor is compared in the transcript's index space. Testing it against
@@ -172,6 +185,7 @@ export function composeReviewInput(request: ActionReviewRequest, cursor?: Action
   }
 }
 
+/** What a review decided: a verdict, or the instruction to fall back to the user. */
 export type ReviewOutcome =
   /** The reviewer cleared the action. */
   | { readonly kind: 'allow'; readonly rationale?: string }
@@ -180,10 +194,17 @@ export type ReviewOutcome =
   /** No verdict — the user flow must run. Never treated as an allow. */
   | { readonly kind: 'ask-user'; readonly why: 'no-reviewer' | 'budget-exhausted' | 'reviewer-failed' }
 
+/** The injected model call a review delegates to. */
 export interface Reviewer {
+  /** Judge one composed input against the action it describes.
+   * @param input - the composed, capped review input.
+   * @param action - the action the reviewer must judge.
+   * @returns the reviewer's verdict.
+   */
   review(input: ComposedReviewInput, action: ActionReviewRequest['action']): Promise<ReviewOutcome>
 }
 
+/** How much of a session's review budget has been spent. */
 export interface ActionReviewBudgetReport {
   readonly used: number
   readonly limit: number
@@ -203,16 +224,26 @@ export class ActionReviewState {
 
   constructor(private readonly limit: number = DEFAULT_REVIEW_BUDGET) {}
 
+  /** The session's review budget report.
+   * @param sessionId - the Harness session to report on.
+   * @returns the budget report.
+   */
   budget(sessionId: string): ActionReviewBudgetReport {
     const used = this.used.get(sessionId) ?? 0
     return { used, limit: this.limit, exhausted: used >= this.limit }
   }
 
+  /** The cursor left behind by the session's last completed review, if any.
+   * @param sessionId - the Harness session whose cursor to read.
+   * @returns the stored cursor, or `undefined` when the session has none.
+   */
   cursor(sessionId: string): ActionReviewCursor | undefined {
     return this.cursors.get(sessionId)
   }
 
-  /** Drop a cursor whose history generation no longer matches. */
+  /** Drop a cursor whose history generation no longer matches. 
+   * @param sessionId - the Harness session this operation acts on.
+   */
   invalidate(sessionId: string): void {
     this.cursors.delete(sessionId)
   }
@@ -225,6 +256,7 @@ export class ActionReviewState {
    * conversation it has ever opened. `invalidate` is not a substitute: it drops a
    * cursor whose history generation moved, which is a different event and leaves
    * the budget counter behind.
+   * @param sessionId - the Harness session this operation acts on.
    */
   forget(sessionId: string): void {
     this.used.delete(sessionId)
@@ -236,6 +268,10 @@ export class ActionReviewState {
    *
    * `reviewer === undefined` is the deployment with no reviewer configured; it
    * returns `ask-user`, which is the same answer as a reviewer that failed.
+   * @param request - the request this call projects from.
+   * @param reviewer - the injected reviewer, or `undefined` when none is configured.
+   * @param cacheKey - builds the cache key the caller reuses for this review.
+   * @returns the outcome, the composed input, and the cache key.
    */
   async review(
     request: ActionReviewRequest,
@@ -267,6 +303,8 @@ export class ActionReviewState {
  * most common result by construction — it is what every failure, missing route,
  * and exhausted budget degrades to — and "why did I get a prompt for this" is
  * exactly the question that needs an answer.
+ * @param outcome - the review outcome to describe.
+ * @returns the human-readable line.
  */
 export function describeReviewOutcome(outcome: ReviewOutcome): string {
   if (outcome.kind === 'allow') return outcome.rationale === undefined ? 'automated review cleared this action' : `automated review cleared this action: ${outcome.rationale}`

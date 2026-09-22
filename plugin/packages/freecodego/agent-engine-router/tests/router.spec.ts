@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentEngineLease } from '../src/engine-registry.ts'
 import { FreeCodeGoAgentEngineRegistry } from '../src/engine-registry.ts'
 import { effectiveProviderOf, enforceSameEngine, inheritSameEngineRoute } from '../src/engine-affinity.ts'
+import { sessionEvents } from '../src/index.ts'
 import type { AgentEngineDefinition } from '@deepseek-ai/dsh-freecodego-root-agent'
 
 function definition(
@@ -118,6 +119,22 @@ describe('FreeCodeGoAgentEngineRouter hot-plug regression', () => {
     expect(effectiveProviderOf('claude', undefined)).toBe('freecodego')
     expect(effectiveProviderOf('claude', '   ')).toBe('freecodego')
     expect(effectiveProviderOf('codex', ' agnes ')).toBe('agnes')
+  })
+
+  // Regression: the resume path read the storage handle's answer as if it were
+  // the event slice. The seam answers `{ eventState, events }`, so
+  // `inspected.events.find(…)` threw `inspected.events.find is not a function`
+  // and every model switch on a session with a durable binding failed with
+  // `gateway/internal: resume failed for session "…"`.
+  it('unwraps the event slice out of a session read result', () => {
+    const binding = { type: 'agent-engine/selected', data: { engineId: 'claude' } }
+
+    expect(sessionEvents({ eventState: {}, events: [binding] })).toStrictEqual([binding])
+    // A backend that answers the slice directly stays readable.
+    expect(sessionEvents([binding])).toStrictEqual([binding])
+    // An unrecognized record is "no durable binding", never a TypeError.
+    expect(sessionEvents({ eventState: {} })).toStrictEqual([])
+    expect(sessionEvents(undefined)).toStrictEqual([])
   })
 
   it('resolves the fallback loop through the service registry during resume', async () => {

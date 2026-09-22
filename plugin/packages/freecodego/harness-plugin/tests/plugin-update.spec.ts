@@ -3,10 +3,10 @@ import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/p
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { compareVersions, FreeCodeGoPluginUpdateService, windowsShimCommandLine } from '../src/plugin-update.ts'
+import { compareVersions, FreeCodeGoPluginUpdateService, releaseAssetNames, windowsShimCommandLine } from '../src/plugin-update.ts'
 
 const HARNESS = '0.1.3-alpha.1'
-const REPOSITORY = 'XiangSu-ce/dsh-freecodego'
+const REPOSITORY = 'XiangSu-ce/dsh-plugin-freecodego'
 
 function settings(enabled = true) {
   // A stored `pluginUpdateChannel` from an earlier build is still present here
@@ -177,6 +177,62 @@ describe('FreeCodeGo plugin updates from GitHub Releases', () => {
       const service = new FreeCodeGoPluginUpdateService({ settings: settings() as never, profilePath: fixture.profile })
       await expect(service.check(true)).resolves.toMatchObject({ phase: 'up-to-date', installation: 'local' })
       expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
+  it('prefers the asset named for the Harness line when a release carries both spellings', async () => {
+    // Two assets on purpose: with one, the single-tarball fallback would decide
+    // this and the naming rule would go untested. A release published by the
+    // packaging rule names its asset after the line — the version in the tag is
+    // the hotfix's own, which is why the two names differ here.
+    const fixture = await releaseProfileFixture()
+    try {
+      const tagged = release('v0.1.3-alpha.1.1', {
+        assetName: `freecodego-${HARNESS}.tgz`,
+        assetUrl: 'https://objects.githubusercontent.example/line.tgz',
+      })
+      tagged.assets.push({
+        name: 'freecodego-0.1.3-alpha.1.1.tgz',
+        browser_download_url: 'https://objects.githubusercontent.example/version.tgz',
+      })
+      mockReleases([tagged])
+      const runner = vi.fn(async (_profile: string, args: readonly string[]) => {
+        expect(args).toEqual(['add', '--save-exact', 'https://objects.githubusercontent.example/line.tgz'])
+        await installsVersion(fixture.profile, '0.1.3-alpha.1.1')
+        return { code: 0, detail: '' }
+      })
+      const service = new FreeCodeGoPluginUpdateService({ settings: settings() as never, profilePath: fixture.profile, runDsh: runner })
+      await expect(service.check(true)).resolves.toMatchObject({ phase: 'available', latestVersion: '0.1.3-alpha.1.1' })
+      await expect(service.install()).resolves.toMatchObject({ phase: 'up-to-date', restartRequired: true })
+      expect(runner).toHaveBeenCalledOnce()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
+  it('reads the family-prefixed release tag the publishing workflow creates', async () => {
+    // `release:freecodego` tags `freecodego-v<version>`, and the publishing
+    // workflow creates its release from that tag, so a check that only read the
+    // bare `v<version>` form would see no release at all. The `dsh-v` release
+    // beside it belongs to another family and must not be selected. Every other
+    // case in this file uses the bare form, which stays readable.
+    const fixture = await releaseProfileFixture()
+    try {
+      mockReleases([
+        release('dsh-v0.1.3-alpha.1.1', { assetName: 'dsh-bundle-0.1.3-alpha.1.1.tgz' }),
+        release('freecodego-v0.1.3-alpha.1.1', { assetUrl: 'https://objects.githubusercontent.example/prefixed.tgz' }),
+      ])
+      const runner = vi.fn(async (_profile: string, args: readonly string[]) => {
+        expect(args).toEqual(['add', '--save-exact', 'https://objects.githubusercontent.example/prefixed.tgz'])
+        await installsVersion(fixture.profile, '0.1.3-alpha.1.1')
+        return { code: 0, detail: '' }
+      })
+      const service = new FreeCodeGoPluginUpdateService({ settings: settings() as never, profilePath: fixture.profile, runDsh: runner })
+      await expect(service.check(true)).resolves.toMatchObject({ phase: 'available', latestVersion: '0.1.3-alpha.1.1' })
+      await expect(service.install()).resolves.toMatchObject({ phase: 'up-to-date', restartRequired: true })
+      expect(runner).toHaveBeenCalledOnce()
     } finally {
       await fixture.dispose()
     }
@@ -570,6 +626,24 @@ describe('FreeCodeGo plugin updates from GitHub Releases', () => {
     expect(shim.environment).toEqual({})
     // Quoting still covers the characters cmd.exe would otherwise act on.
     expect(windowsShimCommandLine('dsh', ['plugin', '--profile', 'my profile']).line).toBe('"dsh plugin --profile \"my profile\""')
+  })
+
+  it('names a release asset after the Harness line, and accepts the bundle version too', () => {
+    // The rule the packaging side publishes under, in the order a lookup tries
+    // it: the line first, then the version the bundle declares. Both are
+    // accepted, because a release published under either spelling has to stay
+    // reachable — a name mismatch would otherwise be an update that silently
+    // never appears.
+    expect(releaseAssetNames('freecodego', '0.1.3-alpha.1.1', HARNESS)).toEqual([
+      `freecodego-${HARNESS}.tgz`,
+      'freecodego-0.1.3-alpha.1.1.tgz',
+    ])
+    // A line's first release: the version is the Harness version, so one name.
+    expect(releaseAssetNames('freecodego', HARNESS, HARNESS)).toEqual([`freecodego-${HARNESS}.tgz`])
+    // A scope is flattened the way a packed tarball spells it.
+    expect(releaseAssetNames('@scope/name', '1.0.0', '1.0.0')).toEqual(['scope-name-1.0.0.tgz'])
+    // No Harness version in scope (a custom package name): the version spelling.
+    expect(releaseAssetNames('freecodego-test', '1.0.0', undefined)).toEqual(['freecodego-test-1.0.0.tgz'])
   })
 
   it('orders stable releases after prereleases', () => {

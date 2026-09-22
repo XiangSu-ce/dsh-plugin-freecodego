@@ -68,6 +68,7 @@ const MUTATION_TOOLS: readonly string[] = ['Bash', 'Edit', 'MultiEdit', 'Write',
  *
  * @param fields - The `readOnly` floor and resolved `sandboxMode` for this session.
  * @param toolName - The SDK tool name `canUseTool` was called with.
+ * @returns the refusal text when a mutation tool meets a read-only floor, or `undefined` to continue to the ordinary permission flow.
  */
 export function claudeSandboxDenial(fields: NativeSessionSandboxFields, toolName: string): string | undefined {
   if (effectiveSandboxMode(fields) !== 'read-only') return undefined

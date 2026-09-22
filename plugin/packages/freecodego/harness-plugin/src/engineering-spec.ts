@@ -42,7 +42,11 @@ const MAX_PLAN_CHARS = 60_000
 const MAX_SECTION_CHARS = 8_000
 const MAX_TASKS = 40
 
-/** Resolve and confine the artifact directory for one council id. */
+/** Resolve and confine the artifact directory for one council id.
+ * @param workspaceRoot - the workspace root this operation is scoped to.
+ * @param id - the council id whose directory to resolve.
+ * @returns the confined directory, or `undefined` when the id is invalid.
+ */
 export function specDirectory(workspaceRoot: string, id: string): string | undefined {
   if (!SPEC_ID.test(id)) return undefined
   const root = resolve(workspaceRoot)
@@ -106,7 +110,10 @@ export function deriveSpecTasks(report: FreeCodeGoEngineeringCouncilReport): rea
   return tasks
 }
 
-/** Render the reviewable statement of what is being built and why. */
+/** Render the reviewable statement of what is being built and why.
+ * @param report - the council report to render.
+ * @returns the specification document text.
+ */
 export function renderSpecDocument(report: FreeCodeGoEngineeringCouncilReport): string {
   const objective = clip(report.objective, MAX_OBJECTIVE_CHARS, 'council objective')
   const lines = [
@@ -139,7 +146,10 @@ export function renderSpecDocument(report: FreeCodeGoEngineeringCouncilReport): 
   return `${lines.join('\n')}\n`
 }
 
-/** Render the approved implementation plan, with reviewer output as appendix. */
+/** Render the approved implementation plan, with reviewer output as appendix.
+ * @param report - the council report to render.
+ * @returns the plan document text.
+ */
 export function renderPlanDocument(report: FreeCodeGoEngineeringCouncilReport): string {
   const lines = [
     `# Implementation plan: ${report.id}`,
@@ -159,7 +169,10 @@ export function renderPlanDocument(report: FreeCodeGoEngineeringCouncilReport): 
   return `${lines.join('\n')}\n`
 }
 
-/** Render the derived, severity-ordered task list. */
+/** Render the derived, severity-ordered task list.
+ * @param report - the council report to derive tasks from.
+ * @returns the tasks document text.
+ */
 export function renderTasksDocument(report: FreeCodeGoEngineeringCouncilReport): string {
   const tasks = deriveSpecTasks(report)
   const lines = [`# Tasks: ${report.id}`, '', `${tasks.length} task(s), ordered by severity.`, '']

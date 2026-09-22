@@ -9,7 +9,7 @@ import type {} from '@deepseek-ai/dsh-freecodego-harness-plugin/remote'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, TeamRuntimeStatus, FreeCodeGoAutomationSettings, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, MemoryConsolidation, MemoryManifest, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import type { AdvisorSnapshot, AdvisorUpdate, EngineeringMemoryIndex } from './settings-tab.tsx'
 import freeCodeGoRemote from '@deepseek-ai/dsh-freecodego-harness-plugin/remote'
 import { ADVISOR_CHANGE_EVENT, CAPABILITY_CHANGE_EVENT, ENGINEERING_CHANGE_EVENT, AdvisorSettingsSection, EngineeringSettingsSection, FreeCodeGoSettingsSection, McpSettingsSection, PluginConflictNotice, SkillSettingsSection, type EngineeringLoopStatus, type EngineeringSettings, type EngineeringStatus, type EngineeringTeamDecision, type EngineeringTeamImplementation, type EngineeringTeamJob, type EngineeringTeamReport, type EngineeringTeamVerification } from './settings-tab.tsx'
@@ -18,6 +18,7 @@ import { EngineAction, EngineExecutionBadge, LanguageAction, VoiceInputAction } 
 import { installFreeCodeGoSidebarIcons } from './sidebar-icons.ts'
 import { installCompanion } from './companion/companion.tsx'
 import { installNativeModelMenuBadges, type NativeModelDirectorySnapshot } from './native-model-menu-badges.ts'
+import { readModelPickerVisibility } from './model-picker-visibility.ts'
 import { installModelSelectionEcho } from './model-selection-echo.ts'
 import { installModelCatalogRetry } from './model-catalog-retry.ts'
 import { TokenUsageDashboard } from './token-usage-dashboard.tsx'
@@ -72,7 +73,14 @@ function useEpochSelector(store: EpochStore): SnapshotSelectorHook<number> {
 // Alpha.1 enforces injected Context service access. The settings section reads
 // the current session for engineering and model controls, so `sessions` must
 // be declared at the root rather than accessed through an undeclared context.
-export const inject = ['slots', 'locale', 'remote', 'connection', 'sessions', 'uiConversation']
+// `uiSession` is declared for the companion: its status rows read
+// `ctx.uiSession.sessionStatus` at install time, and an undeclared property
+// access is not a soft failure — the Context getter throws, `apply` aborts, and
+// the whole `freecodego` client entry ends up FAILED, which the boot page
+// reports as `freecodego: failed`. The provider (`@deepseek-ai/dsh-client-ui-session`)
+// is part of the stock web composition, and the core UI entries that consume it
+// (`ui-chat`, `ui-approval`) already declare it the same way.
+export const inject = ['slots', 'locale', 'remote', 'connection', 'sessions', 'uiSession', 'uiConversation']
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -84,6 +92,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 // the locale-dictionary parity gate discovers module-scope *exported*
 // dictionaries, so a private `zh` paired with an exported `en` left both sides
 // unchecked. Exporting it brings the pair under the gate.
+/**
+ * Chinese strings this UI contributes to the settings surface.
+ */
 export const zh = {
   tab: 'FreeCodeGo',
   'language.switch': '切换中英文',
@@ -158,7 +169,7 @@ export const zh = {
   refreshOrder: '刷新订单',
   openCheckout: '打开支付页',
   paymentQr: '支付二维码',
-  stripeSessionReady: 'Stripe 支付会话已创建，请在支付页完成付款。',
+  stripeSessionReady: '支付会话已创建，请在支付页完成付款。',
   verifyOrder: '校验订单',
   cancelOrder: '取消订单',
   emailReceipt: '发送收据到邮箱',
@@ -183,6 +194,9 @@ export const zh = {
   telegramJoin: '加入群聊',
 } as const
 
+/**
+ * English strings this UI contributes to the settings surface.
+ */
 export const en = {
   tab: 'FreeCodeGo',
   'language.switch': 'Switch language',
@@ -257,7 +271,7 @@ export const en = {
   refreshOrder: 'Refresh order',
   openCheckout: 'Open checkout',
   paymentQr: 'Payment QR code',
-  stripeSessionReady: 'Stripe payment session created; finish payment in the checkout page.',
+  stripeSessionReady: 'Payment session created; finish the payment on the checkout page.',
   verifyOrder: 'Verify order',
   cancelOrder: 'Cancel order',
   emailReceipt: 'Email receipt',
@@ -342,20 +356,61 @@ export function apply(ctx: ClientContext): void {
     }
     return service.catalog()
   }
+  /**
+   * The live model directory of the session on screen.
+   *
+   * One lookup for both consumers: the picker decorator reads it to label the
+   * rows the menu renders, and the settings page reads it to build the
+   * per-provider visibility checklist. They have to be the same rows — a list
+   * built from anything else would offer switches for models the menu does not
+   * show, or miss ones it does.
+   */
+  const pickerDirectory = (): {
+    readonly store?: { getSnapshot?: () => NativeModelDirectorySnapshot & { readonly status?: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'; readonly error?: string | null }; subscribe?: (listener: () => void) => () => void; update?: (mutator: (state: { current: unknown; routable: boolean | null; status: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'; error: string | null }) => void) => void }
+    // alpha.2 reports a refused selection by resolving with the Remote failure
+    // instead of throwing, which is the shape `NativeModelDirectory` declares;
+    // this shadow probe has to state the same return type or the call below
+    // cannot narrow it.
+    readonly select?: (selection: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }) => Promise<RemoteResult<void>>
+    readonly load?: () => Promise<unknown>
+  } | undefined => {
+    const directories = ctx.get('modelDirectories') as {
+      directoryFor?: (sessionId: string) => {
+        readonly store?: { getSnapshot?: () => NativeModelDirectorySnapshot & { readonly status?: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'; readonly error?: string | null }; subscribe?: (listener: () => void) => () => void; update?: (mutator: (state: { current: unknown; routable: boolean | null; status: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'; error: string | null }) => void) => void }
+        readonly select?: (selection: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }) => Promise<RemoteResult<void>>
+        readonly load?: () => Promise<unknown>
+      }
+    } | undefined
+    const sessionId = mainViewSessionId(ctx)
+    if (sessionId === undefined || typeof directories?.directoryFor !== 'function') return undefined
+    return directories.directoryFor(sessionId)
+  }
+  const pickerModelDirectory = (): readonly { readonly provider: string; readonly id: string; readonly label: string; readonly description?: string }[] => {
+    const snapshot = pickerDirectory()?.store?.getSnapshot?.()
+    if (snapshot === undefined) return []
+    // Every row, including the groups the decorator would hide: the checklist is
+    // how a hidden model gets switched back on, so dropping hidden rows here
+    // would make the decision one-way.
+    //
+    // The description rides along because it is where a row states its price, and
+    // the price decides whether the row starts shown (see `model-price.ts`).
+    return snapshot.groups.flatMap(group => group.models.map(model => ({
+      provider: group.id,
+      id: model.id,
+      label: model.name,
+      ...(model.description === undefined ? {} : { description: model.description }),
+    })))
+  }
   ctx.effect(() => installNativeModelMenuBadges({
     language: settingsLanguage,
     availability: () => modelAvailability,
+    // Re-read on every pass instead of caching: the settings page writes this
+    // preference while the menu may already be open, and the store's own event
+    // is what asks the decorator to look again.
+    visibility: readModelPickerVisibility,
     snapshot: () => {
-      const directories = ctx.get('modelDirectories') as {
-        directoryFor?: (sessionId: string) => {
-          readonly store?: { getSnapshot?: () => NativeModelDirectorySnapshot & { readonly status?: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'; readonly error?: string | null }; subscribe?: (listener: () => void) => () => void; update?: (mutator: (state: { current: unknown; routable: boolean | null; status: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'; error: string | null }) => void) => void }
-          select?: (selection: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }) => Promise<void>
-          load?: () => Promise<unknown>
-        }
-      } | undefined
-      const sessionId = mainViewSessionId(ctx)
-      if (sessionId === undefined || typeof directories?.directoryFor !== 'function') return undefined
-      const directory = directories.directoryFor(sessionId)
+      const directory = pickerDirectory()
+      if (directory === undefined) return undefined
       if (typeof directory.select === 'function' && directory.store?.update !== undefined) installModelSelectionEcho(directory as Parameters<typeof installModelSelectionEcho>[0])
       if (typeof directory.load === 'function' && typeof directory.store?.getSnapshot === 'function' && typeof directory.store.subscribe === 'function') installModelCatalogRetry(directory as Parameters<typeof installModelCatalogRetry>[0])
       return directory.store?.getSnapshot?.()
@@ -368,13 +423,34 @@ export function apply(ctx: ClientContext): void {
     if (typeof service?.accountStatus !== 'function') throw new Error('FreeCodeGo account Remote service did not become available')
     return service.accountStatus()
   }
-  const login = async (email: string, password: string, remember?: boolean): Promise<RemoteResult<Account>> => {
+  /**
+   * Read the password this machine remembers for the sign-in form.
+   *
+   * A Host that predates this Remote simply answers nothing, which leaves the
+   * form asking for the password the way it always did — the same "no password
+   * remembered" the current Host reports when the box was never ticked.
+   */
+  const accountRememberedPassword = async (): Promise<RemoteResult<{ readonly password?: string }>> => {
     await remoteMounted
-    const service = ctx.get('remote.freeCodeGoHarness') as { accountLogin?: (input: { email: string; password: string; remember?: boolean }) => Promise<RemoteResult<Account>> } | undefined
+    const service = ctx.get('remote.freeCodeGoHarness') as { accountRememberedPassword?: () => Promise<RemoteResult<{ readonly password?: string }>> } | undefined
+    if (typeof service?.accountRememberedPassword !== 'function') return { ok: true, value: {} }
+    return service.accountRememberedPassword()
+  }
+  const login = async (email: string, password: string, remember?: boolean, rememberPassword?: boolean): Promise<RemoteResult<Account>> => {
+    await remoteMounted
+    const service = ctx.get('remote.freeCodeGoHarness') as { accountLogin?: (input: { email: string; password: string; remember?: boolean; rememberPassword?: boolean }) => Promise<RemoteResult<Account>> } | undefined
     if (typeof service?.accountLogin !== 'function') throw new Error('FreeCodeGo login Remote service did not become available')
     // `remember` rides the same login call: unchecked means the Host keeps the
     // issued session in memory for this run instead of the credential file.
-    return service.accountLogin({ email, password, ...(remember === undefined ? {} : { remember }) })
+    // `rememberPassword` is the second, independent intent over the same call:
+    // the Host keeps the password itself for the next sign-in form, and an
+    // explicit false is what erases one it already kept.
+    return service.accountLogin({
+      email,
+      password,
+      ...(remember === undefined ? {} : { remember }),
+      ...(rememberPassword === undefined ? {} : { rememberPassword }),
+    })
   }
   const logout = async (): Promise<RemoteResult<Account>> => {
     await remoteMounted
@@ -415,11 +491,16 @@ export function apply(ctx: ClientContext): void {
   const oauthPendingBind = (input: { readonly email: string; readonly password: string; readonly totpCode?: string }): Promise<RemoteResult<Account>> => backendCall<Account>('accountOAuthPendingBind', input)
   /** Create a new account from the pending federated identity. */
   const oauthPendingCreate = (input: { readonly email: string; readonly password: string; readonly verifyCode?: string; readonly invitationCode?: string }): Promise<RemoteResult<Account>> => backendCall<Account>('accountOAuthPendingCreate', input)
-  const completeMfa = async (totpCode: string): Promise<RemoteResult<Account>> => {
+  // The Host declares `accountMfaComplete(totpCode, deviceId?)`, and an optional
+  // parameter still counts toward arity, so the Remote layer expects two
+  // arguments: a one-argument call is refused with `expected 2 argument(s), got
+  // 1` before the Host ever sees it. `deviceId` is therefore forwarded even when
+  // the caller has none — the same shape `projectConfigReport` already uses.
+  const completeMfa = async (totpCode: string, deviceId?: string): Promise<RemoteResult<Account>> => {
     await remoteMounted
-    const service = ctx.get('remote.freeCodeGoHarness') as { accountMfaComplete?: (totpCode: string) => Promise<RemoteResult<Account>> } | undefined
+    const service = ctx.get('remote.freeCodeGoHarness') as { accountMfaComplete?: (totpCode: string, deviceId?: string) => Promise<RemoteResult<Account>> } | undefined
     if (typeof service?.accountMfaComplete !== 'function') throw new Error('FreeCodeGo MFA Remote service did not become available')
-    return service.accountMfaComplete(totpCode)
+    return service.accountMfaComplete(totpCode, deviceId)
   }
   const backendCall = async <T>(method: string, ...args: readonly unknown[]): Promise<RemoteResult<T>> => {
     await remoteMounted
@@ -472,7 +553,9 @@ export function apply(ctx: ClientContext): void {
   const headroomUpdate = (patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean }): Promise<RemoteResult<HeadroomStats>> => backendCall<HeadroomStats>('headroomUpdate', patch)
   const deferredToolsStatus = (): Promise<RemoteResult<DeferredToolStatus>> => backendCall<DeferredToolStatus>('deferredToolsStatus')
   const deferredToolsSetEnabled = (enabled: boolean): Promise<RemoteResult<DeferredToolStatus>> => backendCall<DeferredToolStatus>('deferredToolsSetEnabled', enabled)
-  const teamStatus = (): Promise<RemoteResult<TeamRuntimeStatus>> => backendCall<TeamRuntimeStatus>('teamStatus')
+  const reviewStatus = (sessionId: string): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewStatus', sessionId)
+  const reviewStart = (sessionId: string, request: FreeCodeGoReviewStartRequest): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewStart', sessionId, request)
+  const reviewUpdate = (sessionId: string, patch: FreeCodeGoReviewUpdate): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewUpdate', sessionId, patch)
   const guardSettingsStatus = (): Promise<RemoteResult<FreeCodeGoGuardSettingsStatus>> => backendCall<FreeCodeGoGuardSettingsStatus>('guardSettingsStatus')
   const guardSettingsUpdate = (patch: FreeCodeGoGuardSettingsUpdate): Promise<RemoteResult<FreeCodeGoGuardSettingsStatus>> => backendCall<FreeCodeGoGuardSettingsStatus>('guardSettingsUpdate', patch)
   const automationSettingsStatus = (): Promise<RemoteResult<FreeCodeGoAutomationSettings>> => backendCall<FreeCodeGoAutomationSettings>('automationSettingsStatus')
@@ -481,13 +564,21 @@ export function apply(ctx: ClientContext): void {
   /**
    * Folder trust, as a panel sees it.
    *
-   * The status call is deliberately argument-less: the Host answers about the
-   * workspace it is running in, which is the question the panel is asking. Grant
-   * and revoke are handed the canonical root that same answer reported, so the
-   * panel never derives a repository root of its own — a second derivation is how
-   * a revoke ends up naming a directory the grant never recorded.
+   * The status call names no directory: the Host answers about the workspace it
+   * is running in, which is the question the panel is asking. Grant and revoke
+   * are handed the canonical root that same answer reported, so the panel never
+   * derives a repository root of its own — a second derivation is how a revoke
+   * ends up naming a directory the grant never recorded.
+   *
+   * "Names no directory" is not "takes no argument". The Host declares
+   * `trustFolderStatus(directory?: string)`, and an optional parameter still
+   * counts toward JS function arity, so the Remote layer enforces one argument
+   * and answers a zero-argument call with `expected 1 argument(s), got 0` — the
+   * panel rendered that as "授信状态读取失败" and left the section empty. The
+   * parameter is therefore forwarded explicitly, exactly as
+   * `projectConfigReport` already does, and the panel keeps calling it with none.
    */
-  const trustFolderStatus = (): Promise<RemoteResult<FreeCodeGoTrustStatus>> => backendCall<FreeCodeGoTrustStatus>('trustFolderStatus')
+  const trustFolderStatus = (directory?: string): Promise<RemoteResult<FreeCodeGoTrustStatus>> => backendCall<FreeCodeGoTrustStatus>('trustFolderStatus', directory)
   const trustFolderGrant = (directory: string): Promise<RemoteResult<FreeCodeGoTrustStatus>> => backendCall<FreeCodeGoTrustStatus>('trustFolderGrant', directory)
   const trustFolderRevoke = (directory: string): Promise<RemoteResult<FreeCodeGoTrustStatus>> => backendCall<FreeCodeGoTrustStatus>('trustFolderRevoke', directory)
   // The read half of the trust panel: which keys a repository's own
@@ -700,6 +791,7 @@ export function apply(ctx: ClientContext): void {
       // ids to the English fallback instead of widening its contract.
       language: settingsLanguage(),
       accountStatus,
+      accountRememberedPassword,
       login,
       register,
       sendVerifyCode,
@@ -727,6 +819,7 @@ export function apply(ctx: ClientContext): void {
         }
       },
       nativeModelCatalog,
+      pickerModelDirectory,
       vyceStatus: () => backendCall<FreeCodeGoVyceStatus>('vyceStatus'),
       vyceSetKey: (value: string) => backendCall<FreeCodeGoVyceStatus>('vyceSetKey', value),
       logfareStatus: () => backendCall<FreeCodeGoLogfareStatus>('logfareStatus'),
@@ -749,13 +842,21 @@ export function apply(ctx: ClientContext): void {
       paymentVerify: (outTradeNo: string) => backendCall<{ readonly orderId: string; readonly state: string; readonly amount: number; readonly currency: string; readonly checkoutUrl?: string; readonly qrCode?: string; readonly clientSecret?: string; readonly outTradeNo?: string; readonly payAmount?: number; readonly paymentType?: string; readonly expiresAt?: string }>('paymentVerify', outTradeNo),
       paymentCancel: (orderId: string) => backendCall<{ readonly cancelled: boolean }>('paymentCancel', orderId),
       paymentReceiptEmail: (orderId: string) => backendCall<{ readonly email: string; readonly message?: string }>('paymentReceiptEmail', orderId),
-      paymentReceiptDocument: (orderId: string) => backendCall<{ readonly fileName: string; readonly contentType: string; readonly content: string }>('paymentReceiptDocument', orderId),
+      paymentReceiptDocument: (orderId: string) => backendCall<{ readonly fileName: string; readonly contentType: string; readonly content: string; readonly encoding?: 'text' | 'base64' }>('paymentReceiptDocument', orderId),
+      paymentStripeReceiptDocument: (orderId: string) => backendCall<{ readonly fileName: string; readonly contentType: string; readonly content: string; readonly encoding?: 'text' | 'base64' }>('paymentStripeReceiptDocument', orderId),
       agnesStatus: () => backendCall<AgnesStatus>('agnesStatus'),
       clineStatus: () => backendCall<ClineStatus>('clineStatus'),
       clineStartLogin: () => backendCall<ClineDeviceLogin>('clineStartLogin'),
       clinePollLogin: (deviceCode: string) => backendCall<ClineLoginPoll>('clinePollLogin', deviceCode),
       clineRemoveAccount: (accountId: string) => backendCall<ClineStatus>('clineRemoveAccount', accountId),
-      clineRefresh: (accountId?: string) => accountId === undefined ? backendCall<ClineStatus>('clineRefresh') : backendCall<ClineStatus>('clineRefresh', accountId),
+      // These six forward their optional id unconditionally. The Host declares
+      // each of them with one optional parameter, and an optional parameter
+      // still counts toward arity, so the `accountId === undefined` branch that
+      // used to sit here — calling `backendCall('clineRefresh')` with no
+      // argument — was refused by the Remote layer with `expected 1
+      // argument(s), got 0`. That made the no-id case, which is the card's own
+      // "refresh" button, the one case that could never work.
+      clineRefresh: (accountId?: string) => backendCall<ClineStatus>('clineRefresh', accountId),
       clineLogout: () => backendCall<ClineStatus>('clineLogout'),
       workbuddyStatus: () => backendCall<WorkBuddyInternationalStatus>('workbuddyStatus'),
       workbuddyImportDesktopLogin: () => backendCall<WorkBuddyInternationalStatus>('workbuddyImportDesktopLogin'),
@@ -766,26 +867,44 @@ export function apply(ctx: ClientContext): void {
       workbuddyRemoveAccount: (accountId: string) => backendCall<WorkBuddyInternationalStatus>('workbuddyRemoveAccount', accountId),
       workbuddySetActiveAccount,
       workbuddyRefreshCredits: () => backendCall<WorkBuddyInternationalStatus>('workbuddyRefreshCredits'),
+      qoderStatus: () => backendCall<QoderStatus>('qoderStatus'),
+      qoderStartBrowserLogin: () => backendCall<QoderBrowserLogin>('qoderStartBrowserLogin'),
+      qoderPollBrowserLogin: (state: string) => backendCall<QoderLoginPoll>('qoderPollBrowserLogin', state),
+      qoderLogout: () => backendCall<QoderStatus>('qoderLogout'),
+      qoderRemoveAccount: (accountId: string) => backendCall<QoderStatus>('qoderRemoveAccount', accountId),
+      qoderSetActiveAccount: (accountId: string) => backendCall<QoderStatus>('qoderSetActiveAccount', accountId),
+      qoderRefreshQuota: () => backendCall<QoderStatus>('qoderRefreshQuota'),
+      qoderCheckin: () => backendCall<FreeCodeGoCheckinReport>('qoderCheckin'),
+      // Trae owns no ticket on this side: the whole attempt lives in the Host, so
+      // the card renders and polls one status value instead of holding a state.
+      traeStatus: () => backendCall<TraeStatus>('traeStatus'),
+      // The realm is an argument rather than card state: one click authorizes one
+      // deployment, and the Host holds the attempt.
+      traeStartBrowserLogin: (realm: 'cn' | 'sg') => backendCall<TraeStatus>('traeStartBrowserLogin', realm),
+      traePollBrowserLogin: () => backendCall<TraeStatus>('traePollBrowserLogin'),
+      traeSubmitCallback: (url: string) => backendCall<TraeStatus>('traeSubmitCallback', url),
+      traeCancelBrowserLogin: () => backendCall<TraeStatus>('traeCancelBrowserLogin'),
+      traeModels: () => backendCall<readonly TraeModel[]>('traeModels'),
+      traeLogout: () => backendCall<TraeStatus>('traeLogout'),
+      traeRemoveAccount: (accountId: string) => backendCall<TraeStatus>('traeRemoveAccount', accountId),
+      traeSetActiveAccount: (accountId: string) => backendCall<TraeStatus>('traeSetActiveAccount', accountId),
+      traeCheckin: () => backendCall<FreeCodeGoCheckinReport>('traeCheckin'),
       agnesSendVerification: (email: string) => backendCall<{ readonly sent: boolean }>('agnesSendVerification', email),
       agnesSendPasswordReset: (email: string) => backendCall<{ readonly sent: boolean }>('agnesSendPasswordReset', email),
       agnesResetPassword: (email: string, password: string, code: string) => backendCall<{ readonly updated: boolean }>('agnesResetPassword', email, password, code),
       agnesLogin: (email: string, password: string) => backendCall<AgnesStatus>('agnesLogin', email, password),
       agnesRegister: (email: string, password: string, code: string) => backendCall<AgnesStatus>('agnesRegister', email, password, code),
-      agnesCreateApiKey: (accountId?: string) => accountId === undefined ? backendCall<{ readonly configured: boolean; readonly accountId: string }>('agnesCreateApiKey') : backendCall<{ readonly configured: boolean; readonly accountId: string }>('agnesCreateApiKey', accountId),
+      agnesCreateApiKey: (accountId?: string) => backendCall<{ readonly configured: boolean; readonly accountId: string }>('agnesCreateApiKey', accountId),
       agnesRemoveAccount: (accountId: string) => backendCall<AgnesStatus>('agnesRemoveAccount', accountId),
-      agnesRefresh: (accountId?: string) => accountId === undefined ? backendCall<AgnesStatus>('agnesRefresh') : backendCall<AgnesStatus>('agnesRefresh', accountId),
-      agnesLogout: (accountId?: string) => accountId === undefined ? backendCall<AgnesStatus>('agnesLogout') : backendCall<AgnesStatus>('agnesLogout', accountId),
+      agnesRefresh: (accountId?: string) => backendCall<AgnesStatus>('agnesRefresh', accountId),
+      agnesLogout: (accountId?: string) => backendCall<AgnesStatus>('agnesLogout', accountId),
       codexRuntimeStatus: () => backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('codexRuntimeStatus'),
       codexRuntimePackages: () => backendCall<readonly { readonly id: string; readonly platform: string; readonly label: string; readonly runtimeVersion: string; readonly sourceRevision: string; readonly installDirectory: string; readonly compatible: boolean; readonly source: 'official'; readonly downloadURL: string }[]>('codexRuntimePackages'),
-      codexRuntimeInstall: (packageID?: string) => packageID === undefined
-        ? backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('codexRuntimeInstall')
-        : backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('codexRuntimeInstall', packageID),
+      codexRuntimeInstall: (packageID?: string) => backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('codexRuntimeInstall', packageID),
       codexRuntimeRemove: () => backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('codexRuntimeRemove'),
       claudeRuntimeStatus: () => backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('claudeRuntimeStatus'),
       claudeRuntimePackages: () => backendCall<readonly { readonly id: string; readonly platform: string; readonly label: string; readonly runtimeVersion: string; readonly sourceRevision: string; readonly installDirectory: string; readonly compatible: boolean; readonly source: 'official'; readonly downloadURL: string }[]>('claudeRuntimePackages'),
-      claudeRuntimeInstall: (packageID?: string) => packageID === undefined
-        ? backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('claudeRuntimeInstall')
-        : backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('claudeRuntimeInstall', packageID),
+      claudeRuntimeInstall: (packageID?: string) => backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('claudeRuntimeInstall', packageID),
       claudeRuntimeRemove: () => backendCall<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>('claudeRuntimeRemove'),
       pluginUpdateStatus: () => backendCall<import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoPluginUpdateStatus>('pluginUpdateStatus'),
       pluginUpdateCheck: () => backendCall<import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoPluginUpdateStatus>('pluginUpdateCheck'),
@@ -800,7 +919,12 @@ export function apply(ctx: ClientContext): void {
       communityUninstall: (url: string) => backendCall<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }>('communityUninstall', url),
       capabilityMarketplace,
       mcpPresetInstall,
-      skillPresetInstall: (id: string) => backendCall<CapabilitySnapshot>('skillPresetInstall', id),
+      skillPresetInstall: (id: string, placement?: import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoSkillPlacement) => backendCall<CapabilitySnapshot>('skillPresetInstall', id, placement),
+      skillPresetRemove: (id: string) => backendCall<CapabilitySnapshot>('skillPresetRemove', id),
+      skillPlacements: () => backendCall<import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoSkillPlacements>('skillPlacements'),
+      // No argument clears the preference — the community root, which is what an install
+      // did before placements existed.
+      skillPlacementPrefer: (placement?: import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoSkillPlacement) => backendCall<CapabilitySnapshot>('skillPlacementPrefer', placement),
       capabilities: () => backendCall<CapabilitySnapshot>('capabilities'),
       readLocalCapabilities: async () => {
         const fallback = { voiceInputEnabled: true, sessionDeleteEnabled: true }
@@ -833,7 +957,9 @@ export function apply(ctx: ClientContext): void {
       headroomUpdate,
       deferredToolsStatus,
       deferredToolsSetEnabled,
-      teamStatus,
+      reviewStatus,
+      reviewStart,
+      reviewUpdate,
       guardSettingsStatus,
       guardSettingsUpdate,
       automationSettingsStatus,

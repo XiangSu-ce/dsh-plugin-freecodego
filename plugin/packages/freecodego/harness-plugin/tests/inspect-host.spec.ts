@@ -32,6 +32,9 @@ function port(overrides: Partial<InspectHostPort> & { readonly files?: Record<st
     home: () => '/home/user',
     dataHome: () => '/home/user/.dsh',
     trust: async () => ({ enabled: true, trusted: true, reason: 'trusted-repository', root: '/repo' }),
+    // The common composition: no Harness hook bridge mounted, so this reader owns
+    // the Claude dialect. A case that mounts one passes its own answer.
+    claudeHookDialect: () => 'plugin' as const,
     capabilities: async () => ({ skills: [], mcpServers: [], mcpTools: [] }),
     sandbox: () => ({ denyPatterns: [] }),
     engines: () => ({ deepseek: { available: true } }),

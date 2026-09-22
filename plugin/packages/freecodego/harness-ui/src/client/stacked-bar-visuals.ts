@@ -21,7 +21,13 @@ export type StackedSegmentVisualLayout = {
 }
 
 /** Per-segment pixel heights that keep every non-zero segment visible.
- *  Returns null when the scale is unusable (no room, or no positive value). */
+/**
+ * Returns null when the scale is unusable (no room, or no positive value).
+ * @param values - the segment values, in stack order.
+ * @param pixelsPerValue - the bar's pixels per unit of value.
+ * @param minHeight - the pixel floor every non-zero segment keeps.
+ * @returns the per-segment pixel heights, or `null` when the scale is unusable.
+ */
 export function allocateVisualHeights(values: readonly number[], pixelsPerValue: number, minHeight: number): number[] | null {
   if (!Number.isFinite(pixelsPerValue) || pixelsPerValue <= 0) return null
   const rawHeights = values.map(value => Math.max(0, value * pixelsPerValue))
@@ -54,8 +60,12 @@ export function allocateVisualHeights(values: readonly number[], pixelsPerValue:
 
 /** Position of one stacked segment inside its bar. `segmentY`/`segmentHeight`
  *  describe the bar's own box and `stackStart` the value already stacked below
- *  it, so the caller can pass the geometry it measured. */
-export function getStackedSegmentVisualLayout({ values, segmentIndex, segmentHeight, segmentY, stackStart, minHeight = 5 }: {
+/**
+ * it, so the caller can pass the geometry it measured.
+ * @returns the segment's box, or `null` when the segment has nothing to draw.
+ * @param options - the stack values and the measured bar geometry for this segment.
+ */
+export function getStackedSegmentVisualLayout(options: {
   readonly values: readonly number[]
   readonly segmentIndex: number
   readonly segmentHeight: number
@@ -63,6 +73,7 @@ export function getStackedSegmentVisualLayout({ values, segmentIndex, segmentHei
   readonly stackStart: number
   readonly minHeight?: number
 }): StackedSegmentVisualLayout | null {
+  const { values, segmentIndex, segmentHeight, segmentY, stackStart, minHeight = 5 } = options
   const safeValues = values.map(value => (Number.isFinite(value) && value > 0 ? value : 0))
   const segmentValue = safeValues[segmentIndex] ?? 0
   if (segmentValue <= 0 || segmentHeight <= 0 || segmentIndex < 0) return null

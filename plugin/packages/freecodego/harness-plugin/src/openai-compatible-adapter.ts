@@ -8,8 +8,10 @@ import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import type {
   AttachmentStore, ImageAttachmentRef, ImageRequestTarget, RequestImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
-import { hasImageContent, parseSse, serializeRequest, serializeRequestWithInlineImages, translate } from './openai-wire.ts'
+import { hasImageContent, serializeRequest, serializeRequestWithInlineImages, translate } from './openai-wire.ts'
+import { parseSse } from './wire-shared.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
+import { llmCodeForUpstreamStatus } from './upstream-status-code.ts'
 import { ANTHROPIC_MESSAGES_HEADERS, serializeAnthropicRequest, serializeAnthropicRequestWithInlineImages, translateAnthropic } from './anthropic-wire.ts'
 
 /**
@@ -50,7 +52,10 @@ export const WIRE_FOR_PROTOCOL: ReadonlyMap<string, OpenAiCompatibleWire> = new 
 /** Protocols a route may accept; derived so it cannot name an unsendable wire. */
 export const SUPPORTED_WIRE_PROTOCOLS: readonly string[] = [...WIRE_FOR_PROTOCOL.keys()]
 
-/** Fold the backend's protocol spellings so they can be compared. */
+/** Fold the backend's protocol spellings so they can be compared.
+ * @param protocol - the backend's declared protocol spelling.
+ * @returns the canonical protocol key.
+ */
 export function normalizeWireProtocol(protocol: string | undefined): string {
   const value = (protocol ?? '').trim().toLowerCase().replace(/-/gu, '_')
   if (value === 'openai' || value === 'responses') return 'openai_responses'
@@ -58,11 +63,15 @@ export function normalizeWireProtocol(protocol: string | undefined): string {
   return value
 }
 
-/** The wire that serves a backend protocol, or `undefined` when none does. */
+/** The wire that serves a backend protocol, or `undefined` when none does.
+ * @param protocol - the backend's declared protocol spelling.
+ * @returns the wire serving that protocol, or `undefined` when unsupported.
+ */
 export function wireForProtocol(protocol: string | undefined): OpenAiCompatibleWire | undefined {
   return WIRE_FOR_PROTOCOL.get(normalizeWireProtocol(protocol))
 }
 
+/** How one OpenAI-compatible route reaches its provider. */
 export interface OpenAiCompatibleConnection {
   readonly baseURL: string
   readonly apiKey: string
@@ -82,6 +91,7 @@ export interface OpenAiCompatibleConnection {
 /** The DeepSeek-compatible serializer accepts only these wire effort values. */
 export type SupportedReasoningEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
+/** How one OpenAI-compatible adapter is wired to its provider. */
 export interface OpenAiCompatibleAdapterOptions {
   readonly providerName: string
   readonly listModels: (provider: string) => Promise<readonly LlmModelInfo[]>
@@ -284,11 +294,14 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
       // The bare status is useless to the operator on a 429: append the
       // provider-configured proxy/IP suggestion (bilingual) when present.
       const rateHint = response.status === 429 ? this.config.rateLimitedHint?.(this.config.providerName) : undefined
+      // The code is the shared status policy, not a local ladder. It used to read
+      // `401 || 403 ? 'AUTH'`, which reported the plan gate on a paid route as a
+      // rejected key: the UI asked the user to sign in again over a working
+      // credential, and the failure ledger counted an `AUTH` that never happened.
+      // `403` is a gate on *this* route, and only `401` says the sign-in is dead.
       throw new LlmError(
         `${this.config.providerName} provider request failed (HTTP ${response.status})${detail === '' ? '' : `: ${detail}`}${rateHint === undefined ? '' : `\n${rateHint}`}`,
-        response.status === 401 || response.status === 403 ? 'AUTH'
-          : response.status === 429 ? 'RATE_LIMIT'
-            : response.status >= 500 ? 'SERVER' : `HTTP_${response.status}`,
+        llmCodeForUpstreamStatus(response.status),
         { status: response.status },
       )
     }

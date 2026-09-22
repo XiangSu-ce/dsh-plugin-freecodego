@@ -34,6 +34,7 @@
  */
 
 import { cutAtCodePointBoundary, screenMemoryForPersistence, tailAtCodePointBoundary } from './memory-security.ts'
+import { isRecord } from '../untrusted-json.ts'
 
 /** Longest objective or decision text kept per entry. */
 export const MAX_FACT_TEXT_CHARS = 300
@@ -63,6 +64,7 @@ export interface ConversationDecision {
   readonly at: number
 }
 
+/** The goals pursued and decisions made over one conversation. */
 export interface ConversationArc {
   readonly goals: readonly ConversationGoal[]
   readonly decisions: readonly ConversationDecision[]
@@ -89,10 +91,6 @@ const DECISION_PATTERNS: readonly RegExp[] = [
   /\b(?:decided|agreed) (?:to|on|that)\b/iu,
   /\b(?:choose|chose|settled on|opted (?:for|to))\b/iu,
 ]
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 /** Whether one candidate line announces a choice, per the pattern table. */
 function announcesDecision(line: string): boolean {
@@ -221,6 +219,9 @@ function decisionsFromMemories(memories: readonly ConversationArcMemory[]): Conv
  * in scan order — oldest first — so a session with more than
  * {@link MAX_FACTS_PER_LIST} announcements reported its earliest ones and
  * dropped its latest, the half a later session is trying to recall.
+ * @param events - the session events to fold.
+ * @param memories - promoted memory records to read decisions from.
+ * @returns the conversation Arc.
  */
 export function foldConversationArc(
   events: readonly ConversationArcEvent[],
@@ -245,6 +246,8 @@ export function foldConversationArc(
  *
  * This is the shape rehydration injects; the wording mirrors the existing
  * rehydration sections so one injected message reads as one document.
+ * @param arc - the conversation arc to render.
+ * @returns the bounded prompt text, or `''` when nothing happened.
  */
 export function conversationArcText(arc: ConversationArc): string {
   const lines: string[] = []

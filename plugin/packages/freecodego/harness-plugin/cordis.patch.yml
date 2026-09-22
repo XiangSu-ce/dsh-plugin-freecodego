@@ -1,10 +1,14 @@
-# This profile owns the FreeCodeGo/WorkBuddy/Agnes routes. The stock Models
-# page remains available for user-managed third-party provider credentials;
-# the official DeepSeek adapter stays disabled for this deployment.
-- id: llm-deepseek
-  disabled: true
-- id: web-search-deepseek
-  disabled: true
+# This profile owns the FreeCodeGo/WorkBuddy/Agnes routes and leaves the stock
+# Models page available for user-managed third-party provider credentials. The
+# official DeepSeek rows stay mounted: `llm-deepseek` is the only registrant of
+# provider `deepseek-official`, which the base composition names for both
+# `agent-default-model.provider` and `web.searchProvider`.
+#
+# `web-search-deepseek` is deliberately NOT disabled here. The base composition
+# pins `web.searchProvider: deepseek-official`, this row is the only thing that
+# registers that provider, and the plugin registers no search provider at all,
+# so disabling it turns every `web_search` call into the Harness's own
+# `WEB_PROVIDER_CONFIGURED_MISSING`.
 
 - insert:
     - id: freecodego-harness-plugin

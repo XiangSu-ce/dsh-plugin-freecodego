@@ -17,6 +17,7 @@
  */
 
 export const STEERING_SENTINEL = '<headroom_output_shaping>'
+/** Closing fence paired with {@link STEERING_SENTINEL} around a steering block. */
 export const STEERING_SUFFIX = '</headroom_output_shaping>'
 
 /**
@@ -36,7 +37,11 @@ export const VERBOSITY_LEVELS: Readonly<Record<number, string>> = {
   4: 'Minimum tokens. Fragments fine. No preamble, no postamble, no restating context, no rationale. Answer, smallest-possible edits, nothing else. Never drop anything the turn or task needs to be correct, including negations (not, never, no, only, except). Use full prose for destructive or irreversible actions, security warnings, and any multi-step sequence where brevity would create ambiguity.',
 }
 
-/** The full steering block for a verbosity level, or undefined for level 0. */
+/**
+ * The full steering block for a verbosity level, or undefined for level 0.
+ * @param level - the verbosity level to render.
+ * @returns the fenced steering text, or undefined when the level has none.
+ */
 export function steeringText(level: number): string | undefined {
   const text = VERBOSITY_LEVELS[level]
   if (text === undefined) return undefined
@@ -45,6 +50,10 @@ export function steeringText(level: number): string | undefined {
 
 // ─── Effort routing: turn classification (structural only) ──────────────────
 
+/**
+ * Structural classification of the turn the model is about to answer, derived
+ * from session-event shapes alone.
+ */
 export type TurnKind = 'new-user-ask' | 'mechanical-continuation' | 'error-continuation' | 'unknown'
 
 /**
@@ -156,6 +165,14 @@ export function classifyTurnFromTail(lastEventKinds: readonly string[]): TurnKin
  */
 const EFFORT_LADDER: readonly string[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max']
 
+/**
+ * Clamp effort one rung down the ladder on a mechanical continuation, so a turn
+ * that only carries a tool result back does not pay full reasoning cost.
+ * @param effort - the effort level the turn would otherwise use.
+ * @param turnKind - the structural kind of the current turn.
+ * @param enabled - whether effort routing is on.
+ * @returns the effort level to use, or undefined when none was set.
+ */
 export function routeEffort(effort: string | undefined, turnKind: TurnKind, enabled: boolean): string | undefined {
   if (!enabled) return effort
   if (effort === undefined || turnKind !== 'mechanical-continuation') return effort

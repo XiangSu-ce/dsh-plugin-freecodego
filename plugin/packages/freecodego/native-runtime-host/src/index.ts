@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto'
 import { NativeRuntimeJsonlDecoder, encodeNativeRuntimeMessage, redactCredentialShapes, withNativeRuntimeAbort, withNativeRuntimeTimeout } from '@deepseek-ai/dsh-freecodego-native-runtime-protocol'
 import type { NativeRuntimeEvent, NativeRuntimeMessage, NativeRuntimeMethod, NativeRuntimeRequest } from '@deepseek-ai/dsh-freecodego-native-runtime-protocol'
 
+/**
+ * How to launch one native worker process, and the bounds its supervisor enforces.
+ */
 export interface NativeRuntimeHostOptions {
   readonly command: string
   readonly args?: readonly string[]
@@ -31,6 +34,9 @@ export interface NativeRuntimeHostOptions {
   readonly onFailure?: (error: Error) => void
 }
 
+/**
+ * Per-request bounds: a timeout override and the signal that aborts the turn.
+ */
 export interface NativeRuntimeRequestOptions {
   readonly timeoutMs?: number
   readonly signal?: AbortSignal
@@ -143,7 +149,14 @@ export class NativeRuntimeHost {
     })
   }
 
-  request<T = unknown>(method: NativeRuntimeMethod, params: unknown, options: NativeRuntimeRequestOptions = {}): Promise<T> {
+    /**
+   * Send one protocol request to the worker and await its answer.
+   * @param method - the protocol method to call.
+   * @param params - engine-shaped parameters for that method.
+   * @param options - per-request timeout and abort signal.
+   * @returns the worker's result for the request.
+   */
+request<T = unknown>(method: NativeRuntimeMethod, params: unknown, options: NativeRuntimeRequestOptions = {}): Promise<T> {
     if (!METHODS.has(method)) return Promise.reject(new Error(`unsupported native runtime method "${method}"`))
     if (this.disposed) return Promise.reject(new Error('native runtime host is disposed'))
     if (this.failure !== undefined) return Promise.reject(this.failure)
@@ -201,7 +214,10 @@ export class NativeRuntimeHost {
       })
   }
 
-  async dispose(): Promise<void> {
+    /**
+   * Stop the worker and refuse every later request on this host.
+   */
+async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
     const child = this.child

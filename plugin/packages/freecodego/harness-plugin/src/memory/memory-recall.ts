@@ -78,6 +78,7 @@ export type MemoryRecallDropReason =
   /** The selector named more ids than the limit allowed. */
   | 'over-limit'
 
+/** One candidate recall refused to use, with the reason it was dropped. */
 export interface MemoryRecallDrop {
   readonly id: string
   readonly reason: MemoryRecallDropReason
@@ -120,6 +121,7 @@ export type MemorySelector = (
   signal: AbortSignal | undefined,
 ) => Promise<readonly string[]>
 
+/** Everything one recall call needs: the query, candidates, and bounds. */
 export interface MemoryRecallRequest {
   readonly query: string
   readonly candidates: readonly MemoryRecallCandidate[]
@@ -130,6 +132,7 @@ export interface MemoryRecallRequest {
   readonly signal?: AbortSignal
 }
 
+/** What recall selected, the excerpts behind it, and any drops it recorded. */
 export interface MemoryRecallResult {
   readonly strategy: MemoryRecallStrategy
   /** Selected ids, best first. Never more than `limit`, never an unknown id. */
@@ -359,6 +362,9 @@ function readSelectorAnswer(
  * malformed answer all resolve to the lexical ordering with the reason recorded.
  * It *does* throw for a malformed request (an out-of-range limit), because that is
  * a caller bug whose silent clamp would hide a mis-sized context budget.
+ * @param request - the request this call projects from.
+ * @param selector - the optional model selector; absent means a lexical recall.
+ * @returns the memory Recall Result.
  */
 export async function selectMemories(
   request: MemoryRecallRequest,

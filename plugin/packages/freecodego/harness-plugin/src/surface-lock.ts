@@ -38,6 +38,13 @@ import { tokensFromChars } from './token-estimate.ts'
 export const SURFACE_TOKEN_ESTIMATE_NOTE =
   'approximateTokens is a lexical estimate (bytes / 4), not a tokenizer count, not actual injected context, and not the token cost of a task.'
 
+/**
+ * One thing this plugin puts in front of the model.
+ *
+ * The text is the entry's whole content, kept verbatim: the lock is only worth
+ * having if it hashes what the model actually reads, so nothing is normalized on
+ * the way in.
+ */
 export interface SurfaceEntry {
   /** Stable identity inside its group, e.g. a tool name or a guidance id. */
   readonly name: string
@@ -45,12 +52,25 @@ export interface SurfaceEntry {
   readonly text: string
 }
 
+/**
+ * Entries that belong to one named surface, such as the tool schemas.
+ *
+ * The name is the lock's key, so a group renamed in a release appears as one
+ * added and one removed rather than as a silently changed hash.
+ */
 export interface SurfaceGroup {
   /** Surface name, used as the lock key: `tool-schemas`, `injected-guidance`, … */
   readonly group: string
   readonly entries: readonly SurfaceEntry[]
 }
 
+/**
+ * How large one group is, measured rather than estimated from the schema text.
+ *
+ * `bytes` is the real number and `approximateTokens` is the rough one: the pair is
+ * here so a change can be compared between two revisions without ever dressing the
+ * estimate up as a cost.
+ */
 export interface SurfaceMeasurement {
   readonly group: string
   readonly entries: number
@@ -59,18 +79,38 @@ export interface SurfaceMeasurement {
   readonly approximateTokens: number
 }
 
+/**
+ * Every group's measurement, with the totals and the disclaimer.
+ *
+ * The disclaimer travels with the numbers rather than beside them, because these
+ * figures are read on a status panel where nothing else would say what they are.
+ */
 export interface SurfaceReport {
   readonly groups: readonly SurfaceMeasurement[]
   readonly totals: { readonly entries: number; readonly bytes: number; readonly approximateTokens: number }
   readonly disclaimer: string
 }
 
+/**
+ * The reviewed surface hashes, as committed to the repository.
+ *
+ * One digest per group rather than per entry: a reviewer is asked to approve what
+ * changed at the level a person can read, and a per-entry document would change on
+ * every tool added to a group it already covers.
+ */
 export interface SurfaceLockDocument {
   readonly version: 1
   /** Group name → digest of every entry in that group, sorted by entry name. */
   readonly surfaces: Readonly<Record<string, string>>
 }
 
+/**
+ * How the current surfaces differ from the reviewed lock.
+ *
+ * The three lists are kept apart instead of collapsed into "changed", because the
+ * gate's message has to say which way a surface moved: an added group is a review
+ * that has not happened yet, a removed one is a promise the plugin stopped keeping.
+ */
 export interface SurfaceLockDiff {
   readonly added: readonly string[]
   readonly removed: readonly string[]
@@ -86,6 +126,8 @@ function digest(value: string): string {
 /**
  * Digest one entry: name and text together, so renaming an entry is a change
  * even when its body is untouched.
+ * @param entry - the entry to digest.
+ * @returns Its hex digest, over the name and the text as the model reads them.
  */
 export function entryDigest(entry: SurfaceEntry): string {
   return digest(`${entry.name}\u0000${entry.text}`)
@@ -97,12 +139,19 @@ export function entryDigest(entry: SurfaceEntry): string {
  * Entries are sorted by name before hashing, because the injected order must be
  * deterministic for the cache prefix to hold — a lock that changed when a tool was
  * registered in a different order would train us to ignore it.
+ * @param group - the group to digest.
+ * @returns Its hex digest, over every entry's name and digest.
  */
 export function groupDigest(group: SurfaceGroup): string {
   const entries = [...group.entries].sort((left, right) => left.name.localeCompare(right.name))
   return digest(entries.map(entry => `${entry.name}\u0000${entryDigest(entry)}`).join('\u0001'))
 }
 
+/**
+ * Measure every injected surface, as the status panel and the gate read it.
+ * @param groups - the surfaces to measure.
+ * @returns One measurement per group, the totals, and the estimate's disclaimer.
+ */
 export function measureSurfaces(groups: readonly SurfaceGroup[]): SurfaceReport {
   const measurements = groups.map((group) => {
     const bytes = group.entries.reduce((total, entry) => total + Buffer.byteLength(entry.text, 'utf8'), 0)
@@ -119,13 +168,27 @@ export function measureSurfaces(groups: readonly SurfaceGroup[]): SurfaceReport 
   }
 }
 
-/** Build the lock document a reviewer commits. */
+/**
+ * Build the lock document a reviewer commits.
+ * @param groups - the surfaces as they stand now.
+ * @returns The document to write, one digest per group.
+ */
 export function buildSurfaceLock(groups: readonly SurfaceGroup[]): SurfaceLockDocument {
   const surfaces: Record<string, string> = {}
   for (const group of groups) surfaces[group.group] = groupDigest(group)
   return { version: 1, surfaces }
 }
 
+/**
+ * Compare the surfaces now against the reviewed lock.
+ *
+ * A missing lock is not "no difference": every group is reported as added, so a
+ * gate that runs before the lock was ever written fails rather than passing on a
+ * comparison it could not make.
+ * @param lock - the reviewed lock, when one is committed.
+ * @param groups - the surfaces as they stand now.
+ * @returns The three lists of groups, and whether all three are empty.
+ */
 export function diffSurfaceLock(lock: SurfaceLockDocument | undefined, groups: readonly SurfaceGroup[]): SurfaceLockDiff {
   const current = buildSurfaceLock(groups).surfaces
   if (lock === undefined) {
@@ -147,7 +210,11 @@ export function diffSurfaceLock(lock: SurfaceLockDocument | undefined, groups: r
   }
 }
 
-/** One-line summary for a gate failure or a status panel. */
+/**
+ * One-line summary for a gate failure or a status panel.
+ * @param diff - the comparison to describe.
+ * @returns A sentence naming what moved, or that nothing did.
+ */
 export function describeSurfaceLockDiff(diff: SurfaceLockDiff): string {
   if (diff.matches) return 'injected surfaces match the reviewed lock'
   const parts: string[] = []
@@ -162,6 +229,8 @@ export function describeSurfaceLockDiff(diff: SurfaceLockDiff): string {
  *
  * Kept here (rather than in the boot code) so tests can assert the lock without a
  * live Harness, and so "what do we inject" has exactly one answer.
+ * @param input - the registered tool schemas and injected guidance to collect.
+ * @returns The surfaces this plugin injects, one group per injection channel.
  */
 export function collectPluginSurfaces(input: {
   readonly toolSchemas?: readonly { readonly name: string; readonly description?: string; readonly parameters?: unknown }[]

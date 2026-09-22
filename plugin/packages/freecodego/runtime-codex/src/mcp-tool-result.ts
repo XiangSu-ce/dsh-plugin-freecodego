@@ -23,6 +23,9 @@
 /** One MCP content block this transport can return. */
 import { boundToolResultText } from './frame-budget.ts'
 
+/**
+ * One MCP content block this transport can return.
+ */
 export interface CodexToolContentBlock {
   readonly type: 'text'
   readonly text: string

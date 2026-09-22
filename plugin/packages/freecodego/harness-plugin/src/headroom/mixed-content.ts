@@ -13,9 +13,18 @@
  */
 
 import { detectContentType } from './content-detector.ts'
+// "What the terminal renders" is one definition for the whole subsystem, and
+// every test in this module is a `^`-anchored line test — see the note on
+// `isMixedContent`.
+import { stripAnsi } from './lossless-compaction.ts'
 
+/** Content family of one section of a mixed payload. */
 export type SectionType = 'code' | 'json' | 'search' | 'text'
 
+/**
+ * One section of a split payload: its bytes, its content type, an optional
+ * language hint, and whether it must survive as an indivisible unit.
+ */
 export interface ContentSection {
   readonly content: string
   readonly contentType: SectionType
@@ -28,17 +37,47 @@ const JSON_BLOCK_START_RE = /^\s*[[{]/
 const SEARCH_RESULT_RE = /^\S+:\d+:/
 const PROSE_RE = /[A-Z][a-z]+\s+\w+\s+\w+/g
 
-export function mixedContentIndicators(content: string): Readonly<Record<string, boolean>> {
-  const hasCodeFences = /^```(\w*)\s*$/m.test(content)
-  const hasJsonBlocks = /^\s*[[{]/m.test(content)
-  const hasSearchResults = /^\S+:\d+:/m.test(content)
-  const hasProse = (content.match(PROSE_RE) ?? []).length > 5
+/**
+ * The colour-blind reading of a payload, line by line.
+ *
+ * Every test in this module is a `^`-anchored line test — a fence opens with
+ * ```, a JSON block starts with `{`/`[`, a search row is `path:line:` — and a
+ * coloured line starts with `\x1b[32m`, so SGR escapes silently defeated all of
+ * them at once. Measured on a fixture of prose + a fenced command + a JSON block +
+ * prose: `isMixedContent` is `true` and `splitIntoSections` yields
+ * `text code json text` on the plain bytes, and `false` with a single `text`
+ * section once every line is painted — the payload loses the whole section chain,
+ * so the JSON block and the fenced command are handed to the prose crusher as one
+ * run of lines instead of to their own compressors. Colour is decoration, and no
+ * decision here is allowed to depend on it.
+ * @param content - the content to read.
+ * @returns the visible lines, one per input line.
+ */
+function visibleLines(content: string): readonly string[] {
+  return content.split('\n').map(line => stripAnsi(line))
+}
+
+/**
+ * The content signals, read from the rendered text rather than the raw bytes.
+ * @param raw - the content to inspect.
+ * @returns which signals are present.
+ */
+export function mixedContentIndicators(raw: string): Readonly<Record<string, boolean>> {
+  const visible = stripAnsi(raw)
+  const hasCodeFences = /^```(\w*)\s*$/m.test(visible)
+  const hasJsonBlocks = /^\s*[[{]/m.test(visible)
+  const hasSearchResults = /^\S+:\d+:/m.test(visible)
+  const hasProse = (visible.match(PROSE_RE) ?? []).length > 5
   return { hasCodeFences, hasJsonBlocks, hasSearchResults, hasProse }
 }
 
-/** Two or more distinct content signals → split before compressing. */
-export function isMixedContent(content: string): boolean {
-  const indicators = mixedContentIndicators(content)
+/**
+ * Two or more distinct content signals → split before compressing.
+ * @param raw - the content to send.
+ * @returns true when the payload mixes content families.
+ */
+export function isMixedContent(raw: string): boolean {
+  const indicators = mixedContentIndicators(raw)
   return Object.values(indicators).filter(value => value).length >= 2
 }
 
@@ -80,23 +119,37 @@ function extractJsonBlock(lines: readonly string[], start: number): readonly [st
  * blocks, search rows, and plain-text runs. Bracket-balanced-but-invalid
  * JSON (a prose banner like "[harness: ...]") keeps its own atomic section
  * so it meets the text compressors' size floors on its own.
+ * @param content - the content to send.
+ * @param isolate - substrings that must stay in their own section.
+ * @returns the content sections, in payload order.
  */
 export function splitIntoSections(content: string, isolate: readonly string[] = []): readonly ContentSection[] {
   const sections: ContentSection[] = []
   const lines = content.split('\n')
+  // Every branch below is a decision, so every branch reads the rendered line:
+  // the section it produces still carries the payload's own bytes, which keeps the
+  // stronger contract this module has — the sections are the partition a splice
+  // rebuilds from, and no line (or escape) is dropped by the act of splitting.
+  const visible = visibleLines(content)
+  const shown = (index: number): string => visible[index] ?? ''
   const carriesIsolate = (text: string): boolean => isolate.some(marker => text.includes(marker))
+  const isIsolated = (index: number): boolean => isolate.length > 0 && carriesIsolate(shown(index))
+  const isFence = (index: number): boolean => CODE_FENCE_RE.test(shown(index))
+  const isFenceLine = (index: number): boolean => shown(index).startsWith('```')
+  const isSearchRow = (index: number): boolean => SEARCH_RESULT_RE.test(shown(index))
+  const isJsonStart = (index: number): boolean => JSON_BLOCK_START_RE.test(shown(index))
 
   let i = 0
   while (i < lines.length) {
     const line = lines[i]!
 
-    if (isolate.length > 0 && carriesIsolate(line)) {
+    if (isIsolated(i)) {
       sections.push({ content: line, contentType: 'text', atomic: true })
       i += 1
       continue
     }
 
-    const fence = CODE_FENCE_RE.exec(line)
+    const fence = isFence(i) ? CODE_FENCE_RE.exec(shown(i)) : null
     if (fence !== null) {
       const language = fence[1] ?? 'unknown'
       // The delimiters belong to the section, because the sections are the
@@ -107,7 +160,7 @@ export function splitIntoSections(content: string, isolate: readonly string[] = 
       // EOF for it.
       const codeLines: string[] = [line]
       i += 1
-      while (i < lines.length && !lines[i]!.startsWith('```')) {
+      while (i < lines.length && !isFenceLine(i)) {
         codeLines.push(lines[i]!)
         i += 1
       }
@@ -119,26 +172,35 @@ export function splitIntoSections(content: string, isolate: readonly string[] = 
       continue
     }
 
-    if (JSON_BLOCK_START_RE.test(line)) {
-      const extracted = extractJsonBlock(lines, i)
+    if (isJsonStart(i)) {
+      // Balanced over the *rendered* lines, which is what the fence and the JSON
+      // start were read from, and validated there too: a coloured JSON block whose
+      // visible text parses is JSON. Its content stays the raw slice — a parse
+      // proves the visible text is a document, it does not license dropping the
+      // payload's bytes into the model's context without a marker, and the section
+      // is a slice of the partition. The consequence is measured and asserted in
+      // `headroom-detection-rendering.spec.ts`: such a section is typed `json` and
+      // its crusher then refuses the escaped text, so it ships unchanged, which is
+      // a missed saving rather than a wrong rendering.
+      const extracted = extractJsonBlock(visible, i)
       if (extracted !== undefined) {
-        const [jsonContent, endLine] = extracted
+        const [renderedJson, endLine] = extracted
         let validJson = false
         try {
-          JSON.parse(jsonContent)
+          JSON.parse(renderedJson)
           validJson = true
         } catch {
           validJson = false
         }
-        sections.push({ content: jsonContent, contentType: validJson ? 'json' : 'text', atomic: !validJson })
+        sections.push({ content: lines.slice(i, endLine + 1).join('\n'), contentType: validJson ? 'json' : 'text', atomic: !validJson })
         i = endLine + 1
         continue
       }
     }
 
-    if (SEARCH_RESULT_RE.test(line)) {
+    if (isSearchRow(i)) {
       const searchLines: string[] = []
-      while (i < lines.length && SEARCH_RESULT_RE.test(lines[i]!)) {
+      while (i < lines.length && isSearchRow(i)) {
         searchLines.push(lines[i]!)
         i += 1
       }
@@ -149,9 +211,8 @@ export function splitIntoSections(content: string, isolate: readonly string[] = 
     const textLines = [line]
     i += 1
     while (i < lines.length) {
-      const nextLine = lines[i]!
-      if (CODE_FENCE_RE.test(nextLine) || JSON_BLOCK_START_RE.test(nextLine) || SEARCH_RESULT_RE.test(nextLine) || (isolate.length > 0 && carriesIsolate(nextLine))) break
-      textLines.push(nextLine)
+      if (isFence(i) || isJsonStart(i) || isSearchRow(i) || isIsolated(i)) break
+      textLines.push(lines[i]!)
       i += 1
     }
     const textContent = textLines.join('\n')
@@ -166,6 +227,8 @@ export function splitIntoSections(content: string, isolate: readonly string[] = 
  * Source-code false-positive guard (original `_determine_strategy`): the
  * cheap regex heuristics misclassify pure source with dict/list literals as
  * mixed. When the detectors confidently say code, trust that over MIXED.
+ * @param content - the content to send.
+ * @returns true when the payload is confidently source code.
  */
 export function mixedIsActuallyCode(content: string): boolean {
   const detection = detectContentType(content)

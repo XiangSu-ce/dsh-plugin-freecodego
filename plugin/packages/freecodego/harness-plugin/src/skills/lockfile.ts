@@ -59,7 +59,9 @@ export interface SkillLockfile {
   readonly skills: Readonly<Record<string, LockedSkill>>
 }
 
-/** An empty lockfile. */
+/** An empty lockfile. 
+ * @returns the skill Lockfile.
+ */
 export function emptyLockfile(): SkillLockfile {
   return { version: SKILL_LOCK_VERSION, skills: {} }
 }
@@ -165,7 +167,10 @@ export function compareByPath(left: LockedFile, right: LockedFile): number {
   return left.path < right.path ? -1 : 1
 }
 
-/** Serialize a lockfile deterministically. */
+/** Serialize a lockfile deterministically.
+ * @param lockfile - the lockfile to serialize.
+ * @returns the stable JSON text.
+ */
 export function serializeLockfile(lockfile: SkillLockfile): string {
   const skills: Record<string, LockedSkill> = {}
   for (const name of Object.keys(lockfile.skills).sort()) {
@@ -175,12 +180,18 @@ export function serializeLockfile(lockfile: SkillLockfile): string {
   return `${JSON.stringify({ version: lockfile.version, skills }, null, 2)}\n`
 }
 
-/** Digest one file's bytes the way the lockfile records them. */
+/** Digest one file's bytes the way the lockfile records them.
+ * @param bytes - the file contents to digest.
+ * @returns the hex SHA-256 digest.
+ */
 export function digestFile(bytes: string): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-/** Digest a whole skill payload, order-independently. */
+/** Digest a whole skill payload, order-independently.
+ * @param files - the skill's locked files.
+ * @returns the skill's base64 SHA-256 digest.
+ */
 export function digestSkill(files: readonly LockedFile[]): string {
   const hash = createHash('sha256')
   for (const file of [...files].sort(compareByPath)) {

@@ -23,16 +23,22 @@ export type CompanionKey = StateId
  * The states the ladder never calls for are named too: they are reachable from
  * the engine, and an unnamed one would be a hole in the table rather than a
  * state that cannot happen.
+ *
+ * The four poses the resting character stirs through (`egg`, `wink`, `wide`,
+ * `hexagon`) are named as the gestures they are, not as statuses. They are shown
+ * by a session that is doing nothing at all, so a word like "Processing" beside
+ * them would be the strip contradicting the session it describes — and these are
+ * the only poses whose words a reader meets at rest.
  */
 export const zh: Record<CompanionKey, string> = {
   idle: '空闲',
   wink: '眨眼',
-  wide: '注视',
+  wide: '睁大眼',
   notify: '有新消息',
   exclaim: '出错了',
   sleep: '已休眠',
-  egg: '就绪',
-  hexagon: '处理中',
+  egg: '鼓一鼓',
+  hexagon: '变个形',
   play: '开始',
   orbit: '执行中',
   burst: '已完成',
@@ -46,12 +52,12 @@ export const zh: Record<CompanionKey, string> = {
 export const en: Record<CompanionKey, string> = {
   idle: 'Idle',
   wink: 'Wink',
-  wide: 'Watching',
+  wide: 'Wide-eyed',
   notify: 'New message',
   exclaim: 'Failed',
   sleep: 'Asleep',
-  egg: 'Ready',
-  hexagon: 'Processing',
+  egg: 'Puff up',
+  hexagon: 'Shape-shift',
   play: 'Starting',
   orbit: 'Working',
   burst: 'Done',

@@ -15,6 +15,8 @@ Node JSONL framing, cancellation, and timeout primitives for isolated FreeCodeGo
 
 - [Request and event vocabulary](#request-and-event-vocabulary)
 - [Provenance](#provenance)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
 
 -----
@@ -37,8 +39,25 @@ Worker implementations must use this protocol with Harness-owned tools, approval
 
 -----
 
+<a id="model-experience"></a>
+## Model Experience
+
+Indirectly, through the host and worker that speak it; the protocol renders nothing itself.
+
+#### KV Cache effect
+
+Framing, correlation ids, and sequence checks stay off the request path, so the cached prefix is unaffected.
+
+## Known Limitations and Deferred Work
+<a id="known-limitations-and-deferred-work"></a>
+
+- **A worker must use Harness-owned tools, approvals, credentials, and resource limits** — the protocol carries requests, not policy.
+- **Frames are strict** — a malformed or secret-bearing frame is rejected rather than partially interpreted.
+- **Events carry correlation ids and a strictly increasing sequence number** — a gap is a protocol error, not a reorder.
+- **The protocol owns no transport** — the host owns the process, framing, and lifetime.
+
 <a id="dev-note"></a>
-## Dev Note
+### Dev Note
 
 <details>
 <summary>Working context for maintainers — click to expand</summary>

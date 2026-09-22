@@ -37,7 +37,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 const HARNESS = '0.1.3-alpha.1'
-const REPOSITORY = 'XiangSu-ce/dsh-freecodego'
+const REPOSITORY = 'XiangSu-ce/dsh-plugin-freecodego'
 
 function settings(enabled = true) {
   const value: Record<string, unknown> = { pluginUpdateChecksEnabled: enabled }

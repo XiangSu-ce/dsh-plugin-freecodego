@@ -65,11 +65,13 @@ export interface FreeCodeGoSettingsReadPort {
   get(): FreeCodeGoEngineSettings | undefined
 }
 
+/** The settings port a behaviour both reads and writes through. */
 export interface FreeCodeGoSettingsPort extends FreeCodeGoSettingsReadPort {
   /** Merge a user-originated patch into the user layer. */
   update(patch: object): Promise<void>
 }
 
+/** The one place behaviour reads and writes the FreeCodeGo settings document. */
 export class FreeCodeGoPolicy implements FreeCodeGoSettingsPort {
   /**
    * @param settings - the registered namespace scope, or `undefined` when the
@@ -123,4 +125,5 @@ export class FreeCodeGoPolicy implements FreeCodeGoSettingsPort {
  */
 export const ROLLOUT_STAGES = ['off', 'record_only', 'shadow', 'active'] as const
 
+/** One named rollout stage, drawn from {@link ROLLOUT_STAGES}. */
 export type RolloutStage = (typeof ROLLOUT_STAGES)[number]

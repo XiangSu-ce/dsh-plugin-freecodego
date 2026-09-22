@@ -58,14 +58,27 @@ export type FreeCodeGoAccountSnapshot =
   | { readonly status: 'mfa-required'; readonly emailMasked: string }
   | { readonly status: 'authenticated'; readonly user: { readonly username: string; readonly email: string; readonly avatarUrl?: string; readonly balance: number } }
 
+/**
+ * Credentials one FreeCodeGo sign-in attempt sends.
+ */
 export interface FreeCodeGoLoginRequest {
   readonly email: string
   readonly password: string
   readonly deviceId?: string
   /** Keep the issued session on this machine for later launches (default true). */
   readonly remember?: boolean
+  /**
+   * Keep the password itself in the Host credential file so the next sign-in
+   * form can prefill it. Independent of `remember`: the pair is the session, the
+   * password is a convenience the user asks for, and leaving this unset erases a
+   * password an earlier attempt stored.
+   */
+  readonly rememberPassword?: boolean
 }
 
+/**
+ * Registration details: the sign-in request plus the verification, promo, and invitation codes.
+ */
 export interface FreeCodeGoRegistrationRequest extends FreeCodeGoLoginRequest {
   readonly verifyCode?: string
   readonly promoCode?: string
@@ -82,12 +95,18 @@ export interface FreeCodeGoRegistrationRequest extends FreeCodeGoLoginRequest {
  */
 export type FreeCodeGoOAuthProvider = 'google' | 'github'
 
+/**
+ * One FreeCodeGo backend read, in the shape the Host and UI report it.
+ */
 export interface FreeCodeGoBackendSnapshot {
   readonly status: 'available' | 'signed-out' | 'backend-not-configured' | 'error'
   readonly data?: JsonValue
   readonly message?: string
 }
 
+/**
+ * Time range one token-usage read covers.
+ */
 export interface TokenUsageRange {
   readonly startAt: number
   readonly endAt: number
@@ -98,6 +117,9 @@ export interface TokenUsageRange {
   readonly sessionId?: string
 }
 
+/**
+ * Filters for a locally computed token-usage read.
+ */
 export interface LocalTokenUsageQuery {
   readonly startAt?: number
   readonly endAt?: number
@@ -107,6 +129,9 @@ export interface LocalTokenUsageQuery {
   readonly sessionId?: string
 }
 
+/**
+ * Token usage attributed to one provider route.
+ */
 export interface LocalTokenUsageRoute {
   readonly provider: string
   readonly model: string
@@ -137,6 +162,9 @@ export interface LocalTokenUsageFailure {
   readonly count: number
 }
 
+/**
+ * Token usage accumulated over one timeline bucket.
+ */
 export interface LocalTokenUsageBucket {
   readonly startAt: number
   readonly endAt: number
@@ -149,6 +177,9 @@ export interface LocalTokenUsageBucket {
   readonly unreportedAttempts: number
 }
 
+/**
+ * One cell of the usage matrix: a date bucket for one route.
+ */
 export interface LocalTokenUsageMatrixCell {
   readonly date: string
   /** Start of the source timeline bucket; keeps hour-level model series exact. */
@@ -160,6 +191,9 @@ export interface LocalTokenUsageMatrixCell {
   readonly status: 'reported' | 'partial' | 'unreported'
 }
 
+/**
+ * Token usage attributed to one Harness session.
+ */
 export interface LocalTokenUsageSession {
   readonly sessionId: string
   readonly attempts: number
@@ -196,6 +230,9 @@ export interface LocalTokenUsageCacheWaste {
   readonly worst: readonly { readonly at: number; readonly model: string; readonly missedTokens: number; readonly missedCostUsd: number; readonly cause: 'idle-gap' | 'model-changed' | 'prefix-changed' }[]
 }
 
+/**
+ * A whole locally computed token-usage snapshot.
+ */
 export interface LocalTokenUsageSnapshot {
   readonly source: 'harness-local'
   readonly generatedAt: number
@@ -231,6 +268,9 @@ export interface LocalTokenUsageSnapshot {
   readonly currentSession?: LocalTokenUsageSession
 }
 
+/**
+ * Usage figures the FreeCodeGo gateway reported back.
+ */
 export interface GatewayUsageSnapshot {
   readonly source: 'freecodego-gateway'
   readonly fetchedAt: number
@@ -260,6 +300,9 @@ export interface GatewayUsageSnapshot {
   readonly message?: string
 }
 
+/**
+ * Any JSON-serializable value, as the backend returns it.
+ */
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
 
 /** Browser-safe community registry row. Package sources are validated by Host. */
@@ -279,6 +322,9 @@ export interface CommunityCatalogPlugin {
   readonly added?: string
 }
 
+/**
+ * One purchasable plan, as the payment surface lists it.
+ */
 export interface FreeCodeGoPaymentPlan {
   readonly id: string | number
   readonly name: string
@@ -357,6 +403,9 @@ export interface FreeCodeGoGatewayModelPrice {
   readonly imagePrices?: readonly FreeCodeGoImagePriceTier[]
 }
 
+/**
+ * One payment order and its current state.
+ */
 export interface FreeCodeGoPaymentOrder {
   readonly orderId: string
   readonly state: string
@@ -697,19 +746,123 @@ export type WorkBuddyLoginPoll =
   | { readonly pending: true }
   | { readonly pending: false; readonly state: WorkBuddyInternationalStatus }
 
-/** Browser-safe Trae account row; Cloud-IDE JWTs stay in the Host vault. */
+// ============================================================================
+// Qoder connector types
+// ============================================================================
+
+/** One Qoder quota bucket, as the card renders it. */
+export interface QoderQuotaBucketInfo {
+  readonly used: number
+  readonly total: number
+  readonly remaining: number
+  readonly resetTime?: string
+}
+
+/** One Qoder account's quota position, or the reason it could not be read. */
+export interface QoderQuotaInfo {
+  readonly plan?: string
+  readonly userQuota?: QoderQuotaBucketInfo
+  readonly addonQuota?: QoderQuotaBucketInfo
+  readonly isQuotaExceeded: boolean
+  readonly expiresAt?: number
+  readonly checkedAt: number
+  readonly error?: string
+}
+
+/** Browser-safe Qoder account row; device and refresh tokens are Host-only. */
+export interface QoderAccountInfo {
+  readonly id: string
+  readonly name?: string
+  readonly email?: string
+  readonly plan?: string
+  readonly region: 'global' | 'cn'
+  readonly quota?: QoderQuotaInfo
+}
+
+/** One Qoder route, free or metered. */
+export interface QoderModelInfo {
+  readonly id: string
+  readonly displayName: string
+  readonly contextWindow?: number
+  readonly maxTokens?: number
+  readonly isReasoning: boolean
+  /**
+   * The directory's own price multiplier for this route, when it states one.
+   *
+   * `0` is the free tier, above it is what the route costs; absent means the
+   * directory did not price it, which the picker treats as unpriced rather than
+   * free. Carried through the browser-safe row because the settings checklist
+   * decides whether a row starts shown from exactly this value.
+   */
+  readonly priceFactor?: number
+}
+
+/** Browser-safe Qoder status for the settings card. */
+export interface QoderStatus {
+  readonly configured: boolean
+  readonly activeAccountId?: string
+  readonly accounts: readonly QoderAccountInfo[]
+  readonly freeModels: readonly QoderModelInfo[]
+}
+
+/** A Qoder browser-authorization ticket the Settings page renders and polls. */
+export interface QoderBrowserLogin {
+  readonly state: string
+  readonly loginUrl: string
+  readonly expiresAt: number
+  /** Set when the Host could not hand the URL to the system browser. */
+  readonly note?: 'BROWSER_OPEN_FAILED'
+}
+
+/** Result of one Qoder authorization poll. `pending` means "keep polling". */
+export type QoderLoginPoll =
+  | { readonly pending: true }
+  | { readonly pending: false; readonly state: QoderStatus }
+
+/**
+ * Browser-safe Trae account row; Cloud-IDE JWTs stay in the Host vault.
+ *
+ * The label is what the card names the row by, and it is derived Host-side
+ * because the only name the upstream supplies is the account's own display name
+ * from the sign-in redirect — a value whose encoding needs repairing, which is
+ * not a browser's job.
+ */
 export interface TraeAccountSnapshot {
   readonly id: string
   readonly label: string
+  /** Which deployment this account belongs to; the card groups the pool by it. */
+  readonly realm: 'cn' | 'sg'
   readonly userId?: string
   readonly expiresAt?: number
   readonly status: 'authenticated' | 'reauth-required'
 }
 
-/** Browser-safe Trae authorization and account state. */
+/**
+ * Browser-safe Trae authorization and account state.
+ *
+ * One value describes both halves of the connector — which accounts are signed
+ * in, and whether a sign-in is in flight — because the settings card renders
+ * both at once: the pool stays visible under an in-progress authorization, and
+ * a poll that answers "still pending" is the same question as "who is signed
+ * in" asked one tick later.
+ *
+ * `loginUrl` is carried on the pending variant because the browser may not have
+ * opened (`note: 'BROWSER_OPEN_FAILED'`), and because a loopback redirect is
+ * never guaranteed to arrive — when it does not, the user has the page's own URL
+ * and can paste the callback it produced (`traeSubmitCallback`).
+ */
 export type TraeStatus =
   | { readonly status: 'signed-out'; readonly accounts: readonly TraeAccountSnapshot[] }
-  | { readonly status: 'login-pending'; readonly accounts: readonly TraeAccountSnapshot[] }
+  | {
+    readonly status: 'login-pending'
+    readonly accounts: readonly TraeAccountSnapshot[]
+    /** The deployment the browser is being authorized against. */
+    readonly realm: 'cn' | 'sg'
+    readonly loginUrl?: string
+    /** Epoch ms after which the attempt is abandoned. */
+    readonly loginExpiresAt?: number
+    readonly note?: 'BROWSER_OPEN_FAILED'
+  }
   | { readonly status: 'reauth-required'; readonly accountId?: string; readonly label?: string; readonly accounts: readonly TraeAccountSnapshot[] }
   | { readonly status: 'authenticated'; readonly accountId: string; readonly label: string; readonly accounts: readonly TraeAccountSnapshot[] }
 
@@ -717,14 +870,83 @@ export type TraeStatus =
 export interface TraeModel {
   readonly id: string
   readonly name: string
+  /**
+   * The deployment whose catalog lists it.
+   *
+   * Carried because the two catalogs are almost disjoint and a model name sent to
+   * the wrong one answers `4001 param is invalid` — so "which realm serves this"
+   * is a routing fact the pool needs, not a label.
+   */
+  readonly realm: 'cn' | 'sg'
   readonly contextWindow?: number
   readonly maxTokens?: number
 }
 
+/**
+ * What one provider's daily check-in achieved for one account.
+ *
+ * `already` is a success: today's credits are on the account, and asking again
+ * would spend a request only to be told the same thing. `unavailable` is the
+ * provider saying the campaign is not running — that is upstream's own answer
+ * rather than a failure of ours, and the card should say so instead of raising
+ * an error over a feature that is simply switched off.
+ */
+export type FreeCodeGoCheckinOutcome = 'claimed' | 'already' | 'unavailable' | 'failed'
+
+/** One account's line inside a check-in report. */
+export interface FreeCodeGoCheckinAccount {
+  readonly accountId: string
+  readonly label: string
+  readonly outcome: FreeCodeGoCheckinOutcome
+  /** What this account collected on this run; `0` for every other outcome. */
+  readonly credits: number
+  /** Upstream's own words, when the line needs explaining. */
+  readonly message?: string
+  /**
+   * What upstream refused, when this account collected *some* of its benefits.
+   *
+   * A field rather than a sentence inside {@link message}: a run can collect one
+   * campaign and be refused another, and the card renders the collected part from
+   * `credits`, so a refusal that only exists inside the prose would never be shown
+   * to anyone — the exact shape of failure that looks like a clean success.
+   */
+  readonly refused?: string
+}
+
+/**
+ * One check-in run across every account of one provider.
+ *
+ * Reported as a run rather than per account because the gesture is one gesture —
+ * "check in my Trae accounts" — while the per-account lines are what let the
+ * card name the account that failed instead of only reporting that one did.
+ */
+export interface FreeCodeGoCheckinReport {
+  /** Epoch ms this run finished. */
+  readonly checkedAt: number
+  /** Everything this run collected, across all accounts. */
+  readonly credits: number
+  readonly accounts: readonly FreeCodeGoCheckinAccount[]
+}
+
+/**
+ * One Z.ai quota window and how much of it remains.
+ */
 export interface ZaiQuota { readonly name: string; readonly total?: number; readonly used?: number; readonly remaining?: number; readonly expiresAt?: number | string }
+/**
+ * Z.ai account state, as the settings surface reports it.
+ */
 export interface ZaiAccountSnapshot { readonly id: string; readonly label: string; readonly status: 'authenticated' | 'reauth-required'; readonly plan?: string; readonly quotas?: readonly ZaiQuota[]; readonly quotaError?: string; readonly lastCheckedAt?: number }
+/**
+ * Sign-in state of the Z.ai account, in the shape the settings surface renders.
+ */
 export type ZaiStatus = { readonly status: 'signed-out' | 'login-pending' | 'authenticated'; readonly accounts: readonly ZaiAccountSnapshot[]; readonly activeAccountId?: string }
+/**
+ * Promotion Z.ai reported for the signed-in account.
+ */
 export interface ZaiPromotionInfo { readonly modelId: 'glm-5.3-flash'; readonly eligible: boolean; readonly active: boolean; readonly cutoffDay: 20; readonly window: '23:00-09:00 Asia/Shanghai'; readonly message: string }
+/**
+ * One model the Z.ai account can run.
+ */
 export interface ZaiModel { readonly id: string; readonly name: string; readonly contextWindow?: number; readonly maxTokens?: number; readonly promotion?: ZaiPromotionInfo }
 
 /** Browser-safe SenseNova API-key state; the key itself never leaves Host.
@@ -738,6 +960,9 @@ export interface FreeCodeGoSenseNovaStatus {
   readonly baseUrl: string
 }
 
+/**
+ * NVIDIA account state, as the settings surface reports it.
+ */
 export interface FreeCodeGoNvidiaStatus {
   readonly configured: boolean
   readonly baseUrl: string
@@ -778,6 +1003,9 @@ export interface FreeCodeGoLogfareRegistrationRequest {
   readonly trainingOptIn: boolean
 }
 
+/**
+ * Account state the Agnes client reports to the settings surface.
+ */
 export type AgnesStatus =
   | { readonly status: 'signed-out'; readonly accounts: readonly [] }
   | { readonly status: 'authenticated'; readonly accounts: readonly { readonly id: string; readonly email?: string; readonly username?: string; readonly apiKeyConfigured: boolean; /** The platform rejected this account's session; it is kept, not used. */ readonly reauthRequired?: boolean }[]; readonly activeAccountId?: string; readonly email?: string; readonly username?: string; readonly apiKeyConfigured: boolean }
@@ -902,6 +1130,23 @@ export interface FreeCodeGoCapabilitySettings {
    * file, so a third-party Skill can be updated without losing it.
    */
   readonly skillInvocationOverrides: Readonly<Record<string, boolean>>
+  /**
+   * Where a Skill install should land by default, as the two axes of the
+   * placement table (`skills/placement.ts`).
+   *
+   * The *choice* is stored, never the path it resolves to. A root is derived from
+   * the folder this Host runs in, `$DSH_HOME` and the home directory, and every one
+   * of those can move under a saved string — a stored path would then name a
+   * directory the user never picked, which is the failure the placement table exists
+   * to make visible. Absent means no preference: an install goes to the Marketplace's
+   * own community root, exactly as it did before placements existed.
+   *
+   * `null` is the explicit "none" a clear writes, and it exists because a settings write
+   * is a merge: an omitted field means "no change to what is stored", which would leave a
+   * cleared preference in place. Readers never see it — `copySettings` (and so every
+   * snapshot) reports the same absence for both spellings.
+   */
+  readonly preferredSkillPlacement?: FreeCodeGoSkillPlacement | null
 }
 
 /** A model capability classification used by the plugin UI and media tools. */
@@ -987,6 +1232,121 @@ export interface FreeCodeGoCapabilitySnapshot extends FreeCodeGoCapabilitySettin
    * silent skip the gate must never produce.
    */
   readonly trustRefusals?: readonly { readonly id: string; readonly message: string }[]
+  /**
+   * What the last Skill install recorded, on the snapshot that install returned.
+   *
+   * Present because "installed" is only checkable if the pin is visible: the
+   * commit, whether the lockfile took the record, and every verification failure
+   * over the root afterwards. Absent on every other snapshot — a settings read has
+   * no install to report, and a fabricated one would look like a Skill landed
+   * when nothing was fetched.
+   */
+  readonly skillInstall?: FreeCodeGoSkillInstallReport
+  readonly skillRemove?: FreeCodeGoSkillRemoveReport
+}
+
+/**
+ * What one Skill removal took away, as the settings surface reads it.
+ *
+ * Declared here for the same reason the install report is: this module is the
+ * package's `./types` face, which the client loads, and importing the host module
+ * that performs the removal would pull `node:fs` into the browser bundle.
+ */
+export interface FreeCodeGoSkillRemoveReport {
+  /** The name the removed Skill was known by — the one inside its `SKILL.md`. */
+  readonly name: string
+  /** The directory that went away; the same as the name for a recorded Skill. */
+  readonly directory: string
+  /** The source the record carried, when the Skill was recorded at all. */
+  readonly source?: string
+  /** False when the directory existed with no record, so nothing identified it. */
+  readonly recorded: boolean
+  /** Which of the directory and the record were removed, in the installer's words. */
+  readonly detail: string
+  /** Every remaining Skill in the root that no longer matches the record. */
+  readonly verification: readonly { readonly name: string; readonly reason: string; readonly path?: string }[]
+}
+
+/**
+ * What one Skill install recorded, as the settings surface reads it.
+ *
+ * Declared here rather than imported from `skills/marketplace-install.ts`: this
+ * module is the package's `./types` face, which the client loads, and importing a
+ * host module that touches `node:fs` would pull the whole install path into the
+ * browser bundle. The shape is restated for that reason and held to it by the one
+ * assignment that builds it.
+ */
+/**
+ * Which of the two axes a Skill install should use.
+ *
+ * `custom` is absent on purpose: a custom root is a path the caller would have to
+ * supply, and a remote that accepted one would let the page mount any directory it
+ * could name. The matrix reports those rows as unresolved instead.
+ */
+export interface FreeCodeGoSkillPlacement {
+  readonly agent: 'harness' | 'agents'
+  readonly scope: 'project' | 'user'
+}
+
+/** One row of the resolved placement matrix. */
+export interface FreeCodeGoSkillPlacementRow {
+  readonly agent: 'harness' | 'agents' | 'custom'
+  readonly scope: 'project' | 'user'
+  /** False when this combination has no destination here; `reason` says why. */
+  readonly ok: boolean
+  readonly root?: string
+  readonly provenance?: string
+  readonly reason?: string
+}
+
+/** The matrix as the settings page reads it. */
+export interface FreeCodeGoSkillPlacements {
+  /** The repository the rows were resolved against. */
+  readonly workspace: string
+  /** Whether that repository is trusted, which the project rows depend on. */
+  readonly projectTrusted: boolean
+  /** Where an install lands when the caller names no placement. */
+  readonly defaultRoot: string
+  readonly rows: readonly FreeCodeGoSkillPlacementRow[]
+  /**
+   * The remembered choice, when the user made one.
+   *
+   * Reported beside the rows rather than folded into them, because the two are
+   * different facts: a row says whether a destination *can* be used here, and this
+   * says which one the user asked for last. A remembered choice whose row is
+   * currently unusable is still reported — the page has to be able to show what the
+   * user chose, and why it cannot be honoured, instead of silently installing
+   * somewhere else.
+   */
+  readonly preferred?: FreeCodeGoSkillPlacement
+}
+
+export interface FreeCodeGoSkillInstallReport {
+  readonly name: string
+  /** The source as the lockfile records it — canonical, not as it was typed. */
+  readonly source: string
+  /** The commit the content came from, or a content id when the source has none. */
+  readonly resolvedCommit: string
+  /** False means the files are in place and the record is not: the Skill is unverifiable. */
+  readonly locked: boolean
+  readonly replacedCommit?: string
+  /** True when that same source was already installed and this install re-ran it. */
+  readonly idempotent: boolean
+  /** The steps taken, in order — the install's own account of what it did. */
+  readonly steps: readonly string[]
+  readonly lockfileWarning?: string
+  /** One entry per Skill in the root that no longer matches the record; empty when all match. */
+  readonly verification: readonly { readonly name: string; readonly reason: string; readonly path?: string }[]
+  /** Names claimed by more than one source in this root's own record. */
+  readonly collisions: readonly { readonly name: string; readonly claims: readonly { readonly source: string; readonly root: string }[] }[]
+  /**
+   * Where this install landed, when the caller chose a destination.
+   *
+   * Present only for a placement install: the default is the Marketplace's own
+   * community root, which the page already knows, and reporting it as if it were a
+   * choice would make "default" and "chosen default" the same answer.
+   */
+  readonly placement?: { readonly root: string; readonly provenance: string }
 }
 
 /** Persisted controls for the optional, plugin-owned engineering enhancement pack. */
@@ -1006,8 +1366,6 @@ export interface FreeCodeGoEngineeringSettings {
    *  start, so a default-off library is still discoverable. */
   readonly engineeringSkillMapEnabled: boolean
   readonly engineeringQualityEnabled: boolean
-  /** Multi-member team runtime: task board, members, worktrees, context control. */
-  readonly engineeringTeamEnabled: boolean
   readonly engineeringMemoryEnabled: boolean
   readonly engineeringCouncilEnabled: boolean
   /** Independent participation switches for each council engine. */
@@ -1067,7 +1425,7 @@ export interface FreeCodeGoEngineeringModuleStatus {
    * that gate permanently false, so the feature was unreachable while its
    * remotes worked.
    */
-  readonly id: 'skills' | 'scanner' | 'doctor' | 'quality' | 'memory' | 'council' | 'codegraph' | 'canvas' | 'team' | 'checkpoints'
+  readonly id: 'skills' | 'scanner' | 'doctor' | 'quality' | 'memory' | 'council' | 'codegraph' | 'canvas' | 'checkpoints'
   readonly state: 'disabled' | 'available' | 'unavailable' | 'error'
   readonly detail: string
 }
@@ -1120,6 +1478,9 @@ export interface FreeCodeGoSkillMapBudget {
   readonly budgetChars: number
 }
 
+/**
+ * State of the engineering surfaces this plugin exposes.
+ */
 export interface FreeCodeGoEngineeringStatus extends FreeCodeGoEngineeringSettings {
   readonly modules: readonly FreeCodeGoEngineeringModuleStatus[]
   readonly builtinSkillCount: number
@@ -1156,9 +1517,9 @@ export interface FreeCodeGoEngineeringDoctorReport {
    * A separate section because the deny list is the one restriction a user is
    * most likely to overestimate: it is enforced over tool calls and in-process
    * file intents, and it is **not** a kernel-level deny, so an engine's own shell
-   * redirection is the sandbox mode's business. `enforcedBy` uses the same
-   * vocabulary as `isolation-report`'s, because one fact with two synonyms is how
-   * a reader ends up comparing two things that are the same.
+   * redirection is the sandbox mode's business. `enforcedBy` uses the sandbox
+   * profile's own vocabulary, because one fact with two synonyms is how a reader
+   * ends up comparing two things that are the same.
    *
    * Absent when no deny patterns are configured, which is the ordinary state: an
    * empty list restricts nothing, and a section describing nothing is noise.
@@ -1193,6 +1554,9 @@ export type FreeCodeGoEngineeringMemoryTrust = 'captured' | 'draft' | 'reviewed'
  */
 export const ENGINEERING_MEMORY_KINDS = ['decision', 'discovery', 'bugfix', 'change', 'blocker', 'verification', 'handoff', 'note'] as const
 
+/**
+ * Kind of fact one engineering memory entry records.
+ */
 export type FreeCodeGoEngineeringMemoryKind = typeof ENGINEERING_MEMORY_KINDS[number]
 
 /** Compact memory metadata safe for search, list, and timeline responses. */
@@ -1381,6 +1745,9 @@ export interface FreeCodeGoEngineeringCodeGraphProjectStatus {
   readonly reason?: string
 }
 
+/**
+ * Stage a verification run has reached.
+ */
 export type FreeCodeGoEngineeringVerificationStage = 'scope' | 'build' | 'types' | 'lint' | 'tests'
 
 /** Why a verification run is not confirmed, computed rather than inferred. */
@@ -1406,6 +1773,9 @@ export interface FreeCodeGoEngineeringVerificationProbeResult extends FreeCodeGo
   readonly held: boolean
 }
 
+/**
+ * Outcome one verification run reported.
+ */
 export interface FreeCodeGoEngineeringVerificationResult {
   readonly id: string
   readonly checkedAt: number
@@ -1697,6 +2067,16 @@ export interface FreeCodeGoPluginConflictRecord {
   readonly disabledModuleName: string
   readonly keptEntryId: string
   readonly keptModuleName: string
+  /**
+   * True when the stopped entry is one of this plugin's own stand-in mounts and
+   * the entry that kept the resource is an official Harness module.
+   *
+   * The stand-in exists only for compositions that never selected the official
+   * capability, so the Harness's own plugin outranking it is the intended
+   * outcome rather than a conflict repair: the fallback is what yields. The
+   * panel reads this to say so instead of reporting the Harness as the loser.
+   */
+  readonly yieldedToOfficial?: boolean
 }
 
 /** Durable policy and recent automatic repairs for third-party plugin conflicts. */
@@ -1706,7 +2086,17 @@ export interface FreeCodeGoPluginConflictSettings {
 }
 
 /** Browser-safe conflict-protection state. */
-export interface FreeCodeGoPluginConflictStatus extends FreeCodeGoPluginConflictSettings {}
+export interface FreeCodeGoPluginConflictStatus extends FreeCodeGoPluginConflictSettings {
+  /**
+   * Ids of the stored records the running tree still matches: the entry a record
+   * names as disabled is stopped and the entry it names as kept is running.
+   *
+   * A record that no longer matches is history — a later composition superseded
+   * the repair it describes — and a panel or notice that presents it as a live
+   * repair tells the user their Harness disabled something it is now running.
+   */
+  readonly pluginConflictActiveRecords: readonly string[]
+}
 
 /** Persisted policy for checking the published FreeCodeGo package. */
 export interface FreeCodeGoPluginUpdateSettings {
@@ -1743,6 +2133,103 @@ export interface FreeCodeGoPluginUpdateStatus {
   readonly restartRequired: boolean
   readonly rollbackPending?: boolean
   readonly rollbackReason?: string
+}
+
+/**
+ * Stop-time review settings persisted with the FreeCodeGo profile.
+ *
+ * Declared as its own interface rather than folded into the Advisor's because the
+ * two answer different questions: the Advisor reviews an *answer* after it was
+ * written, while this reviews a *change* before the turn is allowed to end. The
+ * one thing they share is the model route, which is why there is no review route
+ * here — a second pair of provider/model fields would be a second place for the
+ * same intent to be set and disagree.
+ */
+export interface FreeCodeGoReviewSettings {
+  /**
+   * `off` (the default) runs nothing at stop time, `record` writes findings to
+   * the session, `gate` also injects them. The review tools work in every mode.
+   */
+  readonly reviewMode: 'off' | 'record' | 'gate'
+  /** The least severe finding the gate delivers rather than only records. */
+  readonly reviewThreshold: 'critical' | 'high' | 'medium' | 'low'
+  /** Stops to wait after a delivery before delivering again. */
+  readonly reviewCooldownTurns: number
+  /**
+   * Review each file with its own read-only child agent instead of one call.
+   *
+   * Off by default because it opens one child per reviewed file. When on, the
+   * review the *tools* run uses it; the stop-time gate does not, since it would
+   * multiply the cost of a pass that runs by itself.
+   */
+  readonly reviewDeep: boolean
+  /**
+   * Re-check `critical` and `high` findings with an independent adversarial pass.
+   *
+   * Off by default: it costs a call per escalated finding, and its shipped
+   * implementation is one route rather than a multi-engine council — see
+   * `review/escalation-model.ts` for exactly what that does and does not catch.
+   */
+  readonly reviewEscalation: boolean
+}
+
+/**
+ * The review report and its parts, re-exported for the browser contract.
+ *
+ * Re-exported rather than restated: the report is deliberately plain data — the
+ * module that assembles it says so for exactly this reason — and a second copy of
+ * the shape here would be a second answer to "what does a finding contain" that
+ * the UI and the engine could disagree about.
+ */
+import type { ReviewReport } from './review/report.ts'
+import type { ReviewRunSnapshot } from './review/runs.ts'
+
+export type { ReviewReport, ReviewRunState, ReviewTargetSummary, ReviewMode } from './review/report.ts'
+export type { ReviewComment, ReviewCategory, ReviewSeverity, ReviewCommentState } from './review/comments.ts'
+export type { ReviewCoverage, ReviewFileOutcome } from './review/coverage.ts'
+export type { ReviewBudgetSummary } from './review/budget.ts'
+export type { EscalationReport } from './review/escalation.ts'
+export type { ReviewRunSnapshot } from './review/runs.ts'
+
+/**
+ * One workspace's review surface, as the settings page reads it.
+ *
+ * Carries the settings as well as the runs because a panel that could start a
+ * review but not show what mode it would run in would have to read the settings
+ * twice through two paths, and the two could disagree.
+ */
+export interface FreeCodeGoReviewStatus {
+  /** The workspace every run in this snapshot is about. */
+  readonly workspace: string
+  /** Whether a review started from here would use the per-file child agent. */
+  readonly deep: boolean
+  readonly mode: 'off' | 'record' | 'gate'
+  readonly threshold: 'critical' | 'high' | 'medium' | 'low'
+  readonly cooldownTurns: number
+  readonly escalation: boolean
+  /** Runs this plugin still remembers, most recent first. */
+  readonly runs: readonly ReviewRunSnapshot[]
+  /** The most recent run's full report, when one is still retained. */
+  readonly report?: ReviewReport
+}
+
+/** A review settings change from the settings page. */
+export interface FreeCodeGoReviewUpdate {
+  readonly reviewMode?: 'off' | 'record' | 'gate'
+  readonly reviewThreshold?: 'critical' | 'high' | 'medium' | 'low'
+  readonly reviewCooldownTurns?: number
+  readonly reviewDeep?: boolean
+  readonly reviewEscalation?: boolean
+}
+
+/** What the settings page asks a review to cover. */
+export interface FreeCodeGoReviewStartRequest {
+  readonly mode?: 'workspace' | 'range' | 'commit'
+  readonly from?: string
+  readonly to?: string
+  readonly commit?: string
+  readonly background?: string
+  readonly exclude?: readonly string[]
 }
 
 /** Cross-engine Advisor settings persisted with the FreeCodeGo profile. */
@@ -1886,7 +2373,7 @@ export interface FreeCodeGoAutomationSettingsUpdate {
 export interface FreeCodeGoGuardSettingsStatus {
   /** Credential-file read protection (tool-guards). */
   readonly envReadGuardEnabled: boolean
-  /** Doom-loop detection (tool-guards). */
+  /** Doom-loop detection for the native engines' own tools (tool-guards). */
   readonly doomLoopGuardEnabled: boolean
   /** Probe-based LSP stack (lsp-mount). */
   readonly lspEnabled: boolean
@@ -1933,59 +2420,6 @@ export interface FreeCodeGoGuardSettingsUpdate {
 
 /** Public, credential-free community catalog payload served to the settings page. */
 export type CommunityCatalogPayload = { readonly updated?: string; readonly plugins: readonly CommunityCatalogPlugin[] }
-
-/**
- * Live multi-member team state (Remote boundary type).
- *
- * Host-safe: it carries counts and a capability flag, never member prompts,
- * briefs, or worktree contents.
- */
-export interface TeamRuntimeStatus {
-  readonly enabled: boolean
-  /** The role library in effect, as data, so the settings page can list it. */
-  readonly roles: readonly {
-    readonly id: string
-    readonly title: string
-    readonly purpose: string
-    readonly notResponsibleFor: string
-    readonly capabilities: readonly string[]
-    readonly sandbox: string
-    readonly maxTurns: number
-  }[]
-  /** Teams this process has opened, keyed by their root session. */
-  readonly teams: number
-  /** Members with a live child Agent handle. */
-  readonly members: number
-  /** Whether this composition mounted a compaction engine for manual control. */
-  readonly contextControl: boolean
-  /**
-   * Who owns the team: the Harness's team runtime when one is composed, this
-   * plugin otherwise.
-   *
-   * `harness` means the plugin registered only its enhancement tools — writer
-   * isolation and crash recovery — and the roster, mailbox, and shared board are
-   * the Harness's.
-   */
-  readonly authority: 'harness' | 'plugin'
-  /**
-   * The plugin's own team tools that were deliberately not registered because
-   * the Harness supersedes them. Empty under `authority: 'plugin'`.
-   *
-   * Reported as data so a reviewer can see which surface stood down without
-   * reading the registration path.
-   */
-  readonly supersededTools: readonly string[]
-  /**
-   * The plugin's own team tools that stay registered because the Harness has no
-   * equivalent: writer worktree isolation and the single merge point, and crash
-   * recovery.
-   *
-   * Listed rather than left implicit for the same reason as its counterpart
-   * above: skipping one of these would be a capability loss rather than a
-   * deduplication, and the report is where that would become visible.
-   */
-  readonly enhancementTools: readonly string[]
-}
 
 /** One tool whose JSONSchema is withheld until the model asks for it. */
 export interface FreeCodeGoDeferredToolEntry {
@@ -2041,6 +2475,29 @@ export interface HeadroomStats {
   readonly configCompressions: number
   readonly losslessCompressions: number
   readonly dedupCompressions: number
+  /**
+   * Whether a lossless fold that clears the bar ships on its own. Read back like
+   * the other policy switches, so a knob the panel can write cannot render as off.
+   */
+  readonly foldPolicy: 'reversible' | 'max'
+  /**
+   * Renders the rule **held** instead of shipping, and had to be beaten by the typed
+   * stages: a whole-payload Stage 2 fold, a mixed-content section's own fold, the
+   * splice that would have carried it, and the cross-turn pointer over a repeat. All
+   * four are one event to a reader — a reversible or partial rendering was on offer
+   * and the chain had to beat it on bytes — so they share these counters.
+   * `deferred = superseded + settled` holds by construction (`adopt`,
+   * `settleDeferred`, and `compressSection`), and a panel needs all three to tell a
+   * payload whose render shipped from one whose render was beaten to half its size.
+   * Counted together on purpose: the pointer is as much a render of this payload as
+   * the fold is, and a ledger that only counted folds would report a repeat that was
+   * re-compressed by a branch (`headroom-extra.spec.ts`) as nothing having happened.
+   */
+  readonly foldDeferred: number
+  /** Held renders a typed stage beat on bytes. */
+  readonly foldSuperseded: number
+  /** Held renders that shipped because no typed stage beat them. */
+  readonly foldSettled: number
   /** Read results replaced by a byte-exact-line skeleton of the same file. */
   readonly codeSkeletonCompressions: number
   readonly protectedCount: number
@@ -2049,12 +2506,28 @@ export interface HeadroomStats {
   readonly retrievals: number
   /** Retrieve calls that found the entry expired/evicted (tombstone returned). */
   readonly retrieveMisses: number
-  /** Upstream project, license, and reviewed ref, e.g. for a diagnostics row. */
+  /**
+   * Writes the store refused at the whole-payload branches that check the write
+   * themselves (`json`, `html`). Diagnostics rather than a knob: a store at its
+   * ceiling is where compression starts to degrade, because those branches fall
+   * through to the generic stages instead of ending the chain, and a rising count is
+   * what explains a delivery in a shape the payload did not have.
+   */
+  readonly ccrWriteRefusals: number
+  /**
+   * Upstream project, license, reviewed ref, and this port's revision, composed into
+   * one sentence (`headroomProvenance`). The panel renders it, which is the point:
+   * the sentence names the upstream ref this build tracks, the one fact a reader needs
+   * when the port and its upstream drift — and the panel used to state the project and
+   * the license in hand-written prose that could not move when the port did.
+   *
+   * It stands in for three fields: this sentence plus two atomic parts
+   * (`portVersion`, `upstreamRevision`) that nothing read — a second and third
+   * spelling of one fact, on a surface whose only consumer is a human-facing panel.
+   * The parts remain on `HEADROOM_PORT`, which composes this string, and a consumer
+   * that has to *compare* a revision reads them there rather than from a status echo.
+   */
   readonly provenance: string
-  /** Revision of this port; a change here means the compression behaves differently. */
-  readonly portVersion: number
-  /** Upstream ref this port was last reconciled against. */
-  readonly upstreamRevision: string
 }
 
 /** One of the Harness file-sandbox modes, weakest first. */
@@ -2124,10 +2597,46 @@ export interface FreeCodeGoEngineeringSkillDraftCluster {
   }[]
 }
 
+/**
+ * One finding from the publish pre-flight.
+ *
+ * Declared here rather than imported from `skills/publish.ts`, because this file is
+ * loaded by the browser too: the shape crosses the remote boundary, so it is a
+ * contract and not a host implementation detail. The host's own report is this shape
+ * field for field, so nothing is mapped on the way out.
+ */
+export interface FreeCodeGoSkillPublishFinding {
+  readonly severity: 'error' | 'warning'
+  readonly code: 'name' | 'description' | 'size' | 'dangerous-command'
+  readonly message: string
+}
+
+/**
+ * What the publish pre-flight concluded about one `SKILL.md`.
+ *
+ * `ok` is false only for an error-severity finding: a draft with warnings is
+ * publishable, and telling the user otherwise would train them past the report.
+ */
+export interface FreeCodeGoSkillPublishReport {
+  readonly ok: boolean
+  readonly name?: string
+  readonly description?: string
+  readonly tokens: number
+  readonly limitTokens: number
+  readonly findings: readonly FreeCodeGoSkillPublishFinding[]
+}
+
 /** Result of one draft-generation run. */
 export interface FreeCodeGoEngineeringSkillDraftResult {
-  /** Drafts written to disk; empty when nothing clustered large enough. */
-  readonly drafts: readonly { readonly name: string; readonly sources: number }[]
+  /**
+   * Drafts written to disk; empty when nothing clustered large enough.
+   *
+   * Each entry carries the publish pre-flight's verdict on its own file, because the
+   * question the pre-flight answers — could this be published as it stands — is worth
+   * asking the moment the draft exists rather than an hour later, when the draft is
+   * what the user is looking at.
+   */
+  readonly drafts: readonly { readonly name: string; readonly sources: number; readonly preflight: FreeCodeGoSkillPublishReport }[]
   /** Absolute directory the drafts were written under, when any were. */
   readonly directory?: string
   /** Why nothing was produced, when nothing was. */
@@ -2179,7 +2688,7 @@ export type FreeCodeGoEngineeringEvalSuite =
   | 'routing'
   | 'preset'
   | 'lsp'
-  | 'team'
+  | 'review'
 
 /**
  * One deterministic capability check.

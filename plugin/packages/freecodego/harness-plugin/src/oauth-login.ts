@@ -59,6 +59,9 @@ function cryptoRandom(): number {
  * It doubles as the only key to the issued pair on the public poll endpoint,
  * so it carries timestamp plus random entropy (≥16 URL-safe characters, which
  * the backend requires before it will ever store or return a pair).
+ * @param nowMs - the time the state is minted at; defaults to the wall clock.
+ * @param random - the entropy source; defaults to the crypto-backed one.
+ * @returns the client-owned handoff state.
  */
 export function generateOAuthLoginState(nowMs: number = Date.now(), random: () => number = cryptoRandom): string {
   return `fcg_oauth_${nowMs.toString(36)}_${Math.floor(random() * 36 ** 10).toString(36).padStart(10, '0')}`
@@ -70,6 +73,10 @@ export function generateOAuthLoginState(nowMs: number = Date.now(), random: () =
  * The redirect value is itself a query string, so it is encoded twice by
  * design: the backend decodes `redirect` once and reads `state`/`plugin` from
  * the inner query, exactly like the desktop deep-link mode does.
+ * @param origin - the backend origin the flow runs against.
+ * @param provider - the federated provider to start.
+ * @param state - the client-owned handoff state.
+ * @returns the provider authorization URL.
  */
 export function pluginOAuthStartUrl(origin: string, provider: OAuthLoginProvider, state: string): string {
   const base = new URL(origin).origin
@@ -77,7 +84,12 @@ export function pluginOAuthStartUrl(origin: string, provider: OAuthLoginProvider
   return `${base}/api/v1/auth/oauth/${provider}/start?redirect=${encodeURIComponent(redirect)}`
 }
 
-/** Build one handoff poll URL for the given client state. */
+/**
+ * Build one handoff poll URL for the given client state.
+ * @param origin - the backend origin the flow runs against.
+ * @param state - the client-owned handoff state.
+ * @returns the poll URL.
+ */
 export function oauthHandoffPollUrl(origin: string, state: string): string {
   return `${new URL(origin).origin}/api/v1/auth/oauth/desktop/poll?state=${encodeURIComponent(state)}`
 }
@@ -101,6 +113,8 @@ export type OAuthHandoffPollResult =
  *
  * The backend normalizes every choice alias onto `choose_account_action_required`;
  * `email_completion` and `bind_login_required` are the other two terminal steps.
+ * @param value - the value to interpret, of unknown shape.
+ * @returns the normalized step, or `undefined` when the value names none.
  */
 export function parseOAuthPendingStep(value: unknown): OAuthLoginPendingStep | undefined {
   const step = typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -110,7 +124,10 @@ export function parseOAuthPendingStep(value: unknown): OAuthLoginPendingStep | u
   return undefined
 }
 
-/** Project one `/oauth/desktop/pending` status payload for the plugin UI. */
+/** Project one `/oauth/desktop/pending` status payload for the plugin UI. 
+ * @param payload - the payload to interpret, of unknown shape.
+ * @returns the pending registration, or `undefined` when the payload carries none.
+ */
 export function parseOAuthPendingRegistration(payload: unknown): OAuthLoginPendingRegistration | undefined {
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return undefined
   const root = payload as Record<string, unknown>
@@ -129,12 +146,21 @@ export function parseOAuthPendingRegistration(payload: unknown): OAuthLoginPendi
   }
 }
 
-/** Build the pending-registration status URL for one headless sign-in. */
+/**
+ * Build the pending-registration status URL for one headless sign-in.
+ * @param origin - the backend origin the flow runs against.
+ * @returns the pending-registration status URL.
+ */
 export function oauthPendingStatusUrl(origin: string): string {
   return `${new URL(origin).origin}/api/v1/auth/oauth/desktop/pending`
 }
 
-/** Build one pending-registration completion URL. */
+/**
+ * Build one pending-registration completion URL.
+ * @param origin - the backend origin the flow runs against.
+ * @param action - the completion action to address.
+ * @returns the completion URL.
+ */
 export function oauthPendingActionUrl(origin: string, action: 'verify-code' | 'bind-login' | 'create-account'): string {
   return `${new URL(origin).origin}/api/v1/auth/oauth/desktop/pending/${action}`
 }
@@ -158,6 +184,9 @@ export function oauthPendingActionUrl(origin: string, action: 'verify-code' | 'b
  *
  * A 404 is deliberately not special-cased here: its caller owns the specific
  * "this backend does not offer the handoff" message it wants to show.
+ * @param status - the response HTTP status.
+ * @param body - the parsed response body.
+ * @returns the refusal message, or `undefined` when the response is an answer.
  */
 export function oauthPollRejection(status: number, body: Record<string, unknown>): string | undefined {
   if (status >= 200 && status < 300) return undefined
@@ -175,6 +204,8 @@ export function oauthPollRejection(status: number, body: Record<string, unknown>
  * issued pair, the backend stores `pending_completion: true` plus the
  * completion payload under the desktop-handoff state; the poll then answers
  * `pending` with that marker until the plugin completes the session.
+ * @param body - the parsed poll response body.
+ * @returns the pending registration, or `undefined` when the marker is absent.
  */
 export function parseOAuthPendingCompletion(body: Record<string, unknown>): OAuthLoginPendingRegistration | undefined {
   if (body.pending_completion !== true) return undefined
@@ -188,6 +219,8 @@ export function parseOAuthPendingCompletion(body: Record<string, unknown>): OAut
  * The pending answer rides the standard `{code, data:{status}}` envelope while
  * the issued pair is written flat (the same shape as every other token-pair
  * response), so both shapes are recognized here rather than assumed.
+ * @param payload - the payload to interpret, of unknown shape.
+ * @returns the oAuth Handoff Poll Result.
  */
 export function parseOAuthHandoffPoll(payload: unknown): OAuthHandoffPollResult {
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return { kind: 'failed', message: 'oauth handoff poll response was not an object' }

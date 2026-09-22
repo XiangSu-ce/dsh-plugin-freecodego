@@ -16,16 +16,113 @@
  * offered for `FAILURE_HOLD_MS` from the moment it is *first seen* and keyed by
  * the failed job's identity: see {@link CompanionObservation.failedJobKey}.
  *
- * The facts here are the ones a root-scoped slot can actually read. Two rungs of
- * the ladder — `streaming` and `notified` — need to know what the *inside* of a
- * turn is doing, which the session list does not separate: a session reports
- * `running` for the whole turn, whether the model is thinking, a tool is
- * executing, or the reply is streaming. Those two facts are therefore carried as
- * optional inputs with a defined home, and the caller that has a finer feed
- * (the host half sees every agent event) can start supplying them without this
- * module changing.
+ * The facts here are the ones a root-scoped slot can actually read, plus the share
+ * that only the session's own event log can answer, which `./activity.ts` supplies:
+ * a session list reports `running` for the whole turn, whether the model is thinking,
+ * a tool is executing, or the reply is streaming, and the phases inside a turn are
+ * exactly what the poses are for. Those inputs stay optional here — the list-only
+ * reading of a session is still a complete observation — so a seat without a feed of
+ * its own degrades to the summary rather than to nothing.
  */
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { JobView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { CompanionSignals } from './arbiter.ts'
+
+/**
+ * Reading one fact out of the Session list snapshot.
+ *
+ * These live here, as plain functions over the snapshot, rather than inside the
+ * selectors that call them, because the facts have two readers: the React seats
+ * read them through the standard Hooks the framework hands a slot, and the
+ * transcript's running row (an injected root outside the slot system, see
+ * `./running-row.tsx`) reads them off the same snapshots directly. One spelling
+ * of each question is what keeps those two surfaces from disagreeing about what
+ * the agent is doing — the property `./bar.tsx` and `./companion.tsx` already
+ * depend on for their own pair.
+ */
+
+/** Stable empty job list, so a reader never returns a fresh array. */
+export const NO_JOBS: readonly JobView[] = []
+
+/**
+ * @param job - one Session's background job.
+ * @returns whether the job is still open, following the jobs surface's own reading.
+ */
+export function isLiveJob(job: JobView): boolean {
+  return job.status === 'running' || job.status === 'stopping'
+}
+
+/**
+ * The Session the main view is showing.
+ *
+ * alpha.2 dropped the selection from the list state, so this is read as local
+ * retention by the `mainView` reference source — the rule the renderer itself
+ * applies in `UiSession#publishMain`. That method has a fast path this cannot
+ * see (the private `current` binding) and falls back to the first row in `byId`
+ * order retained by the main view; this is that fallback, in that order, so the
+ * two agree whenever the fast path does not apply. `./current-session.ts` reads
+ * the same rule for surfaces outside a Session scope.
+ * @param state - the Session list snapshot.
+ * @returns the displayed Session id, or undefined while no Session is shown.
+ */
+export function mainViewSessionId(state: SessionListState): SessionId | undefined {
+  return Object.values(state.byId).find(candidate => (candidate.retainedBy.mainView ?? 0) > 0)?.id
+}
+
+/**
+ * @param state - the Session list snapshot.
+ * @param sessionId - the Session to read.
+ * @returns whether that Session reports a turn in progress.
+ */
+export function sessionRunning(state: SessionListState, sessionId: SessionId | undefined): boolean {
+  return sessionId !== undefined && state.byId[sessionId]?.running === true
+}
+
+/**
+ * @param state - the Session list snapshot.
+ * @param sessionId - the Session to read.
+ * @returns how many of that Session's background jobs are still open.
+ */
+export function liveJobCount(state: SessionListState, sessionId: SessionId | undefined): number {
+  if (sessionId === undefined) return 0
+  let live = 0
+  for (const job of state.jobsBySession[sessionId] ?? NO_JOBS) if (isLiveJob(job)) live += 1
+  return live
+}
+
+/**
+ * The newest failed background job of one Session, by identity.
+ *
+ * The host's list is append-ordered and drains nothing, so the last failed entry
+ * is the most recently started one, and its id is what changes when another job
+ * fails. See `CompanionObservation.failedJobKey` for why a boolean cannot stand
+ * in for this.
+ * @param state - the Session list snapshot.
+ * @param sessionId - the Session to read.
+ * @returns the newest failed job's id, or undefined when the list holds none.
+ */
+export function newestFailedJobKey(state: SessionListState, sessionId: SessionId | undefined): string | undefined {
+  if (sessionId === undefined) return undefined
+  let newest: string | undefined
+  for (const job of state.jobsBySession[sessionId] ?? NO_JOBS) {
+    if (job.status === 'failed') newest = job.id
+  }
+  return newest
+}
+
+/**
+ * @param statuses - the unified Session UI status snapshot.
+ * @param sessionId - the Session to read.
+ * @returns whether a domain-owned request is waiting on the user there.
+ */
+export function awaitingInteraction(
+  statuses: SessionStatusSnapshot,
+  sessionId: SessionId | undefined,
+): boolean {
+  return sessionId !== undefined && statuses.get(sessionId)?.pendingInteraction !== undefined
+}
 
 /**
  * Everything a root-scoped companion can observe about the selected session.
@@ -59,10 +156,36 @@ export interface CompanionObservation {
   /** A domain-owned interaction is waiting on the user in the selected session. */
   readonly awaitingInteraction: boolean
   /**
+   * A tool or command call is executing right now.
+   *
+   * Comes from the session's own event log (`./activity.ts`), not from the job list:
+   * a job is background work the user may not be looking at, while this is the tool
+   * the running turn is waiting on — which is the more precise reading of "working".
+   */
+  readonly toolRunning?: boolean | undefined
+  /**
    * The reply is streaming. Absent (or false) means "not known to be streaming",
    * which is what the session list can honestly say.
    */
   readonly streaming?: boolean | undefined
+  /**
+   * Identity of the newest turn that started, as news.
+   *
+   * An identity rather than a flag because a start is an instant, and the event that
+   * records it stays in the log for the rest of the session: a level reading would
+   * announce the first turn forever and the fiftieth never.
+   */
+  readonly startKey?: string | undefined
+  /**
+   * Identity of the newest turn that ended in failure, as news.
+   *
+   * The list's job failures cannot stand in for this — a turn that fails is not a
+   * job — and {@link CompanionObservation.failedJobKey} explains why the identity
+   * is the field rather than a boolean.
+   */
+  readonly failureKey?: string | undefined
+  /** Identity of the newest message injected from outside the turn, as news. */
+  readonly noticeKey?: string | undefined
   /** A message or subagent result arrived outside the current turn. */
   readonly notified?: boolean | undefined
 }
@@ -79,6 +202,18 @@ export interface CompanionSignalMemory {
   readonly failedJobKey: string | undefined
   /** Until when a failure is still offered, in milliseconds. */
   readonly failureUntilMs: number
+  /** The turn start already announced, so only a different turn is announced. */
+  readonly startKey: string | undefined
+  /** Until when a turn start is still offered, in milliseconds. */
+  readonly startUntilMs: number
+  /** The failed turn already announced, so only a different one is news. */
+  readonly turnFailureKey: string | undefined
+  /** Until when a failed turn is still offered, in milliseconds. */
+  readonly turnFailureUntilMs: number
+  /** The outside message already announced, so only a different one is news. */
+  readonly noticeKey: string | undefined
+  /** Until when an outside message is still offered, in milliseconds. */
+  readonly noticeUntilMs: number
 }
 
 /** Quiet time after which the companion powers down. */
@@ -109,9 +244,73 @@ export const COMPLETION_HOLD_MS = 4_000
  */
 export const FAILURE_HOLD_MS = 4_000
 
-/** The memory of a companion that has not observed anything yet. */
+/**
+ * How long a turn start keeps being offered.
+ *
+ * Same judgement as the two windows above, for the shortest-lived fact of the three:
+ * a start is over as soon as the model produces anything, so the window only has to
+ * outlive the pose it plays (`play`, 2 s) plus its own entry morph. It is also what
+ * keeps the greeting from replaying: the window closes on its own, and the next turn
+ * carries a different identity.
+ */
+export const START_HOLD_MS = 2_800
+
+/**
+ * How long an outside message keeps being offered.
+ *
+ * Shorter than a failure's, longer than a start's: a message injected into the turn
+ * is worth noticing but is not a request for action, so it announces itself without
+ * holding the row.
+ */
+export const NOTICE_HOLD_MS = 3_200
+
+/**
+ * How long a session rests before the character stirs again.
+ *
+ * The resting character is a living mark, not a still one: a session waiting for its
+ * next prompt is where the companion is seen most, and a mark that never moves in
+ * that time reads as broken rather than as calm. So the quiet poses are interrupted
+ * by a short flourish from the engine's catalogue on this period.
+ *
+ * It is shorter than a quarter of {@link IDLE_AFTER_MS} on purpose. The period and
+ * the power-down are the two ends of the same stretch of quiet, and the catalogue has
+ * four poses in it: at this rate a session that is left alone plays all four and
+ * *then* powers down, where a longer period would put the last pose past the
+ * power-down and make it unreachable — a catalogue entry no session could ever show.
+ */
+export const FLOURISH_PERIOD_MS = 20_000
+
+/**
+ * How long a flourish is offered at each period.
+ *
+ * The signal is a window inside each period rather than a level, which is what makes
+ * the rotation repeat: the arbiter's one-shot latch releases while the window is
+ * closed, and the next period offers the next pose in the catalogue. The periods are
+ * counted on the shared clock rather than from each seat's own quiet time, so every
+ * seat opens the same window at the same instant and reads the same step out of it —
+ * the character stirs once, in every place it is drawn.
+ */
+export const FLOURISH_WINDOW_MS = 2_600
+
+/**
+ * The memory of a companion that has not observed anything yet.
+ * @param nowMs - monotonic milliseconds from the arbiter's clock.
+ * @returns the companion Signal Memory.
+ */
 export function emptyMemory(nowMs: number): CompanionSignalMemory {
-  return { running: false, lastActivityMs: nowMs, completionUntilMs: nowMs, failedJobKey: undefined, failureUntilMs: nowMs }
+  return {
+    running: false,
+    lastActivityMs: nowMs,
+    completionUntilMs: nowMs,
+    failedJobKey: undefined,
+    failureUntilMs: nowMs,
+    startKey: undefined,
+    startUntilMs: nowMs,
+    turnFailureKey: undefined,
+    turnFailureUntilMs: nowMs,
+    noticeKey: undefined,
+    noticeUntilMs: nowMs,
+  }
 }
 
 /** One projection step. */
@@ -134,7 +333,10 @@ export function projectSignals(
   nowMs: number,
   memory: CompanionSignalMemory,
 ): ProjectedSignals {
-  const working = observation.liveJobs > 0
+  // Two independent readings of "working": a background job the session is running
+  // (the list's own field) and the tool the running turn is waiting on (the event
+  // log's). Either one is work, so the row says working for either.
+  const working = observation.liveJobs > 0 || observation.toolRunning === true
   const busy = observation.running || working || observation.awaitingInteraction
   // The edge is what restarts the quiet timer; the offered window below is what
   // the arbiter sees, and the two are not the same fact.
@@ -153,18 +355,49 @@ export function projectSignals(
   // holds a failure announces it once, briefly, rather than never.
   const failureIsNew = observation.failedJobKey !== undefined && observation.failedJobKey !== memory.failedJobKey
   const failureUntilMs = failureIsNew ? nowMs + FAILURE_HOLD_MS : memory.failureUntilMs
+  // The three news windows of the event log, all opened the same way and for the
+  // same reason: the fact is durable and stays in the log, so only a *different*
+  // one is news, and only for as long as its pose needs.
+  const startIsNew = observation.startKey !== undefined && observation.startKey !== memory.startKey
+  const startUntilMs = startIsNew ? nowMs + START_HOLD_MS : memory.startUntilMs
+  const turnFailureIsNew = observation.failureKey !== undefined && observation.failureKey !== memory.turnFailureKey
+  const turnFailureUntilMs = turnFailureIsNew ? nowMs + FAILURE_HOLD_MS : memory.turnFailureUntilMs
+  const noticeIsNew = observation.noticeKey !== undefined && observation.noticeKey !== memory.noticeKey
+  const noticeUntilMs = noticeIsNew ? nowMs + NOTICE_HOLD_MS : memory.noticeUntilMs
+  // Powered down is the end of the resting state, not a pose that competes with it:
+  // a session left alone stirs a few times and then goes to sleep, rather than
+  // stirring forever and never powering down.
+  const longIdle = !busy && quietMs >= IDLE_AFTER_MS
+  // The resting periods are counted from the clock, not from this seat's quiet time:
+  // several seats draw the one character, they do not share a mounting instant, and a
+  // phase derived from when this seat happened to open would have them stirring at
+  // different moments with different poses. A quiet session must also have rested a
+  // whole period first, so the flourish never lands on the heels of a turn.
+  const period = Math.floor(nowMs / FLOURISH_PERIOD_MS)
+  const flourishDue = !busy && !longIdle && quietMs >= FLOURISH_PERIOD_MS
+    && nowMs % FLOURISH_PERIOD_MS < FLOURISH_WINDOW_MS
   return {
     signals: {
       awaitingApproval: observation.awaitingInteraction,
-      failed: observation.failedJob && nowMs < failureUntilMs,
+      failed: (observation.failedJob && nowMs < failureUntilMs)
+        || (observation.failureKey !== undefined && nowMs < turnFailureUntilMs),
       working,
-      // A running turn means the agent is producing something; the session list
-      // does not say which part of the turn, so thinking is the honest reading.
+      // A running turn means the agent is producing something; the phases inside it
+      // arrive separately (a tool executing, the reply being written), and this is
+      // the reading for the part of the turn that has neither — the model thinking.
       thinking: observation.running,
       justCompleted: nowMs < completionUntilMs,
+      starting: observation.startKey !== undefined && nowMs < startUntilMs,
       streaming: observation.streaming === true,
-      notified: observation.notified === true,
-      longIdle: !busy && quietMs >= IDLE_AFTER_MS,
+      notified: observation.notified === true
+        || (observation.noticeKey !== undefined && nowMs < noticeUntilMs),
+      // A flourish is offered inside each period, not from the period onwards. A
+      // level signal would be latched by the first flourish and never released,
+      // because the quiet time it is derived from only ever grows. The step is 0
+      // whenever none is due, so a pose is only ever read out of it in a window.
+      restless: flourishDue,
+      restlessStep: flourishDue ? period : 0,
+      longIdle,
     },
     memory: {
       running: observation.running,
@@ -172,6 +405,12 @@ export function projectSignals(
       completionUntilMs,
       failedJobKey: observation.failedJobKey,
       failureUntilMs,
+      startKey: observation.startKey,
+      startUntilMs,
+      turnFailureKey: observation.failureKey,
+      turnFailureUntilMs,
+      noticeKey: observation.noticeKey,
+      noticeUntilMs,
     },
   }
 }

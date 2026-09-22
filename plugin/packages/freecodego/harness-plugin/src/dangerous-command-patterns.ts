@@ -91,13 +91,26 @@ const CMD_SWITCH_GAP = '(?:\\s+/[a-z]+)*\\s*'
  *
  * - **a download piped into an interpreter** — the fetch is not the problem, the
  *   execute is, which is why a bare `curl` is deliberately absent; the window is
- *   bounded so the pattern cannot run away across a long document. Both halves come
+ *   bounded so the pattern cannot run away across a long document. The verb is
+ *   matched as a whole word, because it was not: `curl` inside "curling" and `irm`
+ *   inside "confirm" each matched, so an English sentence that happened to contain
+ *   one of those words and a later `| sh` was reported as a fetch piped into a
+ *   shell. A word that is not even the program is not the lenient reading this
+ *   module makes elsewhere — it is a plain false positive, and the audit that
+ *   reports it is the audit nobody finishes reading. Both halves come
  *   from the policy's vocabularies, because "an operation, one of its spellings" is
  *   the defect this rule exists for: `curl … | pwsh` was refused while
  *   `iwr … | iex` was invisible, and the missing half was the verb, not the shape,
  * - **recursive force-deletion in any flag spelling** — `-rf`, `-fr`, `-Rf`,
  *   `-r -f`, `-f -r`, with or without trailing letters, because a list that only
- *   knew one spelling is exactly how `rm -fr` slipped past the audit. The Windows
+ *   knew one spelling is exactly how `rm -fr` slipped past the audit. That
+ *   enumeration was the same defect one step on: it was complete for the pairs
+ *   someone had thought of, and silent for `rm --recursive --force`, `rm -r
+ *   --force` and `rm -v -r -f` — the operation with a long spelling, or with one
+ *   more flag in front of the pair. The POSIX rule is therefore written as the
+ *   fact — one `rm`, then a recursion token and a force token inside that one
+ *   command, in either order — so the spellings above are what it *matches* rather
+ *   than what it *knows*. The Windows
  *   spellings are here for the same reason: `Remove-Item -Recurse -Force` and
  *   `del /s /q` are that operation, and leaving them out would repeat the defect one
  *   platform over. On Windows the two flags must be adjacent, and that difference is
@@ -107,7 +120,9 @@ const CMD_SWITCH_GAP = '(?:\\s+/[a-z]+)*\\s*'
  * - **a bare `eval(`** — it runs whatever text it is handed,
  * - **`chmod -R 777` in any flag or mode spelling** — `-R`, `-r`, the clustered
  *   `-Rv`, the long `--recursive`, and the mode with or without a leading zero,
- *   because a list that knows one spelling of an operation is how this list
+ *   in either order and with other flags in front of it (`chmod -R -v 777 .`,
+ *   which the rule missed while it read the mode as the token right after the one
+ *   recursive flag), because a list that knows one spelling of an operation is how this list
  *   missed `rm -fr`; the pattern names the recursive flag and the octal modes
  *   ending in a world-writable `777`/`666`, and leaves the *other* spellings of
  *   the same operation (`a+rwx`, `ugo=rwx`) to the command policy, which decides
@@ -115,7 +130,13 @@ const CMD_SWITCH_GAP = '(?:\\s+/[a-z]+)*\\s*'
  *   list that tried to enumerate symbolic modes would report the unbounded
  *   permutations of them, and a finding nobody can act on is a finding nobody
  *   reads,
- * - **a forced push** — it discards whatever the remote already holds,
+ * - **a forced push** — it discards whatever the remote already holds, in either
+ *   spelling and wherever the flag sits in the line, because `git push origin main
+ *   --force` is how the flag is usually written and the rule used to require it
+ *   immediately after the subcommand. `--force-with-lease` is deliberately *not*
+ *   this operation: it refuses when the remote has moved rather than discarding what
+ *   is there, so a skill documenting the safe form is not refused a publish for
+ *   naming it,
  * - **an unqualified `sudo`** — content asking for a privilege whose shape the
  *   reader cannot see, which is the whole reason to look before installing it,
  * - **`mkfs` and `dd if=`** — they write over a device rather than a file.
@@ -144,14 +165,77 @@ const BARE_PRIVILEGE = /\bsudo\b/
 /** A bare `eval(` — named for the same reason {@link BARE_PRIVILEGE} is. */
 const EVAL_CALL = /\beval\s*\(/
 
+/**
+ * Flag vocabularies, and the command window a rule may look through to find them.
+ *
+ * Why a vocabulary rather than a spelling
+ * --------------------------------------
+ * The rule for a recursive force-deletion used to name the flag pairs someone had
+ * thought of — `-rf`, `-fr`, `-r -f`, `-f -r` — and an enumeration of spellings is a
+ * rule that is right about the entries it has and silent about the operation. It was
+ * repaired once, from a lone `-rf` to that list, and the repair was still an
+ * enumeration: `rm --recursive --force`, `rm -r --force` and `rm -v -r -f` were all
+ * invisible, so a reviewer reading this audit was told that a workspace-wiping line
+ * was fine. Measured before this change: of the spellings the matrix in
+ * `tests/dangerous-command-patterns.spec.ts` asserts, nine were reported as nothing —
+ * four ways of writing a forced push, four of a recursive force-deletion, and the
+ * recursive chmod whose mode follows a second flag.
+ *
+ * So the rule is written as the fact instead: *one* `rm`, and then, inside the rest
+ * of that one command, a token asking for recursion and a token asking to stop
+ * asking. Order stops mattering because the two lookaheads answer independently, and
+ * spelling stops mattering because each is a vocabulary.
+ */
+
+/**
+ * The rest of one command: how far a rule may look, and no further.
+ *
+ * Bounded for the reason every window in this file is bounded, and stopped by `|`,
+ * `;`, `&` and a newline so two neighbouring commands cannot lend each other a flag:
+ * `rm -r a; rm -f b` is two commands and not one recursive force-deletion.
+ */
+const FLAG_WINDOW = '[^\\n|;&]{0,120}'
+
+/**
+ * Where a flag token may begin: after a space, or at the start of the window.
+ *
+ * This is the half that keeps a `-` inside a name from reading as a flag. Without
+ * it, `rm -r my-file` matched — the name's `-f` spelled the force flag — and a
+ * finding about a file called `my-file` is a finding nobody can act on.
+ */
+const TOKEN_START = '(?<!\\S)'
+
+/** One token asking for recursion: `-r`, `-R`, `-rR`, `--recursive`. */
+const RECURSIVE_FLAG = '(?:-[a-z]*r[a-z]*|--recursive)'
+
+/**
+ * One token asking to stop asking: `-f`, `--force`.
+ *
+ * One vocabulary for the deletion rule and the push rule, because it is one word
+ * that two operations each spell two ways.
+ */
+const FORCE_FLAG = '(?:-[a-z]*f[a-z]*|--force)'
+
+/**
+ * One token a recursive `chmod` must not be given: an octal mode ending in a
+ * world-writable `777` or `666`, with or without its leading zero.
+ *
+ * A vocabulary for the same reason the flags are: the mode is a token to be found,
+ * not a position to be counted to. The rule used to read `chmod -R 777` as "the mode
+ * immediately after the one recursive flag", so `chmod -R -v 777 .` — the same
+ * operation with a second flag in front of the mode — was invisible.
+ */
+const CHMOD_MODE = '0*[0-7]?(?:777|666)\\b'
+
+/** Command shapes the guard treats as destructive, whatever their spelling. */
 export const DANGEROUS_COMMAND_PATTERNS: readonly RegExp[] = [
-  new RegExp(`(?:curl|wget|${POWERSHELL_DOWNLOADERS})[^\\n|]{0,500}\\|\\s*(?:${SHELL_INTERPRETER_SOURCE}|${POWERSHELL_EXECUTORS})\\b`, 'i'),
-  new RegExp('\\brm\\s+-[a-z]*r[a-z]*f|\\brm\\s+-[a-z]*f[a-z]*r|\\brm\\s+-r\\s+-f|\\brm\\s+-f\\s+-r', 'i'),
+  new RegExp(`\\b(?:curl|wget|${POWERSHELL_DOWNLOADERS})\\b[^\\n|]{0,500}\\|\\s*(?:${SHELL_INTERPRETER_SOURCE}|${POWERSHELL_EXECUTORS})\\b`, 'i'),
+  new RegExp(`\\brm\\s+(?=${FLAG_WINDOW}?${TOKEN_START}${RECURSIVE_FLAG})(?=${FLAG_WINDOW}?${TOKEN_START}${FORCE_FLAG})${FLAG_WINDOW}`, 'i'),
   new RegExp('\\b(?:remove-item|ri)\\b[^\\n|]{0,200}?(?:-recurse|-r)\\s+(?:-force|-fo)\\b|\\b(?:remove-item|ri)\\b[^\\n|]{0,200}?(?:-force|-fo)\\s+(?:-recurse|-r)\\b', 'i'),
   new RegExp(`\\b(?:${CMD_DELETE_PROGRAMS})\\b[^\\n|]{0,120}?(?:/s${CMD_SWITCH_GAP}(?:/q|/f)|(?:/q|/f)${CMD_SWITCH_GAP}/s)\\b`, 'i'),
   EVAL_CALL,
-  /\bchmod\s+(?:-[A-Za-z]*[Rr][A-Za-z]*|--recursive)\s+0*[0-7]?(?:777|666)\b/,
-  /\bgit\s+push\s+--force\b/,
+  new RegExp(`\\bchmod\\b(?=${FLAG_WINDOW}?${TOKEN_START}${RECURSIVE_FLAG})(?=${FLAG_WINDOW}?${TOKEN_START}${CHMOD_MODE})${FLAG_WINDOW}`, 'i'),
+  new RegExp(`\\bgit\\s+push\\b(?=${FLAG_WINDOW}?${TOKEN_START}${FORCE_FLAG}(?![\\w-]))${FLAG_WINDOW}`, 'i'),
   BARE_PRIVILEGE,
   /\bmkfs\b|\bdd\s+if=/,
 ]

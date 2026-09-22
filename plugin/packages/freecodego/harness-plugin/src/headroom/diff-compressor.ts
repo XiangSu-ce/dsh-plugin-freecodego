@@ -14,6 +14,10 @@
 import type { CcrStore } from './ccr.ts'
 import { computeKey } from './ccr.ts'
 
+/**
+ * Tunables for unified-diff compaction: when to engage, how many files and
+ * hunks survive, how much context each keeps, and the ratio to beat.
+ */
 export interface DiffCompressorConfig {
   /** Minimum total lines before compression is attempted. */
   minLines: number
@@ -27,6 +31,7 @@ export interface DiffCompressorConfig {
   maxRatio: number
 }
 
+/** Default diff-compressor tunables. */
 export const DIFF_COMPRESSOR_DEFAULTS: DiffCompressorConfig = {
   minLines: 50,
   maxFiles: 20,
@@ -162,6 +167,10 @@ function trimContext(hunk: Hunk, radius: number): readonly DiffLine[] {
   return out
 }
 
+/**
+ * Outcome of one diff compaction: the rendering, whether it was adopted, and
+ * the CCR key when the dropped hunks were stashed.
+ */
 export interface DiffCompressionResult {
   readonly compressed: string
   readonly applied: boolean
@@ -169,7 +178,13 @@ export interface DiffCompressionResult {
 }
 
 /** Compress one unified diff; `applied: false` for short or non-diff text.
- * `bias` > 1 keeps more hunks (conservative), < 1 fewer (aggressive). */
+ * `bias` > 1 keeps more hunks (conservative), < 1 fewer (aggressive).
+ * @param text - the text to process.
+ * @param cfg - the diff-compressor settings to apply.
+ * @param store - the store to read, when one is mounted.
+ * @param bias - multiplier on the file and hunk budgets (>1 keeps more).
+ * @returns the diff compaction result.
+ */
 export function compressDiff(text: string, cfg: DiffCompressorConfig, store: CcrStore | undefined, bias = 1.0): DiffCompressionResult {
   const totalLines = text.split('\n').length
   if (totalLines < cfg.minLines || !looksLikeDiffOutput(text)) {
@@ -245,14 +260,23 @@ export function compressDiff(text: string, cfg: DiffCompressorConfig, store: Ccr
   // one shape of drift it allows is F-25's — an adopted rendering with no marker.
   let cacheKey: string | undefined
   if (store !== undefined) {
-    cacheKey = computeKey(text)
-    store.put(cacheKey, text)
+    const key = computeKey(text)
+    // This rendering dropped hunks, so it may ship only with its original stored:
+    // a refused write (`StagedCcrStore.put`, an attempt with no room left) means a
+    // diff that cannot be recovered, so the whole rendering is declined — which is
+    // the shape every caller here already handles.
+    if (store.put(key, text) !== true) return { compressed: text, applied: false, cacheKey: undefined }
+    cacheKey = key
     compressed += `\n[${totalLines} diff lines compressed to ${compressed.split('\n').length}. Retrieve full diff: hash=${cacheKey}]`
   }
   return { compressed, applied: true, cacheKey }
 }
 
-/** Whether the text is a unified diff (git/diff -u style). */
+/**
+ * Whether the text is a unified diff (git/diff -u style).
+ * @param text - the text to test.
+ * @returns true when the text carries unified-diff headers.
+ */
 export function looksLikeDiffOutput(text: string): boolean {
   return /^diff --git /mu.test(text) || /^--- .*\n\+\+\+ /mu.test(text)
 }

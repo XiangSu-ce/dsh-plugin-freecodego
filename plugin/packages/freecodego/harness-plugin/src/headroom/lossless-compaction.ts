@@ -47,7 +47,10 @@ function join(lines: readonly string[], hadTrailing: boolean): string {
   return out
 }
 
-/** Strip ANSI color escapes (non-semantic bytes; one-way). */
+/** Strip ANSI color escapes (non-semantic bytes; one-way). 
+ * @param text - the text to process.
+ * @returns the text with ANSI escapes removed.
+ */
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, '')
 }
@@ -221,7 +224,10 @@ function unfoldRepeatedBlocks(text: string): string {
 
 // ─── Search folds (reversible, round-trip verified) ─────────────────────────
 
-/** Convert grep `path:line:content` rows into ripgrep --heading form. */
+/** Convert grep `path:line:content` rows into ripgrep --heading form. 
+ * @param text - the text to process.
+ * @returns the rows in ripgrep `--heading` form.
+ */
 export function searchHeading(text: string): string {
   const { lines, hadTrailing } = splitKeepTrailing(text)
   if (lines.length === 0) return text
@@ -244,7 +250,10 @@ export function searchHeading(text: string): string {
   return join(out, hadTrailing)
 }
 
-/** Exact inverse of searchHeading. */
+/** Exact inverse of searchHeading. 
+ * @param text - the text to process.
+ * @returns grep-style `path:line:content` rows, byte-identical to the heading input.
+ */
 export function searchUnheading(text: string): string {
   const { lines, hadTrailing } = splitKeepTrailing(text)
   if (lines.length === 0) return text
@@ -272,7 +281,10 @@ export function searchUnheading(text: string): string {
   return join(out, hadTrailing)
 }
 
-/** Fold grep rows by DIRECTORY (the `grep -rn` case where each file has one match). */
+/** Fold grep rows by DIRECTORY (the `grep -rn` case where each file has one match). 
+ * @param text - the text to process.
+ * @returns the rows folded under per-directory headings.
+ */
 export function searchDirHeading(text: string): string {
   const { lines, hadTrailing } = splitKeepTrailing(text)
   if (lines.length === 0) return text
@@ -298,7 +310,10 @@ export function searchDirHeading(text: string): string {
   return join(out, hadTrailing)
 }
 
-/** Exact inverse of searchDirHeading. */
+/** Exact inverse of searchDirHeading. 
+ * @param text - the text to process.
+ * @returns grep-style `path:line:content` rows, byte-identical to the dir-heading input.
+ */
 export function searchDirUnheading(text: string): string {
   const { lines, hadTrailing } = splitKeepTrailing(text)
   if (lines.length === 0) return text
@@ -326,7 +341,10 @@ export function searchDirUnheading(text: string): string {
   return join(out, hadTrailing)
 }
 
-/** Fold a pure file-path listing (`find`/`ls -1`/`rg -l`) into dir-heading form. */
+/** Fold a pure file-path listing (`find`/`ls -1`/`rg -l`) into dir-heading form. 
+ * @param text - the text to process.
+ * @returns the paths folded under per-directory headings.
+ */
 export function pathHeading(text: string): string {
   const { lines, hadTrailing } = splitKeepTrailing(text)
   if (lines.filter(line => PATH_ROW_RE.test(line)).length < 2) return text
@@ -349,7 +367,10 @@ export function pathHeading(text: string): string {
   return join(out, hadTrailing)
 }
 
-/** Exact inverse of pathHeading. */
+/** Exact inverse of pathHeading. 
+ * @param text - the text to process.
+ * @returns the flat path listing, byte-identical to the heading input.
+ */
 export function pathUnheading(text: string): string {
   const { lines, hadTrailing } = splitKeepTrailing(text)
   if (lines.length === 0) return text
@@ -377,7 +398,10 @@ export function pathUnheading(text: string): string {
   return join(out, hadTrailing)
 }
 
-/** Drop `index <sha>..<sha>` bookkeeping lines from a unified diff (still applies). */
+/** Drop `index <sha>..<sha>` bookkeeping lines from a unified diff (still applies). 
+ * @param text - the text to process.
+ * @returns the diff without its `index` bookkeeping lines.
+ */
 export function diffStripIndex(text: string): string {
   const { lines, hadTrailing } = splitKeepTrailing(text)
   if (lines.length === 0) return text
@@ -388,6 +412,10 @@ function smaller(candidate: string, original: string): boolean {
   return candidate.length < original.length
 }
 
+/**
+ * Outcome of a lossless compaction: the text to use, and whether the
+ * round-trip-verified smaller rendering was adopted.
+ */
 export interface LosslessResult {
   /** Compacted text, or the original when nothing applied. */
   readonly output: string
@@ -409,17 +437,42 @@ function accept(baseline: string, candidate: string | undefined, withBlocks: boo
  * non-semantic bits, e.g. ANSI color for logs); if verification fails or the
  * result is not smaller, the original content is returned unchanged. Never
  * throws; unknown kinds pass through.
+ * @param text - the text to process.
+ * @param kind - the format-native fold to apply.
+ * @returns the lossless result.
  */
 export function compactLossless(text: string, kind: 'log' | 'search' | 'paths' | 'diff' | 'text' | 'config'): LosslessResult {
   if (text === '') return { output: text, applied: false }
   try {
     if (kind === 'log') {
-      // ANSI is non-semantic and dropped one-way; run-collapse must be
-      // exactly reversible against the de-ANSI'd baseline.
+      // ANSI is non-semantic and dropped one-way; whatever survives must be
+      // exactly reversible against the de-ANSI'd baseline, which `accept` proves
+      // by rebuilding it.
+      //
+      // Both halves of the advertised transform ("ANSI strip + repeated-line
+      // collapse") were unreachable for the inputs that need one of them:
+      //
+      // - an escape-free log returned `applied: false` *before* the run collapse
+      //   was attempted, so a payload that is nothing but a repeated run — 62
+      //   lines of which 60 are identical, rebuilt exactly by `expandRuns` —
+      //   folded to nothing. The early return bought nothing: `accept` already
+      //   refuses a candidate that is not strictly smaller or does not
+      //   round-trip, so the two transforms compose and neither can fire alone;
+      // - colour with nothing repeated came back unchanged too, because the only
+      //   candidate `accept` takes is strictly smaller than the *already
+      //   de-ANSI'd* baseline — and dropping the escapes is the whole saving in
+      //   that shape. That is a fold by the same argument (the escapes are not
+      //   content, and `stripAnsi` is the transform named on the box), so it is
+      //   returned here with the same shape of guarantee: the only bytes that do
+      //   not come back are the escapes.
+      //
+      // The second half is what the detector's ANSI fix made load-bearing: a
+      // coloured log is typed `log` now, so nothing folds it as `search` output,
+      // and without this it would ship verbatim.
       const baseline = stripAnsi(text)
-      if (baseline === text) return { output: text, applied: false }
-      const candidate = collapseRuns(baseline)
-      return accept(baseline, candidate, false)
+      const collapsed = collapseRuns(baseline)
+      if (collapsed !== undefined) return accept(baseline, collapsed, false)
+      return baseline.length < text.length ? { output: baseline, applied: true } : { output: text, applied: false }
     }
 
     if (kind === 'search') {

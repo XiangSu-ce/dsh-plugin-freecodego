@@ -7123,6 +7123,9 @@ importers:
       '@deepseek-ai/dsh-attachment':
         specifier: '*'
         version: link:../../attachment/attachment
+      '@deepseek-ai/dsh-brand':
+        specifier: '*'
+        version: link:../../util/brand
       '@deepseek-ai/dsh-client-locale':
         specifier: '*'
         version: link:../../client/locale
@@ -7156,6 +7159,9 @@ importers:
       '@deepseek-ai/dsh-mcp-client':
         specifier: '*'
         version: link:../../mcp/mcp-client
+      '@deepseek-ai/dsh-permission-presets':
+        specifier: '*'
+        version: link:../../interaction/permission-presets
       '@deepseek-ai/dsh-sandbox-policy':
         specifier: '*'
         version: link:../../sandbox/sandbox-policy
@@ -7171,9 +7177,15 @@ importers:
       '@deepseek-ai/dsh-skill-filesystem':
         specifier: '*'
         version: link:../../skill/skill-filesystem
+      '@deepseek-ai/dsh-subagent':
+        specifier: '*'
+        version: link:../../subagent/subagent
       '@deepseek-ai/dsh-token-meter':
         specifier: '*'
         version: link:../../llm/token-meter
+      '@deepseek-ai/dsh-tools':
+        specifier: '*'
+        version: link:../../core/tools
       '@deepseek-ai/dsh-typert-protocol':
         specifier: '*'
         version: link:../../typert/protocol
@@ -7183,6 +7195,9 @@ importers:
       '@deepseek-ai/dsh-user-questions':
         specifier: '*'
         version: link:../../interaction/user-questions
+      '@deepseek-ai/dsh-util-values':
+        specifier: '*'
+        version: link:../../util/values
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -7198,9 +7213,19 @@ importers:
       tar:
         specifier: 7.5.2
         version: 7.5.2
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+    devDependencies:
+      '@deepseek-ai/dsh-freecodego-agent-engine-router':
+        specifier: workspace:^
+        version: link:../agent-engine-router
+      '@deepseek-ai/dsh-freecodego-harness-plugin':
+        specifier: workspace:^
+        version: link:../harness-plugin
 
   packages/freecodego/freecodego-api:
     devDependencies:
@@ -7309,6 +7334,9 @@ importers:
       js-yaml:
         specifier: ^4.2.0
         version: 4.3.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -7379,9 +7407,15 @@ importers:
       '@types/react':
         specifier: ~18.3.1
         version: 18.3.31
+      '@types/react-dom':
+        specifier: ~18.3.0
+        version: 18.3.7(@types/react@18.3.31)
       react:
         specifier: ^18.2.0
         version: 18.3.1
+      react-dom:
+        specifier: ^18.2.0
+        version: 18.3.1(react@18.3.1)
 
   packages/freecodego/native-runtime-host:
     dependencies:

@@ -19,7 +19,17 @@
  * - **One-shot latching.** `burst` and friends play once and then fall through to
  *   whatever else is true. The signal is latched when its state finishes so a
  *   level-triggered `justCompleted` cannot replay it on every frame; the latch
- *   clears when the signal goes false, so the next completion plays again.
+ *   clears when the signal goes false, so the next completion plays again. A rung
+ *   that cycles a catalogue of poses (`restless`) relies on the same release: the
+ *   latch clears while its window is closed, and the next window — a whole period
+ *   later, with a different step on the signals — asks for the next pose.
+ *
+ * The ladder's order is the order the phases of one turn happen in, most urgent
+ * first, and the ranks are what make that order visible. A phase the ladder ranks
+ * below `thinking` can never be seen at all: the session list reports `running` for
+ * the whole turn, so `thinking` is true alongside every in-turn phase. That is why
+ * `streaming`, `working`, and `starting` all outrank it — and why a rung below
+ * `thinking` is, for the length of a turn, a rung nobody can observe.
  */
 import { STATE_BY_ID, type StateId } from './engine/states.ts'
 
@@ -33,12 +43,33 @@ export interface CompanionSignals {
   working: boolean
   /** A turn is open but nothing has been emitted yet — the model is thinking. */
   thinking: boolean
+  /** A turn just started, and its start is still news. Consumed like a completion. */
+  starting: boolean
   /** A turn just finished. Consumed once, then latched until it clears. */
   justCompleted: boolean
   /** The reply is streaming. */
   streaming: boolean
   /** A message arrived from outside the current turn. Consumed like a completion. */
   notified: boolean
+  /**
+   * A resting session is due for a flourish.
+   *
+   * True inside a short window of each quiet period rather than from the period
+   * onwards, so the companion keeps stirring at rest instead of stirring once (see
+   * `FLOURISH_PERIOD_MS`). It is not true once the session has powered down: the
+   * quiet ends of the vocabulary are `restless`, then `sleep`, in that order.
+   */
+  restless: boolean
+  /**
+   * Which resting period this is, counted from the shared clock, or 0 for none.
+   *
+   * The pose is chosen from it rather than from a count kept in the arbiter, and
+   * that is the whole point: several seats draw one character, the clock is the one
+   * thing they share exactly, and a per-seat count would let a seat that mounted
+   * later walk the catalogue out of step with the others — two poses for one
+   * instant, in two places on screen.
+   */
+  restlessStep: number
   /** Nothing has happened for long enough to power down. */
   longIdle: boolean
 }
@@ -49,18 +80,38 @@ export const IDLE_SIGNALS: CompanionSignals = {
   failed: false,
   working: false,
   thinking: false,
+  starting: false,
   justCompleted: false,
   streaming: false,
   notified: false,
+  restless: false,
+  restlessStep: 0,
   longIdle: false,
 }
+
+/**
+ * The catalogue the resting companion cycles through, in the order it plays.
+ *
+ * These are the engine's poses that describe no session fact — a wink, a look, a
+ * shape change — so they are decoration, and decoration belongs at rest. `play` is
+ * deliberately absent: it means "starting" to a reader, and the ladder already uses
+ * it for the moment a turn starts, where a turning-away flourish would take it away.
+ */
+export const FLOURISHES: readonly StateId[] = ['egg', 'wink', 'wide', 'hexagon']
 
 /** One rung of the ladder. */
 interface Rule {
   /** The signal that selects this state. */
   signal: keyof CompanionSignals
-  /** The engine state it selects. */
+  /** The engine state it selects, or the first of {@link Rule.cycle}. */
   state: StateId
+  /**
+   * Poses the rung cycles through instead of asking for one. The pose is read at the
+   * step the signals carry (see `CompanionSignals.restlessStep`), so the catalogue
+   * is played in order across the resting periods and then from its start again —
+   * one entry per period, the same entry for every seat.
+   */
+  cycle?: readonly StateId[]
   /**
    * Urgency. A request only preempts a state already on screen when its rank is
    * strictly higher, so equal urgency waits out the dwell instead of flapping.
@@ -81,11 +132,22 @@ const LADDER: readonly Rule[] = [
   // for action, not a description of work.
   { signal: 'awaitingApproval', state: 'alert', rank: 100, floorMs: 2000 },
   { signal: 'failed', state: 'exclaim', rank: 90, floorMs: 1200 },
-  { signal: 'working', state: 'orbit', rank: 70, floorMs: 800 },
-  { signal: 'thinking', state: 'thinking', rank: 60, floorMs: 600 },
-  { signal: 'justCompleted', state: 'burst', rank: 50, once: true, floorMs: 800 },
-  { signal: 'streaming', state: 'comet', rank: 40, floorMs: 800 },
-  { signal: 'notified', state: 'notify', rank: 30, once: true, floorMs: 1000 },
+  // A tool in flight is the most concrete thing a turn can be doing, so it outranks
+  // the two phases that describe the model rather than the work.
+  { signal: 'working', state: 'orbit', rank: 75, floorMs: 800 },
+  { signal: 'streaming', state: 'comet', rank: 65, floorMs: 800 },
+  // An injected message is news that arrives *inside* a turn, so it has to outrank
+  // the turn's own phases to be seen at all.
+  { signal: 'notified', state: 'notify', rank: 60, once: true, floorMs: 1000 },
+  // The greeting is allowed its own beat before the turn's phases take over: the
+  // start's window is longer than this floor, so the pose ends by this dwell rather
+  // than by the window closing.
+  { signal: 'starting', state: 'play', rank: 55, once: true, floorMs: 1600 },
+  { signal: 'thinking', state: 'thinking', rank: 50, floorMs: 600 },
+  { signal: 'justCompleted', state: 'burst', rank: 45, once: true, floorMs: 800 },
+  // The floor is the longest pose in the catalogue (2 s) plus its entry morph, so a
+  // resting flourish always finishes rather than being cut by its own window.
+  { signal: 'restless', state: 'egg', cycle: FLOURISHES, rank: 30, once: true, floorMs: 2200 },
   { signal: 'longIdle', state: 'sleep', rank: 20, floorMs: 2000 },
 ]
 
@@ -104,13 +166,27 @@ function dwellFloorMs(state: StateId, floorMs: number): number {
 }
 
 /**
+ * The rung a state belongs to.
+ *
+ * Read from the ladder rather than held beside it, so the two can never drift — and
+ * by membership rather than identity, because a cycling rung owns every pose in its
+ * catalogue: a flourish on screen has to find its own rung to know its floor and its
+ * rank, exactly like a pose a rung names directly.
+ * @param state - state to look up.
+ * @returns the rung that asks for it, or undefined for `idle` and anything unasked.
+ */
+function ruleOf(state: StateId): Rule | undefined {
+  return LADDER.find(rule => rule.state === state || rule.cycle?.includes(state) === true)
+}
+
+/**
  * Urgency of a state, read from the ladder so the two can never drift. A state
  * with no rung — `idle`, or one this companion never calls for — ranks lowest.
  * @param state - state to rank.
  * @returns its rank; 0 when it has no rung.
  */
 function rankOf(state: StateId): number {
-  return LADDER.find(rule => rule.state === state)?.rank ?? 0
+  return ruleOf(state)?.rank ?? 0
 }
 
 /** A decision: the state to show, and why it is allowed to change now. */
@@ -150,9 +226,26 @@ export class CompanionArbiter {
     for (const rule of LADDER) {
       if (!signals[rule.signal]) continue
       if (rule.once === true && this.latched.has(rule.signal)) continue
-      return rule.state
+      return this.stateOf(rule, signals)
     }
     return IDLE_STATE
+  }
+
+  /**
+   * The pose one rung asks for, given the signals behind it.
+   *
+   * A cycling rung reads its catalogue at the step the signals carry, so the pose is
+   * a function of the shared clock rather than of this instance's history: every seat
+   * asks the same question at the same instant and gets the same pose. Asking twice
+   * before the step moves also returns the same pose, which is what keeps a held rung
+   * from walking a catalogue it has not played.
+   * @param rule - the satisfied rung.
+   * @param signals - the activity the decision is being made from.
+   * @returns the state to render for it.
+   */
+  private stateOf(rule: Rule, signals: CompanionSignals): StateId {
+    if (rule.cycle === undefined) return rule.state
+    return rule.cycle[signals.restlessStep % rule.cycle.length] ?? rule.state
   }
 
   /**
@@ -178,7 +271,7 @@ export class CompanionArbiter {
     // A one-shot that has played out stops asking for itself: latch its signal so
     // the ladder falls through to whatever else is true.
     if (finishedOnce) {
-      const rule = LADDER.find(candidate => candidate.state === this.current)
+      const rule = ruleOf(this.current)
       if (rule !== undefined && signals[rule.signal]) this.latched.add(rule.signal)
       const fallback = this.requested(signals)
       return this.commit(fallback, nowMs)
@@ -199,7 +292,7 @@ export class CompanionArbiter {
    * @returns the dwell floor in milliseconds.
    */
   private floorOf(state: StateId): number {
-    const rule = LADDER.find(candidate => candidate.state === state)
+    const rule = ruleOf(state)
     // A state with no rung — `idle`, above all — has no floor. Resting is not a
     // pose worth protecting: a turn starting must be visible on the next frame.
     // What keeps a *busy* state on screen is its own floor, not a floor under
@@ -210,7 +303,7 @@ export class CompanionArbiter {
 
   /** @returns true when the state plays to completion once. */
   private isOnce(state: StateId): boolean {
-    return LADDER.find(candidate => candidate.state === state)?.once === true
+    return ruleOf(state)?.once === true
   }
 
   /**

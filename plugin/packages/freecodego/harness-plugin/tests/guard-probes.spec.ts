@@ -98,11 +98,42 @@ const PROBES: readonly GuardProbe[] = [
     specs: ['packages/freecodego/harness-plugin/tests/command-policy.spec.ts'],
   },
   {
+    // Section 34. The audit's chmod rule reads the spellings the guard decides, not
+    // one flag and one mode. Narrowed to `chmod -R 777`, the long spelling and the
+    // leading-zero octal form stop being read as the operation — on the surface
+    // external content passes, which is where it matters. Re-anchored when the rule
+    // became a token window rather than a spelled-out alternation; the defect this
+    // probe names is the same one, one spelling narrower.
     name: 'the audit reads the same chmod spellings the guard decides, not one flag and one mode',
     file: 'src/dangerous-command-patterns.ts',
-    from: '  /\\bchmod\\s+(?:-[A-Za-z]*[Rr][A-Za-z]*|--recursive)\\s+0*[0-7]?(?:777|666)\\b/,',
+    from: '  new RegExp(`\\\\bchmod\\\\b(?=${FLAG_WINDOW}?${TOKEN_START}${RECURSIVE_FLAG})(?=${FLAG_WINDOW}?${TOKEN_START}${CHMOD_MODE})${FLAG_WINDOW}`, \'i\'),',
     to: '  /\\bchmod\\s+-R\\s+777\\b/,',
     specs: ['packages/freecodego/harness-plugin/tests/skills.spec.ts'],
+  },
+  {
+    // Section 40. The forced-push rule used to require the flag immediately after
+    // the subcommand, so `git push origin main --force` — the way the flag is
+    // actually written — was reported as nothing by both the audit and the publish
+    // pre-flight, while prose containing `--force-with-lease` was refused.
+    // Restoring that reading is the mutation, and the spelling matrix is what
+    // catches it: `git push origin main --force` stops being found.
+    name: 'the audit reads a forced push wherever its flag sits, not only right after the subcommand',
+    file: 'src/dangerous-command-patterns.ts',
+    from: '  new RegExp(`\\\\bgit\\\\s+push\\\\b(?=${FLAG_WINDOW}?${TOKEN_START}${FORCE_FLAG}(?![\\\\w-]))${FLAG_WINDOW}`, \'i\'),',
+    to: '  /\\bgit\\s+push\\s+--force\\b/,',
+    specs: ['packages/freecodego/harness-plugin/tests/dangerous-command-patterns.spec.ts'],
+  },
+  {
+    // Section 40. The recursive force-deletion rule named the flag pairs someone had
+    // thought of, so `rm --recursive --force` and `rm -v -r -f` — the operation with
+    // a long spelling, or with one more flag in front of the pair — were invisible.
+    // The mutation writes back the shortest enumeration, which is the shape this
+    // list had when it was created.
+    name: 'the audit reads a recursive force-deletion as two tokens, not as the pairs it was told about',
+    file: 'src/dangerous-command-patterns.ts',
+    from: '  new RegExp(`\\\\brm\\\\s+(?=${FLAG_WINDOW}?${TOKEN_START}${RECURSIVE_FLAG})(?=${FLAG_WINDOW}?${TOKEN_START}${FORCE_FLAG})${FLAG_WINDOW}`, \'i\'),',
+    to: '  new RegExp(\'\\\\brm\\\\s+-rf\\\\b\', \'i\'),',
+    specs: ['packages/freecodego/harness-plugin/tests/dangerous-command-patterns.spec.ts'],
   },
   {
     name: 'a Windows path names one program token, so its rules are reached',
@@ -166,11 +197,40 @@ const PROBES: readonly GuardProbe[] = [
     specs: ['packages/freecodego/harness-plugin/tests/hook-seams.spec.ts'],
   },
   {
+    // The hole this names is `inspect`, `spill_recall` and `read_document`: three
+    // tools registered with no plugin prefix, so the fence's prefix branch never
+    // reached them and the "unclassified is refused" default never applied. It was
+    // closed by *declaring* them, and the probe deleted one of the declarations.
+    //
+    // The declaration has moved. Names live in `src/tool-manifest.ts` now, one row
+    // per tool, and the fence derives from it — so the same defect is a row that
+    // goes missing, and the spec that must see it is the one that holds the table
+    // against the registration literals the fence can no longer read. Renamed
+    // rather than deleted because the discovery is by name, so a rename and an
+    // omission are the same defect and the rename leaves a distinctive string for
+    // the revert check.
     name: 'an unprefixed tool of the plugin’s own cannot sit outside every classification',
+    file: 'src/tool-manifest.ts',
+    from: "  { name: 'read_document', capability: 'read', planMode: 'allow' },",
+    to: "  { name: 'read_document_hidden', capability: 'read', planMode: 'allow' },",
+    specs: ['packages/freecodego/harness-plugin/tests/tool-manifest.spec.ts'],
+  },
+  {
+    // The manifest is a reading of the registrations, not a second list beside
+    // them, and the difference is only visible under mutation: with this branch
+    // gone, every plugin tool Plan Mode refuses is still refused — by the
+    // *unclassified* default, which reports the decision as an omission the model
+    // is told to go fix in a file. `engineering_hunk_revert` is the instance the
+    // fence's own history records: it was refused for exactly this reason and
+    // nothing stated it.
+    name: 'Plan Mode refuses a plugin writer by classification rather than by omission',
     file: 'src/plan-mode.ts',
-    from: "  'inspect',\n  'spill_recall',\n  'read_document',\n  // Advisor and its read-only evidence tools.",
-    to: "  'inspect',\n  'spill_recall',\n  // Advisor and its read-only evidence tools.",
-    specs: ['packages/freecodego/harness-plugin/tests/plan-mode-coverage.spec.ts'],
+    from: '  if (PLAN_MODE_MUTATING_TOOLS.includes(tool) || PLAN_MODE_MUTATING_PLUGIN_TOOLS.includes(tool)) {',
+    to: '  if (PLAN_MODE_MUTATING_TOOLS.includes(tool)) {',
+    specs: [
+      'packages/freecodego/harness-plugin/tests/plan-mode.spec.ts',
+      'packages/freecodego/harness-plugin/tests/plan-mode-coverage.spec.ts',
+    ],
   },
   {
     name: 'the path-key vocabulary covers the notebook spelling both surfaces use',
@@ -208,13 +268,6 @@ const PROBES: readonly GuardProbe[] = [
     from: "  'grep',",
     to: "  'grep_',",
     specs: ['packages/freecodego/harness-plugin/tests/tool-guards.spec.ts'],
-  },
-  {
-    name: 'a registered worktree is recognised through another spelling of the same path',
-    file: 'src/team/worktree.ts',
-    from: '    if (owned !== undefined && (owned.branch !== branch || !sameLocation(owned.path, path))) {',
-    to: '    if (owned !== undefined && (owned.branch !== branch || owned.path !== path)) {',
-    specs: ['packages/freecodego/harness-plugin/tests/team-worktree.spec.ts'],
   },
   {
     name: 'the credential shield judges every path a call names, not the first it states',
@@ -317,18 +370,6 @@ const PROBES: readonly GuardProbe[] = [
     to: 'throw new LlmError(message, typeof providerError.code',
     specs: [
       'packages/freecodego/harness-plugin/tests/openai-wire.spec.ts',
-      'packages/freecodego/harness-plugin/tests/upstream-text-masking.spec.ts',
-    ],
-  },
-  {
-    name: 'git output is masked before it becomes the worktree failure the member reads',
-    file: 'src/team/worktree.ts',
-    // Written as `String(…)` rather than as the bare call: a mutation that is a
-    // substring of its own anchor trips the leftover-mutation check above.
-    from: 'redactCredentialShapes(boundedTeamText(retry.stderr || retry.stdout, 500))',
-    to: 'String(boundedTeamText(retry.stderr || retry.stdout, 500))',
-    specs: [
-      'packages/freecodego/harness-plugin/tests/team-worktree.spec.ts',
       'packages/freecodego/harness-plugin/tests/upstream-text-masking.spec.ts',
     ],
   },
@@ -846,17 +887,6 @@ const PROBES: readonly GuardProbe[] = [
     specs: ['packages/freecodego/harness-plugin/tests/claude-bridge-secret.spec.ts'],
   },
   {
-    // The list is curated, so a name it is missing is a read-only role holding a
-    // tool that deletes a file rather than an inert entry. The fixture this spec
-    // used before only ever offered `write` and `edit`, which is exactly how six
-    // mutating names stayed invisible; restoring the short list must be caught.
-    name: 'a read-only team role is withheld every mutating tool name, not only the two a fixture offers',
-    file: 'src/team/roles.ts',
-    from: "  'move_file', 'fs_write', 'fs_edit',",
-    to: "  'write_file',",
-    specs: ['packages/freecodego/harness-plugin/tests/team-roles-context.spec.ts'],
-  },
-  {
     // A declared script runs under whichever shell the project uses, and the
     // Windows spellings do not stop at `cmd`. Without these verbs a
     // `Remove-Item -Recurse -Force` is judged a safe verification script, which
@@ -1172,42 +1202,6 @@ const PROBES: readonly GuardProbe[] = [
     specs: ['packages/freecodego/harness-plugin/tests/plan-mode.spec.ts'],
   },
   {
-    // One schema property serves eight actions, so a bound applied by only one of
-    // them is invisible to the model that read the schema: `approve` kept half the
-    // rationale the schema accepted, and nothing recorded the loss. This restores
-    // exactly that asymmetry, which is why the probe sits on the `approve` site
-    // rather than on the constant.
-    name: 'an approval note is stored at the length the schema promised',
-    file: 'src/team/board.ts',
-    from: 'note: boundedTeamText(note, TEAM_NOTE_LIMIT), at: Date.now()',
-    to: 'note: boundedTeamText(note, 1_000), at: Date.now()',
-    specs: ['packages/freecodego/harness-plugin/tests/team-tool-state.spec.ts'],
-  },
-  {
-    // The behavioural case cannot see the promise and the behaviour drift: a 1 500
-    // character note fits under both 2 000 and 3 000, so it passes whichever number
-    // the schema carries. Only comparing the schema's value against the constant
-    // does, and this mutation is the one that separates the two tests.
-    name: 'the note bound in the tool schema is the one the board applies',
-    file: 'src/team/tools.ts',
-    from: "          note: { type: 'string', maxLength: TEAM_NOTE_LIMIT },",
-    to: "          note: { type: 'string', maxLength: 3_000 },",
-    specs: ['packages/freecodego/harness-plugin/tests/team-tool-state.spec.ts'],
-  },
-  {
-    // `member_stop` is the fourth hand-back, and it was the one left out: it stopped
-    // the member and released the task, but never cleared the id, so `recover`
-    // reported a member holding a task the board had already returned to the pool.
-    // Reversing the condition leaves the roster naming it again, which is the defect
-    // exactly — the probe is on the condition rather than on the call so that a
-    // refactor which keeps the call but inverts the test is still caught.
-    name: 'stopping a member clears the task its roster row was naming',
-    file: 'src/team/tools.ts',
-    from: 'if (released !== undefined) await team.members.update(member.id, { clearTask: true })',
-    to: 'if (released === undefined) await team.members.update(member.id, { clearTask: true })',
-    specs: ['packages/freecodego/harness-plugin/tests/team-tool-state.spec.ts'],
-  },
-  {
     // Section 34. The rule's own examples spell the flags `-Recurse -Force`, so
     // dropping the clustered `-Fo` leaves every one of them holding — the rule stays
     // accepted and the module's self-check stays green — while `ri -R -Fo dist`, the
@@ -1311,76 +1305,6 @@ const PROBES: readonly GuardProbe[] = [
     from: "export const SHELL_INTERPRETERS: readonly string[] = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'pwsh', 'powershell', 'cmd', 'script']",
     to: "export const SHELL_INTERPRETERS: readonly string[] = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'pwsh', 'powershell', 'cmd', 'script']",
     specs: ['packages/freecodego/harness-plugin/tests/verification-evidence.spec.ts'],
-  },
-  {
-    // Section 22. Trusting the file's spelling is the defect itself: a status this
-    // build does not know used to load as a real task belonging to no bucket, so
-    // `total` exceeded the sum of the buckets and the task was invisible to every
-    // action. The probe leaves the ledger entry alone deliberately — the repair is
-    // *recorded*, so the record and the status have to be read together.
-    name: 'a status the file spelled wrong is repaired into the open pool, not trusted',
-    file: 'src/team/board.ts',
-    from: "        status: isStoredStatus(task.status) ? task.status : 'open' as const,",
-    to: '        status: asRecorded(task.status),',
-    specs: ['packages/freecodego/harness-plugin/tests/team-board.spec.ts'],
-  },
-  {
-    // Section 36. A token stored as a number pins the task: the tool surface asks
-    // the member for the string `12345` and the token door compares against the
-    // number, so no spelling of that token closes it. Passing the value through
-    // instead of dropping it is the defect, and the spec's own assertion that the
-    // task can still be closed is what catches it.
-    name: 'a token the file stored as a number is dropped rather than passed through',
-    file: 'src/team/board.ts',
-    from: "        claimToken: typeof task.claimToken === 'string' ? task.claimToken : undefined,",
-    to: '        claimToken: task.claimToken as string | undefined,',
-    specs: ['packages/freecodego/harness-plugin/tests/team-board.spec.ts'],
-  },
-  {
-    // Section 36, the timestamp. `waiting[].since` is declared a number, and while
-    // a missing `updatedAt` travelled through as `undefined`, JSON dropped the key
-    // on the way out — so the reader got "no such field" instead of an age. Epoch
-    // is a visible "unknown"; the probe restores the invisible one.
-    name: 'a row with no recorded date reports a number rather than a missing field',
-    file: 'src/team/board.ts',
-    from: "        updatedAt: typeof task.updatedAt === 'number' ? task.updatedAt : 0,",
-    to: '        updatedAt: task.updatedAt as number,',
-    specs: ['packages/freecodego/harness-plugin/tests/team-board.spec.ts'],
-  },
-  {
-    // Section 36, the third face. `create` accepted a dependency naming nothing,
-    // and such a task is not waiting — it never runs. `blocked()` reports a *failed*
-    // dependency and a missing one never fails, so the panel counted it as
-    // available while `nextFor` never offered it. Inverting the predicate makes
-    // every dependency look satisfied, which is the defect exactly.
-    name: 'create refuses a dependency that names no task on the board',
-    file: 'src/team/board.ts',
-    from: '        const missing = task.dependsOn.find(dependency => !known.has(dependency))',
-    to: '        const missing = task.dependsOn.find(dependency => known.has(dependency))',
-    specs: ['packages/freecodego/harness-plugin/tests/team-board.spec.ts'],
-  },
-  {
-    // Section 26. Closing a task leaves the owner on the row, so the ownership
-    // fence passes for the member that just finished the work — releasing a `done`
-    // task rewrote it to `open`, cleared the owner, and put finished work back in
-    // the pool. Removing the fence is what the probe does, and the spec's refusal
-    // assertion is what catches it.
-    name: 'release refuses a closed task instead of putting finished work back',
-    file: 'src/team/board.ts',
-    from: "        this.refuseClosed(current, 'a closed task has no claim to release; rerun reopens a failed or cancelled one')",
-    to: '        // [probe] the release fence is disabled',
-    specs: ['packages/freecodego/harness-plugin/tests/team-board-cas.spec.ts'],
-  },
-  {
-    // Section 28. Five doors ask one shared question, so they cannot disagree about
-    // what "already closed" means. Narrowing it to `done` leaves `failed` and
-    // `cancelled` reopenable by a stray call — the vocabulary is the load-bearing
-    // part, not the call, which is why the probe is on the predicate.
-    name: 'every closed outcome is a record, not only the one spelled done',
-    file: 'src/team/board.ts',
-    from: '    if (TEAM_TERMINAL_TASK_STATUS_NAMES.has(task.status)) {',
-    to: "    if (task.status === 'done') {",
-    specs: ['packages/freecodego/harness-plugin/tests/team-board.spec.ts'],
   },
   {
     // Section 34. One deletion has two spellings and only one of them was refused:
@@ -1515,25 +1439,6 @@ const PROBES: readonly GuardProbe[] = [
     specs: ['packages/freecodego/harness-plugin/tests/engineering-tool-surface.spec.ts'],
   },
   {
-    // The status vocabulary is split in two on purpose: `TEAM_TASK_STATUSES`
-    // holds what the model may ask for, `TEAM_STORED_TASK_STATUSES` what a file
-    // may hold, and the difference is `blocked`, which the board computes rather
-    // than stores. The split is written out by hand because a derived list cannot
-    // disagree, and the comment above the stored half says disagreement is the
-    // only thing that list is there to detect — but nothing detected it. Adding a
-    // status to the full list and not to the stored one is the drift that arrives,
-    // and it is silent: the status becomes settable in memory, `isStoredStatus`
-    // does not know it, and `parseBoard` repairs it to `open` on the next read
-    // while writing a ledger entry that blames the file. The mutation adds the
-    // status to the full list only, so what goes red is the partition and nothing
-    // else — the same edit that would ship the bug.
-    name: 'a status added to the full vocabulary is not left out of the stored half',
-    file: 'src/team/board.ts',
-    from: "export const TEAM_TASK_STATUSES = ['open', 'claimed', 'needs-review', 'blocked', 'done', 'failed', 'cancelled'] as const",
-    to: "export const TEAM_TASK_STATUSES = ['open', 'claimed', 'needs-review', 'blocked', 'done', 'failed', 'cancelled', 'deferred'] as const",
-    specs: ['packages/freecodego/harness-plugin/tests/team-board.spec.ts'],
-  },
-  {
     // The registry-visible settlement is the only channel the owning agent has
     // for a verification run's outcome: the job has no `readOutput`, so
     // `job_output` renders the `output` this settlement carries and nothing else.
@@ -1550,23 +1455,6 @@ const PROBES: readonly GuardProbe[] = [
     specs: ['packages/freecodego/harness-plugin/tests/engineering-jobs.spec.ts'],
   },
   {
-    // `engineering_team_board` cuts the task list to a window, and the count it
-    // was cut from is the only thing that keeps the window from passing for the
-    // board. `summary.total` cannot stand in for it: that counts every task on
-    // the board, while the window is cut from the ones the `include_done` filter
-    // left, so the two disagree by exactly the done tasks. Reading the count off
-    // the window instead — which is what the shipped code did, by not carrying a
-    // count at all — makes `tasksShown` and `tasksMatching` agree, and a reader
-    // that sees them agree reports the board as complete. That is the silent
-    // truncation this pair of numbers exists to prevent, so the mutation is the
-    // window's own length reported as the number it was cut from.
-    name: 'a task-list window says how many tasks it was cut from',
-    file: 'src/team/tools.ts',
-    from: '          tasksMatching: matching.length,',
-    to: '          tasksMatching: Math.min(matching.length, TEAM_BOARD_TASK_LIMIT),',
-    specs: ['packages/freecodego/harness-plugin/tests/team-tool-state.spec.ts'],
-  },
-  {
     // The `kind` guard recognized two of the four members its own type declares,
     // so a row naming a kind with no producer in this build was renamed to
     // `verification` — not a missing answer but a different and more specific
@@ -1578,20 +1466,6 @@ const PROBES: readonly GuardProbe[] = [
     from: "const kind = row.kind === 'verification' || row.kind === 'graph-build' || row.kind === 'graph-update' || row.kind === 'council' ? row.kind : 'verification'",
     to: "const kind = row.kind === 'graph-build' || row.kind === 'graph-update' ? row.kind : 'verification'",
     specs: ['packages/freecodego/harness-plugin/tests/engineering-jobs.spec.ts'],
-  },
-  {
-    // The merge is the one team tool that changes the shared tree, and the set did
-    // not name it: a turn whose only mutation was `git merge --no-ff` at the
-    // workspace root was filed as a turn that changed nothing, so the gate returned
-    // before it read a single path. The set's own header calls a missing name the
-    // hole, and `multi_edit` already fell through it once in this shape. Renamed
-    // rather than deleted because an exact-match list cannot tell the two apart —
-    // either way the name is not in the set, which is all the gate asks.
-    name: 'a merge that changed the shared tree counts as a mutation',
-    file: 'src/verify-on-stop.ts',
-    from: "  'engineering_team_merge',",
-    to: "  'engineering_team_merge_renamed',",
-    specs: ['packages/freecodego/harness-plugin/tests/verify-on-stop.spec.ts'],
   },
   {
     // `edit_and_run` is named by the one prompt section this plugin injects, and

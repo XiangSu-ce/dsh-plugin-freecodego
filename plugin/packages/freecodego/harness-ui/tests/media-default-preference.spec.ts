@@ -50,6 +50,27 @@ describe('media default decision', () => {
     expect(decideMediaDefault('gpt-image-2', [model('logfare/gpt-image-2', 'logfare')])).toEqual({ action: 'migrate', next: 'logfare/gpt-image-2' })
   })
 
+  it('keeps a stored default the catalog lists but cannot use right now', () => {
+    // A provider status is not a retirement: Logfare rows are listed the moment
+    // the catalog arrives but stay unusable until its credentials are
+    // configured, and treating that as a dead route rewrote the user's saved
+    // default on the next open.
+    expect(decideMediaDefault('logfare/gpt-image-2', [], [model('logfare/gpt-image-2', 'logfare')])).toEqual({ action: 'keep' })
+    expect(decideMediaDefault(
+      'logfare/gpt-image-2',
+      [model('agnes-image-2.5-flash', 'agnes')],
+      [model('logfare/gpt-image-2', 'logfare'), model('agnes-image-2.5-flash', 'agnes')],
+    )).toEqual({ action: 'keep' })
+  })
+
+  it('still replaces an id the catalog does not list at all', () => {
+    expect(decideMediaDefault(
+      'logfare/gpt-image-2',
+      [model('agnes-image-2.5-flash', 'agnes')],
+      [model('agnes-image-2.5-flash', 'agnes')],
+    )).toEqual({ action: 'replace', next: 'agnes-image-2.5-flash' })
+  })
+
   it('replaces a retired default instead of leaving it in place', () => {
     // The regression: `logfare/gpt-image-2` was withdrawn from the directory and
     // the old code left it stored, so every generation failed against a route

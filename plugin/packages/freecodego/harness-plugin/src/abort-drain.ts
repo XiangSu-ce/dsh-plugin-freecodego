@@ -81,6 +81,7 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
 }
 
+/** Tracks in-flight writes through teardown and reports how many failed. */
 export class PendingWriteDrain {
   private readonly pending = new Set<Promise<unknown>>()
   private failures = 0
@@ -120,7 +121,10 @@ export class PendingWriteDrain {
     return work
   }
 
-  /** Run a write and track it in one step. */
+  /** Run a write and track it in one step.
+   * @param work - the callback that starts the write to track.
+   * @returns the write's own promise.
+   */
   run<T>(work: () => Promise<T>): Promise<T> {
     let started: Promise<T>
     try {

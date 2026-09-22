@@ -15,6 +15,8 @@ kind: "package-reference"
 
 - [路由与引擎计划](#routing-and-the-engine-plan)
 - [原生引擎](#native-engines)
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
 
 -----
@@ -39,8 +41,25 @@ kind: "package-reference"
 
 -----
 
+<a id="model-experience"></a>
+## Model Experience
+
+间接地，经由路由器为会话预留的持久引擎计划；请求本身由 Harness AgentLoop 依据该计划点名的引擎组装。
+
+#### KV Cache 影响
+
+路由器不贡献任何请求文本，因此不会移动已缓存的 prefix。不同引擎只在下一个提示词组装边界抵达模型，而那时计划已经固定。
+
+## 已知限制与延期工作
+<a id="known-limitations-and-deferred-work"></a>
+
+- **原生引擎绝不回退** —— 缺失或不兼容的运行时会显式失败，因为静默回退会让对话跑在与它持久计划点名的不同引擎上。
+- **每个进程只有一个 factory** —— bundle 会关闭 `agent-loop.registerFactory`，因此挂载第二个 factory 的组合会破坏该不变式，而不是被容忍。
+- **原生引擎需要已校验的 opener** —— 只有当插件自有的运行时 opener 以匹配的代号安装后，才会委派给 Codex 与 Claude。
+- **resume 会重新获取完全相同的持久代号** —— 不再匹配的运行时无法继续该会话。
+
 <a id="dev-note"></a>
-## 开发备注
+### 开发备注
 
 <details>
 <summary>维护者的工作上下文——点击展开</summary>

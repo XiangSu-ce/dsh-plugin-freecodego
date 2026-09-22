@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { listSkillCompanionFiles, readSkillCompanionFile, skillCompanionDirectory, skillForwardTargets } from '../src/skill-detail.ts'
+import { listSkillCompanionFiles, readSkillCompanionFile, skillCompanionDirectory, skillForwardTargets, skillResourceLocation } from '../src/skill-detail.ts'
 
 describe('Skill alias forwards', () => {
   it('reads the names a one-line alias body forwards to', () => {
@@ -120,5 +120,44 @@ describe('Skill companion files', () => {
     expect(skillCompanionDirectory('   ')).toBeUndefined()
     expect(skillCompanionDirectory(join(directory, 'SKILL.md'))).toBe(resolve(directory))
     await expect(listSkillCompanionFiles(undefined)).resolves.toEqual([])
+  })
+})
+
+describe('where a Skill says its resources are', () => {
+  const assets = join(tmpdir(), 'freecodego-skill-assets')
+
+  it('prefers the base the provider declared over the path it did not give', () => {
+    // The bundled `dsh-badge` skill is exactly this: an asset directory declared
+    // as its resource base, and no `SKILL.md` path at all. Inferring the
+    // directory from the absent path reported a Skill that has files as empty.
+    expect(skillResourceLocation({ resourceBase: { kind: 'directory', path: assets } })).toEqual({
+      kind: 'directory',
+      directory: resolve(assets),
+      provenance: "the resource base this Skill's provider declared",
+    })
+  })
+
+  it('falls back to the reported SKILL.md path only when no base was declared', () => {
+    expect(skillResourceLocation({ path: join(assets, 'SKILL.md') })).toEqual({
+      kind: 'directory',
+      directory: resolve(assets),
+      provenance: "the SKILL.md path this Skill's provider reported",
+    })
+    expect(skillResourceLocation({})).toEqual({ kind: 'unavailable', reason: expect.stringContaining('reports no directory') })
+  })
+
+  it('reports a base this build cannot read instead of reading the local disk', () => {
+    // "These resources are served from a URL" and "these resources are in this
+    // directory" are different facts; answering the second while doing the first
+    // is how a dialog shows a file that is not the one the model was told about.
+    expect(skillResourceLocation({ path: join(assets, 'SKILL.md'), resourceBase: { kind: 'url', url: 'https://skills.example.test/badge/' } }))
+      .toEqual({ kind: 'unavailable', reason: 'this Skill\'s resources are served from https://skills.example.test/badge/, not from a local directory' })
+    expect(skillResourceLocation({ path: join(assets, 'SKILL.md'), resourceBase: { kind: 'opaque', description: 'the provider resolves these itself' } }))
+      .toEqual({ kind: 'unavailable', reason: 'the provider resolves these itself' })
+    // A `kind` from a newer Harness is refused, never downgraded to a local read.
+    expect(skillResourceLocation({ path: join(assets, 'SKILL.md'), resourceBase: { kind: 'git-tree', ref: 'HEAD' } }))
+      .toEqual({ kind: 'unavailable', reason: expect.stringContaining('"git-tree" resource base') })
+    // A declared base that is empty is not a base either.
+    expect(skillResourceLocation({ resourceBase: { kind: 'directory', path: '  ' } })).toEqual({ kind: 'unavailable', reason: expect.stringContaining('"directory" resource base') })
   })
 })

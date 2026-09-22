@@ -26,13 +26,21 @@ import { compactArray, formatCompaction, lossySampleArray, type JsonObject } fro
 // word, so the detector could claim a shape this parser then refused.
 import { detectDelimited, detectMarkdownTable, isMdSeparator } from './table-shape.ts'
 
+/**
+ * A table the detector recognized: its format, the delimiter that fits it, and
+ * how confident the shape rules were.
+ */
 export interface TabularDetection {
   readonly format: 'markdown' | 'csv'
   readonly delimiter: string
   readonly confidence: number
 }
 
-/** Detect a whole-content table. Prose rows around a table abort the transform. */
+/**
+ * Detect a whole-content table. Prose rows around a table abort the transform.
+ * @param content - the content to send.
+ * @returns the detected table shape, or undefined when no table is found.
+ */
 export function detectTabular(content: string): TabularDetection | undefined {
   const lines = content.split('\n').filter(l => l.trim().length > 0)
   if (lines.length < 3) return undefined
@@ -68,6 +76,10 @@ function splitCsvLine(line: string, delim: string): string[] {
   return cells
 }
 
+/**
+ * Outcome of one table compaction: the rendering, and whether it was adopted
+ * over the original text.
+ */
 export interface TabularResult {
   readonly output: string
   readonly applied: boolean
@@ -76,6 +88,11 @@ export interface TabularResult {
 /**
  * Compress a detected table through the SmartCrusher csv-schema pipeline.
  * Jagged rows (cell count ≠ header width) abort: never invent structure.
+ * @param content - the content to send.
+ * @param detection - the table shape the detector reported.
+ * @param cfg - the smart-crusher settings to apply.
+ * @param store - the store to read, when one is mounted.
+ * @returns the table compaction result.
  */
 export function compressTabular(content: string, detection: TabularDetection, cfg: SmartCrusherConfig, store: CcrStore | undefined): TabularResult {
   const lines = content.split('\n').filter(l => l.trim().length > 0)

@@ -217,7 +217,10 @@ export interface MemoryPipelineHost {
  * a platform one.
  */
 
-/** Where the lease file lives inside one workspace's memory home. */
+/** Where the lease file lives inside one workspace's memory home.
+ * @param home - the workspace's memory home directory.
+ * @returns the lease file path.
+ */
 export function dreamLeasePath(home: string): string {
   return `${home}/${DREAM_LEASE_FILENAME}`
 }
@@ -250,6 +253,7 @@ function snapshotIdentity(observations: readonly MemoryObservation[]): string {
   return observations.map(observation => `${observation.id}:${observation.sha256}`).join('\n')
 }
 
+/** The memory consolidation and forget pipeline for one Host. */
 export class MemoryPipeline {
   private readonly now: () => number
   /** Each workspace's last consolidated snapshot, oldest entry evicted first. */
@@ -259,12 +263,18 @@ export class MemoryPipeline {
     this.now = host.now ?? (() => Date.now())
   }
 
-  /** The directory curated topics for one workspace are written into. */
+  /** The directory curated topics for one workspace are written into.
+   * @param cwd - working directory the command runs in.
+   * @returns the topics directory path.
+   */
   topicsDirectory(cwd: string): string {
     return `${this.host.home(cwd)}/${MEMORY_TOPICS_DIRECTORY}`
   }
 
-  /** The rendered index's path inside one workspace's memory home. */
+  /** The rendered index's path inside one workspace's memory home.
+   * @param cwd - working directory the command runs in.
+   * @returns the manifest path.
+   */
   manifestPath(cwd: string): string {
     return `${this.host.home(cwd)}/${MEMORY_MANIFEST_FILENAME}`
   }
@@ -275,6 +285,7 @@ export class MemoryPipeline {
    * Per call rather than cached: the stage is a setting the user can change while
    * the plugin runs, and a decision pinned at construction would take effect only
    * after a restart.
+   * @returns the memory Rollout Decision.
    */
   rollout(): MemoryRolloutDecision {
     return resolveMemoryRollout({ user: this.host.stage() })
@@ -287,6 +298,8 @@ export class MemoryPipeline {
    * forget gesture has to refuse is the one where another process — or a crashed
    * one whose lease has not yet expired — is mid-write. An expired lease is not
    * active, which is what makes a crash recoverable.
+   * @param cwd - working directory the command runs in.
+   * @returns true when a live consolidation lease exists.
    */
   leaseActive(cwd: string): boolean {
     return readDreamLease({ directory: this.host.home(cwd), now: this.now(), io: this.host.io }) !== undefined
@@ -299,6 +312,8 @@ export class MemoryPipeline {
    * lease, snapshot, plan, commit, index, release. A stage below `shadow` stops
    * before the model call; `shadow` runs the model and stops before the commit;
    * only `active` writes.
+   * @param context - the workspace and inputs this pass consolidates.
+   * @returns the memory Consolidation.
    */
   async consolidate(context: MemoryConsolidationContext): Promise<MemoryConsolidation> {
     const decision = this.rollout()
@@ -447,6 +462,8 @@ export class MemoryPipeline {
    * plan, so the index describes what is actually stored — a topic written by an
    * earlier pass, or by hand, is listed, and one this pass planned but did not
    * commit (a shadow stage) is not.
+   * @returns the memory Manifest.
+   * @param cwd - working directory the command runs in.
    */
   writeManifest(cwd: string): MemoryManifest {
     const directory = this.topicsDirectory(cwd)
@@ -468,6 +485,10 @@ export class MemoryPipeline {
    * the seven refusals to `forgetObservation`. The telemetry record is emitted
    * for a refusal as well as a success, because a refused forget is an answer the
    * user asked for and an operator watching the pipeline needs to see it.
+   * @param cwd - working directory the command runs in.
+   * @param evidence - the observation or topic the caller wants forgotten.
+   * @param overrides - any caller-supplied context fields to override.
+   * @returns the forget Result.
    */
   forget(cwd: string, evidence: ForgetEvidence, overrides: Partial<ForgetContext> = {}): ForgetResult {
     const started = this.now()

@@ -38,6 +38,7 @@ const CLOSE = new RegExp(`</${TAG}\\b([^>]*)>`, 'gi')
 /** The attribute the producer puts on both tags of one injection. */
 const NONCE = /\bdata-fcg-[0-9a-f]+\b/i
 
+/** The nonce-tagged opening and closing markers one memory-context injection uses. */
 export interface MemoryContextFence {
   /** Opening tag, carrying the nonce. */
   readonly open: string
@@ -46,7 +47,9 @@ export interface MemoryContextFence {
 }
 
 /** Mint the tag pair for one injection. The nonce is per call, so stored text
- *  cannot contain the closing tag this injection ends on. */
+ *  cannot contain the closing tag this injection ends on. 
+ * @returns the memory Context Fence.
+ */
 export function memoryContextFence(): MemoryContextFence {
   const nonce = `data-fcg-${randomBytes(6).toString('hex')}`
   return {
@@ -56,7 +59,10 @@ export function memoryContextFence(): MemoryContextFence {
 }
 
 /** Escape the fence delimiters in text that is about to be interpolated into a
- *  fence, so the artifact contains exactly one opening and one closing tag. */
+ *  fence, so the artifact contains exactly one opening and one closing tag.
+ * @param value - the text to neutralize.
+ * @returns the text with any fence delimiters escaped.
+ */
 export function neutralizeMemoryContextTags(value: string): string {
   return neutralizeFenceTags(value, TAG)
 }
@@ -64,6 +70,8 @@ export function neutralizeMemoryContextTags(value: string): string {
 /**
  * Remove every injected context section from `value`, including the text a
  * crafted body appended after a closing tag it brought along.
+ * @param value - the text to strip injected sections from.
+ * @returns the text without any injected context sections.
  */
 export function stripMemoryContextSections(value: string): string {
   let output = ''

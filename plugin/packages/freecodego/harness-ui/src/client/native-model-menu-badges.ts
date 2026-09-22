@@ -6,6 +6,9 @@
  * rows that expose the stable ARIA menu contract.
  */
 
+import { EMPTY_MODEL_PICKER_VISIBILITY, isModelVisible, isProviderVisible, subscribeModelPickerVisibility, type ModelPickerVisibility } from './model-picker-visibility.ts'
+import { modelMultipliers, modelPriceClass, modelSourceOf } from './model-price.ts'
+
 type NativeModel = {
   readonly id: string
   readonly name: string
@@ -18,6 +21,9 @@ type NativeModelGroup = {
   readonly models: readonly NativeModel[]
 }
 
+/**
+ * The official picker directory as read at decoration time.
+ */
 export interface NativeModelDirectorySnapshot {
   readonly groups: readonly NativeModelGroup[]
   readonly current?: { readonly provider: string; readonly model: string } | null
@@ -42,6 +48,9 @@ interface ModelAvailability {
   readonly reason?: string
 }
 
+/**
+ * Options for installing the native model menu badges.
+ */
 export interface NativeModelMenuBadgesOptions {
   /** Read the official picker directory at decoration time. */
   readonly snapshot: () => NativeModelDirectorySnapshot | undefined
@@ -49,13 +58,18 @@ export interface NativeModelMenuBadgesOptions {
   readonly language: () => MenuLanguage
   /** Host-owned credential and provider availability, keyed by provider/model. */
   readonly availability?: () => ReadonlyMap<string, ModelAvailability>
+  /**
+   * Which providers and models the user chose to keep in the menu.
+   *
+   * Absent means "hide nothing": the picker then shows exactly what the Host
+   * registered, which is also what an empty decision set means.
+   */
+  readonly visibility?: () => ModelPickerVisibility
 }
 
 type CollapseState = Map<string, boolean>
 type MenuWidthPins = WeakMap<HTMLElement, { readonly width: number; readonly signature: string }>
 type GroupOrderState = WeakMap<HTMLElement, { readonly signature: string }>
-
-const FREE_SOURCES = new Set(['opencode', 'openrouter', 'logfare', 'mystery provider', 'mystery provider 2'])
 
 /**
  * Official picker class names this decorator has to discover by substring.
@@ -98,10 +112,65 @@ const PROVIDER_ACCENTS: Readonly<Record<string, string>> = {
   agnes: '#0891b2',
   workbuddy: '#9333ea',
   cline: '#ea580c',
+  // The routes this plugin ships itself are pinned rather than drawn, because they
+  // are in the menu every day: the drawn assignment handed DeepSeek the same amber
+  // as OpenCode and Kilo the house blue, which is a collision the section colours
+  // exist to prevent. A curated entry is also what keeps them steady as the
+  // registered set changes.
+  'deepseek-official': '#4338ca',
+  trae: '#0d9488',
+  qoder: '#be123c',
+  kilo: '#166534',
 }
 
+/**
+ * The hues an uncurated provider's accent is drawn from.
+ *
+ * Being *uncurated* was how a whole class of providers ended up with no colour at
+ * all: the table above only ever named the providers someone remembered to add, so
+ * TRAE, Qoder, DeepSeek and Kilo — three of them added after this decorator —
+ * rendered in the same primary ink as their own model rows, which is exactly the
+ * "scanning the menu means reading every label" problem the accents exist for. The
+ * fallback is therefore drawn rather than inherited, so a provider that arrives
+ * tomorrow is distinguishable on the day it arrives. Values are mid-tone so they
+ * hold up on both the light and the dark surface.
+ */
+const PROVIDER_ACCENT_PALETTE: readonly string[] = [
+  '#2563eb', '#7c3aed', '#059669', '#d97706', '#db2777', '#65a30d', '#0891b2', '#9333ea',
+  '#ea580c', '#4f46e5', '#0d9488', '#c2410c', '#be123c', '#4338ca', '#a21caf', '#15803d',
+]
+
+/**
+ * The palette index for one provider id.
+ *
+ * A hash of the id rather than its position in the menu: the position changes with
+ * what the user configured, and a heading that changes colour when a provider is
+ * hidden is worse than no colour at all. Two ids may land on one hue; the curated
+ * table above is the answer for the providers where that matters.
+ * @param provider - the picker group's provider id.
+ * @returns an index into {@link PROVIDER_ACCENT_PALETTE}.
+ */
+function accentIndex(provider: string): number {
+  let hash = 2_166_136_261
+  for (let index = 0; index < provider.length; index += 1) {
+    hash ^= provider.charCodeAt(index)
+    // FNV-1a, kept inside 32 bits with `Math.imul` so every id is a number here.
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return Math.abs(hash) % PROVIDER_ACCENT_PALETTE.length
+}
+
+/**
+ * The accent for one provider heading.
+ * @param provider - the picker group's provider id.
+ * @returns a CSS colour, never undefined.
+ */
 function providerAccent(provider: string): string {
-  return PROVIDER_ACCENTS[provider] ?? 'var(--dsw-alias-label-primary, #111)'
+  const curated = PROVIDER_ACCENTS[provider]
+  if (curated !== undefined) return curated
+  const drawn = PROVIDER_ACCENT_PALETTE[accentIndex(provider)]
+  /* v8 ignore next -- the palette is non-empty, so a lookup always answers. */
+  return drawn ?? 'var(--dsw-alias-label-primary, #111)'
 }
 
 /** Providers this plugin registers itself. Every picker group whose id is not
@@ -142,19 +211,15 @@ function visibleModelLabel(provider: string | undefined, model: NativeModel, fal
 
 function presentationOf(model: NativeModel): ModelPresentation | undefined {
   const description = model.description
-  const source = compact(description?.split('·', 1)[0] ?? '')
-  const normalizedSource = source.toLowerCase()
-  const multipliers = description === undefined
-    ? []
-    : [...description.matchAll(/(?:×|x)\s*(\d+(?:\.\d+)?)/giu)]
-      .map(match => Number(match[1]))
-      .filter(value => Number.isFinite(value))
-
+  // The price reading is `model-price.ts`'s, which the visibility controls share
+  // — a second copy here is how the badge and the checklist would start
+  // disagreeing about whether a route is free.
+  const source = modelSourceOf(description)
   const health = healthOf(description)
   if (description?.includes('tag:training') === true) return { source, access: 'training', ...(health === undefined ? {} : { health }) }
-  if (multipliers.some(value => value === 0) || FREE_SOURCES.has(normalizedSource)) return { source, access: 'free', ...(health === undefined ? {} : { health }) }
+  if (modelPriceClass(description) === 'free') return { source, access: 'free', ...(health === undefined ? {} : { health }) }
 
-  const paid = [...new Set(multipliers.filter(value => value > 0))]
+  const paid = [...new Set(modelMultipliers(description).filter(value => value > 0))]
   if (paid.length === 0) return undefined
   return { source, access: 'multiplier', multiplier: paid.map(value => `×${value}`).join(' / '), ...(health === undefined ? {} : { health }) }
 }
@@ -351,6 +416,9 @@ function modelForRow(snapshot: NativeModelDirectorySnapshot, group: Element, lab
  * part that says which group the row bills through. Only the plugin's own
  * gateway provider composes names this way, so the split is scoped to it and
  * every other provider keeps its label verbatim.
+ * @param label - the label to record with the entry.
+ * @param provider - the provider the label belongs to; only the plugin's gateway is split.
+ * @returns the model name and billing group, or `undefined` when the label carries no group.
  */
 export function splitGatewayGroupLabel(provider: string | undefined, label: string): { readonly name: string; readonly group: string } | undefined {
   if (provider !== 'freecodego') return undefined
@@ -361,7 +429,7 @@ export function splitGatewayGroupLabel(provider: string | undefined, label: stri
   return name === '' || group === '' ? undefined : { name, group }
 }
 
-function decorateVisibleModelLabel(row: HTMLButtonElement, provider: string | undefined, model: NativeModel, fallback: string): void {
+function decorateVisibleModelLabel(row: HTMLButtonElement, provider: string | undefined, model: NativeModel, fallback: string, multiplier: string | undefined): void {
   const label = visibleModelLabel(provider, model, fallback)
   const split = splitGatewayGroupLabel(provider, label)
   let target = row.querySelector<HTMLElement>('[data-fcg-model-visible-label]')
@@ -402,7 +470,16 @@ function decorateVisibleModelLabel(row: HTMLButtonElement, provider: string | un
     group.dataset.fcgModelGroup = 'true'
     target.after(group)
   }
-  if (group.textContent !== split.group) group.textContent = split.group
+  // The billing group's own line also carries the group's rate, which is what
+  // tells two rows for one model apart in practice: the name says which line it
+  // bills through, the rate says what that line costs. It rides this element
+  // instead of a trailing badge because the group line is ours alone — the
+  // official picker's pricing lane renders nothing for the gateway and a second
+  // badge beside it was what produced the duplicated labels this decorator was
+  // trimmed to avoid. A rate the Host could not resolve carries no `×` token in
+  // the description, so nothing is appended rather than a placeholder.
+  const groupText = multiplier === undefined ? split.group : `${split.group} · ${multiplier}`
+  if (group.textContent !== groupText) group.textContent = groupText
 }
 
 /** Freeze the picker at its collapsed width.
@@ -462,14 +539,49 @@ function groupRank(snapshot: NativeModelDirectorySnapshot, section: HTMLElement)
   return 1
 }
 
-/** Reorder the menu's group sections: FreeCodeGo first, user providers last.
+/**
+ * Hide the provider sections the user switched off, and only those.
+ *
+ * The stamp is `data-fcg-provider-*` and the rule is one CSS line, so the
+ * section is never removed from the DOM: it stays React's child, and switching
+ * the provider back on is clearing an attribute rather than rebuilding a menu.
+ * Removing the section (or its rows) would fight the picker's own virtualization
+ * and selection index, the way moving sections does.
+ * @param menu - the menu element to sync.
+ * @param snapshot - the picker directory, which names each group.
+ * @param visibility - the user's decisions.
+ */
+function syncProviderVisibility(menu: HTMLElement, snapshot: NativeModelDirectorySnapshot, visibility: ModelPickerVisibility): void {
+  for (const section of modelMenuSections(menu)) {
+    const provider = providerForGroup(snapshot, section)
+    if (provider === undefined) continue
+    if (isProviderVisible(visibility, provider)) delete section.dataset.fcgProviderHidden
+    else section.dataset.fcgProviderHidden = 'true'
+  }
+}
+
+/** Order the menu's group sections: FreeCodeGo first, user providers last.
  *
  * The picker renders groups in adapter registration order, so a
  * user-configured provider that registered early sat above FreeCodeGo in the
- * menu. The decorator owns presentation only, so ordering is expressed as DOM
- * order and re-applied per decoration. A signature over child order guards
- * against fighting React: if React re-renders a different order it wins, and
- * our stable order is re-imposed once per change instead of per mutation.
+ * menu.
+ *
+ * The order is applied with the `order` property and the parent switched to a
+ * flex column — never by moving the `section` elements. Those sections are
+ * React's children: re-appending them (what this used to do, and what the
+ * comment here once defended as "ordering expressed as DOM order") left React's
+ * reconciler pointing at siblings that had moved, so its next commit inserted
+ * relative to a stale reference and threw. The throw landed inside the open
+ * menu's own subtree and tore the picker down, which is why the model list read
+ * as "cannot open" rather than as a visual glitch. `ModelSelect` also indexes
+ * its arrow-key targets from a React ref array in render order
+ * (`itemRefs`, ModelSelect.tsx:331), so DOM order was never what the keyboard
+ * walked anyway — leaving React's child order alone costs no navigation that
+ * the previous approach actually provided.
+ *
+ * A signature over the rendered group ids keeps this to one pass per change
+ * instead of one per mutation, and re-imposes the stable order when React
+ * re-renders a different set.
  */
 function reorderMenuGroups(
   menu: HTMLElement,
@@ -484,15 +596,18 @@ function reorderMenuGroups(
   const prior = groupOrder.get(menu)
   if (prior !== undefined && prior.signature === signature) return
   const sorted = [...sections].sort((left, right) => groupRank(snapshot, left) - groupRank(snapshot, right))
-  if (sorted.every((section, index) => section === sections[index])) {
-    groupOrder.set(menu, { signature })
-    return
-  }
-  for (const section of sorted) parent.append(section)
-  // Record the post-append child order: the pre-append `sections` snapshot is
-  // stale the moment React re-renders, and a wrong signature makes every later
-  // pass believe our order still holds while the DOM shows something else.
-  groupOrder.set(menu, { signature: sorted.map(section => section.getAttribute('aria-labelledby') ?? '').join('\u0000') })
+  parent.dataset.fcgGroupOrdered = 'true'
+  // Indices rather than the rank itself: `groupRank` answers with
+  // `MAX_SAFE_INTEGER` for user providers, which is outside what a CSS integer
+  // reliably carries. Sorting is stable, so equal ranks keep their render
+  // order and the index sequence says exactly what the sort decided.
+  sorted.forEach((section, index) => {
+    const next = String(index)
+    if (section.style.order !== next) section.style.order = next
+  })
+  // The DOM order is React's, so this signature is stable across passes: a
+  // re-render that changes the group set is what changes it.
+  groupOrder.set(menu, { signature })
 }
 
 function syncModelMenuGroups(
@@ -530,7 +645,18 @@ function syncModelMenuGroups(
     // Every group is a first-class section now that the confidential relay is
     // gone: there is no second provider left to file under the gateway, so the
     // heading is always a real collapse toggle.
-    const collapsed = collapsedGroups.get(provider) ?? true
+    //
+    // The default is collapsed — with one exception, the provider that owns the
+    // selected model. Collapsing everything makes the picker open as a list of
+    // provider names with no models under any of them, which reads as "the model
+    // list is gone" even though every heading is a working toggle (that is the
+    // complaint the fully-expanded default used to answer). Expanding the active
+    // provider keeps the models on screen the moment the picker opens while the
+    // other ten stay out of the way, which is what the collapsed default was
+    // asked for in the first place. `collapsedGroups` starts empty, so this
+    // decides only the state nobody chose; a toggle the user performs is
+    // remembered per provider for as long as the menu is mounted.
+    const collapsed = collapsedGroups.get(provider) ?? provider !== snapshot.current?.provider
     group.dataset.fcgProviderCollapsed = String(collapsed)
     heading.hidden = false
     heading.dataset.fcgProviderToggle = provider
@@ -624,6 +750,16 @@ function installStyle(): void {
     [data-fcg-provider-count] { display: none; }
     section[data-fcg-provider-collapsed="true"] button[role="menuitemradio"] { display: none !important; }
     button[data-fcg-model-hidden="true"] { display: none !important; }
+    /* A provider the user switched off in Settings. Hidden with a rule rather
+       than unmounted, so React keeps owning the section and turning it back on
+       is one attribute. */
+    section[data-fcg-provider-hidden="true"] { display: none !important; }
+    /* The group container becomes a flex column only so the decorator can order
+       the sections with the order property. Keeping each section at its natural
+       height (flex: 0 0 auto) is what lets the container still scroll instead of
+       squashing the groups to fit. */
+    [role="menu"] [data-fcg-group-ordered="true"] { display: flex; flex-direction: column; }
+    [role="menu"] [data-fcg-group-ordered="true"] > section[role="group"] { flex: 0 0 auto; }
     [role="menu"] [class*="groups"] { scrollbar-width: thin; scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, #c4c8cf) transparent; }
     [role="menu"] [class*="groups"]::-webkit-scrollbar { width: 6px; height: 6px; }
     [role="menu"] [class*="groups"]::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--dsw-alias-scrollbar-bg-l2, #c4c8cf); }
@@ -644,9 +780,11 @@ function installStyle(): void {
 function decorate(options: NativeModelMenuBadgesOptions, collapsedGroups: CollapseState, menuWidthPins: MenuWidthPins, groupOrder: GroupOrderState): void {
   const snapshot = options.snapshot()
   if (snapshot === undefined) return
+  const visibility = options.visibility?.() ?? EMPTY_MODEL_PICKER_VISIBILITY
   decorateModelTrigger(snapshot)
   for (const menu of document.querySelectorAll<HTMLElement>('[role="menu"]')) {
     reorderMenuGroups(menu, snapshot, groupOrder)
+    syncProviderVisibility(menu, snapshot, visibility)
     syncModelMenuGroups(menu, snapshot, collapsedGroups, options.language(), options.availability)
     pinMenuWidth(menu, menuWidthPins)
     for (const row of menu.querySelectorAll<HTMLButtonElement>('section[role="group"] button[role="menuitemradio"][title]')) {
@@ -658,13 +796,20 @@ function decorate(options: NativeModelMenuBadgesOptions, collapsedGroups: Collap
       if (model === undefined) continue
       const presentation = presentationOf(model)
       const provider = providerForGroup(snapshot, group)
-      const hidden = isHiddenLogfareTextModel(provider, model)
+      // Two independent reasons to keep a row out of the menu: the plugin never
+      // advertises logfare's Claude routes here (a product decision), and the
+      // user unchecked this model in Settings. Both use the same stamp so the
+      // row is restored by clearing one attribute whichever reason clears.
+      // The row's own price travels with the question: a metered route starts
+      // out of the menu unless the user asked for it, and only the description
+      // says which routes those are.
+      const hidden = isHiddenLogfareTextModel(provider, model) || !isModelVisible(visibility, provider, model.id, modelPriceClass(model.description))
       if (hidden) {
         row.dataset.fcgModelHidden = 'true'
         continue
       }
       if (row.dataset.fcgModelHidden === 'true') delete row.dataset.fcgModelHidden
-      decorateVisibleModelLabel(row, provider, model, originalTitle)
+      decorateVisibleModelLabel(row, provider, model, originalTitle, presentation?.multiplier)
       const availability = provider === undefined ? undefined : options.availability?.().get(`${provider}\u0000${model.id}`)
       const unavailable = availability?.available === false
       // Walk a row back the moment its reason is gone: the early exits below
@@ -739,6 +884,8 @@ function decorate(options: NativeModelMenuBadgesOptions, collapsedGroups: Collap
  * Add metadata to the native model menu without replacing its React component.
  * A missing or changed native menu is deliberately a no-op: it must never
  * prevent the Harness picker from opening or selecting a model.
+ * @param options - the directory, language, and availability readers the badges use.
+ * @returns a disposer that removes the decoration and its listeners.
  */
 export function installNativeModelMenuBadges(options: NativeModelMenuBadgesOptions): () => void {
   installStyle()
@@ -746,35 +893,59 @@ export function installNativeModelMenuBadges(options: NativeModelMenuBadgesOptio
   const menuWidthPins: MenuWidthPins = new WeakMap()
   const groupOrder: GroupOrderState = new WeakMap()
   const boundMenus = new Set<HTMLElement>()
-  const toggleGroup = (event: Event): void => {
-    const target = event.target
-    if (!(target instanceof Element)) return
-    const heading = target.closest<HTMLElement>('[data-fcg-provider-toggle]')
-    if (heading === null) return
-    const menu = heading.closest<HTMLElement>('[role="menu"]')
-    const group = heading.closest<HTMLElement>('section[role="group"]')
-    if (menu === null || group === null) return
-    if (event.type === 'keydown') {
-      const keyboard = event as KeyboardEvent
-      if (keyboard.key !== 'Enter' && keyboard.key !== ' ') return
+  // This decorator may fail to decorate a menu. It must never be able to break
+  // one: every pass below runs on DOM React owns, and an exception escaping a
+  // pass — out of the animation frame, or out of a listener the menu also has to
+  // route its own clicks through — is how "the model menu will not open" reads
+  // from the outside. The documented instance is an earlier version of this file
+  // that re-appended the group sections and left React's reconciler holding a
+  // sibling that had moved; the throw landed inside the open menu's subtree and
+  // tore the picker down. The passes no longer move React's nodes, and this is
+  // the guarantee that the class stays closed: report once, decorate nothing on
+  // that pass, and leave the picker's own behaviour exactly as it was.
+  let reportedFailure = false
+  const guarded = (pass: () => void): void => {
+    try {
+      pass()
+    } catch (error) {
+      if (reportedFailure) return
+      reportedFailure = true
+      console.warn('[freecodego] model menu decoration failed; the menu is left untouched', error)
     }
-    event.preventDefault()
-    event.stopPropagation()
-    const provider = heading.dataset.fcgProviderToggle
-    if (provider === undefined) return
-    const collapsed = collapsedGroups.get(provider) ?? group.dataset.fcgProviderCollapsed === 'true'
-    collapsedGroups.set(provider, !collapsed)
-    const snapshot = options.snapshot()
-    if (snapshot !== undefined) syncModelMenuGroups(menu, snapshot, collapsedGroups, options.language(), options.availability)
-    refresh()
+  }
+  const toggleGroup = (event: Event): void => {
+    guarded(() => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const heading = target.closest<HTMLElement>('[data-fcg-provider-toggle]')
+      if (heading === null) return
+      const menu = heading.closest<HTMLElement>('[role="menu"]')
+      const group = heading.closest<HTMLElement>('section[role="group"]')
+      if (menu === null || group === null) return
+      if (event.type === 'keydown') {
+        const keyboard = event as KeyboardEvent
+        if (keyboard.key !== 'Enter' && keyboard.key !== ' ') return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      const provider = heading.dataset.fcgProviderToggle
+      if (provider === undefined) return
+      const collapsed = collapsedGroups.get(provider) ?? group.dataset.fcgProviderCollapsed === 'true'
+      collapsedGroups.set(provider, !collapsed)
+      const snapshot = options.snapshot()
+      if (snapshot !== undefined) syncModelMenuGroups(menu, snapshot, collapsedGroups, options.language(), options.availability)
+      refresh()
+    })
   }
   let frame: number | undefined
   const refresh = (): void => {
     if (frame !== undefined) cancelAnimationFrame(frame)
     frame = requestAnimationFrame(() => {
       frame = undefined
-      bindMenus()
-      decorate(options, collapsedGroups, menuWidthPins, groupOrder)
+      guarded(() => {
+        bindMenus()
+        decorate(options, collapsedGroups, menuWidthPins, groupOrder)
+      })
     })
   }
   const bindMenus = (): void => {
@@ -785,19 +956,27 @@ export function installNativeModelMenuBadges(options: NativeModelMenuBadgesOptio
       boundMenus.add(menu)
     }
   }
-  const observer = new MutationObserver(refresh)
+  // The same function is added and removed, so the disposer really detaches it.
+  const onExternalChange = (): void => { guarded(refresh) }
+  const observer = new MutationObserver(onExternalChange)
   observer.observe(document.body, { childList: true, subtree: true })
-  bindMenus()
-  document.addEventListener('fcg:model-availability-updated', refresh)
+  guarded(bindMenus)
+  document.addEventListener('fcg:model-availability-updated', onExternalChange)
+  // The settings page writes the preference and this menu is usually already
+  // open behind it, so the re-decorate pass has to be driven by the store's own
+  // event. Subscribing here rather than adding a second listener keeps one
+  // definition of "the decisions changed".
+  const unsubscribeVisibility = options.visibility === undefined ? undefined : subscribeModelPickerVisibility(onExternalChange)
   refresh()
   return () => {
     if (frame !== undefined) cancelAnimationFrame(frame)
+    unsubscribeVisibility?.()
     observer.disconnect()
     for (const menu of boundMenus) {
       menu.removeEventListener('click', toggleGroup)
       menu.removeEventListener('keydown', toggleGroup)
     }
     boundMenus.clear()
-    document.removeEventListener('fcg:model-availability-updated', refresh)
+    document.removeEventListener('fcg:model-availability-updated', onExternalChange)
   }
 }

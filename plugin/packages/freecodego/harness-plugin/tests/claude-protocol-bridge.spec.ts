@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { ClaudeProtocolBridge, encodeCodexBridgeRoute } from '../src/claude-protocol-bridge.ts'
 
 const bridges: ClaudeProtocolBridge[] = []
@@ -220,6 +220,43 @@ describe('a stream that fails after it started', () => {
     }))
 
     expect(body).toContain('"type":"rate_limit_error"')
+  })
+
+  it('does not send the client back to sign in over a plan gate', async () => {
+    // The frame type is the client's own instruction set: `authentication_error` is
+    // how an Anthropic client decides a credential needs re-authorizing, and a 403
+    // here is the plan declining the route. Classified as `auth`, it told the user to
+    // sign in again over a credential that was never the problem.
+    const body = await streamTurn(new ClaudeProtocolBridge({
+      async *stream() {
+        yield { type: 'text-delta', index: 0, text: '' }
+        throw Object.assign(new Error('this model is not in your plan'), { status: 403 })
+      },
+    }))
+
+    expect(body).not.toContain('"type":"authentication_error"')
+    expect(body).toContain('"type":"invalid_request_error"')
+    // The provider's own words still reach the user: the frame says which kind of
+    // refusal it was, and the message says which model and whose plan.
+    expect(body).toContain('this model is not in your plan')
+  })
+
+  it('reads the frame from the error every adapter actually throws', async () => {
+    // The bridge classifies whatever `adapter.stream` threw, and for this plugin's own
+    // routes that is an `LlmError`: the status sits on its frozen `failure` record and
+    // the code is `RATE_LIMIT` for a gate and a rate limit alike, because the vocabulary
+    // has no code for a balance. The flat `{ status }` fixture in the case above is a
+    // library exception's shape, so this case is the production one — and read by code
+    // alone it used to reach the client as a retryable `rate_limit_error`.
+    const body = await streamTurn(new ClaudeProtocolBridge({
+      async *stream() {
+        throw new LlmError('this model is not in your plan', 'RATE_LIMIT', { status: 403 })
+      },
+    }))
+
+    expect(body).toContain('"type":"invalid_request_error"')
+    expect(body).not.toContain('"type":"rate_limit_error"')
+    expect(body).toContain('this model is not in your plan')
   })
 
   it('turns silence into a retryable timeout rather than leaving the request open', async () => {

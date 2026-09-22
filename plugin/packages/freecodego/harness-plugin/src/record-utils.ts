@@ -8,12 +8,20 @@
  * same thing without mutating a copy a caller may still be holding.
  */
 
-/** A copy of `record` with `key` removed. */
+/** A copy of `record` with `key` removed.
+ * @param record - the record to copy.
+ * @param key - the entry name to drop.
+ * @returns the copy without that entry.
+ */
 export function omitRecordKey<T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> {
   return Object.fromEntries(Object.entries(record).filter(([name]) => name !== key))
 }
 
-/** A copy of `record` with every name in `keys` removed. */
+/** A copy of `record` with every name in `keys` removed.
+ * @param record - the record to copy.
+ * @param keys - the entry names to drop.
+ * @returns the copy without those entries.
+ */
 export function omitRecordKeys<T>(record: Readonly<Record<string, T>>, keys: Iterable<string>): Record<string, T> {
   const dropped = new Set(keys)
   return Object.fromEntries(Object.entries(record).filter(([name]) => !dropped.has(name)))

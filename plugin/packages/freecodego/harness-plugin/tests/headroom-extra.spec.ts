@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { CcrStore, computeKey } from '../src/headroom/ccr.ts'
 import { SMART_CRUSHER_DEFAULTS, analyzeCrushability, lossySampleArray } from '../src/headroom/smart-crusher.ts'
 import { detectContentType } from '../src/headroom/content-detector.ts'
-import { compactLossless, pathHeading, pathUnheading, searchDirHeading, searchDirUnheading, searchHeading, searchUnheading } from '../src/headroom/lossless-compaction.ts'
+import { compactLossless, pathHeading, pathUnheading, searchDirHeading, searchDirUnheading, searchHeading, searchUnheading, stripAnsi } from '../src/headroom/lossless-compaction.ts'
 import { contextWords, scoreBatch } from '../src/headroom/relevance.ts'
 import { CrossTurnDedup } from '../src/headroom/cross-turn-dedup.ts'
+import { referencesIn } from './support/headroom-seam.ts'
 import { compressTabular, detectTabular } from '../src/headroom/tabular-ingest.ts'
 import { compressConfig } from '../src/headroom/config-compressor.ts'
 import { compressHtml } from '../src/headroom/html-extractor.ts'
@@ -84,6 +85,38 @@ describe('headroom lossless compaction folds', () => {
 
   it('declines a fold when nothing repeats', () => {
     expect(compactLossless('single unique line only', 'log').applied).toBe(false)
+  })
+
+  it('folds a repeated run in a log that has no colour to strip', () => {
+    // Half of the advertised log transform ("ANSI strip + repeated-line collapse")
+    // was unreachable: an escape-free log returned `applied: false` *before* the
+    // run collapse was attempted, so a payload whose bytes are mostly one repeated
+    // line — which is what `collapseRuns` is for — folded to nothing. The early
+    // return bought nothing, because `accept` already refuses a candidate that is
+    // not strictly smaller or does not rebuild its baseline, which is what makes
+    // the two transforms safe to compose.
+    const line = '2026-09-20T10:00:02.000Z INFO worker heartbeat ok'
+    const text = ['2026-09-20T10:00:01.000Z INFO worker start', ...Array.from({ length: 60 }, () => line), '2026-09-20T10:00:03.000Z INFO worker stop'].join('\n')
+    const result = compactLossless(text, 'log')
+    expect(result.applied).toBe(true)
+    expect(result.output).toContain('repeated 60 times')
+    expect(result.output.length).toBeLessThan(text.length)
+  })
+
+  it('counts colour alone as a fold when nothing repeats', () => {
+    // The other half of the same early return. `accept`'s floor is the *already
+    // de-ANSI'd* baseline, so the only candidate it would take is strictly smaller
+    // than the text without escapes — and dropping the escapes is the entire saving
+    // in this shape. The escapes are not content (`stripAnsi` is the transform named
+    // on the box), and this is the half that the detector's colour fix made
+    // load-bearing: a coloured log is typed `log` rather than `search` now, so no
+    // other fold reaches its prefix.
+    const text = Array.from({ length: 6 }, (_, i) => `\u001b[32m2026-09-20T10:00:0${i}.000Z INFO worker[${i}] handled request id=req-${i}\u001b[0m`).join('\n')
+    const result = compactLossless(text, 'log')
+    expect(result.applied).toBe(true)
+    expect(result.output).toBe(stripAnsi(text))
+    expect(result.output).not.toContain('\u001b[')
+    expect(result.output.length).toBeLessThan(text.length)
   })
 
   it('folds repeated config stanzas reversibly, not just single-line runs', () => {
@@ -168,6 +201,24 @@ describe('headroom cross-turn dedup fold', () => {
 })
 
 describe('headroom cross-turn dedup reaches the model', () => {
+  const bytesOf = (text: string): number => Buffer.byteLength(text, 'utf8')
+  const ratioOf = (from: string, to: string): number => bytesOf(to) / Math.max(1, bytesOf(from))
+  /** Numbered source: detected as code and left alone by the chain on a first sighting. */
+  const source = (from: number, count: number): string =>
+    Array.from({ length: count }, (_value, index) => `${from + index}: const value${from + index} = compute(${from + index})`).join('\n')
+  /** A pretty-printed `jq` document: three lines per record, so a fold can elide records. */
+  const jsonDoc = (ids: readonly number[]): string => [
+    '{',
+    '  "results": [',
+    ...ids.flatMap(id => [
+      `    { "id": ${id},`,
+      `      "name": "user_${id}",`,
+      `      "detail": "${'z'.repeat(60)}_${id}" },`,
+    ]),
+    '  ]',
+    '}',
+  ].join('\n')
+
   /** The `tools/post-execute` seam, with just what the runtime touches. */
   function harness(settings: HeadroomSettings): {
     readonly runtime: FreeCodeGoHeadroomRuntime
@@ -209,8 +260,11 @@ describe('headroom cross-turn dedup reaches the model', () => {
     // (the pipeline returned undefined and the caller kept the original block)
     // while the panel credited a dedup compression that never reached anyone.
     const runtime = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
-    // Numbered source: detected as code and passed through unmangled, so the only
-    // thing that can replace a repeat of it is the dedup fold.
+    // Numbered source sized just under the prose crusher's 4 KB floor
+    // (`TEXT_CRUSHER_DEFAULTS.minBytes`), so this is a payload nothing else touches
+    // and the only thing that can replace a repeat of it is the dedup fold. Measured
+    // on the same 120 lines: 3,869 bytes, refused by the crusher on the floor, while
+    // the same shape at 4,139 bytes is crushed to 0.540.
     const body = Array.from({ length: 120 }, (_value, index) => `${index}: const value${index} = compute(${index})`).join('\n')
     const first = await runtime.run('bash', body)
     expect(first?.kind).toBe('next')
@@ -252,6 +306,107 @@ describe('headroom cross-turn dedup reaches the model', () => {
     // A repeat is compressed again, on its own hash — which is what makes the
     // omission recoverable — rather than collapsed into a dangling pointer.
     expect(runtime.runtime.status().proseCompressions).toBe(2)
+  })
+
+  it('offers the chain the repeat itself rather than the pointer over it', async () => {
+    // A *partial* repeat — a file re-read after an edit, an appended document — is
+    // the shape this stage is worst at: it elides the run that came back unchanged,
+    // and a pointer line inside a JSON body is a line no stage can read, so a chain
+    // handed the pointer cannot answer with the crusher written for that shape. The
+    // pointer used to ship on sight, because the stage read its own reversibility as
+    // a delivery — so the *same* payload arrived 1.7x bigger with dedup memory than
+    // with none: measured 0.916 of the payload, against 0.539 through the prose
+    // stage behind it.
+    const memory = new CrossTurnDedup()
+    const first = jsonDoc(Array.from({ length: 30 }, (_value, index) => index))
+    const second = jsonDoc([...Array.from({ length: 4 }, (_value, index) => index), ...Array.from({ length: 28 }, (_value, index) => 100 + index)])
+    memory.remember(first)
+    const pointer = memory.fold(second)
+    // The premise of the case: a mild repeat puts the pointer *above* the decisive
+    // bar, which is what makes it a candidate instead of a delivery. Without this
+    // line the case would pass on a payload where the pointer was the answer anyway.
+    expect(pointer.applied).toBe(true)
+    expect(ratioOf(second, pointer.output)).toBeGreaterThan(0.6)
+
+    const warm = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    await warm.run('curl', first)
+    const shipped = (await warm.run('curl', second))?.content?.[0]?.text ?? ''
+    // The comparison that makes this a rule and not an anecdote: same payload, same
+    // settings, no memory at all. A stage whose memory makes its output *larger* is
+    // worse than the stage being absent, which is the defect in one line.
+    const cold = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    const withoutMemory = (await cold.run('curl', second))?.content?.[0]?.text ?? ''
+    expect(shipped).toBe(withoutMemory)
+
+    // The chain saw the payload, not the pointer text: a rendering extracted from the
+    // original names where the rest went, and no pointer line is in it.
+    expect(shipped).not.toContain('same as earlier tool result')
+    expect(referencesIn(shipped).length).toBeGreaterThan(0)
+
+    // The ledger says the render existed, was beaten on bytes, and was *not* what the
+    // model received: one candidate held, one branch strictly smaller, nothing settled.
+    const status = warm.runtime.status()
+    expect(status.foldDeferred).toBe(1)
+    expect(status.foldSuperseded).toBe(1)
+    expect(status.foldSettled).toBe(0)
+    expect(status.dedupCompressions).toBe(0)
+    expect(status.proseCompressions).toBe(1)
+    expect(status.jsonCompressions).toBe(0)
+  })
+
+  it('replaces a mild repeat only when nothing the chain makes of it is smaller', async () => {
+    // The same rule where the chain left the *first* sighting alone — numbered source
+    // at 3,869 bytes, under the prose crusher's 4 KB floor, which is also the only way
+    // this stage learns a payload: it indexes what it did *not* rewrite, so the memory
+    // here holds bytes the model really has. A mild repeat of it (ten of a hundred and
+    // twenty lines unchanged) puts the pointer at 0.958, and the repeat itself is
+    // 4,139 bytes — over that floor — so the prose stage answers it at 0.540.
+    const first = source(0, 120)
+    const second = `${source(0, 10)}\n${source(500, 110)}`
+    const memory = new CrossTurnDedup()
+    memory.remember(first)
+    const pointer = memory.fold(second)
+    expect(pointer.applied).toBe(true)
+    expect(ratioOf(second, pointer.output)).toBeGreaterThan(0.9)
+
+    const warm = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    expect((await warm.run('bash', first))?.kind).toBe('next')
+    const shipped = (await warm.run('bash', second))?.content?.[0]?.text ?? ''
+    const cold = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    const withoutMemory = (await cold.run('bash', second))?.content?.[0]?.text ?? ''
+
+    expect(shipped).toBe(withoutMemory)
+    expect(shipped).not.toContain('same as earlier tool result')
+    expect(ratioOf(second, shipped)).toBeLessThan(ratioOf(second, pointer.output))
+    const status = warm.runtime.status()
+    expect(status.foldSuperseded).toBe(1)
+    expect(status.dedupCompressions).toBe(0)
+  })
+
+  it('ships the pointer when every stage refuses, and credits it where it ships', async () => {
+    // The other end of the rule, and the reason the pointer is not simply demoted:
+    // `headroomFoldPolicy: 'max'` says every render has to be beaten before it ships,
+    // so an exact repeat's pointer is held rather than delivered on sight — and this
+    // payload is under the prose crusher's 4 KB floor, so nothing at all answers it
+    // and the pointer is what the model receives. The ledger then says why: one
+    // candidate held, none smaller, one settled. Without the settle half the stage
+    // would hold a render and ship the payload verbatim, which is *worse* than not
+    // folding at all.
+    const body = source(0, 120)
+    const runtime = harness({ headroomEnabled: true, headroomThresholdChars: 1_200, headroomFoldPolicy: 'max' })
+    expect((await runtime.run('bash', body))?.kind).toBe('next')
+
+    const second = await runtime.run('bash', body)
+    const replacement = second?.content?.[0]?.text ?? ''
+    expect(replacement).toContain('same as earlier tool result')
+    expect(ratioOf(body, replacement)).toBeLessThan(0.06)
+    const status = runtime.runtime.status()
+    expect(status.foldDeferred).toBe(1)
+    expect(status.foldSettled).toBe(1)
+    expect(status.foldSuperseded).toBe(0)
+    expect(status.dedupCompressions).toBe(1)
+    expect(status.originalBytes).toBe(bytesOf(body))
+    expect(status.compressedBytes).toBe(bytesOf(replacement))
   })
 
   it('leaves a multi-block result alone rather than folding every block into the first', async () => {

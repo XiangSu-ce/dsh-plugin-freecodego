@@ -13,6 +13,15 @@ type IconName = 'freecodego' | 'settings' | 'models' | 'plugin' | 'agentPreset' 
  * prefix ending on a word boundary — never a bare `startsWith`, which would let
  * a longer label capture a shorter entry's icon. A decorated entry is stamped
  * with `data-fcg-semantic-entry`, so no later pass decorates it twice.
+ *
+ * Prefix matching alone is not enough to keep a label list honest: the shell
+ * reuses the product name on non-navigation controls, and "FreeCodeGo 网关账单"
+ * (the gateway tab in the token-usage panel) satisfied `startsWith('FreeCodeGo ')`.
+ * That stamped a settings tab, injected a 27px glyph plus `gap: 10px`, and grew
+ * the segmented control from roughly 200x30 to 310x48 — visible as a header that
+ * no longer matched the panel below it. Navigation entries never carry
+ * `role="tab"`, so tabs inside a tablist are skipped by structure rather than by
+ * adding every panel's wording to this list.
  */
 const targets: readonly { readonly name: IconName; readonly labels: readonly string[] }[] = [
   { name: 'freecodego', labels: ['FreeCodeGo'] },
@@ -54,6 +63,7 @@ function applyIcons(): void {
     for (const button of document.querySelectorAll<HTMLButtonElement>('button')) {
       const label = button.textContent?.replace(/\s+/gu, ' ').trim() ?? ''
       if (!target.labels.some(value => label === value || label.startsWith(`${value} `))) continue
+      if (button.closest('[role="tablist"]') !== null) continue
       if (button.querySelector(`[data-fcg-icon="${target.name}"]`) !== null) continue
       const defaultIcon = button.querySelector<SVGElement>('svg')
       defaultIcon?.classList.add('fcg-default-sidebar-icon')
@@ -63,7 +73,10 @@ function applyIcons(): void {
   }
 }
 
-/** Mount icons outside the official shell while preserving its navigation and focus behavior. */
+/**
+ * Mount icons outside the official shell while preserving its navigation and focus behavior.
+ * @returns a disposer that stops the observer and removes the injected style.
+ */
 export function installFreeCodeGoSidebarIcons(): () => void {
   if (document.head.querySelector('[data-fcg-sidebar-icon-style]') === null) {
     const style = document.createElement('style')

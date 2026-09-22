@@ -1,25 +1,31 @@
 /**
- * One collection pass, ten sections, one report.
+ * One collection pass, one report.
  *
- * Why a composition layer rather than a fourth surface
- * ---------------------------------------------------
- * This plugin already answers "what is loaded?" three times: `engineering_doctor`,
- * `engineering_surface_report`, and whatever a user runs to look. Adding
- * `engineering_inspect` as a fourth independent collector would guarantee that
- * two of the four eventually disagree, and a user comparing two answers has no
- * way to tell which one is stale — worse than having only one.
+ * Why the collectors live here rather than inside the tool
+ * -------------------------------------------------------
+ * The inspect surface has one consumer — `engineering_inspect`, through its tool
+ * and its Remote — so the AGENTS.md rule against extracting single-use helpers is
+ * not what keeps this out of `index.ts`. Three things are: the section list and
+ * its order exist **once**, so the tool, the Remote and the renderer cannot
+ * disagree about what the report contains; the isolation rule below is a property
+ * of the *pass*, and a pass is what this module is; and the collectors read an
+ * injected port, which is what lets the whole surface be driven from a fixture
+ * (`inspect-host.spec.ts`) rather than from a running Host.
  *
- * So the collectors live here and every surface reads them. `inspect` renders
- * all ten; `doctor` consumes the same objects; `surface_report` is the `rules`
- * section with a different header. The AGENTS.md rule against extracting
- * single-use helpers is not violated here, because there are three consumers.
+ * This header used to say something different, and the correction is worth keeping:
+ * that `engineering_doctor` and `engineering_surface_report` already answered "what
+ * is loaded?" and that `doctor` consumes these same objects. It does not —
+ * `engineering_doctor` audits bundled Skills for integrity, secrets and dangerous
+ * installer commands, and `engineering_surface_report` reports what got registered;
+ * neither reads anything here. A justification naming consumers it does not have
+ * is how a future reader is talked out of a drift risk that is still unhandled.
  *
  * Two properties this module exists to guarantee
  * ----------------------------------------------
  * **A section can fail without the report failing.** A collector that throws —
  * an MCP server whose config is unreadable, an engine probe that hangs and
- * rejects — produces `unavailable` plus the reason, and the other eight sections
- * still render. A report whose first unreadable file blanks the whole thing is a
+ * rejects — produces `unavailable` plus the reason, and the other sections still
+ * render. A report whose first unreadable file blanks the whole thing is a
  * report nobody can use to diagnose the unreadable file.
  *
  * **Everything crossing a Remote boundary is `JsonValue`.** Not a record, not
@@ -43,7 +49,14 @@ import type { JsonValue } from '../types.ts'
  */
 export type { JsonValue }
 
-/** The ten sections, in report order. */
+/**
+ * The sections, in report order — the report's shape, stated once.
+ *
+ * The pass below emits exactly these, in this order, and marks any section it has
+ * no collector for as `unavailable` with a reason: a section that quietly vanished
+ * from the report because a wiring line was dropped is the failure this list is
+ * here to make visible.
+ */
 export const INSPECT_SECTIONS = [
   { id: 'trust', title: 'Folder trust' },
   { id: 'sandbox', title: 'Sandbox' },
@@ -56,6 +69,7 @@ export const INSPECT_SECTIONS = [
   { id: 'scan', title: 'Scan selection' },
 ] as const
 
+/** Id of one inspection section, drawn from the catalog above. */
 export type InspectSectionId = typeof INSPECT_SECTIONS[number]['id']
 
 /** One section's data, or the reason it could not be produced. */
@@ -120,7 +134,10 @@ export async function collectInspectReport(
   }
 }
 
-/** The report as a boundary-safe value. */
+/** The report as a boundary-safe value.
+ * @param report - the report to project.
+ * @returns the json Value.
+ */
 export function inspectReportToJson(report: InspectReport): JsonValue {
   return {
     generatedAt: report.generatedAt,
@@ -239,6 +256,7 @@ export function collectSkillsSection(skills: readonly InspectSkillEntry[]): Json
 /**
  * The `hooks` section: how many handlers each event has, and from where.
  * @param handlers - the merged handler set from G7.
+ * @param warnings - load warnings to include in the section.
  * @returns the section payload.
  */
 export function collectHooksSection(

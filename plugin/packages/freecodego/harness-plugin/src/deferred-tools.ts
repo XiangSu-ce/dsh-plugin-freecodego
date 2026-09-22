@@ -100,6 +100,8 @@ export const MAX_TOOL_SEARCH_RESULTS = 20
  *
  * An explicit `deferredToolNames` setting is deliberately not consulted: that is
  * an operator's override, and a prompt-bearing module cannot read it.
+ * @param name - the tool name to test.
+ * @returns true when the name is one the deferral prefix would withhold.
  */
 export function isDeferrableByPrefix(name: string): boolean {
   return !ALWAYS_IMMEDIATE.has(name) && DEFERRED_PREFIXES.some(prefix => name.startsWith(prefix))
@@ -111,7 +113,7 @@ export function isDeferrableByPrefix(name: string): boolean {
  *
  * A prompt may name a tool only if the Agent can call it, and this plugin ships
  * two ways to keep that true. Its own fixed set of named tools pays the schema
- * (`ALWAYS_IMMEDIATE`); text it injects *unsolicited* — a team member's brief, a
+ * (`ALWAYS_IMMEDIATE`); text it injects *unsolicited* — a persona brief, a
  * memory-context block at session start — does not, because that cost would be
  * paid by every Agent for a pointer most of them never follow. Such text names
  * the tool and how to load it instead, which is the shape this plugin treats as
@@ -244,6 +246,8 @@ function catalogEntries(schemas: readonly ToolSchemaLike[]): readonly CatalogEnt
  * marginally cleaner one it has to learn; `list:` is the one form added here,
  * and it exists so that a briefer-than-full index cannot hide a name — see
  * `tool-catalog-budget.ts`.
+ * @returns the parsed Query.
+ * @param query - the query text to match.
  */
 export function parseToolSearchQuery(query: string): ParsedQuery {
   const trimmed = query.trim()
@@ -272,6 +276,10 @@ export function parseToolSearchQuery(query: string): ParsedQuery {
  * description — and a `+term`-only query is a filter whose survivors keep an
  * order they can be read in, because a filter with no ranking terms makes every
  * survivor equally relevant.
+ * @param query - the query text to match.
+ * @param candidates - the schemas the query may match against.
+ * @param maxResults - the maximum number of results to return.
+ * @returns the tool Schema Like rows, in backend order.
  */
 export function matchDeferredTools(query: string, candidates: readonly ToolSchemaLike[], maxResults = 10): readonly ToolSchemaLike[] {
   const parsed = parseToolSearchQuery(query)
@@ -297,6 +305,7 @@ export function matchDeferredTools(query: string, candidates: readonly ToolSchem
   return rankTools(parsed.terms, survivors, limit).map(entry => entry.tool)
 }
 
+/** Withholds the deferrable tool schemas per agent until a search reveals them. */
 export class FreeCodeGoDeferredTools {
   private readonly tools: ToolServiceLike | undefined
   /**
@@ -322,6 +331,7 @@ export class FreeCodeGoDeferredTools {
     this.tools = (ctx as unknown as { get(name: string): unknown }).get('tools') as ToolServiceLike | undefined
   }
 
+  /** Register the discovery tool and begin applying per-agent restrictions. */
   start(): void {
     if (this.tools?.register === undefined) return
     this.registerSearchTool()
@@ -373,6 +383,7 @@ export class FreeCodeGoDeferredTools {
     })
   }
 
+  /** Release the settings subscription and every per-agent restriction scope. */
   dispose(): void {
     this.disposed = true
     this.stopWatching?.()
@@ -468,6 +479,9 @@ export class FreeCodeGoDeferredTools {
     }
   }
 
+  /** The current deferral decision and the tool sizes behind it.
+   * @returns the deferred-tool status.
+   */
   status(): DeferredToolStatus {
     const eligible = this.eligible()
     const immediate = (this.tools?.schemas?.() ?? []).filter(schema => !eligible.some(entry => entry.name === schema.name))

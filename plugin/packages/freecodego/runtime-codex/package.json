@@ -5,7 +5,7 @@
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/XiangSu-ce/dsh-freecodego.git",
+    "url": "git+https://github.com/XiangSu-ce/dsh-plugin-freecodego.git",
     "directory": "packages/freecodego/runtime-codex"
   },
   "type": "module",

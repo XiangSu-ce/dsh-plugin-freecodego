@@ -39,7 +39,7 @@ import { installRehydration, rehydrationText } from '../src/rehydration.ts'
 import { denyRefusal } from '../src/sandbox/profiles.ts'
 import { startSuspendWatch } from '../src/system-power.ts'
 import { tokensFromChars } from '../src/token-estimate.ts'
-import { DoomLoopGuard, credentialRealpathDenial, freeCodeGoToolGuard } from '../src/tool-guards.ts'
+import { credentialRealpathDenial, freeCodeGoToolGuard } from '../src/tool-guards.ts'
 import { sessionWorktreePlan } from '../src/worktree/tools.ts'
 
 /** Workspaces created by a test, removed when it ends. */
@@ -102,6 +102,7 @@ describe('1. a new session assembles its request', () => {
       home: () => `${root}-home`,
       dataHome: () => `${root}-data`,
       trust: async () => ({ enabled: true, trusted, reason: trusted ? 'granted' : 'no grant recorded', root }),
+      claudeHookDialect: () => 'plugin' as const,
       capabilities: async () => ({ skills: [], mcpServers: [], mcpTools: [] }),
       sandbox: () => ({ profile: 'workspace', deny: [] }),
       engines: () => ({ graphify: false, codegraph: false }),
@@ -194,10 +195,9 @@ describe('2. the guards judge one call in a fixed order', () => {
   })
 
   /** The composed guard, with the mode a caller asks for. */
-  function guard(mode: 'plan' | 'execute', policy: CompiledCommandPolicy = COMPILED_BUILT_IN_COMMAND_POLICY, doomLoop = new DoomLoopGuard()) {
+  function guard(mode: 'plan' | 'execute', policy: CompiledCommandPolicy = COMPILED_BUILT_IN_COMMAND_POLICY) {
     return freeCodeGoToolGuard({
       settings,
-      doomLoop,
       policy,
       planMode: { policy, modeFor: () => mode },
     })
@@ -234,21 +234,21 @@ describe('2. the guards judge one call in a fixed order', () => {
     expect(guard('plan')(asCall({ name: 'bash', arguments: { command: 'git status' }, agent: { id: 'a1' } }))).toBeUndefined()
   })
 
-  test('the doom loop is the last resort, and only on repetition', () => {
-    let clock = 1_000
-    const doomLoop = new DoomLoopGuard({ now: () => clock, cooldownMs: 0 })
-    const judge = guard('execute', COMPILED_BUILT_IN_COMMAND_POLICY, doomLoop)
+  test('repetition is never refused on this path — the Harness owns the loop answer', () => {
+    // This pipeline used to end in a doom-loop tier that refused the third
+    // identical call. Every call it judges was dispatched by the Host, so the
+    // Harness's advisory `dsh-repeat-tool-reminder` counts the same repeats and
+    // is the answer the model gets; a second one here was split authority on one
+    // call. The tier stays on the native engines' path — see the wiring test
+    // below, and `native-tool-guard.spec.ts` for its behaviour.
+    const judge = guard('execute')
     const call = asCall({ name: 'read', arguments: { file_path: '/w/src/a.ts' }, agent: { id: 'a1' } })
-    // Two identical calls are legitimate work — read the file, then read it again
-    // after something changed — so neither is refused.
-    expect(judge(call)).toBeUndefined()
-    expect(judge(call)).toBeUndefined()
-    clock += 1
-    expect(judge(call)).toContain('Doom loop detected')
-    // Different arguments are different work, and a guard that refused those would
-    // be the thing that stops the session.
-    clock += 1
-    expect(judge(asCall({ name: 'read', arguments: { file_path: '/w/src/b.ts' }, agent: { id: 'a1' } }))).toBeUndefined()
+    for (let index = 0; index < 8; index += 1) expect(judge(call)).toBeUndefined()
+    // The monotonic tiers are untouched by that removal: a repetition of a call
+    // they refuse is still refused, and still as policy rather than as a loop.
+    for (let index = 0; index < 4; index += 1) {
+      expect(judge(asCall({ name: 'bash', arguments: { command: 'rm -rf build' }, agent: { id: 'a1' } }))).toContain('command policy')
+    }
   })
 
   test('the sandbox deny list refuses a path no other rule knows about', () => {
@@ -285,6 +285,22 @@ describe('2. the guards judge one call in a fixed order', () => {
     // The realpath tier lives on the waterfall, which the registry guards precede:
     // a call must be refused before the pre-execute handlers start side effects.
     expect(realpath).toBeGreaterThan(deny)
+  })
+
+  test('index.ts wires the loop tier to the engines only, and never to the registry', async () => {
+    // The split is the fix: the Host-dispatched guard must not carry a loop tier
+    // (the Harness already counts those calls), while the native seam must, because
+    // nothing else can see an engine's own tools. Asserted on the wiring source
+    // because no behavioural test can tell one composed object from another.
+    const source = await readFile(new URL('../src/index.ts', import.meta.url), 'utf8')
+    const composite = source.slice(source.indexOf('guard(freeCodeGoToolGuard({'))
+    const wiring = composite.slice(0, composite.indexOf('}))'))
+    expect(wiring).not.toContain('doomLoop')
+    const nativeWiring = source.slice(source.indexOf('await nativeToolDenial(call, {'))
+    expect(nativeWiring.slice(0, nativeWiring.indexOf('}).catch('))).toContain('doomLoop')
+    // And the remedy itself still exists to be wired: a deleted guard is a
+    // different change from a guard moved off one path.
+    expect(source).toContain('new DoomLoopGuard(')
   })
 
   test('index.ts registers the deny list’s resolution tier on the same waterfall', async () => {

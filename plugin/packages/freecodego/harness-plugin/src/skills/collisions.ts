@@ -29,11 +29,25 @@ import { formatSkillSource, sameSkillSource, type SkillSource } from './source.t
 
 /** A skill the runtime already knows about. */
 export interface InstalledSkill {
+  /**
+   * The name discovery matches on — the one inside `SKILL.md` when the directory
+   * declares one, and the directory's own name when it does not. This is the field a
+   * collision is decided on, because this is the field the registry compares.
+   */
   readonly name: string
   /** Parsed source, when the record carries one. */
   readonly source?: SkillSource
   /** Where it lives, for the report. */
   readonly root: string
+  /**
+   * The directory it occupies under that root, when that differs from the name.
+   *
+   * The two come apart for a Skill that landed under its declared name (`demo`) and
+   * for one an older install wrote into a flattened identity directory
+   * (`acme-skills-demo`). A collision is about the name; *removal* has to address the
+   * directory, so the caller needs both rather than one of them twice.
+   */
+  readonly directory?: string
 }
 
 /** One name claimed by more than one place. */

@@ -3,9 +3,9 @@
  * notice; PROVENANCE.md in this directory holds its source and upstream hash.
  */
 /* v8 ignore file -- vendored third-party engine; PROVENANCE.md records its source and per-file hashes, and the behaviour built on the engine is covered by this package's companion specs. */
-import { EYE_H, EYE_SPLIT, EYE_W, REST_GAZE, type HeadGaze } from './face'
-import { lerp } from './math'
-import type { EyeCfg } from './states'
+import { EYE_H, EYE_SPLIT, EYE_W, REST_GAZE, type HeadGaze } from './face.ts'
+import { lerp } from './math.ts'
+import type { EyeCfg } from './states.ts'
 
 /**
  * Expression de repos du bot.
@@ -182,7 +182,9 @@ const lerpEyeCfg = (a: EyeCfg, b: EyeCfg, t: number): EyeCfg => ({
   open: lerp(a.open, b.open, t),
 })
 
-/** Interpolation de deux expressions : le changement se fait en glissant. */
+/** Interpolation de deux expressions : le changement se fait en glissant. 
+ * @returns the bot Expression.
+ */
 export function blendExpression(a: BotExpression, b: BotExpression, t: number): BotExpression {
   return {
     id: b.id,

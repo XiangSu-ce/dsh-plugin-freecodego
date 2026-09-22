@@ -20,8 +20,13 @@ const YAML_BLOCK_SCALAR_RE = /:\s*[|>][+-]?\d*\s*$/m
 const COMMENT_LINE_RE = /^\s*#/
 const INI_COMMENT_LINE_RE = /^[#;]/
 
+/** Config syntax the compressor recognizes; each has its own comment rules. */
 export type ConfigFlavor = 'yaml' | 'toml' | 'ini'
 
+/**
+ * Outcome of one config compaction: the rendering, and whether it was adopted
+ * over the original text.
+ */
 export interface ConfigResult {
   readonly output: string
   readonly applied: boolean
@@ -42,7 +47,13 @@ function elideComments(text: string, flavor: ConfigFlavor): { readonly output: s
   return { output: out.join('\n'), elided }
 }
 
-/** Compress YAML/TOML/INI config text: comment elision + lossless folding. */
+/**
+ * Compress YAML/TOML/INI config text: comment elision + lossless folding.
+ * @param text - the text to process.
+ * @param flavor - the config syntax of the text.
+ * @param store - the store to read, when one is mounted.
+ * @returns the config compaction result.
+ */
 export function compressConfig(text: string, flavor: ConfigFlavor, store: CcrStore | undefined): ConfigResult {
   // Tier 1 — reversible repeated-line/block folding (always safe).
   const folded = compactLossless(text, 'config')
@@ -71,6 +82,12 @@ export function compressConfig(text: string, flavor: ConfigFlavor, store: CcrSto
   // unacceptable (`reclaimedTokens` aside, the model loses a retrieval it was
   // told it had). Stashing before the size test above is wrong for the same
   // reason: a declined call returns text carrying no marker either.
-  if (footer !== '' && store !== undefined) store.put(key, text)
+  if (footer !== '' && store !== undefined && store.put(key, text) !== true) {
+    // The elision dropped comments, and the marker is the only pointer back to
+    // them: a refused write means the footer would name nothing, so the marker
+    // comes off and the fold-only rendering ships — the same shape this function
+    // already returns for a call it declines.
+    return folded.applied ? { output: folded.output, applied: true } : { output: text, applied: false }
+  }
   return { output: candidate, applied: true }
 }

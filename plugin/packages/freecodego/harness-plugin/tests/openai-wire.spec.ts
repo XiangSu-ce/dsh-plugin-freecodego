@@ -53,6 +53,62 @@ describe('OpenAI-compatible history serialization', () => {
 })
 
 /**
+ * A tool call the provider never named, and the tolerance that must survive it.
+ *
+ * `ToolCallBlock.name` is a string, so this layer used to close such a call as the
+ * empty name and let the runtime report `unknown tool ""` — a provider fault wearing
+ * this layer's shape, retried by the loop because nothing said the call was
+ * unusable. The tolerance matters just as much: providers do send the name in a
+ * later delta than the arguments, and refusing those would break working routes.
+ */
+describe('OpenAI-compatible tool calls without a name', () => {
+  async function collect(payloads: readonly string[]): Promise<StreamChunk[]> {
+    async function* source(): AsyncGenerator<string> { for (const payload of payloads) yield payload }
+    const chunks: StreamChunk[] = []
+    for await (const chunk of translate(source())) chunks.push(chunk)
+    return chunks
+  }
+
+  it('refuses a call that is still unnamed when it closes, naming the omission', async () => {
+    await expect(collect([
+      JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_abc', function: { arguments: '{"path":"x"}' } }] } }] }),
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }),
+    ])).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE', message: expect.stringContaining('no function name') })
+  })
+
+  it('says which call it was, and masks the arguments it quotes', async () => {
+    const leaked = `ghp_${'A'.repeat(36)}`
+    let message = ''
+    try {
+      await collect([
+        JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_leaky', function: { arguments: `{"token":"${leaked}"}` } }] } }] }),
+        JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }),
+      ])
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    // The call id is what makes this diagnosable against a provider's own log, and
+    // the arguments are upstream text, so they arrive masked like every other quote.
+    expect(message).toContain('call_leaky')
+    expect(message).toContain('"token"')
+    expect(message).not.toContain(leaked)
+  })
+
+  it('accepts a name that arrives in a later delta than the arguments', async () => {
+    const chunks = await collect([
+      JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_abc', function: { arguments: '{"path"' } }] } }] }),
+      JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_abc', function: { name: 'read' } }] } }] }),
+      JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_abc', function: { arguments: ':"x"}' } }] } }] }),
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }),
+    ])
+    expect(chunks).toContainEqual({
+      type: 'block-end', index: 0,
+      block: { type: 'tool-call', id: 'call_abc', name: 'read', arguments: '{"path":"x"}' },
+    })
+  })
+})
+
+/**
  * The two ways this layer quotes the upstream into an `LlmError`.
  *
  * Every OpenAI-compatible adapter streams through here, so text that reaches an

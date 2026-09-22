@@ -57,13 +57,12 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/json-text
  */
 
+import { maybeRecord } from './untrusted-json.ts'
+
 /** Parse one candidate span as a JSON object, or `undefined` for anything else. */
 function asObject(span: string): Record<string, unknown> | undefined {
   try {
-    const parsed: unknown = JSON.parse(span)
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : undefined
+    return maybeRecord(JSON.parse(span))
   } catch {
     return undefined
   }

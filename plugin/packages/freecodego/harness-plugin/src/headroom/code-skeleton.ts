@@ -38,6 +38,10 @@
 
 import { detectContentType } from './content-detector.ts'
 
+/**
+ * Tunables for the read skeleton: the size floor it engages at, the ratio it
+ * must beat, and the run lengths that decide what may be elided.
+ */
 export interface CodeSkeletonConfig {
   /** Below this many bytes the wrapper declines: a marker costs more than it saves. */
   readonly minChars: number
@@ -67,6 +71,10 @@ export const CODE_SKELETON_DEFAULTS: CodeSkeletonConfig = {
   maxSignatureLines: 40,
 }
 
+/**
+ * Outcome of one read skeletonization: the rewritten envelope, how many lines
+ * were kept and elided, and the byte savings it achieved.
+ */
 export interface CodeSkeletonResult {
   readonly applied: boolean
   /** The rewritten envelope; identical to the input when `applied` is false. */
@@ -485,7 +493,11 @@ export function skeletonizeReadOutput(
  */
 export const READ_LIKE_TOOL_NAMES: readonly string[] = ['read', 'read_file', 'view', 'readfile']
 
-/** Read-like tools whose results are eligible for skeletonization. */
+/**
+ * Read-like tools whose results are eligible for skeletonization.
+ * @param name - the tool name to test, in any casing.
+ * @returns true when the tool's output may be skeletonized.
+ */
 export function isSkeletonEligibleTool(name: string): boolean {
   return READ_LIKE_TOOL_NAMES.includes(name.toLowerCase())
 }

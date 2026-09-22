@@ -36,8 +36,13 @@ import {
   companionAtRest,
   companionSize,
 } from '../src/client/companion/bar.tsx'
+import { FLOURISHES } from '../src/client/companion/arbiter.ts'
+import { companionClock } from '../src/client/companion/driver.ts'
+import { FLOURISH_PERIOD_MS, FLOURISH_WINDOW_MS } from '../src/client/companion/signals.ts'
 import { en, zh, type CompanionKey } from '../src/client/companion/companion-locale.ts'
+import { claimRunningRowFace, runningRowHasFace } from '../src/client/companion/running-row-presence.ts'
 import { STATE_BY_ID } from '../src/client/companion/engine/states.ts'
+import { activityFixture } from './companion-activity.fixture.ts'
 
 /** Monotonic for the whole file, for the reason in the header. */
 let clockMs = 0
@@ -102,6 +107,31 @@ function pump(advanceMs = 16): void {
 }
 
 /**
+ * The shared clock's own reading, in milliseconds.
+ *
+ * The animation clock is a process singleton that only ever moves forward, so a test
+ * cannot assume a phase: it asks the clock where the next resting window is. The
+ * mocked frame clock above is reset per test; this one is not, and is the one the
+ * seat decides from.
+ * @returns the shared clock's reading in milliseconds.
+ */
+function sharedNowMs(): number {
+  return companionClock().nowSeconds() * 1000
+}
+
+/**
+ * The next instant inside a resting window, at or after `atMs`.
+ *
+ * 100 ms into the period, because a window is half-open: it opens on the period's
+ * boundary and is closed again by its far edge.
+ * @param atMs - the earliest instant worth opening a window at.
+ * @returns that instant in milliseconds.
+ */
+function windowAtOrAfter(atMs: number): number {
+  return Math.ceil((atMs + 1) / FLOURISH_PERIOD_MS) * FLOURISH_PERIOD_MS + 100
+}
+
+/**
  * The session facts the seat reads through the global standard kit.
  *
  * No `current`: the strip is handed its own session by the dock entry, so it
@@ -130,25 +160,41 @@ type BarProps = Parameters<typeof CompanionBar>[0]
  * The label is the real Chinese dictionary, so the row's words are asserted
  * against the namespace rather than against a stub.
  */
-function stubProps(sessions: SessionsState): BarProps {
+/**
+ * Stub the dock entry's runtime props.
+ *
+ * `blank` is the framework's own reading of the blank-session Hero, and the seat
+ * gives it one meaning: no strip at all. Defaulted to `false` because every case
+ * below that is not about the Hero is about a session that already has a turn.
+ */
+function stubProps(sessions: SessionsState, blank = false, activity = activityFixture()): BarProps {
   return {
-    session: { sessionId: 's1', running: false, blank: false },
+    session: { sessionId: 's1', running: false, blank },
     input: {},
     useSessions: (selector: (state: SessionsState) => unknown) => selector(sessions),
     // Presence is all the row reads, so the empty status snapshot is the fixture.
     useSessionStatus: (selector: (map: ReadonlyMap<string, SessionStatus>) => unknown) => selector(new Map()),
+    // The live feed arrives by injection rather than through a store, which is why
+    // the seat's props carry it: the two slot seats have no context to read one from.
+    activity,
     t: (key: CompanionKey) => zh[key],
   } as unknown as BarProps
 }
 
-/** Render the strip against stub props. */
-function setup(sessions: SessionsState) {
-  return render(<CompanionBar {...stubProps(sessions)} />)
+/**
+ * Render the strip against stub props.
+ * @param sessions - the session list snapshot the row reads.
+ * @param blank - the framework's blank-session Hero bit.
+ * @param activity - the live feed, when the case drives one.
+ * @returns the rendered seat.
+ */
+function setup(sessions: SessionsState, blank = false, activity = activityFixture()) {
+  return render(<CompanionBar {...stubProps(sessions, blank, activity)} />)
 }
 
 /** Re-render the same seat with different facts, as a session update would. */
-function update(view: ReturnType<typeof setup>, sessions: SessionsState): void {
-  view.rerender(<CompanionBar {...stubProps(sessions)} />)
+function update(view: ReturnType<typeof setup>, sessions: SessionsState, blank = false): void {
+  view.rerender(<CompanionBar {...stubProps(sessions, blank)} />)
 }
 
 /** @returns the strip element. */
@@ -171,6 +217,11 @@ function resting(container: HTMLElement): string | null {
   return bar(container)!.getAttribute('data-fcg-companion-rest')
 }
 
+/** @returns which surface the strip says is holding the drawing. */
+function face(container: HTMLElement): string | null {
+  return bar(container)!.getAttribute('data-fcg-companion-face')
+}
+
 describe('companion strip: how large the character is drawn', () => {
   it('draws at the floor before it has measured anything', () => {
     expect(companionSize(0)).toBe(COMPANION_MIN_PX)
@@ -190,13 +241,58 @@ describe('companion strip: how large the character is drawn', () => {
 })
 
 describe('companion strip: one lane height, for the whole session', () => {
-  it('is on screen before anything happens, drawn quiet', () => {
+  it('is on screen at rest inside a conversation', () => {
     const { container } = setup(running(false))
     pump()
     expect(bar(container)).not.toBeNull()
     expect(resting(container)).toBe('true')
     expect(pose(container)).toBe('idle')
     expect(bar(container)!.textContent).toBe('空闲')
+  })
+
+  it('draws nothing at all on the blank-session Hero', () => {
+    // The new-conversation page has no conversation to describe yet, and the strip
+    // there was the first thing a user saw above an empty composer: a status line
+    // named "idle" for work nobody has asked for. Nothing of the seat is drawn — not
+    // a label, not a lane, not even the character at rest — because a hidden row that
+    // still occupied its height would be the same wasted space with less to read.
+    const { container } = setup(running(false), true)
+    pump()
+    expect(bar(container)).toBeNull()
+    expect(container.querySelector('svg')).toBeNull()
+    expect(container.textContent).toBe('')
+    // And it did not measure a lane it is not drawing in: the observation starts
+    // when there is a lane to measure, which is also what keeps the blank page from
+    // holding a subscription it will never use.
+    expect(observes).toBe(0)
+  })
+
+  it('appears on the first prompt and measures its lane then', () => {
+    // The transition the Hero guard has to survive: same seat instance, `blank`
+    // clearing on the first send. The lane is measured at that point (not before),
+    // and from there it is the strip the rest of this file describes — one lane, one
+    // pose at a time, never leaving again while the conversation is on screen.
+    const view = setup(running(false), true)
+    pump()
+    expect(bar(view.container)).toBeNull()
+    expect(observes).toBe(0)
+
+    update(view, running(true), false)
+    pump()
+    expect(bar(view.container)).not.toBeNull()
+    expect(pose(view.container)).toBe('thinking')
+    expect(observes).toBe(1)
+    const firstSize = drawnAt(view.container)
+
+    update(view, running(false), false)
+    pump(700)
+    pump(2_500)
+    expect(pose(view.container)).toBe('idle')
+    expect(bar(view.container)).not.toBeNull()
+    expect(drawnAt(view.container)).toBe(firstSize)
+    // «Back to the Hero» is not a state a session returns to: the bit is monotone,
+    // so the lane that has appeared stays for the session.
+    expect(observes).toBe(1)
   })
 
   it('takes the lane out of its resting look while there is something to say', () => {
@@ -247,8 +343,108 @@ describe('companion strip: one lane height, for the whole session', () => {
     const lane = /\.root \{[\s\S]*?min-height:\s*(\d+)px/.exec(stylesheet)
     expect(lane).not.toBeNull()
     expect(Number(lane![1])).toBeGreaterThanOrEqual(COMPANION_MAX_PX)
-    // The resting look is a fade on the same row, not a second element.
-    expect(stylesheet).toContain(".root[data-fcg-companion-rest='true']")
+  })
+
+  it('draws the character at full ink in every pose, resting included', async () => {
+    // The row used to fade to 40% for `idle` and `sleep`, which on a light surface
+    // is a grey character and on a dark one a washed-out one — and `idle` is where a
+    // session spends most of its time, so the character was least legible in its most
+    // common state. Pinned as a stylesheet reading because the property is a *look*
+    // rather than behaviour: the pose and the label already say "nothing is
+    // happening", and the draw-in was the only thing making the row hard to read.
+    const stylesheet = readFileSync(
+      resolve(nodeProcess.cwd(), 'packages/freecodego/harness-ui/src/client/companion/companion.module.css'),
+      'utf8',
+    )
+    const restingRule = /\[data-fcg-companion-rest='true'\]\s*\{([^}]*)\}/u.exec(stylesheet)
+    // The attribute may be styled by a host, so the rule itself is allowed — what is
+    // not allowed is it drawing the row back.
+    expect(restingRule?.[1] ?? '').not.toMatch(/opacity|filter|color/u)
+    // And the row never fades as a whole, resting or not.
+    const rootRule = /\.root \{([^}]*)\}/u.exec(stylesheet)
+    expect(rootRule?.[1] ?? '').not.toMatch(/opacity:\s*0\./u)
+  })
+})
+
+describe('companion strip: handing the character to the transcript', () => {
+  it('yields the drawing while the running row holds it, and keeps its lane and words', () => {
+    const { container } = setup(running(true))
+    pump()
+    expect(face(container)).toBe('composer')
+    const drawnSize = drawnAt(container)
+
+    let release: (() => void) | undefined
+    act(() => { release = claimRunningRowFace() })
+
+    // The drawing is gone from this row and nothing else is: the lane element is
+    // still here — its height is the stylesheet's job, pinned above — and the words
+    // that say what the agent is doing are still the row's own.
+    expect(face(container)).toBe('transcript')
+    expect(container.querySelector('svg')).toBeNull()
+    expect(bar(container)).not.toBeNull()
+    expect(bar(container)!.textContent).toBe('思考中')
+    expect(pose(container)).toBe('thinking')
+
+    act(() => { release?.() })
+    expect(face(container)).toBe('composer')
+    expect(drawnAt(container)).toBe(drawnSize)
+    expect(runningRowHasFace()).toBe(false)
+  })
+
+  it('yields while any claim stands, and takes the drawing back when the last one goes', () => {
+    // A claim is owned by a mount, so two rows overlapping in one frame cannot
+    // drop the character: whichever is released first, one claim is still standing.
+    const { container } = setup(running(true))
+    pump()
+    let first: (() => void) | undefined
+    let second: (() => void) | undefined
+    act(() => {
+      first = claimRunningRowFace()
+      second = claimRunningRowFace()
+    })
+    expect(face(container)).toBe('transcript')
+    act(() => { first?.() })
+    expect(face(container)).toBe('transcript')
+    act(() => { second?.() })
+    expect(face(container)).toBe('composer')
+    expect(runningRowHasFace()).toBe(false)
+  })
+})
+
+describe('companion strip: the resting character keeps moving', () => {
+  it('plays the resting catalogue one pose per period, and not the same pose forever', () => {
+    // A session waiting for its next prompt is where the mark is seen most, and one
+    // that never moved there reads as broken rather than as calm. So the quiet poses
+    // are interrupted by a short flourish from the engine's catalogue on a period,
+    // and this walks two consecutive periods: the first pose is not the only pose,
+    // which is the defect it pins. Which pose a period plays is read from the shared
+    // clock, so every seat plays the same rotation rather than each walking the
+    // catalogue from whenever it mounted.
+    const { container } = setup(running(false))
+    pump()
+    expect(pose(container)).toBe('idle')
+
+    // The first window in which the seat has both rested a whole period of its own
+    // and is inside one of the clock's windows.
+    const startMs = sharedNowMs()
+    const firstAt = windowAtOrAfter(startMs + FLOURISH_PERIOD_MS)
+    pump(firstAt - startMs)
+    const played = pose(container)
+    expect(FLOURISHES).toContain(played)
+    // The words follow the pose, out of the same dictionary the rail seat reads: a
+    // flourish is drawn by a session doing nothing, so it is named as the gesture it
+    // is rather than as a status that would contradict the session on screen.
+    expect(FLOURISHES.map(id => zh[id])).toContain(bar(container)!.textContent)
+
+    // The window closes and the character returns to rest, so the catalogue is a
+    // succession of poses rather than one pose held from the moment it first played.
+    pump(FLOURISH_WINDOW_MS + 100)
+    expect(pose(container)).toBe('idle')
+
+    // The next period, one window later on the same grid, offers the next pose.
+    pump(firstAt + FLOURISH_PERIOD_MS - sharedNowMs())
+    expect(FLOURISHES).toContain(pose(container))
+    expect(pose(container)).not.toBe(played)
   })
 })
 

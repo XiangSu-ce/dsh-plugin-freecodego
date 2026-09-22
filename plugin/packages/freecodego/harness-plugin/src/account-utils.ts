@@ -12,6 +12,9 @@ import type { FreeCodeGoAccountSnapshot, FreeCodeGoRuntimePackage } from './type
  * selection moves it. The WorkBuddy pool has always worked this way; the other
  * two recomputed the field from whichever row they happened to write last,
  * which silently switched the reported account.
+ * @param accounts - the pool's rows after the write.
+ * @param input - the row written, the previous selection, and whether this write adopts it.
+ * @returns the account id the pool should keep in front.
  */
 export function activeAccountIdAfterWrite(
   accounts: readonly { readonly id: string }[],
@@ -29,6 +32,9 @@ export function activeAccountIdAfterWrite(
  * Removing an unrelated account must not move the selection; only losing the
  * selected account itself promotes a survivor (and an emptied pool records no
  * selection at all).
+ * @param accounts - the pool's rows after the removal.
+ * @param previousActiveId - the selection before the removal.
+ * @returns the surviving selection, or `undefined` when the pool is empty.
  */
 export function activeAccountIdAfterRemoval(
   accounts: readonly { readonly id: string }[],
@@ -38,12 +44,19 @@ export function activeAccountIdAfterRemoval(
   return accounts[0]?.id
 }
 
+/** The error every remote call throws when the backend is not configured.
+ * @returns the coded error.
+ */
 export function backendNotConfigured(): Error & { code: 'BACKEND_NOT_CONFIGURED' } {
   const error = new Error('FreeCodeGo backend is not configured') as Error & { code: 'BACKEND_NOT_CONFIGURED' }
   error.code = 'BACKEND_NOT_CONFIGURED'
   return error
 }
 
+/** Project the account coordinator's snapshot onto the plugin's public shape.
+ * @param value - the coordinator's snapshot, or `undefined` when unavailable.
+ * @returns the public account snapshot.
+ */
 export function accountSnapshot(value: ReturnType<FreeCodeGoAccountCoordinator['snapshot']> | undefined): FreeCodeGoAccountSnapshot {
   if (value === undefined || value.status === 'signed-out' || value.status === 'reauth-required') return { status: value?.status ?? 'signed-out' }
   if (value.status === 'mfa-required') return { status: value.status, emailMasked: value.emailMasked }
@@ -51,6 +64,10 @@ export function accountSnapshot(value: ReturnType<FreeCodeGoAccountCoordinator['
   return { status: value.status, user: { username: user.username, email: user.email, ...(user.avatarUrl === undefined ? {} : { avatarUrl: user.avatarUrl }), balance: user.balance } }
 }
 
+/** Normalize a raw account profile row, refusing one that lacks an email or balance.
+ * @param user - the profile row to normalize.
+ * @returns the normalized identity.
+ */
 export function accountIdentity(user: { readonly id?: number; readonly username?: string; readonly email?: string; readonly avatarUrl?: string; readonly role?: string; readonly balance?: number; readonly status?: string }): { readonly id: number; readonly username: string; readonly email: string; readonly avatarUrl?: string; readonly role: string; readonly balance: number; readonly status: string } {
   const email = user.email?.trim()
   if (email === undefined || email === '') throw new Error('FreeCodeGo account profile did not include an email')
@@ -67,10 +84,19 @@ export function accountIdentity(user: { readonly id?: number; readonly username?
   }
 }
 
+/** A shallow copy of a runtime package record, for callers that must not mutate the original.
+ * @param input - the runtime package record.
+ * @returns a copy of the record.
+ */
 export function runtimePackageView(input: FreeCodeGoRuntimePackage): FreeCodeGoRuntimePackage {
   return { ...input }
 }
 
+/** Report an engine's availability to the optional router, ignoring an unmounted one.
+ * @param agentEngines - the router surface, when it is mounted.
+ * @param id - the engine whose availability changed.
+ * @param availability - the availability to report.
+ */
 export function setEngineAvailability(agentEngines: { setAvailability?: (id: 'codex' | 'claude', availability: 'available' | 'unavailable' | 'updating') => void } | undefined, id: 'codex' | 'claude', availability: 'available' | 'unavailable' | 'updating'): void {
   try { agentEngines?.setAvailability?.(id, availability) } catch { /* optional router may not be mounted yet */ }
 }

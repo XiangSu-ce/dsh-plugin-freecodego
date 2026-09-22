@@ -3,9 +3,18 @@ import { readFile } from 'node:fs/promises'
 import { isAbsolute, normalize, relative } from 'node:path'
 import { arch, platform } from 'node:process'
 
+/**
+ * The native engines a runtime artifact can carry.
+ */
 export type NativeRuntimeEngine = 'codex' | 'claude'
+/**
+ * OS and architecture ids a runtime artifact is published for.
+ */
 export type NativeRuntimePlatform = 'win32-x64' | 'win32-arm64' | 'linux-x64' | 'linux-arm64' | 'darwin-x64' | 'darwin-arm64'
 
+/**
+ * The facts one installed runtime artifact is pinned to.
+ */
 export interface NativeRuntimeManifest {
   readonly manifestVersion: 1
   readonly engine: NativeRuntimeEngine
@@ -39,11 +48,18 @@ export function runtimePlatformFor(platformName: string, architecture: string): 
   throw new Error(`unsupported native runtime platform ${platformName}-${architecture}`)
 }
 
-/** The runtime platform of the running process. */
+/** The runtime platform of the running process. 
+ * @returns the platform id of the running process.
+ */
 export function currentRuntimePlatform(): NativeRuntimePlatform {
   return runtimePlatformFor(platform, arch)
 }
 
+/**
+ * Validate an untrusted manifest document before any path it names is used.
+ * @param value - the parsed JSON document to validate.
+ * @returns the manifest, once every required field is present and every path stays inside the artifact root.
+ */
 export function validateRuntimeManifest(value: unknown): NativeRuntimeManifest {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('runtime manifest must be an object')
   const item = value as Record<string, unknown>
@@ -66,6 +82,11 @@ export function validateRuntimeManifest(value: unknown): NativeRuntimeManifest {
   return item as unknown as NativeRuntimeManifest
 }
 
+/**
+ * Verify an artifact against the digest its manifest declares, before the runtime is used.
+ * @param manifest - the validated manifest whose paths are read.
+ * @param rootDirectory - the runtime root every manifest path has to stay inside.
+ */
 export async function verifyRuntimeArtifact(manifest: NativeRuntimeManifest, rootDirectory: string): Promise<void> {
   if (manifest.platform !== currentRuntimePlatform()) throw new Error(`runtime manifest platform ${manifest.platform} is not supported on ${currentRuntimePlatform()}`)
   const artifact = resolveContained(rootDirectory, manifest.artifactPath)

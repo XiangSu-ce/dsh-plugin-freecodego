@@ -70,6 +70,7 @@ import type { FreeCodeGoSandboxMode } from '../types.ts'
 /** The builtin profiles a custom one may extend, and the complete set of them. */
 export const BUILTIN_SANDBOX_PROFILES = ['off', 'workspace', 'devbox', 'read-only', 'strict'] as const
 
+/** One builtin sandbox profile name, drawn from {@link BUILTIN_SANDBOX_PROFILES}. */
 export type BuiltinSandboxProfileName = (typeof BUILTIN_SANDBOX_PROFILES)[number]
 
 /** A profile as the user writes it, before it is resolved against a platform. */

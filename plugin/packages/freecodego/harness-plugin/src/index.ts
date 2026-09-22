@@ -14,11 +14,11 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type { ToolDefinitionShape } from './tool-definition.ts'
 // `toolDefinition` is used below under this name; see the `spill_recall`
 // registration for why the identity wrapper is worth calling.
-import { toolDefinition as rawTool } from './tool-definition.ts'
+import { JSON_TOOL_OUTPUT, toolDefinition as rawTool } from './tool-definition.ts'
 import { readDocumentToolDefinition } from './read-document.ts'
 import { createWorktree, realCreatorDeps, type WorktreeCreation } from './worktree/creator.ts'
 import { loadPersonaRoster } from './persona/files.ts'
-import { loadHookDocuments } from './hooks/files.ts'
+import { claudeHookDialectOf, loadHookDocuments, type ClaudeHookDialectOwner } from './hooks/files.ts'
 import { PlanFileStore, planFilePath } from './plan/plan-file.ts'
 import { composePlanReworkMessage, planReviewSurface } from './plan/plan-review.ts'
 import { inspectPlanSections } from './plan/plan-sections.ts'
@@ -28,14 +28,16 @@ import type { HookDocument } from './hooks/surface.ts'
 import { PersonaRuns, loadPersonaInstructions, namedOutputsIn, personaToolDefinitions } from './persona/tools.ts'
 import { randomUUID, createHash } from 'node:crypto'
 import { SessionWorktrees, worktreeToolDefinitions } from './worktree/tools.ts'
-import { TeamWorktrees } from './team/worktree.ts'
+import { WorktreeRegistry } from './worktree/registry.ts'
+import { ContextControl, contextControlToolDefinitions } from './context-control.ts'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoManagedRuntime, FreeCodeGoReceiptDocument } from '@deepseek-ai/dsh-freecodego-api'
-import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorStatus, FreeCodeGoAdvisorUpdate, FreeCodeGoAdvisorModel, FreeCodeGoAdvisorNote, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus } from './types.ts'
+import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorStatus, FreeCodeGoAdvisorUpdate, FreeCodeGoAdvisorModel, FreeCodeGoAdvisorNote, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate } from './types.ts'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { createUserMessage, type LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import { CodexRuntimeManager, ClaudeRuntimeManager } from '@deepseek-ai/dsh-freecodego-native-runtime-host'
@@ -44,6 +46,8 @@ import { AgnesClient } from './agnes.ts'
 import { ClineClient } from './cline.ts'
 import type { WorkBuddyIntlClient } from './workbuddy-intl.ts'
 import type { WorkBuddyPoolService } from './workbuddy-pool.ts'
+import type { QoderClient } from './qoder-intl.ts'
+import type { TraeClient } from './trae-intl.ts'
 import { ClaudeProtocolBridge } from './claude-protocol-bridge.ts'
 import { FreeCodeGoCapabilityRegistry, FreeCodeGoCapabilitySettingsSchema } from './capabilities.ts'
 import { FreeCodeGoPluginConflictSettingsSchema, installFreeCodeGoPluginConflictGuard } from './plugin-conflicts.ts'
@@ -69,15 +73,16 @@ import { runtimePackageView, setEngineAvailability } from './account-utils.ts'
 import type { MediaRoute, MediaVideoArgs } from './media-utils.ts'
 import { generateAudioWithFallback, generateImageWithFallback, generateVideoWithFallback, gatewayMediaJson, mediaRoute, registerMediaTools, type ImageGenerationArgs, type MediaGenerationHost, type MediaRequestOptions } from './media-generation.ts'
 import { registerAdvisorTools, registerAgnesTools, type AgentToolsDeps } from './agent-tools.ts'
-import { capabilityMarketplace, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, mcpPresetInstall, skillPresetInstall, type CommunityRemotesHost, type CommunityRemotesState } from './community-remotes.ts'
+import { capabilityMarketplace, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, mcpPresetInstall, skillPlacements, skillPresetInstall, skillPresetRemove, type CommunityRemotesHost, type CommunityRemotesState } from './community-remotes.ts'
+import type { PlacementContext } from './skills/placement.ts'
 import { freeCodeGoDataHome, harnessHomeDirectory } from './data-home.ts'
 import { ensureDesktopDshShim, requireClaudeEngineManifestPath } from './runtime-assets.ts'
 import { ensureFreeCodeGoAgentPreset } from './agent-preset-install.ts'
 import { PendingWriteDrain } from './abort-drain.ts'
 import { FreeCodeGoHeadroomRuntime, type HeadroomStats } from './headroom/runtime.ts'
 import { FreeCodeGoDeferredTools, type DeferredToolStatus } from './deferred-tools.ts'
-import { FreeCodeGoTeamRuntime, type TeamRuntimeStatus } from './team/tools.ts'
 import { DoomLoopGuard, FreeCodeGoGuardSettingsSchema, credentialRealpathDenial, freeCodeGoToolGuard, isCredentialPath } from './tool-guards.ts'
+import { workflowScriptRefusal } from './workflow-static-check.ts'
 import { FolderTrustStore, FreeCodeGoTrustSettingsSchema, defaultTrustRecordPath, folderTrustEnabled, repositoryRoot, resolveFolderTrust, seedTrustRecordOnce } from './trust.ts'
 import { startSuspendWatch, type SuspendEvidence } from './system-power.ts'
 import { nativeCallsFromPermission, nativeToolDenial } from './native-tool-guard.ts'
@@ -124,19 +129,28 @@ import { denyRealpathRefusal, denyRefusal, describeDenyEnforcement, normalizeDen
 import { FreeCodeGoPolicy } from './policy.ts'
 import { collectInspectReport, inspectReportToJson, renderInspectReport, type InspectCollector, type InspectReport } from './inspect/collect.ts'
 import { buildInspectCollectors } from './inspect/host.ts'
+import { createReviewInstall, type ReviewInstall } from './review/install.ts'
+import { reviewToolDefinitions } from './review/tool.ts'
+import { createSubagentFileReviewer, type ReviewSubagentOptions } from './review/subagent-reviewer.ts'
+import { reviewStart, reviewStatus, reviewUpdate, type ReviewRemotesHost } from './review/remotes.ts'
+import type { ReviewFilePort } from './review/reviewer.ts'
+import { DEFAULT_REVIEW_GATE_SETTINGS, FreeCodeGoReviewGate, reviewGateRecord, type ReviewGateSettings } from './review/gate.ts'
+import { narrowTurnScope, turnChangePaths, type TurnScopeEvent, type TurnScopeSummary } from './review/turn-scope.ts'
 import {
   accountDetail, accountStatus, backendBootstrap, backendCatalog, backendQuota, backendRuntimeHealth, backendUsage, completeMfa, deviceSessions, groqWhisperTranscribe, vyceSetKey, vyceStatus,
   revokeAllSessions, revokeDeviceSession,
   logfareRegister, logfareSetKey, logfareSetTrainingOptIn, logfareStatus, login, logout, refreshAccount, register,
-  sendVerifyCode, sensenovaSetKey, sensenovaStatus, nvidiaSetKey, nvidiaStatus, restoreAccount as restoreDurableAccount, accountOAuthLogin,
+  readRememberedPassword, sendVerifyCode, sensenovaSetKey, sensenovaStatus, nvidiaSetKey, nvidiaStatus, restoreAccount as restoreDurableAccount, accountOAuthLogin,
   accountOAuthPendingStatus, accountOAuthPendingSendVerifyCode, accountOAuthPendingBind, accountOAuthPendingCreate,
   type AccountRemotesHost, type AccountRemotesState,
   workbuddyImportDesktopLogin, workbuddyLogout, workbuddyOpenSignIn, workbuddyPollBrowserLogin, workbuddyRefreshToken, workbuddyRefreshCredits, workbuddyRemoveAccount, workbuddySetActiveAccount, workbuddyStartBrowserLogin, workbuddyStatus,
   clineAddAccount, clineLogout, clinePollLogin, clineRefresh, clineRemoveAccount, clineStartLogin, clineStatus,
+  qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin,
+  traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin,
 } from './account-remotes.ts'
 import {
   accountGatewayModelPrices, gatewayModelPrices, localGatewayModelPrices, paymentCancel, paymentChannels, paymentCheckout, paymentConfig, paymentOrder, paymentOrders, paymentPlans,
-  paymentReceiptDocument, paymentReceiptEmail, paymentVerify, tokenUsageCurrentSession, tokenUsageGateway, tokenUsageLocal, type PaymentRemotesHost,
+  paymentReceiptDocument, paymentReceiptEmail, paymentStripeReceiptDocument, paymentVerify, tokenUsageCurrentSession, tokenUsageGateway, tokenUsageLocal, type PaymentRemotesHost,
 } from './payment-remotes.ts'
 import {
   advisorModels, advisorReviewNow, engineeringCouncilReview, engineeringCouncilReports, engineeringTeamStart, engineeringTeamJob, engineeringTeamReports, engineeringTeamDecision,
@@ -163,7 +177,7 @@ import { COMPILED_BUILT_IN_COMMAND_POLICY, describePolicyDiagnostics, type Compi
 import { ContextFragmentLog, renderFragments, type ContextSection, type SectionInput } from './context-fragments.ts'
 import { PLAN_MODE_GUIDANCE, PlanModeStore, findUpstreamPlanMode, planModeGuidanceText, planModeSessionKey, type PlanMode, type UpstreamPlanMode } from './plan-mode.ts'
 import { collectPluginSurfaces, describeSurfaceLockDiff, diffSurfaceLock, measureSurfaces, type SurfaceLockDocument } from './surface-lock.ts'
-import { FreeCodeGoConfigSchema, type Config } from './plugin-config.ts'
+import type { Config } from './plugin-config.ts'
 import { SANDBOX_MODES, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringLoopStatus, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle,  FreeCodeGoInspectReport,
@@ -330,6 +344,8 @@ function reportCommandPolicyDiagnostics(ctx: Context, policy: CompiledCommandPol
  * Pre-loader bootstrap for records written by FreeCodeGo engines. Session
  * persistence validates stored event types before configured plugins mount, so
  * this must run before the ordinary Host entry constructs its service.
+ * @param ctx - context carrying the services this call reads.
+ * @returns the conflict guard's disposer, so the Host entry can release it.
  */
 export function bootstrapFreeCodeGoHarness(ctx: Context): ReturnType<typeof installFreeCodeGoPluginConflictGuard> {
   registerFreeCodeGoSessionEventTypes()
@@ -444,7 +460,29 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   // Authentication state is stored only through the Host credential service.
   // Declare it here so construction cannot race the base bundle activation.
   static inject = ['credentials', 'settings', 'llm', 'tools', 'agents', 'sessions', 'sessionPersistence']
-  static Config: z<Config> = FreeCodeGoConfigSchema
+  /**
+   * Runtime schema for {@link Config}, declared inline so the generated config
+   * catalog can walk it: it is the only statically resolvable form a
+   * plugin-class schema may take. Schemastery has no first-class `.optional()`;
+   * the public `Config` type already types these fields as optional, so the
+   * schema carries the same contract at runtime (absent input passes through)
+   * without fighting the inferred builder types.
+   */
+  static Config: z<Config> = z.object({
+    gateway: z.object({
+      baseUrl: z.string().default(FREECODEGO_CLOUD_ORIGIN),
+    }),
+    defaultModel: z.string(),
+    defaultEngine: z.union([z.const('deepseek'), z.const('codex'), z.const('claude')]).default('deepseek'),
+    codexRuntimeDirectory: z.string().default(''),
+    codexRuntimeSourceDirectory: z.string().default(''),
+    claudeRuntimeDirectory: z.string().default(''),
+    autoSubagentModelSelection: z.boolean().default(true),
+    autoAdvisorEnabled: z.boolean().default(true),
+    updatePackageName: z.string().default(''),
+    updateReleaseRepository: z.string().default(''),
+    updateReleaseTokenEnv: z.string().default(''),
+  })
   private account: FreeCodeGoAccountCoordinator | undefined
   private api: FreeCodeGoApiClient | undefined
   private credentials: CredentialProvider | undefined
@@ -473,8 +511,17 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   private readonly automation: FreeCodeGoAutomationRuntime
   private readonly pluginConflictGuard: ReturnType<typeof installFreeCodeGoPluginConflictGuard>
   private readonly advisor: FreeCodeGoAdvisorRuntime
+  /**
+   * One review surface per workspace, assembled on first use.
+   *
+   * Keyed by workspace rather than held once because the review rules are read
+   * from the workspace under review: a single shared port would make every session
+   * resolve against whichever checkout happened to run first. The value is the
+   * *promise*, so two tools called in the same turn share one assembly instead of
+   * racing to read the same rule files twice.
+   */
+  private readonly reviewInstalls = new Map<string, Promise<ReviewInstall>>()
   private readonly agentProgress: FreeCodeGoAgentProgressRuntime
-  private readonly teamRuntime: FreeCodeGoTeamRuntime
   private readonly engineCouncil: FreeCodeGoEngineCouncil
   private readonly pluginUpdates: FreeCodeGoPluginUpdateService
   private readonly subagentModelRouting: FreeCodeGoSubagentModelRouting
@@ -672,6 +719,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   private cline: ClineClient | undefined
   private workbuddy: WorkBuddyIntlClient | undefined
   private workbuddyPool: WorkBuddyPoolService | undefined
+  private qoder: QoderClient | undefined
+  private trae: TraeClient | undefined
   /** Mutex and in-flight caches shared with the extracted community remotes. */
   private readonly communityState: CommunityRemotesState = {
     communityMutationTask: undefined,
@@ -749,6 +798,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       agnes: () => this.agnes,
       cline: () => this.cline,
       workbuddy: () => this.workbuddy,
+      qoder: () => this.qoder,
+      trae: () => this.trae,
       configuredProviderRoute: model => this.configuredProviderRoute(model),
       directConnection: (model, allowExternalProviders) => this.directConnection(model, allowExternalProviders),
       managedRuntime: model => this.managedRuntime(model),
@@ -819,6 +870,25 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
           // Durable Advisor findings also land in project memory as pending
           // drafts so reviews survive the session (reviewed in memory settings).
           advisorMemoryDraftsEnabled: z.boolean().default(true),
+          // Stop-time review is opt-in. `off` costs nothing; `record` runs the
+          // pass and writes a durable summary; `gate` turns that same pass into
+          // a delivery channel that injects findings at or above the threshold.
+          // The default is `off` because a review spends model calls and, in
+          // `gate`, changes the shape of every conversation — neither is a thing
+          // to enable on a user's behalf. The manual tools work regardless.
+          reviewMode: z.union([z.const('off'), z.const('record'), z.const('gate')]).default('off'),
+          reviewThreshold: z.union([z.const('critical'), z.const('high'), z.const('medium'), z.const('low')]).default('high'),
+          reviewCooldownTurns: z.number().step(1).min(0).max(20).default(3),
+          // Deeper per-file review: every reviewed file is read by its own
+          // read-only child agent, which can search for callers and open the
+          // implementation a test covers instead of judging the diff alone. Off
+          // by default because it opens one child agent per file, which is a
+          // decision with a cost rather than a better default.
+          reviewDeep: z.boolean().default(false),
+          // Adjudication of high-severity findings. Off by default because it costs
+          // a call per escalated finding and its shipped implementation is one
+          // route, not the multi-engine council the port is designed for.
+          reviewEscalation: z.boolean().default(false),
           // Headroom context compression: on by default; the threshold bounds
           // which tool results are considered oversized. The remaining knobs
           // mirror the runtime's reader defaults (min savings ratio, dedup,
@@ -845,6 +915,16 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
            * is always retrievable through `headroom_retrieve`.
            */
           headroomCodeSkeletonEnabled: z.boolean().default(true),
+          /**
+           * Reversible-render competition policy. `reversible` (default) delivers a
+           * render that clears `FOLD_DECISIVE_RATIO` on sight — a Stage 2 fold, or a
+           * mixed-content splice; `max` demotes every one of them to a candidate so
+           * the compressor written for the payload's shape is always asked first.
+           * The two settings are two products, not a fine-tuning — see
+           * `HeadroomRuntime.foldPolicy` for the measured difference on the shapes
+           * where they disagree.
+           */
+          headroomFoldPolicy: z.union([z.const('reversible'), z.const('max')]).default('reversible'),
           /**
            * Keep task-specific tool schemas out of the request until the model
            * asks for them with `tool_search`. Measured saving is ~3.2k tokens per
@@ -1108,9 +1188,17 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     })
     // Credential-file protection, the declarative command policy, and Plan Mode:
     // monotonic denials on every host-dispatched tool call (settings-gated).
+    //
+    // Loop hygiene is deliberately *absent* here. Every call this guard sees is
+    // also a call `tools/pre-execute` dispatched, which is exactly the population
+    // the Harness's own `dsh-repeat-tool-reminder` counts and reminds the model
+    // about at 3, 5 and 8 repeats. Denying the same repeat here as well would put
+    // two answers on one call — a reminder to change approach and a refusal — so
+    // this path leaves loops to the Harness. The engine's own tools never reach
+    // `tools/pre-execute`; `nativeToolGuard` below is where the denial is still
+    // the only protection there is.
     ctx.get('tools')?.guard(freeCodeGoToolGuard({
       settings: () => this.policy.get(),
-      doomLoop: this.doomLoopGuard,
       policy: this.commandPolicy,
       projectPolicy: agent => this.projectPolicyForAgent(agent),
       planMode: {
@@ -1127,9 +1215,11 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.registerPlanModeTool()
     this.registerSurfaceReportTool()
     this.registerInspectTool()
+    this.registerReviewTools()
     this.registerInspectCommand()
     this.registerSpillRecallTool()
     this.registerContextBudgetTool()
+    this.registerContextControlTools()
     this.registerPromptCompositionTool()
     this.registerReadDocumentTool()
     this.registerWorktreeTools()
@@ -1248,6 +1338,15 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       // checkpoint capture below, because a refused call must not leave one behind.
       const denyDenial = await denyRealpathRefusal({ deny: this.denyPatterns(), args: exec.arguments }).catch(() => undefined)
       if (denyDenial !== undefined) return { kind: 'deny', reason: denyDenial }
+      // A workflow script is refused here for the same reason the guards above refuse
+      // an action: the failure is already certain, and by the time the engine reports
+      // it the run has already paid for child agents on the way to the failure. Keyed
+      // on the argument shape rather than the tool name — the name is a documented
+      // configuration knob, so a name-keyed rule stops guarding the moment a
+      // deployment renames it — and nothing loads the compiler unless a call actually
+      // carries a script.
+      const scriptRefusal = workflowScriptRefusal(exec.arguments)
+      if (scriptRefusal !== undefined) return { kind: 'deny', reason: scriptRefusal }
       const cwd = sessionCwd(exec)
       await this.engineering.checkpointAutoCapture(cwd, exec.name)
       // Hunk tracking (P-21) reads the same seam for the same reason: this is the
@@ -1334,20 +1433,6 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     ctx.effect(() => () => { this.agentProgress.dispose() }, 'freecodego: delegated Agent progress')
     this.engineCouncil = new FreeCodeGoEngineCouncil(this.policy, () => this.defaultAgentOptions())
     ctx.effect(() => () => { this.engineCouncil.dispose() }, 'freecodego: engine council')
-    // The multi-member team surface: board, member registry, worktrees, context
-    // control. It registers its own tools, so it must start after the tool
-    // registry exists and must dispose before the context tears down.
-    this.teamRuntime = new FreeCodeGoTeamRuntime({
-      ctx,
-      settings: this.policy,
-      defaultAgentOptions: () => this.defaultAgentOptions(),
-      // A member's isolation report and the deny list's reach are read together:
-      // the effective limit on a member is the weaker of the two, and printing
-      // them apart is how a caller plans around a rule that does not reach.
-      denyEnforcement: () => describeDenyEnforcement(this.denyPatterns()),
-    })
-    this.teamRuntime.start()
-    ctx.effect(() => () => { this.teamRuntime.dispose() }, 'freecodego: team runtime')
     // Close the autonomous engineering loop. `dsh-goal-round-driver` (mounted by
     // the base bundle) owns *continuation*; this listener owns the termination
     // half — when a goal leaves the active phase, the declared verification
@@ -1555,12 +1640,22 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.catalogs.registerAgnesAdapter()
     this.catalogs.registerClineAdapter()
     this.catalogs.registerWorkbuddyAdapter()
+    this.catalogs.registerQoderAdapter()
+    this.catalogs.registerTraeAdapter()
     // The WorkBuddy pool sweeps credits and the daily check-in on its own clock;
     // the timers are unref'd so a Host that is otherwise idle can still exit.
     ctx.effect(() => () => this.workbuddyPool?.stop(), 'freecodego: WorkBuddy pool maintenance')
     this.catalogs.registerSenseNovaAdapter()
     this.catalogs.registerNvidiaAdapter()
     this.catalogs.registerKiloAdapter()
+    // Every directory behind those registrations is read once here, behind the
+    // answer, after the snapshot the previous process left has been restored. The
+    // model menu's first catalog arrives after a browser has connected, so it
+    // should find the directories known rather than wait for twelve network reads
+    // (see `known-provider-catalog.ts`). The reads themselves are fire-and-forget:
+    // a route that has not answered by the time the picker asks is answered by its
+    // own cold budget instead of being waited on.
+    void this.catalogs.prewarmProviderCatalogs()
     this.catalogs.refreshLogfareHealthInBackground()
     this.registerAgnesTools()
     this.registerMediaTools()
@@ -1591,6 +1686,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.subagentModelRouting = new FreeCodeGoSubagentModelRouting(ctx, config.autoSubagentModelSelection !== false)
     ctx.effect(() => () => { this.subagentModelRouting.dispose() }, 'freecodego: automatic Subagent model routing')
     this.registerVerifyOnStop(ctx)
+    this.registerReviewGate(ctx)
   }
 
   /**
@@ -1671,18 +1767,140 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     }), 'freecodego: verify-on-stop state')
   }
 
-  /** Return a dynamic opener; each session revalidates the installed artifact. */
+  /** The stop-time review settings, defaulted field by field. */
+  private reviewGateSettings(): ReviewGateSettings {
+    const stored = this.policy.get()
+    return {
+      mode: stored?.reviewMode ?? DEFAULT_REVIEW_GATE_SETTINGS.mode,
+      threshold: stored?.reviewThreshold ?? DEFAULT_REVIEW_GATE_SETTINGS.threshold,
+      cooldownTurns: stored?.reviewCooldownTurns ?? DEFAULT_REVIEW_GATE_SETTINGS.cooldownTurns,
+    }
+  }
+
+  /**
+   * Register the stop-time review.
+   *
+   * One pass per change set, run when the turn is about to end, with two delivery
+   * channels: the findings are always recorded as a durable session summary, and
+   * are injected only when a finding reaches the configured threshold and the
+   * cooldown has elapsed. Sharing one pass between "review each turn" and "gate the
+   * stop" is deliberate — two hooks would read the same diff twice, pay for it
+   * twice, and be able to disagree about the same tree.
+   *
+   * The run is confined to the paths the turn actually changed, so a turn does not
+   * re-review files that were already dirty and cannot report their findings as its
+   * own. A failure to review never blocks the stop: the turn must still be able to
+   * end, and a review that could not run is not evidence that a change is clean.
+   */
+  private registerReviewGate(ctx: Context): void {
+    const agents = new Map<string, {
+      readonly session?: {
+        readonly id?: unknown
+        readonly header?: { readonly cwd?: string }
+        readonly append?: unknown
+        /** Read for the per-turn change record; absent on a session shape without it. */
+        readonly snapshotEvents?: () => readonly unknown[]
+      }
+      readonly inject?: (message: unknown) => void
+    }>()
+    const workspaceOf = (agentId: string): string => {
+      const cwd = agents.get(agentId)?.session?.header?.cwd
+      return typeof cwd === 'string' && cwd !== '' ? cwd : process.cwd()
+    }
+    const gate = new FreeCodeGoReviewGate({
+      settings: () => this.reviewGateSettings(),
+      workspaceOf,
+      readChangedPaths: async (agentId, turn) => {
+        const scope = await readWorkspaceChangeScope(workspaceOf(agentId))
+        if (scope === undefined) return undefined
+        // The Host's per-turn record is preferred over the workspace's whole
+        // uncommitted set, and only when it is provably a subset of it — see
+        // `review/turn-scope.ts`, where both rules and their reasons live.
+        const turnPaths = readReviewTurnPaths(this.ctx, agents.get(agentId)?.session, turn)
+        return narrowTurnScope(turnPaths, scope.changedPaths)
+      },
+      readChangeRevision: async agentId => await readWorkspaceRevision(workspaceOf(agentId)),
+      portFor: async workspace => (await this.reviewInstallFor(workspace)).port,
+      record: (agentId, report, delivery) => {
+        const session = agents.get(agentId)?.session
+        if (session === undefined || typeof session.append !== 'function') return
+        try {
+          // The session records the summary; the report itself stays in the run
+          // manager, which is what `engineering_review_report` reads. A session
+          // event is replayed on every resume, so the full report would be an
+          // unbounded durable cost for a fact the tool can answer on demand.
+          (session.append as (type: string, data: unknown) => unknown)('freecodego/review', reviewGateRecord(report, delivery))
+        } catch { /* a disposed session cannot record a review */ }
+      },
+      inject: (agentId, text) => {
+        const agent = agents.get(agentId)
+        if (typeof agent?.inject !== 'function') return false
+        agent.inject(createUserMessage({
+          source: { kind: 'plugin', plugin: 'freecodego-review' },
+          content: [{ type: 'text', text: `<stop-time-review>\n${text}\n</stop-time-review>` }],
+        }))
+        return true
+      },
+    })
+    ctx.on('agent/created', ({ agent }) => {
+      agents.set(String(agent.id), agent as unknown as { readonly session?: { readonly header?: { readonly cwd?: string } } })
+    })
+    ctx.on('tools/post-execute', (exec, _result, next) => {
+      try {
+        const id = exec.agent?.id
+        if (id !== undefined) gate.noteToolCall(String(id), exec.name)
+      } catch { /* advisory only: never fail a tool call to observe it */ }
+      return next()
+    })
+    ctx.on('agent/turn-stopping', ({ agent, turn, signal }) => {
+      void gate.onTurnStopping(String(agent.id), {
+        ...(typeof turn === 'number' ? { turn } : {}),
+        ...(signal === undefined ? {} : { signal }),
+      }).then(outcome => {
+        if (outcome.kind === 'failed') {
+          this.ctx.logger.warn(`freecodego: the stop-time review could not run: ${redactCredentialShapes(outcome.reason)}`)
+        }
+      }).catch(() => undefined)
+    })
+    // Dropped on disposal for the same reason `verify-on-stop` drops its own: the
+    // agent is gone, and an id that outlived its agent would resolve to a stale
+    // workspace — and would be kept for the life of the plugin process, one entry
+    // per agent a long-running host has ever seen.
+    ctx.effect(() => ctx.on('agent/disposed', ({ agent }) => {
+      const id = String(agent.id)
+      agents.delete(id)
+      gate.forget(id)
+    }), 'freecodego: review gate state')
+    ctx.effect(() => () => {
+      gate.clear()
+      agents.clear()
+    }, 'freecodego: review gate')
+  }
+
+  /** Return a dynamic opener; each session revalidates the installed artifact. 
+   * @returns the native Agent Runtime Openers.
+   */
   nativeRuntimeOpeners(): NativeAgentRuntimeOpeners {
     return nativeRuntimeOpeners(this.engineRemotesHost)
   }
 
-  nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.status() }
-  /** Root-engine defaults are read by the Host API only for new identities. */
+    /**
+   * Report the installed Codex runtime state, as the native-runtime surface reads it.
+   * @returns the runtime's install state.
+   */
+nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.status() }
+  /** Root-engine defaults are read by the Host API only for new identities. 
+   * @returns the default engine, provider, and model new identities start with.
+   */
   defaultAgentOptions(): { readonly engine: 'deepseek' | 'codex' | 'claude'; readonly provider: string; readonly model?: string } {
     return defaultAgentOptions(this.engineRemotesHost)
   }
 
-  /** Resolve the native execution plan through the RC.1 AgentFactory seam. */
+  /** Resolve the native execution plan through the RC.1 AgentFactory seam. 
+   * @param restore - the durable engine plan being restored, when reopening an existing session.
+   * @param requested - the caller's options to layer over that plan.
+   * @returns the options a native child agent is created with.
+   */
   nativeAgentOptionsAlpha(
     restore?: { readonly engine: 'codex' | 'claude'; readonly modelId?: string; readonly provider?: string },
     requested?: AgentOptions,
@@ -1690,36 +1908,53 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return nativeAgentOptionsAlpha(this.engineRemotesHost, restore, requested)
   }
 
-  @Remote('setDefaultEngine')
+    /**
+   * Persist the engine future sessions open with.
+   * @param engine - engine id to persist.
+   * @returns the persisted engine.
+   */
+@Remote('setDefaultEngine')
   async setDefaultEngine(engine: string): Promise<{ readonly engine: 'deepseek' | 'codex' | 'claude' }> {
     return setDefaultEngine(this.engineRemotesHost, engine)
   }
 
-  /** Persist the model id used by future sessions; live sessions remain pinned. */
+  /** Persist the model id used by future sessions; live sessions remain pinned. 
+   * @param model - model id the turn runs.
+   * @returns the persisted model id.
+   */
   @Remote('setDefaultModel')
   async setDefaultModel(model: string): Promise<{ readonly model: string }> {
     return setDefaultModel(this.engineRemotesHost, model)
   }
 
-  /** Return browser-safe aggregate status for the Host-managed Advisor. */
+  /** Return browser-safe aggregate status for the Host-managed Advisor. 
+   * @returns the advisor Status.
+   */
   @Remote('advisorStatus')
   advisorStatus(): FreeCodeGoAdvisorStatus {
     return this.advisor.status()
   }
 
-  /** Persist a partial Advisor configuration update. */
+  /** Persist a partial Advisor configuration update. 
+   * @returns the advisor Status.
+   * @param input - the partial Advisor configuration to merge.
+   */
   @Remote('advisorUpdate')
   async advisorUpdate(input: FreeCodeGoAdvisorUpdate): Promise<FreeCodeGoAdvisorStatus> {
     return this.advisor.update(input)
   }
 
-  /** List text-capable managed routes suitable for an independent Advisor call. */
+  /** List text-capable managed routes suitable for an independent Advisor call. 
+   * @returns the advisor Model rows, in backend order.
+   */
   @Remote('advisorModels')
   async advisorModels(): Promise<readonly FreeCodeGoAdvisorModel[]> {
     return advisorModels(this.engineeringRemotesHost)
   }
 
-  /** Recent durable notes for currently live sessions; transcript data stays Host-owned. */
+  /** Recent durable notes for currently live sessions; transcript data stays Host-owned. 
+   * @returns the advisor Note rows, in backend order.
+   */
   @Remote('advisorNotes')
   advisorNotes(): readonly FreeCodeGoAdvisorNote[] {
     const sessions = this.ctx.get('sessions') as { list?: () => readonly ({ readonly id: unknown } & HostSessionEvents)[] } | undefined
@@ -1729,25 +1964,66 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       .slice(0, 40)
   }
 
-  /** Ask the Advisor to review the latest durable facts of one live session. */
+  /** Ask the Advisor to review the latest durable facts of one live session. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the advisor Status.
+   */
   @Remote('advisorReviewNow')
   advisorReviewNow(sessionId: string): FreeCodeGoAdvisorStatus {
     return advisorReviewNow(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Request architecture, security, and testing perspectives without steering the main Agent. */
+  /** Read one workspace's review surface: its settings, its runs, and its last report. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the review Status.
+   */
+  @Remote('reviewStatus')
+  async reviewStatus(sessionId: string): Promise<FreeCodeGoReviewStatus> {
+    return reviewStatus(this.reviewRemotesHost, sessionId)
+  }
+
+  /** Start a review for one session's workspace; the run continues in the background. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @param request - what to review.
+   * @returns the review Status.
+   */
+  @Remote('reviewStart')
+  async reviewStart(sessionId: string, request: FreeCodeGoReviewStartRequest): Promise<FreeCodeGoReviewStatus> {
+    return reviewStart(this.reviewRemotesHost, sessionId, request)
+  }
+
+  /** Persist a review settings change and return the workspace's new surface. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @param patch - the settings fields to change.
+   * @returns the review Status.
+   */
+  @Remote('reviewUpdate')
+  async reviewUpdate(sessionId: string, patch: FreeCodeGoReviewUpdate): Promise<FreeCodeGoReviewStatus> {
+    return reviewUpdate(this.reviewRemotesHost, sessionId, patch)
+  }
+
+  /** Request architecture, security, and testing perspectives without steering the main Agent. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the advisor Council Report.
+   */
   @Remote('engineeringCouncilReview')
   engineeringCouncilReview(sessionId: string): Promise<FreeCodeGoAdvisorCouncilReport> {
     return engineeringCouncilReview(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Read the most recent durable Council reports for a live or restored session. */
+  /** Read the most recent durable Council reports for a live or restored session. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the advisor Council Report rows, in backend order.
+   */
   @Remote('engineeringCouncilReports')
   async engineeringCouncilReports(sessionId: string): Promise<readonly FreeCodeGoAdvisorCouncilReport[]> {
     return engineeringCouncilReports(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Expose the user-owned provider match to the engine router. */
+  /** Expose the user-owned provider match to the engine router. 
+   * @param model - model id the turn runs.
+   * @returns the provider and model the user's route maps to, or `undefined` when the caller's own provider owns it.
+   */
   resolveModelRoute(model: string): { readonly provider: string; readonly model: string } | undefined {
     return this.configuredProviderRoute(model.trim())
   }
@@ -1757,32 +2033,49 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return configuredProviderRoute(this.ctx, model)
   }
 
-  /** Start a bounded three-engine engineering council for one live parent Agent. */
+  /** Start a bounded three-engine engineering council for one live parent Agent. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @param request - the request this call projects from.
+   * @returns the engineering Council Job.
+   */
   @Remote('engineeringTeamStart')
   engineeringTeamStart(sessionId: string, request: FreeCodeGoEngineeringCouncilRequest): FreeCodeGoEngineeringCouncilJob {
     return engineeringTeamStart(this.engineeringRemotesHost, sessionId, request)
   }
 
-  /** Read one live engineering council task. */
+  /** Read one live engineering council task. 
+   * @returns the engineering Council Job.
+   * @param id - id of the council job to read.
+   */
   @Remote('engineeringTeamJob')
   async engineeringTeamJob(id: string): Promise<FreeCodeGoEngineeringCouncilJob> {
     return engineeringTeamJob(this.engineeringRemotesHost, id)
   }
 
-  /** Cancel one live engineering council and all of its child Agents. */
+  /** Cancel one live engineering council and all of its child Agents. 
+   * @returns the engineering Council Job.
+   * @param id - id of the council job to cancel.
+   */
   @Remote('engineeringTeamCancel')
   engineeringTeamCancel(id: string): FreeCodeGoEngineeringCouncilJob {
     if (typeof id !== 'string' || !/^council_[a-f0-9]{32}$/i.test(id)) throw new Error('engineering council job id is invalid')
     return this.engineCouncil.cancel(id)
   }
 
-  /** Read durable council reports from one live parent Agent. */
+  /** Read durable council reports from one live parent Agent. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Council Report rows, in backend order.
+   */
   @Remote('engineeringTeamReports')
   async engineeringTeamReports(sessionId: string): Promise<readonly FreeCodeGoEngineeringCouncilReport[]> {
     return engineeringTeamReports(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Record the user's explicit approval or rejection of a completed engineering council. */
+  /** Record the user's explicit approval or rejection of a completed engineering council. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Council Decision.
+   * @param request - the council id and the decision to record.
+   */
   @Remote('engineeringTeamDecision')
   async engineeringTeamDecision(
     sessionId: string,
@@ -1791,7 +2084,11 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return engineeringTeamDecision(this.engineeringRemotesHost, sessionId, request)
   }
 
-  /** Run declared verification after the user approved a completed engineering council. */
+  /** Run declared verification after the user approved a completed engineering council. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Verification Result.
+   * @param request - the council id and the verification stages to run.
+   */
   @Remote('engineeringTeamVerify')
   async engineeringTeamVerify(
     sessionId: string,
@@ -1800,61 +2097,94 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return engineeringTeamVerify(this.engineeringRemotesHost, sessionId, request)
   }
 
-  /** Mark an approved plan as implemented before running verification. */
+  /** Mark an approved plan as implemented before running verification. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Council Implementation.
+   * @param request - the council id and the implementation summary.
+   */
   @Remote('engineeringTeamImplementation')
   async engineeringTeamImplementation(sessionId: string, request: { readonly id: string; readonly summary: string }): Promise<FreeCodeGoEngineeringCouncilImplementation> {
     return engineeringTeamImplementation(this.engineeringRemotesHost, sessionId, request)
   }
 
-  /** Browser-safe engineering enhancement state; modules remain isolated from account loading. */
+  /** Browser-safe engineering enhancement state; modules remain isolated from account loading. 
+   * @returns the engineering Status.
+   */
   @Remote('engineeringStatus')
   async engineeringStatus(): Promise<FreeCodeGoEngineeringStatus> {
     return engineeringStatus(this.engineeringRemotesHost)
   }
 
-  /** Enable or disable every engineering enhancement resource without affecting MCP or user Skills. */
+  /** Enable or disable every engineering enhancement resource without affecting MCP or user Skills. 
+   * @param enabled - whether this capability is switched on.
+   * @returns the engineering Status.
+   */
   @Remote('engineeringSetEnabled')
   async engineeringSetEnabled(enabled: boolean): Promise<FreeCodeGoEngineeringStatus> {
     return engineeringSetEnabled(this.engineeringRemotesHost, enabled)
   }
 
-  /** Persist an explicitly bounded engineering settings patch. */
+  /** Persist an explicitly bounded engineering settings patch. 
+   * @returns the engineering Status.
+   * @param input - the bounded engineering settings patch.
+   */
   @Remote('engineeringSettingsUpdate')
   async engineeringSettingsUpdate(input: Partial<FreeCodeGoEngineeringSettings>): Promise<FreeCodeGoEngineeringStatus> {
     return engineeringSettingsUpdate(this.engineeringRemotesHost, input)
   }
 
-  /** Read the session's autonomous loop: goal, phase, continuation, round budget. */
+  /** Read the session's autonomous loop: goal, phase, continuation, round budget. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Loop Status.
+   */
   @Remote('engineeringLoopStatus')
   async engineeringLoopStatus(sessionId: string): Promise<FreeCodeGoEngineeringLoopStatus> {
     return engineeringLoopStatus(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Let the goal's round driver continue without a user turn. */
+  /** Let the goal's round driver continue without a user turn. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Loop Status.
+   */
   @Remote('engineeringLoopArm')
   async engineeringLoopArm(sessionId: string): Promise<FreeCodeGoEngineeringLoopStatus> {
     return engineeringLoopArm(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Stop unattended continuation for the session's goal. */
+  /** Stop unattended continuation for the session's goal. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Loop Status.
+   */
   @Remote('engineeringLoopStop')
   async engineeringLoopStop(sessionId: string): Promise<FreeCodeGoEngineeringLoopStatus> {
     return engineeringLoopStop(this.engineeringRemotesHost, sessionId)
   }
 
-  /** List compact local memories for the selected workspace without exposing drafts to Agents. */
+  /** List compact local memories for the selected workspace without exposing drafts to Agents. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Memory Page.
+   * @param request - the trust filter, page size, and cursor.
+   */
   @Remote('engineeringMemoryList')
   engineeringMemoryList(sessionId: string, request?: { readonly trusts?: readonly FreeCodeGoEngineeringMemoryTrust[]; readonly limit?: number; readonly cursor?: string }): FreeCodeGoEngineeringMemoryPage {
     return engineeringMemoryList(this.engineeringRemotesHost, sessionId, request)
   }
 
-  /** Search reviewed historical knowledge for the selected workspace. */
+  /** Search reviewed historical knowledge for the selected workspace. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Memory Index rows, in backend order.
+   * @param searchText - the text to match.
+   * @param limit - the maximum number of records to return.
+   */
   @Remote('engineeringMemorySearch')
   engineeringMemorySearch(sessionId: string, searchText?: string, limit?: number): readonly FreeCodeGoEngineeringMemoryIndex[] {
     return engineeringMemorySearch(this.engineeringRemotesHost, sessionId, searchText, limit)
   }
 
-  /** Preview the bounded reviewed-memory index that is injected only at session start. */
+  /** Preview the bounded reviewed-memory index that is injected only at session start. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Memory Recall.
+   */
   @Remote('engineeringMemoryRecall')
   engineeringMemoryRecall(sessionId: string): FreeCodeGoEngineeringMemoryRecall {
     const started = Date.now()
@@ -1871,49 +2201,79 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return recall
   }
 
-  /** Read a bounded time neighborhood around a user-selected local memory record. */
+  /** Read a bounded time neighborhood around a user-selected local memory record. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Memory Timeline.
+   * @param request - the record id and the time window around it.
+   */
   @Remote('engineeringMemoryTimeline')
   engineeringMemoryTimeline(sessionId: string, request: { readonly id: string; readonly before?: number; readonly after?: number }): FreeCodeGoEngineeringMemoryTimeline {
     return engineeringMemoryTimeline(this.engineeringRemotesHost, sessionId, request)
   }
 
-  /** Read selected local memory details for human review. */
+  /** Read selected local memory details for human review. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Memory Detail rows, in backend order.
+   * @param ids - ids of the records to read.
+   */
   @Remote('engineeringMemoryGet')
   engineeringMemoryGet(sessionId: string, ids: readonly string[]): readonly FreeCodeGoEngineeringMemoryDetail[] {
     return engineeringMemoryGet(this.engineeringRemotesHost, sessionId, ids)
   }
 
-  /** User-only review decision. Agent tools cannot call this path. */
+  /** User-only review decision. Agent tools cannot call this path. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Memory Detail.
+   * @param request - the record id and the review decision.
+   */
   @Remote('engineeringMemoryReview')
   engineeringMemoryReview(sessionId: string, request: { readonly id: string; readonly decision: FreeCodeGoEngineeringMemoryReviewDecision }): FreeCodeGoEngineeringMemoryDetail {
     return engineeringMemoryReview(this.engineeringRemotesHost, sessionId, request)
   }
 
-  /** Permanently delete one local memory selected by the user. */
+  /** Permanently delete one local memory selected by the user. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @param id - id of the record to delete.
+   * @returns true once the record is gone.
+   */
   @Remote('engineeringMemoryDelete')
   engineeringMemoryDelete(sessionId: string, id: string): { readonly deleted: true } {
     return engineeringMemoryDelete(this.engineeringRemotesHost, sessionId, id)
   }
 
-  /** Clear non-reviewed records by default; reviewed knowledge needs an explicit opt-in. */
+  /** Clear non-reviewed records by default; reviewed knowledge needs an explicit opt-in. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @param request - whether reviewed knowledge is included in the purge.
+   * @returns how many records were deleted.
+   */
   @Remote('engineeringMemoryPurgeProject')
   engineeringMemoryPurgeProject(sessionId: string, request?: { readonly includeReviewed?: boolean }): { readonly deleted: number } {
     return engineeringMemoryPurgeProject(this.engineeringRemotesHost, sessionId, request)
   }
 
-  /** Export reviewed project knowledge without drafts, rejected records, or database paths. */
+  /** Export reviewed project knowledge without drafts, rejected records, or database paths. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the reviewable records, with drafts and rejected entries omitted.
+   */
   @Remote('engineeringMemoryExport')
   engineeringMemoryExport(sessionId: string): { readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly FreeCodeGoEngineeringMemoryDetail[] } {
     return engineeringMemoryExport(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Produce a consistent plugin-private SQLite backup without exposing its path. */
+  /** Produce a consistent plugin-private SQLite backup without exposing its path. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Memory Backup.
+   */
   @Remote('engineeringMemoryBackup')
   engineeringMemoryBackup(sessionId: string): Promise<FreeCodeGoEngineeringMemoryBackup> {
     return engineeringMemoryBackup(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Trim only stale generated/rejected memory and completed Outbox entries. */
+  /** Trim only stale generated/rejected memory and completed Outbox entries. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Memory Retention Result.
+   * @param retentionDays - age in days beyond which stale records are trimmed.
+   */
   @Remote('engineeringMemoryRetentionSweep')
   engineeringMemoryRetentionSweep(sessionId: string, retentionDays?: number): FreeCodeGoEngineeringMemoryRetentionResult {
     const started = Date.now()
@@ -1938,6 +2298,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * waiting out the debounce. It is gated exactly like the background path: the
    * rollout stage decides whether a model is called and whether anything is
    * written.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the memory Consolidation.
    */
   @Remote('engineeringMemoryConsolidate')
   async engineeringMemoryConsolidate(sessionId: string): Promise<MemoryConsolidation> {
@@ -1954,6 +2316,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * opens only this file never sees a row whose file is missing. Regenerated here
    * rather than only during a pass, because a user who edited a topic by hand
    * needs a way to bring the index back in step without spending a model request.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the memory Manifest.
    */
   @Remote('engineeringMemoryManifest')
   engineeringMemoryManifest(sessionId: string): MemoryManifest {
@@ -1972,6 +2336,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * The result names the forgotten path relative to the archive and nothing else:
    * the tombstone and audit locations are filesystem detail, and every other
    * memory Remote on this surface is careful not to hand those out.
+   * @param sessionId - the Harness session this operation acts on.
+   * @param request - the path and the sha256 of the bytes the caller read.
+   * @returns whether the record was forgotten, with the refusal when it was not.
    */
   @Remote('engineeringMemoryForget')
   engineeringMemoryForget(
@@ -1988,37 +2355,60 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return result.ok ? { ok: true, path: result.path } : result
   }
 
-  /** Capture a checkpoint of the workspace's tracked source files. */
+  /** Capture a checkpoint of the workspace's tracked source files. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Checkpoint.
+   * @param input - the label the checkpoint is listed under.
+   */
   @Remote('engineeringCheckpointCapture')
   async engineeringCheckpointCapture(sessionId: string, input: { readonly label: string }): Promise<FreeCodeGoEngineeringCheckpoint> {
     return engineeringCheckpointCapture(this.engineeringRemotesHost, sessionId, input?.label)
   }
 
-  /** List this workspace's checkpoints, newest first. */
+  /** List this workspace's checkpoints, newest first. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Checkpoint rows, in backend order.
+   */
   @Remote('engineeringCheckpointList')
   engineeringCheckpointList(sessionId: string): readonly FreeCodeGoEngineeringCheckpoint[] {
     return engineeringCheckpointList(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Restore the workspace to a checkpoint. */
+  /** Restore the workspace to a checkpoint. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Checkpoint Restore Result.
+   * @param input - id of the checkpoint to restore.
+   */
   @Remote('engineeringCheckpointRestore')
   async engineeringCheckpointRestore(sessionId: string, input: { readonly id: string }): Promise<FreeCodeGoEngineeringCheckpointRestoreResult> {
     return engineeringCheckpointRestore(this.engineeringRemotesHost, sessionId, input?.id)
   }
 
-  /** Delete one checkpoint manifest. */
+  /** Delete one checkpoint manifest. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @param input - id of the checkpoint to delete.
+   * @returns true once the manifest is gone.
+   */
   @Remote('engineeringCheckpointRemove')
   engineeringCheckpointRemove(sessionId: string, input: { readonly id: string }): { readonly deleted: true } {
     return engineeringCheckpointRemove(this.engineeringRemotesHost, sessionId, input?.id)
   }
 
-  /** Preview what restoring one checkpoint would change, without touching files. */
+  /** Preview what restoring one checkpoint would change, without touching files. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Checkpoint Diff.
+   * @param input - id of the checkpoint to preview.
+   */
   @Remote('engineeringCheckpointDiff')
   engineeringCheckpointDiff(sessionId: string, input: { readonly id: string }): FreeCodeGoEngineeringCheckpointDiff {
     return engineeringCheckpointDiff(this.engineeringRemotesHost, sessionId, input?.id)
   }
 
-  /** Pin or unpin one checkpoint; pinned ones survive the retention cap. */
+  /** Pin or unpin one checkpoint; pinned ones survive the retention cap. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @param input - the checkpoint id and the pin state to store.
+   * @returns the pin state now stored.
+   */
   @Remote('engineeringCheckpointSetPinned')
   engineeringCheckpointSetPinned(sessionId: string, input: { readonly id: string; readonly pinned: boolean }): { readonly pinned: boolean } {
     return engineeringCheckpointSetPinned(this.engineeringRemotesHost, sessionId, input?.id,  input?.pinned)
@@ -2030,6 +2420,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * Writes drafts only; it never registers a Skill root. The gap between "a file
    * exists" and "every engine now follows it" is exactly the boundary a human
    * should cross deliberately.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Skill Draft Result.
    */
   @Remote('engineeringSkillDraft')
   async engineeringSkillDraft(sessionId: string): Promise<FreeCodeGoEngineeringSkillDraftResult> {
@@ -2043,6 +2435,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * The report is already durable in the session log; this makes it reviewable —
    * a file a teammate can read in a pull request. Only an approved report is
    * exported, because an unreviewed plan is not a decision the project has made.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Spec Bundle.
+   * @param request - the council report id to export.
    */
   @Remote('engineeringSpecExport')
   async engineeringSpecExport(sessionId: string, request: { readonly id: string }): Promise<FreeCodeGoEngineeringSpecBundle> {
@@ -2057,31 +2452,33 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * refresh or a diagnostics script. It measures this plugin's own
    * deterministic units — guards, repo map, memory ranking, compression,
    * council merge — and never model behaviour, which needs a keyed harness.
+   * @returns the engineering Eval Report.
    */
   @Remote('engineeringEval')
   async engineeringEval(): Promise<FreeCodeGoEngineeringEvalReport> {
     return await runEngineeringEval()
   }
 
-  /** Read live Headroom context-compression state and savings counters. */
+  /** Read live Headroom context-compression state and savings counters. 
+   * @returns the headroom Stats.
+   */
   @Remote('headroomStatus')
   headroomStatus(): HeadroomStats {
     return this.headroom.status()
   }
 
-  /** What the deferred-tool split currently saves on every request. */
+  /** What the deferred-tool split currently saves on every request. 
+   * @returns the deferred Tool Status.
+   */
   @Remote('deferredToolsStatus')
   deferredToolsStatus(): DeferredToolStatus {
     return this.deferredTools.status()
   }
 
-  /** Live multi-member team state: open teams, live members, context control. */
-  @Remote('teamStatus')
-  teamStatus(): TeamRuntimeStatus {
-    return this.teamRuntime.status()
-  }
-
-  /** Toggle deferred tool schemas for future sessions. */
+  /** Toggle deferred tool schemas for future sessions. 
+   * @param enabled - whether this capability is switched on.
+   * @returns the deferred Tool Status.
+   */
   @Remote('deferredToolsSetEnabled')
   async deferredToolsSetEnabled(enabled: boolean): Promise<DeferredToolStatus> {
     const settings = this.policy
@@ -2090,7 +2487,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return this.deferredTools.status()
   }
 
-  /** Probe-and-mount status for the optional LSP stack (fail-soft). */
+  /** Probe-and-mount status for the optional LSP stack (fail-soft). 
+   * @returns the probe-and-mount state of the optional LSP stack.
+   */
   @Remote('lspMountStatus')
   async lspMountStatus(): Promise<import('./types.ts').FreeCodeGoLspMountStatus> {
     if (this.lspMount === undefined) return { enabled: false, mounted: false, servers: [] }
@@ -2105,6 +2504,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * Remote exists because the stock client has no surface for it, and a
    * FreeCodeGo session that lands in `read-only` otherwise reports every failed
    * write as a generic tool error instead of an explicable policy denial.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the sandbox Status.
    */
   @Remote('sandboxModeStatus')
   async sandboxModeStatus(sessionId: string): Promise<FreeCodeGoSandboxStatus> {
@@ -2143,6 +2544,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * safe, and scoped to this session. `danger-full-access` is reachable here
    * because a user explicitly asking for it is the intended flow; the model has
    * no path to this Remote.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the sandbox Status.
+   * @param mode - the Harness sandbox mode to apply to this session.
    */
   @Remote('sandboxModeSet')
   async sandboxModeSet(sessionId: string, mode: string): Promise<FreeCodeGoSandboxStatus> {
@@ -2173,6 +2577,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * the record alone would report "what has ever been granted" and leave the panel
    * with no root to revoke, which is a different screen and not a useful one.
    * @param directory - an absolute directory to resolve, or absent for this Host's workspace.
+   * @returns the trust Status.
    */
   @Remote('trustFolderStatus')
   async trustFolderStatus(directory?: string): Promise<FreeCodeGoTrustStatus> {
@@ -2194,6 +2599,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * repository there is nothing to grant, and this fails loudly instead of
    * recording an entry no consumer would ever match.
    * @param directory - an absolute directory inside the repository to trust.
+   * @returns the trust Status.
    */
   @Remote('trustFolderGrant')
   async trustFolderGrant(directory: string): Promise<FreeCodeGoTrustStatus> {
@@ -2228,6 +2634,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * settings change would leave a project's MCP servers running after the user
    * said no.
    * @param directory - an absolute directory inside the repository to distrust.
+   * @returns the trust Status.
    */
   @Remote('trustFolderRevoke')
   async trustFolderRevoke(directory: string): Promise<FreeCodeGoTrustStatus> {
@@ -2303,7 +2710,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * Nothing opened the file, so a repository could write the tier's four keys and
    * have them read by no one — and a key *outside* the whitelist was dropped with
    * no way to tell its author why, which the module's own doc calls out as the
-   * failure that makes a team conclude the whole tier is broken.
+   * failure that makes a whole tier look broken.
    *
    * The gate is asked before the file is opened, and through
    * {@link projectScopeTrust} rather than a second reading of the trust record:
@@ -2591,12 +2998,17 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    *
    * The timer exists to bound cost, not to change behaviour, so a test that
    * wanted to observe a pass would otherwise have to wait out the debounce.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the memory Consolidation.
+   * @param cwd - the workspace the consolidation pass runs against.
    */
   async consolidateMemoryForTest(cwd: string, sessionId?: string): Promise<MemoryConsolidation> {
     return await this.memoryPipeline.consolidate(sessionId === undefined ? { cwd } : { cwd, sessionId })
   }
 
-  /** All guard/quality toggles in one snapshot for the settings UI. */
+  /** All guard/quality toggles in one snapshot for the settings UI. 
+   * @returns the guard Settings Status.
+   */
   @Remote('guardSettingsStatus')
   async guardSettingsStatus(): Promise<FreeCodeGoGuardSettingsStatus> {
     const settings = this.policy.get()
@@ -2871,10 +3283,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
           },
           required: ['action'],
         },
-        output: {
-          schema: { type: 'object', additionalProperties: true },
-          render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
-        },
+        output: JSON_TOOL_OUTPUT,
         execute: async (args: { readonly action?: string; readonly reason?: string; readonly plan?: string }, exec: { readonly agent?: unknown }) => {
           const agent = exec?.agent as PlanModeAgent | undefined
           if (agent === undefined) return { error: 'Plan Mode needs an active agent' }
@@ -2936,7 +3345,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   }
 
   /**
-   * The ten collectors, wired to this plugin's own objects.
+   * The collectors, wired to this plugin's own objects.
    *
    * Every reader here already exists: trust resolution, the capability
    * registry's snapshot, the sandbox profile in force, the engine status
@@ -2969,6 +3378,10 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
           ...(resolved.root === undefined ? {} : { root: resolved.root }),
         }
       },
+      // The same answer the dispatcher gets, from the same method: the hooks
+      // section reads the dispatcher's own discovery, so a report that decided
+      // this question for itself would list a file the runtime no longer opens.
+      claudeHookDialect: () => this.claudeHookDialect(),
       capabilities: async () => {
         const snapshot = await this.capabilities.snapshot()
         return {
@@ -3044,11 +3457,111 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   /**
    * Register the unified inspect surface.
    *
-   * One tool, one collection pass, ten sections. It exists because the same
-   * question ("what is actually loaded?") previously required four commands, and
+   * One tool, one collection pass, every declared section. It exists because the
+   * same question ("what is actually loaded?") previously required four commands,
+   * and
    * because a section that could not be read has to say so rather than render as
    * empty — see `inspect/collect.ts` for the isolation rule.
    */
+  /**
+   * The review surface for one workspace, assembled on first use.
+   *
+   * Assembly is deferred rather than done at boot because it reads the
+   * workspace's rule files: reading every checkout's rules during construction
+   * would do filesystem work for workspaces this session never reviews, and would
+   * warn about a malformed rule file for a workspace nobody asked about. A failure
+   * here is a rejected promise the tool reports, not a broken plugin.
+   * @param workspace - the workspace under review, as an absolute path.
+   */
+  private reviewInstallFor(workspace: string): Promise<ReviewInstall> {
+    const existing = this.reviewInstalls.get(workspace)
+    if (existing !== undefined) return existing
+    const created = createReviewInstall({
+      llm: this.ctx.llm,
+      settings: {
+        get: () => {
+          const current = this.policy.get()
+          return current === undefined
+            ? undefined
+            : { advisorProvider: current.advisorProvider, advisorModel: current.advisorModel }
+        },
+      },
+      workspace,
+      home: homedir(),
+      readFile: async candidate => {
+        try {
+          return await readFile(candidate, 'utf8')
+        } catch {
+          return undefined
+        }
+      },
+      joinPath: (left, right) => path.join(left, right),
+      maxConcurrent: 1,
+      escalationEnabled: () => this.policy.get()?.reviewEscalation === true,
+    }).then(install => {
+      // A rule file a project wrote and this plugin cannot use is the one failure
+      // a user cannot see any other way: the review runs, and simply applies a
+      // standard other than the one the repository asked for.
+      for (const warning of install.warnings) {
+        this.ctx.logger.warn(`freecodego: a review rule file could not be used — ${redactCredentialShapes(warning)}`)
+      }
+      return install
+    })
+    this.reviewInstalls.set(workspace, created)
+    return created
+  }
+
+  /**
+   * The deeper per-file reviewer for one tool call, or nothing when there is none.
+   *
+   * Three ways to answer "no": the setting is off, the call carried no session with
+   * a workspace (so a child could not be opened anywhere), or the caller was not an
+   * agent at all. Each falls back to the installed single-shot reviewer, which is a
+   * working reviewer rather than a failure — a review that cannot be deep is still
+   * worth having.
+   * @param agent - the agent that made the tool call, as the tool surface typed it.
+   */
+  private deepReviewerFor(agent: unknown): ReviewFilePort | undefined {
+    const stored = this.policy.get()
+    if (stored?.reviewDeep !== true) return undefined
+    const parent = agentForReviewSubagent(agent)
+    if (parent === undefined) return undefined
+    return createSubagentFileReviewer(parent, reviewSubagentOptions(stored))
+  }
+
+  /**
+   * Register the review tools.
+   *
+   * Four doors over one engine: run a review, preview its coverage without a model
+   * call, read what is running, and re-render the last report. Keys are resolved
+   * per call from the executing session's working directory, so a review is always
+   * about the workspace the caller is in. A registration failure is logged rather
+   * than thrown, matching every other tool set here: the remaining tools still
+   * work, and which door is missing is the observable half of the problem.
+   */
+  private registerReviewTools(): void {
+    const tools = this.toolRegistry()
+    if (tools?.register === undefined) return
+    try {
+      const disposers = reviewToolDefinitions({
+        forWorkspace: workspace => this.reviewInstallFor(workspace).then(install => install.port),
+        // Resolved per call rather than cached with the workspace's port: the deep
+        // reviewer opens a child in the calling agent's session, and one workspace's
+        // port is shared by every session in it. The setting is read here for the
+        // same reason the advisor's route is — a toggle takes effect on the next
+        // review instead of on the next reload.
+        deepReviewer: agent => this.deepReviewerFor(agent),
+      }).map(tool => tools.register(tool))
+      const cleanups = disposers.map(dispose => typeof dispose === 'function' ? dispose : () => { dispose.dispose?.() })
+      this.ctx.effect(() => () => {
+        for (const cleanup of cleanups) cleanup()
+        this.reviewInstalls.clear()
+      }, 'freecodego: review tools')
+    } catch (error) {
+      this.ctx.logger.warn(`freecodego: the review tools were not registered: ${redactCredentialShapes(String(error))}`)
+    }
+  }
+
   private registerInspectTool(): void {
     const tools = this.toolRegistry()
     if (tools?.register === undefined) return
@@ -3063,10 +3576,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
             json: { type: 'boolean', description: 'Return the report as structured JSON instead of a readable summary.' },
           },
         },
-        output: {
-          schema: { type: 'object', additionalProperties: true },
-          render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
-        },
+        output: JSON_TOOL_OUTPUT,
         execute: async (
           args: { readonly json?: boolean },
           exec?: { readonly agent?: { readonly session?: { readonly header?: { readonly cwd?: string } } } },
@@ -3141,6 +3651,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * Deliberately the same collection pass rather than a second renderer: the
    * tool, the command and this Remote must not be able to disagree about what is
    * loaded.
+   * @returns the inspect Report.
    */
   @Remote('inspectReport')
   async inspectReport(): Promise<FreeCodeGoInspectReport> {
@@ -3165,10 +3676,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         name: 'engineering_surface_report',
         description: 'Report how much prompt surface this plugin injects (tool schemas plus guidance) and whether it changed since the reviewed lock in .freecodego/surface-lock.json. Use it after editing guidance or tool descriptions, so a prompt change is a reviewable diff instead of an invisible one.',
         parameters: { type: 'object', additionalProperties: false, properties: {} },
-        output: {
-          schema: { type: 'object', additionalProperties: true },
-          render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
-        },
+        output: JSON_TOOL_OUTPUT,
         execute: async (_args: unknown, exec: { readonly agent?: { readonly session?: { readonly header?: { readonly cwd?: string } } } }) => {
           // `schemas` is optional on this structural seam, and a missing list is
           // not an empty one. `collectPluginSurfaces` defaults it to `[]`, so
@@ -3305,6 +3813,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
           }
         },
       },
+      claudeDialect: this.claudeHookDialect(),
     })
     // The project tier's own `hooks` key: `.freecodego/config.json` accepts a hook
     // block, and until this was appended the key was reported as accepted and
@@ -3319,6 +3828,28 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       : [...documents, { source: 'project' as const, path: `${PROJECT_CONFIG_RELATIVE_PATH}#hooks`, value: tier.hooks }]
     this.hookDocuments.set(key, { documents: withTier, at: Date.now() })
     return withTier
+  }
+
+  /**
+   * Who owns `.claude/settings.json` in this composition.
+   *
+   * The Harness's own bridge parses the same file and *runs the same commands*
+   * (`@deepseek-ai/dsh-hooks-claude-code`), so a composition that mounts both
+   * fires every Claude hook twice. The native row keeps the file; this reader
+   * keeps the dialects no Harness package parses.
+   *
+   * Read off the Loader rather than off a bundle name, because the bridge is not
+   * in any bundle: the two profiles that mount it are test fixtures that insert
+   * the row themselves, so "is the package currently started" is the only question
+   * whose answer matches what will actually run. A loader that is absent or
+   * throws answers `'plugin'`, which keeps the user's own files running — the
+   * direction that never drops a rule nobody else would run.
+   * @returns the owner of the Claude dialect.
+   */
+  private claudeHookDialect(): ClaudeHookDialectOwner {
+    // The decision and its fail-open rules live in `hooks/files.ts`, beside the
+    // file list they decide about, so they can be tested without a Host.
+    return claudeHookDialectOf(this.ctx.get('loader'))
   }
 
   /**
@@ -3396,19 +3927,18 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   /**
    * One session-worktree set per workspace, built on first use.
    *
-   * The registry is a `TeamWorktrees` over `<workspace>/.freecodego/worktrees.json`,
-   * which is the same class, document type and parser the team uses. What is
-   * shared is the *format* rather than the file: a team's registry lives under the
-   * team root, which a session that belongs to no team cannot reach, and a
-   * workspace-scoped copy of a workspace-scoped worktree is the right scope. The
-   * risk the plan named — two registries, one directory of worktrees, the orphan
-   * neither can find — is answered by the parser refusing a document whose `cwd`
-   * is a different workspace, so a stray file cannot be read as this one's.
+   * The registry is a `WorktreeRegistry` over
+   * `<workspace>/.freecodego/worktrees.json`: one document per workspace, holding
+   * every copy that workspace has handed out — this session's, and entries written
+   * before this build by the retired team runtime. The risk of two registries over
+   * one directory of worktrees — the orphan neither can find — is answered by the
+   * parser refusing a document whose `cwd` is a different workspace, so a stray
+   * file cannot be read as this one's.
    */
   private sessionWorktreesFor(workspaceRoot: string): SessionWorktrees {
     const existing = this.worktreeSessions.get(workspaceRoot)
     if (existing !== undefined) return existing
-    const registry = new TeamWorktrees(workspaceRoot, path.join(workspaceRoot, '.freecodego', 'worktrees.json'))
+    const registry = new WorktreeRegistry(workspaceRoot, path.join(workspaceRoot, '.freecodego', 'worktrees.json'))
     const runGit = async (args: readonly string[]): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> => {
       try {
         const result = await promisify(execFile)('git', args, { timeout: 120_000, windowsHide: true, maxBuffer: 64_000 })
@@ -3496,9 +4026,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   /**
    * Register the persona roster and dispatcher.
    *
-   * The spawn path is the same one the team uses (`ctx.agents.create` off the
-   * parent's context), with one difference that is the whole point of a persona
-   * here: the child's `cwd` is the isolated copy when the persona asks for one.
+   * The spawn path is the Harness's own (`ctx.agents.create` off the parent's
+   * context), with one difference that is the whole point of a persona here: the
+   * child's `cwd` is the isolated copy when the persona asks for one.
    * A session's cwd cannot be revised after creation, but a child's is set by the
    * act of creating it — so this is where `default_isolation` becomes a real
    * redirect rather than an intention.
@@ -3626,10 +4156,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
             max_lines: { type: 'integer', minimum: 1, description: `Whole lines to serve at most (default ${DEFAULT_RECALL_MAX_LINES}).` },
           },
         },
-        output: {
-          schema: { type: 'object', additionalProperties: true },
-          render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
-        },
+        output: JSON_TOOL_OUTPUT,
         execute: async (args: SpillRecallArgs | undefined) => this.recallSpill(args),
         presentCall: (args: SpillRecallArgs | undefined) => ({ card: 'generic', title: spillRecallTitle(args?.locator) }),
       }))
@@ -3744,10 +4271,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
             carried_debt_tokens: { type: 'integer', minimum: 0, description: 'Cost the previous compaction has not yet earned back.' },
           },
         },
-        output: {
-          schema: { type: 'object', additionalProperties: true },
-          render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
-        },
+        output: JSON_TOOL_OUTPUT,
         execute: async (args: ContextBudgetArgs | undefined, exec: { readonly agent?: ContextBudgetAgent }) => {
           if (this.policy.get()?.contextBudgetEnabled === false) return { enabled: false, note: 'The model-visible context budget is disabled in FreeCodeGo settings.' }
           const agent = exec?.agent
@@ -3780,6 +4304,31 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       // fragment is the only reading left. That is a difference an operator
       // should be able to see rather than infer from a tool that is not there.
       this.ctx.logger.warn(`freecodego: the context budget tool was not registered, so only the coarse budget fragment remains: ${redactCredentialShapes(String(error))}`)
+    }
+  }
+
+  /**
+   * Register the two manual context-control tools.
+   *
+   * Registered unconditionally, including in a composition with no compaction
+   * engine: the engine is resolved per call, so a missing one is answered by the
+   * tool ("no engine is mounted for this session") rather than by the tool being
+   * absent. An absent tool tells the model nothing about *why*, and a deployment
+   * can mount an engine into a session later than the plugin loads.
+   */
+  private registerContextControlTools(): void {
+    const tools = this.toolRegistry()
+    if (tools?.register === undefined) return
+    const control = new ContextControl(this.ctx)
+    for (const definition of contextControlToolDefinitions(control)) {
+      try {
+        const dispose = tools.register(definition)
+        const cleanup = typeof dispose === 'function' ? dispose : () => { dispose.dispose?.() }
+        this.ctx.effect(() => () => { cleanup() }, `freecodego: ${definition.name}`)
+      } catch (error) {
+        // One failed registration must not take the other with it.
+        this.ctx.logger.warn(`freecodego: ${definition.name} was not registered: ${redactCredentialShapes(String(error))}`)
+      }
     }
   }
 
@@ -3899,10 +4448,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         name: 'engineering_context_prompt',
         description: 'Report where this conversation\'s prompt tokens actually go — system prompt, tool definitions, rules, Skills, MCP servers, subagent definitions, summarized conversation, and the transcript — plus a bounded tree naming the largest individual items and any tool call whose result never arrived. Call this when the context is filling up and the next step depends on *what* is large: a bloated tool block calls for deferring schemas or turning a Skill pack off, a long transcript calls for compacting, and a broken tool pairing means a turn was interrupted. Pair it with engineering_context_budget, which reports how much room is left rather than what filled it.',
         parameters: { type: 'object', additionalProperties: false, properties: {} },
-        output: {
-          schema: { type: 'object', additionalProperties: true },
-          render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
-        },
+        output: JSON_TOOL_OUTPUT,
         execute: async (_args: unknown, exec: { readonly agent?: ContextBudgetAgent }) => {
           if (this.policy.get()?.promptCompositionEnabled === false) return { enabled: false, note: 'The model-visible prompt composition is disabled in FreeCodeGo settings.' }
           const agent = exec?.agent
@@ -4155,6 +4701,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * Answers from the runtime rather than from the settings document, so the
    * caller sees the values actually in force — including the defaults a partial
    * or hand-edited settings document falls back to.
+   * @returns the automation Settings.
    */
   @Remote('automationSettingsStatus')
   async automationSettingsStatus(): Promise<FreeCodeGoAutomationSettings> {
@@ -4180,6 +4727,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * with no caller at all, which is the same unreachability in a new shape. The
    * settings surface now renders these four switches, and `harness-ui`'s Remote
    * contract test refuses to let a declared Remote go uncalled again.
+   * @returns the automation Settings.
+   * @param patch - the session-automation switches to update.
    */
   @Remote('automationSettingsUpdate')
   async automationSettingsUpdate(patch: FreeCodeGoAutomationSettingsUpdate): Promise<FreeCodeGoAutomationSettings> {
@@ -4190,7 +4739,10 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return this.automation.effectiveSettings()
   }
 
-  /** Update any subset of the guard/quality toggles. */
+  /** Update any subset of the guard/quality toggles. 
+   * @returns the guard Settings Status.
+   * @param patch - the guard and quality toggles to update.
+   */
   @Remote('guardSettingsUpdate')
   async guardSettingsUpdate(patch: FreeCodeGoGuardSettingsUpdate): Promise<FreeCodeGoGuardSettingsStatus> {
     const settings = this.policy
@@ -4204,7 +4756,10 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return this.guardSettingsStatus()
   }
 
-  /** Enable or disable Headroom context compression for future tool results. */
+  /** Enable or disable Headroom context compression for future tool results. 
+   * @param enabled - whether this capability is switched on.
+   * @returns the headroom Stats.
+   */
   @Remote('headroomSetEnabled')
   async headroomSetEnabled(enabled: boolean): Promise<HeadroomStats> {
     const settings = this.policy
@@ -4213,9 +4768,12 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return this.headroom.status()
   }
 
-  /** Update Headroom tuning knobs (threshold, savings floor, exclusion list). */
+  /** Update Headroom tuning knobs (threshold, savings floor, exclusion list). 
+   * @returns the headroom Stats.
+   * @param patch - the Headroom tuning knobs to update.
+   */
   @Remote('headroomUpdate')
-  async headroomUpdate(patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean }): Promise<HeadroomStats> {
+  async headroomUpdate(patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean; readonly foldPolicy?: 'reversible' | 'max' }): Promise<HeadroomStats> {
     const settings = this.policy
     if (settings === undefined) throw new Error('FreeCodeGo settings are not configured')
     const update: Record<string, unknown> = {}
@@ -4225,6 +4783,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     if (Array.isArray(patch.excludeTools)) update.headroomExcludeTools = patch.excludeTools.map(entry => String(entry).toLowerCase().trim()).filter(entry => entry !== '')
     if (typeof patch.foldReads === 'boolean') update.headroomFoldReads = patch.foldReads
     if (typeof patch.codeSkeletonEnabled === 'boolean') update.headroomCodeSkeletonEnabled = patch.codeSkeletonEnabled
+    if (patch.foldPolicy === 'reversible' || patch.foldPolicy === 'max') update.headroomFoldPolicy = patch.foldPolicy
     await settings.update(update)
     return this.headroom.status()
   }
@@ -4312,176 +4871,272 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       }
     }), 'freecodego: headroom effort routing')  }
 
-  /** Status for the fixed official Graphify Runtime. This check does not start Python. */
+  /** Status for the fixed official Graphify Runtime. This check does not start Python. 
+   * @returns the engineering Graph Runtime Status.
+   */
   @Remote('engineeringGraphRuntimeStatus')
   engineeringGraphRuntimeStatus(): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
     return engineeringGraphRuntimeStatus(this.engineeringRemotesHost)
   }
 
-  /** Supported private Graphify Runtime installation sources for this platform. */
+  /** Supported private Graphify Runtime installation sources for this platform. 
+   * @returns the engineering Graph Runtime Package rows, in backend order.
+   */
   @Remote('engineeringGraphRuntimePackages')
   engineeringGraphRuntimePackages(): Promise<readonly FreeCodeGoEngineeringGraphRuntimePackage[]> {
     return engineeringGraphRuntimePackages(this.engineeringRemotesHost)
   }
 
-  /** Install the fixed official Graphify Wheel into a plugin-private Python environment. */
+  /** Install the fixed official Graphify Wheel into a plugin-private Python environment. 
+   * @returns the engineering Graph Runtime Status.
+   * @param input - the Python package to install, and the interpreter when an existing one is reused.
+   */
   @Remote('engineeringGraphRuntimeInstall')
   engineeringGraphRuntimeInstall(input: { readonly packageId: 'managed-uv-python' | 'existing-python'; readonly pythonPath?: string }): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
     return engineeringGraphRuntimeInstall(this.engineeringRemotesHost, input)
   }
 
-  /** Remove only the plugin-owned Graphify Runtime; project graphs remain preserved. */
+  /** Remove only the plugin-owned Graphify Runtime; project graphs remain preserved. 
+   * @returns the engineering Graph Runtime Status.
+   */
   @Remote('engineeringGraphRuntimeRemove')
   engineeringGraphRuntimeRemove(): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
     return engineeringGraphRuntimeRemove(this.engineeringRemotesHost)
   }
 
-  /** Read the current workspace's Graphify output state without scanning the workspace. */
+  /** Read the current workspace's Graphify output state without scanning the workspace. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Graph Project Status.
+   */
   @Remote('engineeringGraphProjectStatus')
   engineeringGraphProjectStatus(sessionId: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     return engineeringGraphProjectStatus(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Build the official Graphify code graph into DSH_HOME, never into the workspace. */
+  /** Build the official Graphify code graph into DSH_HOME, never into the workspace. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Graph Project Status.
+   * @param request - whether the existing graph is rebuilt by force.
+   */
   @Remote('engineeringGraphBuild')
   engineeringGraphBuild(sessionId: string, request?: { readonly force?: boolean }): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     return engineeringGraphBuild(this.engineeringRemotesHost, sessionId, request)
   }
 
-  @Remote('engineeringGraphUpdate')
+    /**
+   * Refresh the workspace Graphify graph from what changed since the last build.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the graph project status.
+   */
+@Remote('engineeringGraphUpdate')
   engineeringGraphUpdate(sessionId: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     return engineeringGraphUpdate(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Abort only the plugin-owned Graphify process tree associated with this workspace. */
+  /** Abort only the plugin-owned Graphify process tree associated with this workspace. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns true once the plugin-owned build process tree was aborted.
+   */
   @Remote('engineeringGraphCancel')
   engineeringGraphCancel(sessionId: string): { readonly cancelled: boolean } {
     return engineeringGraphCancel(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Provide a bounded graph projection to compatible Canvas plugins without leaking raw graph JSON. */
+  /** Provide a bounded graph projection to compatible Canvas plugins without leaking raw graph JSON. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Canvas Graph.
+   * @param request - the node budget for this projection.
+   */
   @Remote('engineeringGraphCanvas')
   engineeringGraphCanvas(sessionId: string, request?: { readonly maxNodes?: number }): Promise<FreeCodeGoEngineeringCanvasGraph> {
     return engineeringGraphCanvas(this.engineeringRemotesHost, sessionId, request)
   }
 
-  @Remote('engineeringGraphClearProject')
+    /**
+   * Drop this workspace's Graphify graph and its caches.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the graph project status.
+   */
+@Remote('engineeringGraphClearProject')
   engineeringGraphClearProject(sessionId: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     return engineeringGraphClearProject(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Status for the self-contained CodeGraph Runtime (bundled Node, no Python). */
+  /** Status for the self-contained CodeGraph Runtime (bundled Node, no Python). 
+   * @returns the engineering Code Graph Runtime Status.
+   */
   @Remote('engineeringCodeGraphRuntimeStatus')
   engineeringCodeGraphRuntimeStatus(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
     return engineeringCodeGraphRuntimeStatus(this.engineeringRemotesHost)
   }
 
-  /** The verified CodeGraph platform bundle for this OS/CPU, when one exists. */
+  /** The verified CodeGraph platform bundle for this OS/CPU, when one exists. 
+   * @returns the engineering Code Graph Runtime Package rows, in backend order.
+   */
   @Remote('engineeringCodeGraphRuntimePackages')
   engineeringCodeGraphRuntimePackages(): Promise<readonly FreeCodeGoEngineeringCodeGraphRuntimePackage[]> {
     return engineeringCodeGraphRuntimePackages(this.engineeringRemotesHost)
   }
 
-  /** Download and install the SHA-256 verified official CodeGraph bundle. */
+  /** Download and install the SHA-256 verified official CodeGraph bundle. 
+   * @returns the engineering Code Graph Runtime Status.
+   */
   @Remote('engineeringCodeGraphRuntimeInstall')
   engineeringCodeGraphRuntimeInstall(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
     return engineeringCodeGraphRuntimeInstall(this.engineeringRemotesHost)
   }
 
-  /** Remove only the plugin-owned CodeGraph Runtime; workspace indexes stay. */
+  /** Remove only the plugin-owned CodeGraph Runtime; workspace indexes stay. 
+   * @returns the engineering Code Graph Runtime Status.
+   */
   @Remote('engineeringCodeGraphRuntimeRemove')
   engineeringCodeGraphRuntimeRemove(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
     return engineeringCodeGraphRuntimeRemove(this.engineeringRemotesHost)
   }
 
-  /** Read the current workspace's CodeGraph index state. */
+  /** Read the current workspace's CodeGraph index state. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Code Graph Project Status.
+   */
   @Remote('engineeringCodeGraphProjectStatus')
   engineeringCodeGraphProjectStatus(sessionId: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     return engineeringCodeGraphProjectStatus(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Initialize or refresh the workspace CodeGraph index. */
+  /** Initialize or refresh the workspace CodeGraph index. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engineering Code Graph Project Status.
+   * @param request - whether the existing index is rebuilt by force.
+   */
   @Remote('engineeringCodeGraphBuild')
   engineeringCodeGraphBuild(sessionId: string, request?: { readonly force?: boolean }): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     return engineeringCodeGraphBuild(this.engineeringRemotesHost, sessionId, request)
   }
 
-  @Remote('engineeringCodeGraphSync')
+    /**
+   * Re-index only the files that changed since the last CodeGraph build.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the codegraph project status.
+   */
+@Remote('engineeringCodeGraphSync')
   engineeringCodeGraphSync(sessionId: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     return engineeringCodeGraphSync(this.engineeringRemotesHost, sessionId)
   }
 
-  @Remote('engineeringCodeGraphCancel')
+    /**
+   * Abort the plugin-owned CodeGraph indexing process tree for this workspace.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns true once the build process tree was aborted.
+   */
+@Remote('engineeringCodeGraphCancel')
   engineeringCodeGraphCancel(sessionId: string): { readonly cancelled: boolean } {
     return engineeringCodeGraphCancel(this.engineeringRemotesHost, sessionId)
   }
 
-  @Remote('engineeringCodeGraphClearProject')
+    /**
+   * Drop this workspace's CodeGraph index and its caches.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the codegraph project status.
+   */
+@Remote('engineeringCodeGraphClearProject')
   engineeringCodeGraphClearProject(sessionId: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     return engineeringCodeGraphClearProject(this.engineeringRemotesHost, sessionId)
   }
 
-  /** Permanently delete one idle session and withdraw it from workspace navigation. */
+  /** Permanently delete one idle session and withdraw it from workspace navigation. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns true once the session is gone.
+   */
   @Remote('sessionDelete')
   async sessionDelete(sessionId: string): Promise<{ readonly deleted: true }> {
     return sessionDelete(this.engineRemotesHost, sessionId)
   }
 
-  /** Return the current cross-engine MCP and Skill capability inventory. */
+  /** Return the current cross-engine MCP and Skill capability inventory. 
+   * @returns the capability snapshot the Host reports.
+   */
   @Remote('capabilities')
   async capabilitiesSnapshot(): Promise<FreeCodeGoCapabilitySnapshot> {
     return capabilitiesSnapshot(this.engineRemotesHost)
   }
 
-  /** Persist MCP and Skill switches; disabled capabilities are not mounted for future sessions. */
+  /** Persist MCP and Skill switches; disabled capabilities are not mounted for future sessions. 
+   * @returns the capability snapshot the Host reports.
+   * @param input - the capability switches to persist.
+   */
   @Remote('capabilitiesSetEnabled')
   async capabilitiesSetEnabled(input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }): Promise<FreeCodeGoCapabilitySnapshot> {
     return capabilitiesSetEnabled(this.engineRemotesHost, input)
   }
 
-  /** Persist a manual model capability category without altering native provider settings. */
+  /** Persist a manual model capability category without altering native provider settings. 
+   * @returns the capability snapshot the Host reports.
+   * @param input - the model key and the category to store for it.
+   */
   @Remote('modelCategorySet')
   async modelCategorySet(input: { readonly key: string; readonly category?: FreeCodeGoModelCategory }): Promise<FreeCodeGoCapabilitySnapshot> {
     return modelCategorySet(this.engineRemotesHost, input)
   }
 
-  /** Read automatic third-party plugin conflict protection state and repair history. */
+  /** Read automatic third-party plugin conflict protection state and repair history. 
+   * @returns the plugin Conflict Status.
+   */
   @Remote('pluginConflictStatus')
   pluginConflictStatus(): FreeCodeGoPluginConflictStatus {
     return pluginConflictStatus(this.engineRemotesHost)
   }
 
-  /** Enable or disable automatic third-party plugin conflict prevention. */
+  /** Enable or disable automatic third-party plugin conflict prevention. 
+   * @param enabled - whether this capability is switched on.
+   * @returns the plugin Conflict Status.
+   */
   @Remote('pluginConflictSetEnabled')
   async pluginConflictSetEnabled(enabled: boolean): Promise<FreeCodeGoPluginConflictStatus> {
     return pluginConflictSetEnabled(this.engineRemotesHost, enabled)
   }
 
-  /** Save one third-party stdio or Streamable HTTP MCP server. */
+  /** Save one third-party stdio or Streamable HTTP MCP server. 
+   * @returns the capability snapshot the Host reports.
+   * @param input - the MCP server to save, carrying its id when it already exists.
+   */
   @Remote('mcpSave')
   async mcpSave(input: Omit<FreeCodeGoMcpServer, 'id'> & { readonly id?: string }): Promise<FreeCodeGoCapabilitySnapshot> {
     return mcpSave(this.engineRemotesHost, input)
   }
 
-  /** Remove one third-party MCP server. */
+  /** Remove one third-party MCP server. 
+   * @returns the capability snapshot the Host reports.
+   * @param id - id of the MCP server to remove.
+   */
   @Remote('mcpRemove')
   async mcpRemove(id: string): Promise<FreeCodeGoCapabilitySnapshot> {
     return mcpRemove(this.engineRemotesHost, id)
   }
 
-  /** Save one additional filesystem Skill root. */
+  /** Save one additional filesystem Skill root. 
+   * @returns the capability snapshot the Host reports.
+   * @param input - the Skill root to save, carrying its id when it already exists.
+   */
   @Remote('skillRootSave')
   async skillRootSave(input: Omit<FreeCodeGoSkillRoot, 'id'> & { readonly id?: string }): Promise<FreeCodeGoCapabilitySnapshot> {
     return skillRootSave(this.engineRemotesHost, input)
   }
 
-  /** Remove one additional filesystem Skill root. */
+  /** Remove one additional filesystem Skill root. 
+   * @returns the capability snapshot the Host reports.
+   * @param id - id of the Skill root to remove.
+   */
   @Remote('skillRootRemove')
   async skillRootRemove(id: string): Promise<FreeCodeGoCapabilitySnapshot> {
     return skillRootRemove(this.engineRemotesHost, id)
   }
 
-  @Remote('skillInvocationSet')
+    /**
+   * Persist whether one Skill may be invoked by the model alone.
+   * @param input - the Skill name and its model-invocability.
+   * @returns the capability snapshot the Host reports.
+   */
+@Remote('skillInvocationSet')
   async skillInvocationSet(input: { readonly name: string; readonly modelInvocable?: boolean }): Promise<FreeCodeGoCapabilitySnapshot> {
     return skillInvocationSet(this.engineRemotesHost, input)
   }
@@ -4493,31 +5148,85 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * model-facing `loadSkill`, which rejects anything without
    * `modelInvocable` and would leave the entries the dialog matters most for
    * unreadable.
+   * @returns the skill Detail.
+   * @param input - the Skill and the companion file to read.
    */
   @Remote('skillDetail')
   async skillDetail(input: FreeCodeGoSkillDetailRequest): Promise<FreeCodeGoSkillDetail> {
     return skillDetail(this.engineRemotesHost, input)
   }
 
-  /** Read one bounded page from the public MCP.so or skills.sh directory. */
+  /** Read one bounded page from the public MCP.so or skills.sh directory. 
+   * @returns the capability Marketplace Page.
+   * @param input - the directory query and its page cursor.
+   */
   @Remote('capabilityMarketplace')
   async capabilityMarketplace(input: FreeCodeGoCapabilityMarketplaceRequest): Promise<FreeCodeGoCapabilityMarketplacePage> {
     return capabilityMarketplace(this.communityHost, input)
   }
 
-  /** Add a public MCP.so entry when its published configuration can be represented by the shared runtime. */
+  /** Add a public MCP.so entry when its published configuration can be represented by the shared runtime. 
+   * @returns the capability snapshot the Host reports.
+   * @param id - id of the public MCP.so entry to add.
+   */
   @Remote('mcpPresetInstall')
   async mcpPresetInstall(id: string): Promise<FreeCodeGoCapabilitySnapshot> {
     return mcpPresetInstall(this.communityHost, id)
   }
 
-  /** Import one skills.sh entry from its verified GitHub source repository. */
+  /** Import one skills.sh entry from its verified GitHub source repository. 
+   * @returns the capability snapshot the Host reports.
+   * @param id - id of the skills.sh entry to import.
+   */
   @Remote('skillPresetInstall')
-  async skillPresetInstall(id: string): Promise<FreeCodeGoCapabilitySnapshot> {
-    return skillPresetInstall(this.communityHost, id)
+  async skillPresetInstall(id: string, placement?: FreeCodeGoSkillPlacement): Promise<FreeCodeGoCapabilitySnapshot> {
+    return skillPresetInstall(this.communityHost, id, placement)
   }
 
-  /** Resolve native-worker requests through the same Host-owned capability inventory used by DeepSeek. */
+  /**
+   * The Skill placement matrix, as the settings page shows it.
+   *
+   * Its own Remote rather than a field on the catalog response: the rows depend on
+   * the *folder* — whether it is trusted, and where it is — and a page that read them
+   * out of a cached catalog would keep offering a project install after the folder
+   * stopped being trusted.
+   * @returns the resolved rows and the folder they were resolved against.
+   */
+  @Remote('skillPlacements')
+  async skillPlacements(): Promise<FreeCodeGoSkillPlacements> {
+    return skillPlacements(this.communityHost)
+  }
+
+  /**
+   * Remember where a Skill install should land, or clear the preference.
+   *
+   * The axes travel, not a path: the Host resolves them again at install time, so a
+   * stored preference keeps meaning the same *choice* even after the folder it was
+   * chosen in has moved or lost its trust.
+   * @param input - the two axes to prefer, or neither to go back to the community root.
+   * @returns the capability snapshot the Host reports.
+   */
+  @Remote('skillPlacementPrefer')
+  async skillPlacementPrefer(input?: { readonly agent?: 'harness' | 'agents'; readonly scope?: 'project' | 'user' }): Promise<FreeCodeGoCapabilitySnapshot> {
+    // No argument is the clear: a caller that names no axes is going back to the
+    // community root, which is the one request that has nothing to say about a
+    // destination. A *partial* pair is refused below, by the registry.
+    return this.capabilities.setPreferredSkillPlacement(input ?? {})
+  }
+
+  /** Remove one Skill an earlier Marketplace install added to the managed root.
+   * @returns the capability snapshot, carrying what was removed.
+   * @param id - id of the skills.sh entry to remove.
+   */
+  @Remote('skillPresetRemove')
+  async skillPresetRemove(id: string): Promise<FreeCodeGoCapabilitySnapshot> {
+    return skillPresetRemove(this.communityHost, id)
+  }
+
+  /** Resolve native-worker requests through the same Host-owned capability inventory used by DeepSeek. 
+   * @returns the backend payload, of unknown shape.
+   * @param request - the bridge call the native worker asked for.
+   */
   async claudeBridgeHandle(request: { readonly bridge: string; readonly op: string; readonly input: unknown; readonly sessionId: string; readonly workspaceRoot?: string; readonly signal: AbortSignal }): Promise<unknown> {
     return claudeBridgeHandle(this.engineRemotesHost, request)
   }
@@ -4534,11 +5243,16 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * means the call proceeds to the engine's own approval exactly as before. A
    * request this module cannot classify also returns `undefined`.
    *
-   * The doom-loop guard is the *same instance* the Harness pipeline uses, and
-   * the agent the request belongs to is bound here rather than passed onward: the
-   * guard keys its fingerprints by agent, and a native call and a Harness call
-   * from one agent are one agent's behaviour, so they have to land on the same
-   * key or neither guard sees the loop.
+   * The doom-loop tier is this path's alone, and that is the point of it. The
+   * calls judged here never cross `tools/pre-execute` — they run inside the
+   * engine's process — so the Harness's advisory `dsh-repeat-tool-reminder`
+   * cannot see them and `freeCodeGoToolGuard` no longer carries a loop tier to
+   * duplicate it on the calls it does see. An identical retry loop on a native
+   * engine's own shell is therefore only ever stopped here.
+   *
+   * The agent the request belongs to is bound here rather than passed onward:
+   * the guard keys its fingerprints by agent, and every call in one request
+   * belongs to one agent, so the projection carries the key the guard reads.
    *
    * @param request - the transport's tool name (Claude) or method (Codex), its detail, and the agent it belongs to.
    * @returns the refusal to report to the model, or `undefined` to leave the call alone.
@@ -4583,34 +5297,55 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return undefined
   }
 
-  /** Public, credential-free community catalog used by the embedded settings page. */
+  /** Public, credential-free community catalog used by the embedded settings page. 
+   * @returns the community Catalog Payload.
+   */
   @Remote('communityCatalog')
   async communityCatalog(): Promise<CommunityCatalogPayload> {
     return communityCatalog(this.communityHost)
   }
 
-  /** Resolve only verified repository artwork; never synthesize a plugin identity. */
+  /** Resolve only verified repository artwork; never synthesize a plugin identity. 
+   * @param urls - the repository artwork URLs to resolve.
+   * @returns the resolved artwork, keyed by repository URL.
+   */
   @Remote('communityCatalogIcons')
   async communityCatalogIcons(urls: readonly string[]): Promise<Record<string, string>> {
     return communityCatalogIcons(this.communityHost, urls)
   }
 
-  @Remote('communityEnvironment')
+    /**
+   * Describe the runtime this profile would install community plugins into.
+   * @returns the Node, platform, and profile facts the installer surface shows.
+   */
+@Remote('communityEnvironment')
   async communityEnvironment(): Promise<{ readonly ready: boolean; readonly platform: string; readonly node: string; readonly profile: string }> {
     return communityEnvironment(this.communityHost)
   }
 
-  @Remote('communityInstalled')
+    /**
+   * List the community plugins installed in this profile and how each of them activated.
+   * @returns the installed versions, activation states, and the sources they came from.
+   */
+@Remote('communityInstalled')
   async communityInstalled(): Promise<{ readonly installed: Record<string, string>; readonly activation: Record<string, { readonly state: string }>; readonly sources: Record<string, readonly string[]>; readonly restartRequired: boolean }> {
     return communityInstalled(this.communityHost)
   }
 
-  @Remote('communityInstall')
+    /**
+   * Install one community plugin from its published URL.
+   * @param url - the plugin's published URL.
+   * @returns the installed package names, and that a restart is required.
+   */
+@Remote('communityInstall')
   async communityInstall(url: string): Promise<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }> {
     return communityInstall(this.communityHost, url)
   }
 
-  /** Remove an installed community plugin from the running profile and its next boot. */
+  /** Remove an installed community plugin from the running profile and its next boot. 
+   * @param url - absolute URL the request is sent to.
+   * @returns the removed package names, and that a restart is required.
+   */
   @Remote('communityUninstall')
   async communityUninstall(url: string): Promise<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }> {
     return communityUninstall(this.communityHost, url)
@@ -4651,6 +5386,35 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       communityProfileDirectory: () => this.communityProfileDirectory(),
       communitySkillDirectory: () => this.communitySkillDirectory(),
       communityRuntimeStartTime: () => this.communityRuntimeStartTime(),
+      skillPlacementContext: () => this.skillPlacementContext(),
+    }
+  }
+
+  /**
+   * The roots and the folder trust the Skill placement matrix resolves against.
+   *
+   * Read here rather than in the remote because this class is what knows the data
+   * home, the home directory, and — through the same trust resolution every other
+   * workspace-scoped reader uses — whether the folder this process runs in has been
+   * trusted. The workspace is `process.cwd()`, the same answer
+   * `trustFolderStatus` gives when asked about "this Host", so a settings panel that
+   * shows a folder as trusted and a placement panel that refuses a project install
+   * cannot be looking at two different checkouts.
+   *
+   * `workspace` falls back to the resolved directory when it is not inside a
+   * repository: the field names where a project install would land, and `undefined`
+   * would say "no folder" about a folder that merely has no repository root. The
+   * project rows refuse it on their own (`not-a-repository`), which is the reason
+   * worth showing.
+   */
+  private async skillPlacementContext(): Promise<PlacementContext> {
+    const directory = process.cwd()
+    const resolution = await this.resolveTrust(directory)
+    return {
+      workspace: resolution.root ?? path.resolve(directory),
+      dataHome: harnessHomeDirectory(),
+      home: homedir(),
+      projectTrusted: resolution.decision?.trusted === true,
     }
   }
 
@@ -4670,7 +5434,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return path.join(harnessHomeDirectory(), 'skills', 'freecodego-community')
   }
 
-  /** Return the redacted engine directory consumed by settings surfaces. */
+  /** Return the redacted engine directory consumed by settings surfaces. 
+   * @returns the engine directory settings surfaces render.
+   */
   @Remote('catalog')
   catalog(): { readonly defaultEngine: FreeCodeGoEngineId; readonly defaultModel?: string; readonly engines: readonly FreeCodeGoEngineSnapshot[] } {
     return catalog(this.engineRemotesHost)
@@ -4680,6 +5446,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * The generic Harness SessionController catalog intentionally carries only
    * portable model fields. Preserve FreeCodeGo credential readiness here so
    * our private picker can render known-but-unconfigured routes as disabled.
+   * @returns the model Availability rows, in backend order.
    */
   @Remote('modelAvailability')
   async modelAvailability(): Promise<readonly FreeCodeGoModelAvailability[]> {
@@ -4687,213 +5454,387 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   }
 
   /** Session-local execution fact for the UI. This is log-derived rather than
-   * inferred from the currently selected toolbar default. */
+   * inferred from the currently selected toolbar default. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the engine fact recorded for that session.
+   */
   @Remote('sessionEngineStatus')
   async sessionEngineStatus(sessionId: string): Promise<{ readonly engine: string; readonly executor: 'native' | 'adapter-loop'; readonly provider: string; readonly model: string }> {
     return sessionEngineStatus(this.engineRemotesHost, sessionId)
   }
 
-  @Remote('codexRuntimeStatus')
+    /**
+   * Report whether the optional Codex runtime is installed.
+   * @returns the runtime's install state.
+   */
+@Remote('codexRuntimeStatus')
   codexRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.status() }
 
-  @Remote('codexRuntimeInstall')
+    /**
+   * Install one official Codex runtime package.
+   * @param packageID - the package to install; defaults to this platform's.
+   * @returns the install state after the swap.
+   */
+@Remote('codexRuntimeInstall')
   async codexRuntimeInstall(packageID?: string): Promise<FreeCodeGoCodexRuntimeStatus> {
     return codexRuntimeInstall(this.engineRemotesHost, packageID)
   }
 
-  @Remote('codexRuntimePackages')
+    /**
+   * List the Codex runtime packages this platform can install.
+   * @returns one row per known package, flagged for compatibility.
+   */
+@Remote('codexRuntimePackages')
   async codexRuntimePackages(): Promise<readonly FreeCodeGoRuntimePackage[]> { return (await this.codexRuntime.packages()).map(runtimePackageView) }
 
-  @Remote('codexRuntimeRemove')
+    /**
+   * Remove the installed Codex runtime.
+   * @returns the install state after removal.
+   */
+@Remote('codexRuntimeRemove')
   async codexRuntimeRemove(): Promise<FreeCodeGoCodexRuntimeStatus> {
     return codexRuntimeRemove(this.engineRemotesHost)
   }
 
-  @Remote('claudeRuntimeStatus')
+    /**
+   * Report whether the optional Claude Agent SDK runtime is installed.
+   * @returns the runtime's install state.
+   */
+@Remote('claudeRuntimeStatus')
   claudeRuntimeStatus(): FreeCodeGoClaudeRuntimeStatus { return this.claudeRuntime.status() }
 
-  @Remote('claudeRuntimeInstall')
+    /**
+   * Install one official Claude Agent SDK runtime package.
+   * @param packageID - the package to install; defaults to this platform's.
+   * @returns the install state after the swap.
+   */
+@Remote('claudeRuntimeInstall')
   async claudeRuntimeInstall(packageID?: string): Promise<FreeCodeGoClaudeRuntimeStatus> {
     return claudeRuntimeInstall(this.engineRemotesHost, packageID)
   }
 
-  @Remote('claudeRuntimePackages')
+    /**
+   * List the Claude Agent SDK runtime packages this platform can install.
+   * @returns one row per known package, flagged for compatibility.
+   */
+@Remote('claudeRuntimePackages')
   claudeRuntimePackages(): readonly FreeCodeGoRuntimePackage[] { return this.claudeRuntime.packages().map(runtimePackageView) }
 
-  @Remote('claudeRuntimeRemove')
+    /**
+   * Remove the installed Claude Agent SDK runtime.
+   * @returns the install state after removal.
+   */
+@Remote('claudeRuntimeRemove')
   async claudeRuntimeRemove(): Promise<FreeCodeGoClaudeRuntimeStatus> { return claudeRuntimeRemove(this.engineRemotesHost) }
 
-  /** Read the Host-owned FreeCodeGo package update state. */
+  /** Read the Host-owned FreeCodeGo package update state. 
+   * @returns the current update state.
+   */
   @Remote('pluginUpdateStatus')
   pluginUpdateStatus(): import('./types.ts').FreeCodeGoPluginUpdateStatus { return this.pluginUpdates.status() }
 
-  /** Check the configured NPM registry for a newer FreeCodeGo package. */
+  /** Check the configured NPM registry for a newer FreeCodeGo package. 
+   * @returns the update state after the registry check.
+   */
   @Remote('pluginUpdateCheck')
   async pluginUpdateCheck(): Promise<import('./types.ts').FreeCodeGoPluginUpdateStatus> { return this.pluginUpdates.check(true) }
 
-  /** Enable or disable periodic FreeCodeGo update checks. */
+  /** Enable or disable periodic FreeCodeGo update checks. 
+   * @param enabled - whether this capability is switched on.
+   * @returns the update state after the change.
+   */
   @Remote('pluginUpdateSetEnabled')
   async pluginUpdateSetEnabled(enabled: boolean): Promise<import('./types.ts').FreeCodeGoPluginUpdateStatus> { return this.pluginUpdates.setEnabled(enabled) }
 
-  /** Restore the retained pre-update Profile and require a Host restart. */
+  /** Restore the retained pre-update Profile and require a Host restart. 
+   * @returns the update state after the rollback.
+   */
   @Remote('pluginUpdateRollback')
   async pluginUpdateRollback(): Promise<import('./types.ts').FreeCodeGoPluginUpdateStatus> { return this.pluginUpdates.rollback() }
 
-  /** Install the checked package version; a Harness restart is required. */
+  /** Install the checked package version; a Harness restart is required. 
+   * @returns the update state after the install.
+   */
   @Remote('pluginUpdateInstall')
   async pluginUpdateInstall(): Promise<import('./types.ts').FreeCodeGoPluginUpdateStatus> { return this.pluginUpdates.install() }
 
-  @Remote('accountStatus')
+    /**
+   * Read the account state the settings surface renders.
+   * @returns the account snapshot.
+   */
+@Remote('accountStatus')
   async accountStatus(): Promise<FreeCodeGoAccountSnapshot> {
     return accountStatus(this.accountRemotesHost)
   }
 
-  @Remote('accountDetail')
+    /**
+   * Read the account's backend profile for the settings surface.
+   * @returns the backend payload, or the reason it is unavailable.
+   */
+@Remote('accountDetail')
   async accountDetail(): Promise<FreeCodeGoBackendSnapshot> {
     return accountDetail(this.accountRemotesHost)
   }
 
-  @Remote('accountRegister')
+    /**
+   * Create an account and sign in with the credentials just registered.
+   * @param input - registration details and the remember-me intent of this attempt.
+   * @returns the account snapshot after the sign-in.
+   */
+@Remote('accountRegister')
   async register(input: FreeCodeGoRegistrationRequest): Promise<FreeCodeGoAccountSnapshot> {
     return register(this.accountRemotesHost, input)
   }
 
-  @Remote('accountSendVerifyCode')
+    /**
+   * Send the registration verification code to one address.
+   * @param email - the address the code is sent to.
+   * @returns the countdown a resend control waits for.
+   */
+@Remote('accountSendVerifyCode')
   async sendVerifyCode(email: string): Promise<{ readonly countdown: number }> {
     return sendVerifyCode(this.accountRemotesHost, email)
   }
 
-  @Remote('accountLogin')
+    /**
+   * Sign in with a password, keeping the issued tokens in the Host vault.
+   * @param input - credentials and the remember-me intent of this attempt.
+   * @returns the account snapshot after the sign-in.
+   */
+@Remote('accountLogin')
   async login(input: FreeCodeGoLoginRequest): Promise<FreeCodeGoAccountSnapshot> {
     return login(this.accountRemotesHost, input)
+  }
+
+    /**
+   * Read the password this machine remembers for the sign-in form.
+   * @returns the remembered password, or `undefined` when the user never asked to keep one.
+   */
+@Remote('accountRememberedPassword')
+  async rememberedPassword(): Promise<{ readonly password?: string }> {
+    return readRememberedPassword(this.accountRemotesHost)
   }
 
   /**
    * Federated sign-in (Google / GitHub). Opens the provider authorization
    * page in the system browser and polls the backend handoff until the issued
    * pair lands in the Host vault; see `oauth-login.ts`.
+   * @returns the account Snapshot.
+   * @param provider - which federated provider to sign in with.
    */
   @Remote('accountOAuthLogin')
   async oauthLogin(provider: 'google' | 'github'): Promise<FreeCodeGoAccountSnapshot> {
     return accountOAuthLogin(this.accountRemotesHost, provider)
   }
 
-  /** Read the pending federated registration the browser step left behind. */
+  /** Read the pending federated registration the browser step left behind. 
+   * @returns the pending registration, or `undefined` when none is waiting.
+   */
   @Remote('accountOAuthPendingStatus')
   async oauthPendingStatus(): Promise<OAuthLoginPendingRegistration | undefined> {
     return accountOAuthPendingStatus(this.accountRemotesHost)
   }
 
-  /** Send the registration verification email for the pending session. */
+  /** Send the registration verification email for the pending session. 
+   * @param email - the address the code is sent to.
+   * @returns the countdown a resend control waits for.
+   */
   @Remote('accountOAuthPendingSendVerifyCode')
   async oauthPendingSendVerifyCode(email: string): Promise<{ readonly countdown: number }> {
     return accountOAuthPendingSendVerifyCode(this.accountRemotesHost, email)
   }
 
-  /** Bind the pending federated identity to an existing password account. */
+  /** Bind the pending federated identity to an existing password account. 
+   * @returns the account Snapshot.
+   * @param input - the existing account's credentials and an optional second factor.
+   */
   @Remote('accountOAuthPendingBind')
   async oauthPendingBind(input: { readonly email: string; readonly password: string; readonly totpCode?: string }): Promise<FreeCodeGoAccountSnapshot> {
     return accountOAuthPendingBind(this.accountRemotesHost, input)
   }
 
-  /** Create a new account from the pending federated identity. */
+  /** Create a new account from the pending federated identity. 
+   * @returns the account Snapshot.
+   * @param input - the new account's credentials and codes.
+   */
   @Remote('accountOAuthPendingCreate')
   async oauthPendingCreate(input: { readonly email: string; readonly password: string; readonly verifyCode?: string; readonly invitationCode?: string }): Promise<FreeCodeGoAccountSnapshot> {
     return accountOAuthPendingCreate(this.accountRemotesHost, input)
   }
 
-  @Remote('accountMfaComplete')
+    /**
+   * Complete the pending two-factor challenge.
+   * @param totpCode - the code the user's authenticator produced.
+   * @param deviceId - device identifier recorded with the session.
+   * @returns the account snapshot after the second factor.
+   */
+@Remote('accountMfaComplete')
   async completeMfa(totpCode: string, deviceId?: string): Promise<FreeCodeGoAccountSnapshot> {
     return completeMfa(this.accountRemotesHost, totpCode, deviceId)
   }
 
-  @Remote('accountRefresh')
+    /**
+   * Rotate the stored session token.
+   * @param deviceId - device identifier recorded with the rotated session.
+   * @returns the account snapshot after the rotation.
+   */
+@Remote('accountRefresh')
   async refreshAccount(deviceId?: string): Promise<FreeCodeGoAccountSnapshot> {
     return refreshAccount(this.accountRemotesHost, deviceId)
   }
 
-  @Remote('accountLogout')
+    /**
+   * Sign out and erase the stored session from the Host vault.
+   * @returns the signed-out account snapshot.
+   */
+@Remote('accountLogout')
   async logout(): Promise<FreeCodeGoAccountSnapshot> {
     return logout(this.accountRemotesHost)
   }
 
-  /** List the desktop sessions of the signed-in account for the Settings page. */
+  /** List the desktop sessions of the signed-in account for the Settings page. 
+   * @returns the device Sessions.
+   */
   @Remote('accountDeviceSessions')
   async deviceSessions(): Promise<FreeCodeGoDeviceSessions> {
     return deviceSessions(this.accountRemotesHost)
   }
 
-  @Remote('accountRevokeDeviceSession')
+    /**
+   * Revoke one device session and report the sessions that remain.
+   * @param deviceId - id of the device session to revoke.
+   * @returns the sessions the account still has.
+   */
+@Remote('accountRevokeDeviceSession')
   async revokeDeviceSession(deviceId: string): Promise<FreeCodeGoDeviceSessions> {
     return revokeDeviceSession(this.accountRemotesHost, deviceId)
   }
 
-  /** Revoke every session, including this device's; returns how many were revoked. */
+  /** Revoke every session, including this device's; returns how many were revoked. 
+   * @returns how many sessions the backend revoked.
+   */
   @Remote('accountRevokeAllSessions')
   async revokeAllSessions(): Promise<number> {
     return revokeAllSessions(this.accountRemotesHost)
   }
 
-  /** Fetch a redacted remote catalog using the Host vault; tokens never cross this Remote boundary. */
+  /** Fetch a redacted remote catalog using the Host vault; tokens never cross this Remote boundary. 
+   * @returns the managed Catalog.
+   */
   async managedCatalog(): Promise<FreeCodeGoManagedCatalog> { return managedCatalog(this.engineRemotesHost) }
 
-  /** Return the existing backend model directory without exposing access tokens. */
+  /** Return the existing backend model directory without exposing access tokens. 
+   * @returns the managed Catalog.
+   */
   @Remote('backendCatalog')
   async backendCatalog(): Promise<FreeCodeGoManagedCatalog> {
     return backendCatalog(this.accountRemotesHost)
   }
 
-  @Remote('vyceStatus')
+    /**
+   * Read the Vyce account and key state.
+   * @returns the status the settings surface renders.
+   */
+@Remote('vyceStatus')
   async vyceStatus(): Promise<FreeCodeGoVyceStatus> {
     return vyceStatus(this.accountRemotesHost)
   }
 
-  @Remote('vyceSetKey')
+    /**
+   * Store the Vyce API key in the Host credential vault.
+   * @param value - the key to store; an empty value clears it.
+   * @returns the status after the change.
+   */
+@Remote('vyceSetKey')
   async vyceSetKey(value: string): Promise<FreeCodeGoVyceStatus> {
     return vyceSetKey(this.accountRemotesHost, value)
   }
 
-  @Remote('groqWhisperTranscribe')
+    /**
+   * Transcribe one recorded clip through Groq Whisper.
+   * @param audioBase64 - the recorded audio, base64 encoded.
+   * @param mimeType - the recording's MIME type.
+   * @param language - the expected spoken language, when the caller knows it.
+   * @returns the transcript and the model that produced it.
+   */
+@Remote('groqWhisperTranscribe')
   async groqWhisperTranscribe(audioBase64: string, mimeType: string, language?: string): Promise<{ readonly text: string; readonly model: string }> {
     return groqWhisperTranscribe(this.accountRemotesHost, audioBase64, mimeType, language)
   }
 
-  @Remote('logfareStatus')
+    /**
+   * Read the Logfare account and key state.
+   * @returns the status the settings surface renders.
+   */
+@Remote('logfareStatus')
   async logfareStatus(): Promise<FreeCodeGoLogfareStatus> {
     return logfareStatus(this.accountRemotesHost)
   }
 
-  @Remote('logfareSetKey')
+    /**
+   * Store the Logfare API key in the Host credential vault.
+   * @param value - the key to store; an empty value clears it.
+   * @returns the status after the change.
+   */
+@Remote('logfareSetKey')
   async logfareSetKey(value: string): Promise<FreeCodeGoLogfareStatus> {
     return logfareSetKey(this.accountRemotesHost, value)
   }
 
-  @Remote('logfareRegister')
+    /**
+   * Create a Logfare account from the settings surface.
+   * @param input - the registration details.
+   * @returns the status after the registration.
+   */
+@Remote('logfareRegister')
   async logfareRegister(input: FreeCodeGoLogfareRegistrationRequest): Promise<FreeCodeGoLogfareStatus> {
     return logfareRegister(this.accountRemotesHost, input)
   }
 
-  @Remote('logfareSetTrainingOptIn')
+    /**
+   * Record whether this account's traffic may be used for training.
+   * @param enabled - whether this capability is switched on.
+   * @returns the status after the change.
+   */
+@Remote('logfareSetTrainingOptIn')
   async logfareSetTrainingOptIn(enabled: boolean): Promise<FreeCodeGoLogfareStatus> {
     return logfareSetTrainingOptIn(this.accountRemotesHost, enabled)
   }
 
-  @Remote('sensenovaStatus')
+    /**
+   * Read the SenseNova account and key state.
+   * @returns the status the settings surface renders.
+   */
+@Remote('sensenovaStatus')
   async sensenovaStatus(): Promise<FreeCodeGoSenseNovaStatus> {
     return sensenovaStatus(this.accountRemotesHost)
   }
 
-  @Remote('sensenovaSetKey')
+    /**
+   * Store the SenseNova API key in the Host credential vault.
+   * @param value - the key to store; an empty value clears it.
+   * @returns the status after the change.
+   */
+@Remote('sensenovaSetKey')
   async sensenovaSetKey(value: string): Promise<FreeCodeGoSenseNovaStatus> {
     return sensenovaSetKey(this.accountRemotesHost, value)
   }
 
-  @Remote('nvidiaStatus')
+    /**
+   * Read the NVIDIA account and key state.
+   * @returns the status the settings surface renders.
+   */
+@Remote('nvidiaStatus')
   async nvidiaStatus(): Promise<FreeCodeGoNvidiaStatus> {
     return nvidiaStatus(this.accountRemotesHost)
   }
 
-  @Remote('nvidiaSetKey')
+    /**
+   * Store the NVIDIA API key in the Host credential vault.
+   * @param value - the key to store; an empty value clears it.
+   * @returns the status after the change.
+   */
+@Remote('nvidiaSetKey')
   async nvidiaSetKey(value: string): Promise<FreeCodeGoNvidiaStatus> {
     return nvidiaSetKey(this.accountRemotesHost, value)
   }
@@ -4902,181 +5843,524 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   // WorkBuddy International Edition (workbuddy.ai)
   // ============================================================================
 
-  @Remote('workbuddyStatus')
+    /**
+   * Read the WorkBuddy accounts, the active one, and its credits.
+   * @returns the status the settings surface renders.
+   */
+@Remote('workbuddyStatus')
   async workbuddyStatus(): Promise<WorkBuddyInternationalStatus> {
     return workbuddyStatus(this.accountRemotesHost)
   }
 
-  @Remote('workbuddyImportDesktopLogin')
+    /**
+   * Import the desktop client's existing WorkBuddy login.
+   * @returns the status after the import.
+   */
+@Remote('workbuddyImportDesktopLogin')
   async workbuddyImportDesktopLogin(): Promise<WorkBuddyInternationalStatus> {
     return workbuddyImportDesktopLogin(this.accountRemotesHost)
   }
 
-  @Remote('workbuddyOpenSignIn')
+    /**
+   * Open the WorkBuddy web sign-in page in the system browser.
+   * @returns whether a browser opened, and the URL it was sent to.
+   */
+@Remote('workbuddyOpenSignIn')
   async workbuddyOpenSignIn(): Promise<{ readonly opened: boolean; readonly url: string }> {
     return workbuddyOpenSignIn(this.accountRemotesHost)
   }
 
-  @Remote('workbuddyStartBrowserLogin')
+    /**
+   * Start the WorkBuddy browser sign-in handshake.
+   * @returns the state a poll continues with.
+   */
+@Remote('workbuddyStartBrowserLogin')
   async workbuddyStartBrowserLogin(): Promise<WorkBuddyBrowserLogin> {
     return workbuddyStartBrowserLogin(this.accountRemotesHost)
   }
 
-  @Remote('workbuddyPollBrowserLogin')
+    /**
+   * Poll the WorkBuddy browser sign-in handshake.
+   * @param state - the handshake state the start call returned.
+   * @returns the outcome of this poll.
+   */
+@Remote('workbuddyPollBrowserLogin')
   async workbuddyPollBrowserLogin(state: string): Promise<WorkBuddyLoginPoll> {
     return workbuddyPollBrowserLogin(this.accountRemotesHost, state)
   }
 
-  @Remote('workbuddyLogout')
+    /**
+   * Sign every WorkBuddy account out and clear the stored sessions.
+   * @returns the signed-out status.
+   */
+@Remote('workbuddyLogout')
   async workbuddyLogout(): Promise<WorkBuddyInternationalStatus> {
     return workbuddyLogout(this.accountRemotesHost)
   }
 
-  @Remote('workbuddyRemoveAccount')
+    /**
+   * Forget one WorkBuddy account locally.
+   * @param accountId - id of the account to remove.
+   * @returns the status after the removal.
+   */
+@Remote('workbuddyRemoveAccount')
   async workbuddyRemoveAccount(accountId: string): Promise<WorkBuddyInternationalStatus> {
     return workbuddyRemoveAccount(this.accountRemotesHost, accountId)
   }
 
-  @Remote('workbuddySetActiveAccount')
+    /**
+   * Choose which WorkBuddy account carries new requests.
+   * @param accountId - id of the account to activate.
+   * @returns the status after the change.
+   */
+@Remote('workbuddySetActiveAccount')
   async workbuddySetActiveAccount(accountId: string): Promise<WorkBuddyInternationalStatus> {
     return workbuddySetActiveAccount(this.accountRemotesHost, accountId)
   }
 
-  @Remote('workbuddyRefreshToken')
+    /**
+   * Exchange a WorkBuddy refresh token for a fresh pair.
+   * @param refreshToken - the refresh token to exchange.
+   * @returns the rotated token pair and its expiry.
+   */
+@Remote('workbuddyRefreshToken')
   async workbuddyRefreshToken(refreshToken: string): Promise<{ readonly accessToken: string; readonly refreshToken?: string; readonly expiresAt: number }> {
     return workbuddyRefreshToken(this.accountRemotesHost, refreshToken)
   }
 
-  @Remote('workbuddyRefreshCredits')
+    /**
+   * Re-read the WorkBuddy account credits from upstream.
+   * @returns the status with the credits it read.
+   */
+@Remote('workbuddyRefreshCredits')
   async workbuddyRefreshCredits(): Promise<WorkBuddyInternationalStatus> {
     return workbuddyRefreshCredits(this.accountRemotesHost)
   }
 
+  // Qoder (qoder.com / qoder.com.cn) free-model connector.
+
+    /**
+   * Read the Qoder accounts, the active one, its quota, and the free route.
+   * @returns the status the settings surface renders.
+   */
+@Remote('qoderStatus')
+  async qoderStatus(): Promise<QoderStatus> {
+    return qoderStatus(this.accountRemotesHost)
+  }
+
+    /**
+   * Start the Qoder browser sign-in handshake.
+   * @returns the state a poll continues with.
+   */
+@Remote('qoderStartBrowserLogin')
+  async qoderStartBrowserLogin(): Promise<QoderBrowserLogin> {
+    return qoderStartBrowserLogin(this.accountRemotesHost)
+  }
+
+    /**
+   * Poll the Qoder browser sign-in handshake.
+   * @param state - the handshake state the start call returned.
+   * @returns the outcome of this poll.
+   */
+@Remote('qoderPollBrowserLogin')
+  async qoderPollBrowserLogin(state: string): Promise<QoderLoginPoll> {
+    return qoderPollBrowserLogin(this.accountRemotesHost, state)
+  }
+
+    /**
+   * Sign every Qoder account out and clear the stored sessions.
+   * @returns the signed-out status.
+   */
+@Remote('qoderLogout')
+  async qoderLogout(): Promise<QoderStatus> {
+    return qoderLogout(this.accountRemotesHost)
+  }
+
+    /**
+   * Forget one Qoder account locally.
+   * @param accountId - id of the account to remove.
+   * @returns the status after the removal.
+   */
+@Remote('qoderRemoveAccount')
+  async qoderRemoveAccount(accountId: string): Promise<QoderStatus> {
+    return qoderRemoveAccount(this.accountRemotesHost, accountId)
+  }
+
+    /**
+   * Choose which Qoder account carries new requests.
+   * @param accountId - id of the account to activate.
+   * @returns the status after the change.
+   */
+@Remote('qoderSetActiveAccount')
+  async qoderSetActiveAccount(accountId: string): Promise<QoderStatus> {
+    return qoderSetActiveAccount(this.accountRemotesHost, accountId)
+  }
+
+  /**
+   * Re-read the Qoder account quotas from upstream.
+   * @returns the status with the quota it read.
+   */
+@Remote('qoderRefreshQuota')
+  async qoderRefreshQuota(): Promise<QoderStatus> {
+    return qoderRefreshQuota(this.accountRemotesHost)
+  }
+
+  /**
+   * Claim today's campaign credits for every Qoder account.
+   * @returns the run's report.
+   */
+@Remote('qoderCheckin')
+  async qoderCheckin(): Promise<FreeCodeGoCheckinReport> {
+    return qoderCheckin(this.accountRemotesHost)
+  }
+
+  // TRAE (www.trae.cn) SOLO channel. The sign-in is a browser redirect into a
+  // loopback listener this Host opens, so the pending state carries the URL the
+  // card offers as a link and the callback the user may have to paste.
+
+  /**
+   * Read the stored TRAE accounts and whether a sign-in is in flight.
+   * @returns the status the settings surface renders.
+   */
+@Remote('traeStatus')
+  async traeStatus(): Promise<TraeStatus> {
+    return traeStatus(this.accountRemotesHost)
+  }
+
+  /**
+   * Start a TRAE browser authorization against one deployment and open its sign-in page.
+   * @param realm - `cn` or `sg`; an omitted or unknown value means China.
+   * @returns the pending status with the login URL.
+   */
+@Remote('traeStartBrowserLogin')
+  async traeStartBrowserLogin(realm?: string): Promise<TraeStatus> {
+    return traeStartBrowserLogin(this.accountRemotesHost, realm)
+  }
+
+  /**
+   * Poll a TRAE authorization; the exchange happens on the first poll that
+   * finds the redirect already captured.
+   * @returns the status after the poll.
+   */
+@Remote('traePollBrowserLogin')
+  async traePollBrowserLogin(): Promise<TraeStatus> {
+    return traePollBrowserLogin(this.accountRemotesHost)
+  }
+
+  /**
+   * Complete a TRAE sign-in from a callback URL the user pasted.
+   * @param url - the callback URL as the browser shows it.
+   * @returns the status after the sign-in.
+   */
+@Remote('traeSubmitCallback')
+  async traeSubmitCallback(url: string): Promise<TraeStatus> {
+    return traeSubmitCallback(this.accountRemotesHost, url)
+  }
+
+  /**
+   * Abandon a TRAE authorization the user no longer wants.
+   * @returns the status after the cancellation.
+   */
+@Remote('traeCancelBrowserLogin')
+  async traeCancelBrowserLogin(): Promise<TraeStatus> {
+    return traeCancelBrowserLogin(this.accountRemotesHost)
+  }
+
+  /**
+   * Read the TRAE configuration table the signed-in accounts can serve.
+   * @returns the model rows.
+   */
+@Remote('traeModels')
+  async traeModels(): Promise<readonly TraeModel[]> {
+    return traeModels(this.accountRemotesHost)
+  }
+
+  /**
+   * Sign every TRAE account out and clear the stored sessions.
+   * @returns the signed-out status.
+   */
+@Remote('traeLogout')
+  async traeLogout(): Promise<TraeStatus> {
+    return traeLogout(this.accountRemotesHost)
+  }
+
+  /**
+   * Forget one TRAE account locally.
+   * @param accountId - id of the account to remove.
+   * @returns the status after the removal.
+   */
+@Remote('traeRemoveAccount')
+  async traeRemoveAccount(accountId: string): Promise<TraeStatus> {
+    return traeRemoveAccount(this.accountRemotesHost, accountId)
+  }
+
+  /**
+   * Choose which TRAE account carries new requests.
+   * @param accountId - id of the account to activate.
+   * @returns the status after the change.
+   */
+@Remote('traeSetActiveAccount')
+  async traeSetActiveAccount(accountId: string): Promise<TraeStatus> {
+    return traeSetActiveAccount(this.accountRemotesHost, accountId)
+  }
+
+  /**
+   * Claim today's credits for every TRAE account.
+   * @returns the run's report.
+   */
+@Remote('traeCheckin')
+  async traeCheckin(): Promise<FreeCodeGoCheckinReport> {
+    return traeCheckin(this.accountRemotesHost)
+  }
+
   // Cline (api.cline.bot) free-model pool.
 
-  @Remote('clineStatus')
+    /**
+   * Read the stored Cline accounts and their pool state.
+   * @returns the status the settings surface renders.
+   */
+@Remote('clineStatus')
   async clineStatus(): Promise<ClineStatus> {
     return clineStatus(this.accountRemotesHost)
   }
 
-  @Remote('clineStartLogin')
+    /**
+   * Start Cline device sign-in; the caller then polls with the returned code.
+   * @returns the device code and the verification URL.
+   */
+@Remote('clineStartLogin')
   async clineStartLogin(): Promise<ClineDeviceLogin> {
     return clineStartLogin(this.accountRemotesHost)
   }
 
-  @Remote('clinePollLogin')
+    /**
+   * Poll the Cline device sign-in.
+   * @param deviceCode - the device code the start call returned.
+   * @returns the outcome of this poll.
+   */
+@Remote('clinePollLogin')
   async clinePollLogin(deviceCode: string): Promise<ClineLoginPoll> {
     return clinePollLogin(this.accountRemotesHost, deviceCode)
   }
 
-  @Remote('clineAddAccount')
+    /**
+   * Add a Cline account from a refresh token.
+   * @param refreshToken - the account's refresh token.
+   * @returns the status after the account was added.
+   */
+@Remote('clineAddAccount')
   async clineAddAccount(refreshToken: string): Promise<ClineStatus> {
     return clineAddAccount(this.accountRemotesHost, refreshToken)
   }
 
-  @Remote('clineRemoveAccount')
+    /**
+   * Forget one Cline account locally.
+   * @param accountId - id of the account to remove.
+   * @returns the status after the removal.
+   */
+@Remote('clineRemoveAccount')
   async clineRemoveAccount(accountId: string): Promise<ClineStatus> {
     return clineRemoveAccount(this.accountRemotesHost, accountId)
   }
 
-  @Remote('clineRefresh')
+    /**
+   * Revalidate one Cline account's session.
+   * @param accountId - the account to revalidate; defaults to the active one.
+   * @returns the status after the revalidation.
+   */
+@Remote('clineRefresh')
   async clineRefresh(accountId?: string): Promise<ClineStatus> {
     return clineRefresh(this.accountRemotesHost, accountId)
   }
 
-  @Remote('clineLogout')
+    /**
+   * Sign every Cline account out and clear the stored sessions.
+   * @returns the signed-out status.
+   */
+@Remote('clineLogout')
   async clineLogout(): Promise<ClineStatus> {
     return clineLogout(this.accountRemotesHost)
   }
 
-  /** Return the existing FreeCodeGo bootstrap snapshot through a redacted Remote. */
+  /** Return the existing FreeCodeGo bootstrap snapshot through a redacted Remote. 
+   * @returns the backend Snapshot.
+   */
   @Remote('backendBootstrap')
   async backendBootstrap(): Promise<FreeCodeGoBackendSnapshot> {
     return backendBootstrap(this.accountRemotesHost)
   }
 
-  /** Return the existing backend quota snapshot without exposing credentials. */
+  /** Return the existing backend quota snapshot without exposing credentials. 
+   * @returns the backend Snapshot.
+   */
   @Remote('backendQuota')
   async backendQuota(): Promise<FreeCodeGoBackendSnapshot> {
     return backendQuota(this.accountRemotesHost)
   }
 
-  /** Return existing backend runtime health. */
+  /** Return existing backend runtime health. 
+   * @returns the backend Snapshot.
+   */
   @Remote('backendRuntimeHealth')
   async backendRuntimeHealth(): Promise<FreeCodeGoBackendSnapshot> {
     return backendRuntimeHealth(this.accountRemotesHost)
   }
 
-  @Remote('backendUsage')
+    /**
+   * Read the account's gateway usage over a number of days.
+   * @param days - how many days back the read starts.
+   * @returns the usage payload, or the reason it is unavailable.
+   */
+@Remote('backendUsage')
   async backendUsage(days: number): Promise<FreeCodeGoBackendSnapshot> {
     return backendUsage(this.accountRemotesHost, days)
   }
 
-  @Remote('tokenUsageLocal')
+    /**
+   * Compute token usage from this machine's own session logs.
+   * @param usageQuery - the filters the snapshot is computed for.
+   * @returns the computed usage snapshot.
+   */
+@Remote('tokenUsageLocal')
   async tokenUsageLocal(usageQuery: LocalTokenUsageQuery): Promise<LocalTokenUsageSnapshot> {
     return tokenUsageLocal(this.paymentRemotesHost, usageQuery)
   }
 
-  @Remote('tokenUsageGateway')
+    /**
+   * Read the gateway's token usage over a number of days.
+   * @param days - how many days back the read starts.
+   * @returns the usage figures the gateway reported.
+   */
+@Remote('tokenUsageGateway')
   async tokenUsageGateway(days: number): Promise<GatewayUsageSnapshot> {
     return tokenUsageGateway(this.paymentRemotesHost, days)
   }
 
-  @Remote('tokenUsageCurrentSession')
+    /**
+   * Compute token usage for one session.
+   * @param sessionId - the session whose usage is computed.
+   * @returns the session's usage snapshot, or `undefined` when nothing is recorded.
+   */
+@Remote('tokenUsageCurrentSession')
   async tokenUsageCurrentSession(sessionId: string): Promise<LocalTokenUsageSnapshot | undefined> {
     return tokenUsageCurrentSession(this.paymentRemotesHost, sessionId)
   }
 
-  @Remote('agnesStatus')
+    /**
+   * Read the stored Agnes accounts and which of them is active.
+   * @returns the status the settings surface renders.
+   */
+@Remote('agnesStatus')
   async agnesStatus(): Promise<AgnesStatus> { return this.requireAgnes().status() }
 
-  @Remote('agnesSendVerification')
+    /**
+   * Send the Agnes registration verification code.
+   * @param email - the address the code is sent to.
+   * @returns true once the platform accepted the request.
+   */
+@Remote('agnesSendVerification')
   async agnesSendVerification(email: string): Promise<{ readonly sent: boolean }> { return this.requireAgnes().sendVerificationCode(email) }
 
-  @Remote('agnesSendPasswordReset')
+    /**
+   * Send the Agnes password-reset code.
+   * @param email - the address the code is sent to.
+   * @returns true once the platform accepted the request.
+   */
+@Remote('agnesSendPasswordReset')
   async agnesSendPasswordReset(email: string): Promise<{ readonly sent: boolean }> { return this.requireAgnes().sendPasswordResetCode(email) }
 
-  @Remote('agnesResetPassword')
+    /**
+   * Set a new Agnes password using the mailed code.
+   * @param email - the account's address.
+   * @param password - the new password to set.
+   * @param code - the code the platform mailed.
+   * @returns true once the platform accepted the change.
+   */
+@Remote('agnesResetPassword')
   async agnesResetPassword(email: string, password: string, code: string): Promise<{ readonly updated: boolean }> { return this.requireAgnes().resetPassword({ email, password, code }) }
 
-  @Remote('agnesLogin')
+    /**
+   * Sign in to Agnes with a password.
+   * @param email - the account's address.
+   * @param password - the account's password.
+   * @returns the status after the sign-in.
+   */
+@Remote('agnesLogin')
   async agnesLogin(email: string, password: string): Promise<AgnesStatus> { return this.requireAgnes().login(email, password) }
 
-  @Remote('agnesRegister')
+    /**
+   * Register an Agnes account, then sign in with it.
+   * @param email - the address being registered.
+   * @param password - the password to set.
+   * @param code - the code the platform mailed.
+   * @returns the status after the sign-in.
+   */
+@Remote('agnesRegister')
   async agnesRegister(email: string, password: string, code: string): Promise<AgnesStatus> { return this.requireAgnes().register({ email, password, code }) }
 
-  @Remote('agnesCreateApiKey')
+    /**
+   * Provision, or reuse, this plugin's Agnes API key.
+   * @param accountId - the account to provision for; defaults to the active one.
+   * @returns whether a key is configured, and the account it belongs to.
+   */
+@Remote('agnesCreateApiKey')
   async agnesCreateApiKey(accountId?: string): Promise<{ readonly configured: boolean; readonly accountId: string }> { return this.requireAgnes().createApiKey(accountId) }
 
-  @Remote('agnesRemoveAccount')
+    /**
+   * Forget one Agnes account locally.
+   * @param accountId - id of the account to remove.
+   * @returns the status after the removal.
+   */
+@Remote('agnesRemoveAccount')
   async agnesRemoveAccount(accountId: string): Promise<AgnesStatus> { return this.requireAgnes().removeAccount(accountId) }
 
-  @Remote('agnesRefresh')
+    /**
+   * Revalidate one Agnes account's session.
+   * @param accountId - the account to revalidate; defaults to the active one.
+   * @returns the status after the revalidation.
+   */
+@Remote('agnesRefresh')
   async agnesRefresh(accountId?: string): Promise<AgnesStatus> { return this.requireAgnes().refreshAccount(accountId) }
 
-  @Remote('agnesLogout')
+    /**
+   * Sign one Agnes account out, or every account.
+   * @param accountId - the account to sign out; omitted signs every account out.
+   * @returns the status after the sign-out.
+   */
+@Remote('agnesLogout')
   async agnesLogout(accountId?: string): Promise<AgnesStatus> { return this.requireAgnes().logout(accountId) }
 
 
-  /** Return saleable plans from the existing FreeCodeGo payment API. */
+  /** Return saleable plans from the existing FreeCodeGo payment API. 
+   * @returns the payment Plan rows, in backend order.
+   */
   @Remote('paymentPlans')
   async paymentPlans(): Promise<readonly FreeCodeGoPaymentPlan[]> {
     return paymentPlans(this.paymentRemotesHost)
   }
 
-  @Remote('paymentChannels')
+    /**
+   * List the payment channels the backend offers this account.
+   * @returns the channels the checkout surface shows.
+   */
+@Remote('paymentChannels')
   async paymentChannels(): Promise<readonly FreeCodeGoPaymentChannel[]> {
     return paymentChannels(this.paymentRemotesHost)
   }
 
-  /** Limits and the publishable Stripe key the in-plugin card form needs. */
+  /** Limits and the publishable Stripe key the in-plugin card form needs. 
+   * @returns the payment Config.
+   */
   @Remote('paymentConfig')
   async paymentConfig(): Promise<FreeCodeGoPaymentConfig> {
     return paymentConfig(this.paymentRemotesHost)
   }
 
   /** Return the current account-visible tariff catalog. Account model options
-   * provide the enabled whitelist and effective group pricing. */
+   * provide the enabled whitelist and effective group pricing. 
+   * @param language - locale the returned labels are written in.
+   * @returns the gateway Model Price rows, in backend order.
+   */
   @Remote('gatewayModelPrices')
   async gatewayModelPrices(language: 'zh' | 'en'): Promise<readonly FreeCodeGoGatewayModelPrice[]> {
     return gatewayModelPrices(this.paymentRemotesHost, language)
@@ -5090,51 +6374,122 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return localGatewayModelPrices(this.paymentRemotesHost)
   }
 
-  @Remote('paymentOrders')
+    /**
+   * Read the account's payment orders.
+   * @returns the order payload as the backend returned it.
+   */
+@Remote('paymentOrders')
   async paymentOrders(): Promise<JsonValue> {
     return paymentOrders(this.paymentRemotesHost)
   }
 
-  /** Create a payment order through the existing FreeCodeGo endpoint. */
+  /** Create a payment order through the existing FreeCodeGo endpoint. 
+   * @returns the payment Order.
+   * @param planId - the plan being purchased.
+   * @param paymentType - the payment channel to use.
+   * @param returnUrl - where the provider returns the browser after payment.
+   * @param amount - the amount to charge, when the channel allows an override.
+   */
   @Remote('paymentCheckout')
   async paymentCheckout(planId: number, paymentType: string, returnUrl: string, amount?: number): Promise<FreeCodeGoPaymentOrder> {
     return paymentCheckout(this.paymentRemotesHost, planId, paymentType, returnUrl, amount)
   }
 
-  /** Poll an existing FreeCodeGo payment order. */
+  /** Poll an existing FreeCodeGo payment order. 
+   * @returns the payment Order.
+   * @param orderId - id of the order to poll.
+   */
   @Remote('paymentOrder')
   async paymentOrder(orderId: string): Promise<FreeCodeGoPaymentOrder> {
     return paymentOrder(this.paymentRemotesHost, orderId)
   }
 
-  @Remote('paymentVerify')
+    /**
+   * Verify one payment with the provider.
+   * @param outTradeNo - the out-trade number to verify.
+   * @returns the order as the backend reports it.
+   */
+@Remote('paymentVerify')
   async paymentVerify(outTradeNo: string): Promise<FreeCodeGoPaymentOrder> {
     return paymentVerify(this.paymentRemotesHost, outTradeNo)
   }
 
-  @Remote('paymentCancel')
+    /**
+   * Cancel one pending payment order.
+   * @param orderId - id of the order to cancel.
+   * @returns true once the order was cancelled.
+   */
+@Remote('paymentCancel')
   async paymentCancel(orderId: string): Promise<{ readonly cancelled: boolean }> {
     return paymentCancel(this.paymentRemotesHost, orderId)
   }
 
-  @Remote('paymentReceiptEmail')
+    /**
+   * Mail the receipt for one order.
+   * @param orderId - id of the order whose receipt is mailed.
+   * @returns the address the receipt was sent to, and the backend's message when it sent one.
+   */
+@Remote('paymentReceiptEmail')
   async paymentReceiptEmail(orderId: string): Promise<{ readonly email: string; readonly message?: string }> {
     return paymentReceiptEmail(this.paymentRemotesHost, orderId)
   }
 
-  @Remote('paymentReceiptDocument')
+    /**
+   * Render the receipt for one order.
+   * @param orderId - id of the order whose receipt is rendered.
+   * @returns the receipt document to download.
+   */
+@Remote('paymentReceiptDocument')
   async paymentReceiptDocument(orderId: string): Promise<FreeCodeGoReceiptDocument> {
     return paymentReceiptDocument(this.paymentRemotesHost, orderId)
   }
 
+  /**
+   * Render Stripe's own receipt for one order.
+   *
+   * A separate Remote from the receipt above because the two documents come from
+   * different issuers, and the order list already says which rows have this one
+   * (`stripe_receipt_available`) — so the page offers it only where the backend
+   * will actually serve it.
+   * @param orderId - id of the order whose Stripe receipt is rendered.
+   * @returns the receipt document to download, base64 encoded as a PDF.
+   */
+@Remote('paymentStripeReceiptDocument')
+  async paymentStripeReceiptDocument(orderId: string): Promise<FreeCodeGoReceiptDocument> {
+    return paymentStripeReceiptDocument(this.paymentRemotesHost, orderId)
+  }
+
   /** Instance-level seams preserved so tests can override or call the live
    * catalog runtime. These mirror the original private methods; the runtime
-   * implementations live in FreeCodeGoManagedCatalogs. */
+   * implementations live in FreeCodeGoManagedCatalogs. 
+   * @param provider - provider id the turn is routed to.
+   * @returns the llm Model Info rows, in backend order.
+   */
   async listFreeCodeGoModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listFreeCodeGoModels(provider) }
-  async listOpenCodeModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listOpenCodeModels(provider) }
-  async listVyceModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listVyceModels(provider) }
-  async listSenseNovaModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listSenseNovaModels(provider) }
-  async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listNvidiaModels(provider) }
+    /**
+   * List the models OpenCode exposes for one provider.
+   * @param provider - provider id to list models for.
+   * @returns the model rows the picker renders.
+   */
+async listOpenCodeModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listOpenCodeModels(provider) }
+    /**
+   * List the models Vyce exposes for one provider.
+   * @param provider - provider id to list models for.
+   * @returns the model rows the picker renders.
+   */
+async listVyceModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listVyceModels(provider) }
+    /**
+   * List the models SenseNova exposes for one provider.
+   * @param provider - provider id to list models for.
+   * @returns the model rows the picker renders.
+   */
+async listSenseNovaModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listSenseNovaModels(provider) }
+    /**
+   * List the models NVIDIA exposes for one provider.
+   * @param provider - provider id to list models for.
+   * @returns the model rows the picker renders.
+   */
+async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.catalogs.listNvidiaModels(provider) }
   private async readManagedCatalogCache(): Promise<FreeCodeGoManagedCatalog | undefined> { return this.catalogs.readManagedCatalogCache() }
   private refreshManagedCatalogInBackground(): void { this.catalogs.refreshManagedCatalogInBackground() }
   private refreshGatewayHealthInBackground(): void { this.catalogs.refreshGatewayHealthInBackground() }
@@ -5260,6 +6615,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     return {
       ...this.coreDeps,
       workbuddyPool: this.workbuddyPool,
+      qoder: this.qoder,
+      trae: this.trae,
       state: this.accountRemotesState,
       logfareStatus: () => this.logfareStatus(),
       sensenovaStatus: () => this.sensenovaStatus(),
@@ -5316,9 +6673,45 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         this.workbuddyPool = pool
         pool?.start()
       },
+      setQoder: (qoder) => { this.qoder = qoder },
+      setTrae: (trae) => { this.trae = trae },
       setAccount: (account) => { this.account = account },
       setApi: (api) => { this.api = api },
       setGatewayBaseUrl: (baseUrl) => { this.gatewayBaseUrl = baseUrl },
+    }
+  }
+
+  /**
+   * The review surface the Remotes read and write.
+   *
+   * The settings accessors are functions rather than values, for the same reason
+   * every other live setting here is: a panel that showed the mode as it was at
+   * connection time would keep showing it after the user changed it.
+   */
+  private get reviewRemotesHost(): ReviewRemotesHost {
+    return {
+      ctx: this.ctx,
+      portFor: workspace => this.reviewInstallFor(workspace).then(install => install.port),
+      deepReviewerFor: agent => this.deepReviewerFor(agent),
+      settings: () => {
+        const settings = this.reviewGateSettings()
+        return {
+          mode: settings.mode,
+          threshold: settings.threshold,
+          cooldownTurns: settings.cooldownTurns,
+          deep: this.policy.get()?.reviewDeep === true,
+          escalation: this.policy.get()?.reviewEscalation === true,
+        }
+      },
+      // `policy.update` writes through the settings scope and does nothing at all
+      // when there is none, which would leave the panel reporting a saved value it
+      // never stored — the read-back comes from the same document. A composition
+      // without a settings service cannot save review settings, and saying so is
+      // the only outcome a user can act on.
+      update: async patch => {
+        if (!this.policy.configured) throw new Error('this composition has no settings service, so review settings cannot be saved')
+        await this.policy.update(patch)
+      },
     }
   }
 
@@ -5332,6 +6725,75 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     }
   }
 
+}
+/**
+ * The parent agent a review child may be opened in, when the tool call carried one.
+ *
+ * The tool surface types the agent as a small slice, so this is a check rather
+ * than a cast: a child needs a session with a workspace to run in and an agent
+ * registry to be created through, and a caller that is missing either is refused
+ * here instead of failing deep inside the child's construction.
+ * @param agent - the agent to test, as the tool surface handed it over.
+ * @returns the agent, when it can host a review child.
+ */
+function agentForReviewSubagent(agent: unknown): Agent | undefined {
+  const candidate = agent as Agent | undefined
+  const cwd = candidate?.session?.header?.cwd
+  if (typeof cwd !== 'string' || cwd.trim() === '') return undefined
+  if (candidate?.ctx?.agents === undefined) return undefined
+  return candidate
+}
+
+/**
+ * The paths the Host recorded for one turn, when it has a record for *that* turn.
+ *
+ * Both rules about trusting this record live in `review/turn-scope.ts`, along with
+ * their reasons; this function is the plumbing that reaches them. Everything is read
+ * defensively because the record is a Host service this plugin does not depend on:
+ * a composition without `workspace-changes` has no per-turn record, and the gate
+ * then reviews the workspace's change set as it always did.
+ * @param ctx - the context the service is looked up on.
+ * @param session - the stopping agent's session, as the gate's registry holds it.
+ * @param turn - the stopping turn, which the record has to name.
+ * @returns the turn's changed paths, or `undefined` when there is no such record.
+ */
+function readReviewTurnPaths(
+  ctx: Context,
+  session: { readonly id?: unknown; readonly snapshotEvents?: () => readonly unknown[] } | undefined,
+  turn: number | undefined,
+): readonly string[] | undefined {
+  if (session === undefined || turn === undefined || session.id === undefined) return undefined
+  const service = ctx.get('workspaceChanges') as
+    | { readonly summary?: (sessionId: unknown, seq: number) => TurnScopeSummary | undefined }
+    | undefined
+  if (typeof service?.summary !== 'function') return undefined
+  const summarize = service.summary.bind(service)
+  return turnChangePaths({
+    sessionId: String(session.id),
+    turn,
+    events: (typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : []) as readonly TurnScopeEvent[],
+    summarize: (sessionId, seq) => summarize(sessionId, seq),
+  })
+}
+
+/**
+ * The review child's model route: the plugin's own second-model route, as the review itself.
+ *
+ * The same pair, and for the same reason the review's single-shot model uses it —
+ * "the model this plugin calls on its own behalf" is one intent, and a dedicated
+ * route for the reviewer would be a second place to set it. Blank values are
+ * dropped rather than passed on, so the child's engine resolves its own default
+ * instead of receiving an empty model id.
+ * @param settings - the stored settings holding the route.
+ * @returns the child's options, with only the fields that were actually set.
+ */
+function reviewSubagentOptions(settings: { readonly advisorProvider?: string; readonly advisorModel?: string }): ReviewSubagentOptions {
+  const provider = (settings.advisorProvider ?? '').trim()
+  const model = (settings.advisorModel ?? '').trim()
+  return {
+    ...(provider === '' ? {} : { provider }),
+    ...(model === '' ? {} : { model }),
+  }
 }
 
 declare module '@deepseek-ai/cordis' {

@@ -89,7 +89,13 @@ export function defaultCopyConcurrency(): number {
   return Math.max(1, Math.min(16, availableParallelism()))
 }
 
-/** Distribute an ordered list into `buckets` groups by a stable hash of the item. */
+/**
+ * Distribute an ordered list into `buckets` groups by a stable hash of the item.
+ * @param items - the ordered list to distribute.
+ * @param buckets - how many groups to spread it across; at least one is used.
+ * @param keyOf - the stable key an item is hashed by, usually its path.
+ * @returns One group per bucket, in bucket order, each keeping the input order.
+ */
 export function shard<T>(items: readonly T[], buckets: number, keyOf: (item: T) => string): readonly (readonly T[])[] {
   const groups: T[][] = Array.from({ length: Math.max(1, buckets) }, () => [])
   for (const item of items) {

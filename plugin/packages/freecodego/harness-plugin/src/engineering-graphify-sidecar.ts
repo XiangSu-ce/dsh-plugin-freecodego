@@ -2,6 +2,7 @@
 
 import type { GraphifyRuntimeManager } from './engineering-graphify.ts'
 
+/** The Graphify operations this in-process bridge exposes. */
 export type GraphifyMcpToolName = 'graphify_search' | 'graphify_explain' | 'graphify_path' | 'graphify_affected' | 'graphify_overview'
 
 /**
@@ -23,7 +24,9 @@ export const GRAPHIFY_MCP_ARGUMENTS: Readonly<Record<GraphifyMcpToolName, readon
   graphify_overview: ['top'],
 }
 
-/** The same table as a sentence, for a schema description or a refusal message. */
+/** The same table as a sentence, for a schema description or a refusal message.
+ * @returns the argument names rendered as one sentence.
+ */
 export function graphifyMcpArgumentsHelp(): string {
   return Object.entries(GRAPHIFY_MCP_ARGUMENTS).map(([name, keys]) => `${name}: ${keys.map(key => `"${key}"`).join(', ')}`).join('; ')
 }
@@ -37,6 +40,12 @@ export function graphifyMcpArgumentsHelp(): string {
 export class GraphifyMcpSidecar {
   constructor(private readonly graphify: GraphifyRuntimeManager) {}
 
+  /** Run one Graphify operation against a workspace.
+   * @param cwd - the workspace to query.
+   * @param name - the Graphify operation to run.
+   * @param args - the operation's arguments, read by name.
+   * @returns the operation output and the project it belongs to.
+   */
   async call(cwd: string, name: GraphifyMcpToolName, args: Record<string, unknown>): Promise<{ readonly output: string; readonly projectId: string }> {
     if (name === 'graphify_search') {
       const query = requiredString(args.query, 'query', name)

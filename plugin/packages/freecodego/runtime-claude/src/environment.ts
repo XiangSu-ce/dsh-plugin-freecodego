@@ -17,7 +17,12 @@ const PASSTHROUGH_ENV_KEYS = [
   'NODE_EXTRA_CA_CERTS',
 ] as const
 
-/** Build the minimal environment inherited by the official Claude Code subprocess. */
+/** Build the minimal environment inherited by the official Claude Code subprocess. 
+ * @param input - the Host process environment the passthrough keys are read from.
+ * @param configDirectory - the plugin-owned Claude home exported as `CLAUDE_CONFIG_DIR`.
+ * @param model - provider wire id to pin as `ANTHROPIC_MODEL`; omitted when blank.
+ * @returns the environment for the subprocess: passthrough keys plus the gateway and home settings.
+ */
 export function buildClaudeSdkEnvironment(input: NodeJS.ProcessEnv, configDirectory: string, model?: string): Record<string, string> {
   const env: Record<string, string> = {}
   for (const key of PASSTHROUGH_ENV_KEYS) {

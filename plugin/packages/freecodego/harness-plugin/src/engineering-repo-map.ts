@@ -36,6 +36,7 @@ export interface RepoMapEntry {
   readonly references: number
 }
 
+/** A workspace's ranked repository map, plus what the scan could not read. */
 export interface RepoMapResult {
   readonly projectId: string
   readonly filesScanned: number
@@ -168,6 +169,9 @@ function isCommentLine(trimmed: string): boolean {
  * Extraction is deliberately a *definition surface*: it reports what a file
  * declares, ranked by how the rest of the workspace references it. It is not a
  * parser and does not attempt to resolve types, macros, or generated names.
+ * @param content - the file's source text.
+ * @param extension - the file extension that selects the language.
+ * @returns the definition rows, in backend order.
  */
 export function extractDefinitions(content: string, extension: string): readonly Definition[] {
   const language = LANGUAGE_BY_EXTENSION.get(extension.toLowerCase())
@@ -477,6 +481,11 @@ function referenceTokens(content: string): Map<string, number> {
  * Following aider: file→identifier edges weigh per reference, identifier→file
  * edges point at the definition, and damping 0.85 with ~20 iterations is
  * plenty at this graph size.
+ * @param nodes - the graph's identifiers.
+ * @param edges - each identifier's reference weights.
+ * @param damping - the damping factor.
+ * @param iterations - the number of power iterations to run.
+ * @returns each identifier's rank.
  */
 export function pagerank(nodes: readonly string[], edges: Map<string, Map<string, number>>, damping = 0.85, iterations = 20): Map<string, number> {
   const rank = new Map<string, number>()
@@ -511,6 +520,7 @@ export function pagerank(nodes: readonly string[], edges: Map<string, Map<string
 
 // ─── Map construction ───────────────────────────────────────────────────────
 
+/** The workspace and budget one repository-map build runs with. */
 export interface RepoMapInput {
   readonly cwd: string
   readonly maxTokens?: number
@@ -519,7 +529,10 @@ export interface RepoMapInput {
   readonly useCache?: boolean
 }
 
-/** Build the ranked repository map for a workspace. */
+/** Build the ranked repository map for a workspace.
+ * @param input - the workspace, token budget, focus files, and cache toggle.
+ * @returns the repo Map Result.
+ */
 export function buildRepoMap(input: RepoMapInput): RepoMapResult {
   const root = resolve(input.cwd)
   const maxTokens = Math.max(256, Math.min(8_192, input.maxTokens ?? 1_024))

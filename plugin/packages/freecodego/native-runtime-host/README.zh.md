@@ -15,6 +15,8 @@ kind: "package-reference"
 
 - [子进程契约](#child-process-contract)
 - [受管运行时文件](#managed-runtime-files)
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
 
 -----
@@ -37,8 +39,25 @@ kind: "package-reference"
 
 -----
 
+<a id="model-experience"></a>
+## Model Experience
+
+间接地，经由 host 中转进 Harness 会话的 worker 事件。
+
+#### KV Cache 影响
+
+host 自身不增加请求文本；已缓存的 prefix 取决于会话自身的事件投影。
+
+## 已知限制与延期工作
+<a id="known-limitations-and-deferred-work"></a>
+
+- **每个 worker 一个隔离的子进程** —— 有界的 JSONL 分帧、请求关联与单调事件序号校验就是它的契约。
+- **协议消息里没有凭据** —— host 会拒绝类密钥字段，而不是转发它们。
+- **受管运行时文件位于 Harness home 之下** —— 只要平台与协议匹配，已安装的官方运行时在 Host worker 更新后仍然可用。
+- **清理是升级式的，而不是尽力而为** —— 超时与中止处理以升级式进程清理收尾。
+
 <a id="dev-note"></a>
-## 开发备注
+### 开发备注
 
 <details>
 <summary>维护者的工作上下文——点击展开</summary>

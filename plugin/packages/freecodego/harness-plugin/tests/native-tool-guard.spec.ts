@@ -229,7 +229,10 @@ describe('native guard evaluation', () => {
  *
  * The module's contract is that both paths judge a call the same way — the
  * registry guard for Harness tools, this module's tiers for the engines' own
- * tools — and nothing compared them. That is exactly where the projection bug
+ * tools — and nothing compared them. The single deliberate exception is the
+ * loop tier, which belongs to this path alone: the registry's population is
+ * already counted by the Harness's advisory repeat-reminder. Every row below
+ * therefore tests a monotonic tier, which both paths must answer identically. That is exactly where the projection bug
  * lived: the Codex transport was judged as an unknown tool with no arguments
  * while the registry denied the very same command, and both specs passed on their
  * own. Every row below is therefore expressed twice, once per vocabulary, and the
@@ -244,7 +247,6 @@ describe('the two guard paths agree', () => {
   const registryVerdict = (name: string, args: Record<string, unknown>, plan = false): string | undefined =>
     freeCodeGoToolGuard({
       settings,
-      doomLoop: new DoomLoopGuard(),
       policy: COMPILED_BUILT_IN_COMMAND_POLICY,
       ...(plan ? { planMode: { ...planView, policy: COMPILED_BUILT_IN_COMMAND_POLICY } } : {}),
     })({ name, arguments: args, callId: 'call-1' } as never)
@@ -378,10 +380,11 @@ describe('native doom-loop tier', () => {
     expect(denial).toContain('Doom loop detected')
   })
 
-  it('keeps a native call and a Harness call of the same tool on one fingerprint', async () => {
-    // The property the tier exists for: a loop is the agent's behaviour, not the
-    // transport's. Two native calls plus one registry call is three identical
-    // repetitions by one agent, and must be caught as such.
+  it('keys one agent\'s repetitions through one fingerprint, whoever spells the call', async () => {
+    // A loop is the agent's behaviour, not the transport's, and the guard is
+    // keyed that way — which is why the native seam binds the request's agent in.
+    // No second path feeds this guard today; if one is ever added it has to use
+    // this instance and this key, and this test is what says so.
     const guard = new DoomLoopGuard({ now: () => 0 })
     const native = nativeToolCall('Read', { file_path: '/work/a.ts' })
     await repeat(native, 2, guard)

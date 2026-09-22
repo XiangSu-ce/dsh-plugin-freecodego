@@ -5,15 +5,24 @@ import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelIn
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import type { AttachmentStore, ImageAttachmentRef, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
 import { activeAccountIdAfterRemoval, activeAccountIdAfterWrite } from './account-utils.ts'
+import { logfareResponseError } from './managed-catalog-utils.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
-import { hasImageContent, parseSse, serializeRequest, serializeRequestWithInlineImages, translate } from './openai-wire.ts'
+import { asRecord as object, asString as string } from './untrusted-json.ts'
+import { llmCodeForUpstreamStatus } from './upstream-status-code.ts'
+import { clampMaxOutputTokens } from './openai-compatible-adapter.ts'
+import { hasImageContent, serializeRequest, serializeRequestWithInlineImages, translate } from './openai-wire.ts'
+import { parseSse } from './wire-shared.ts'
 
+/**
+ * Credential reference holding the account-scoped Agnes session token.
+ */
 export const AGNES_AUTH_REF: CredentialRef = credentialRef('AGNES_AUTH')
 /** Legacy key ref is retained only for migration/cleanup; keys are now account scoped. */
 export const AGNES_API_KEY_REF: CredentialRef = credentialRef('AGNES_API_KEY')
 const PLATFORM = 'https://platform-backend.agnes-ai.com'
 const API_BASE = 'https://apihub.agnes-ai.com/v1'
 const VIDEO_STATUS_BASE = 'https://apihub.agnes-ai.com/agnesapi'
+/** The Agnes model family the picker always exposes, whether or not the live directory answers. */
 export const AGNES_DOCUMENTED_MODELS = [
   { id: 'agnes-3.0-flash', name: 'Agnes 3.0 Flash', description: 'Agnes AI · ×0 · health:operational|uptime:100|success:100|traffic:0|latency:na', inputModalities: ['text'] as const },
   { id: 'agnes-image-2.5-flash', name: 'Agnes Image 2.5 Flash', description: 'Agnes AI · ×0 · health:operational|uptime:100|success:100|traffic:0|latency:na', inputModalities: ['text', 'image'] as const },
@@ -30,6 +39,7 @@ const AGNES_MEDIA_FALLBACK_MODELS = [
 ] as const
 const AGNES_MODELS_URL = `${API_BASE}/models`
 const AGNES_MODELS_CACHE_TTL_MS = 5 * 60_000
+/** Bound on one fetch of Agnes' live model directory. */
 export const AGNES_MODELS_TIMEOUT_MS = 8_000
 /**
  * Bound on one account or sign-in round trip.
@@ -61,6 +71,16 @@ export const AGNES_MEDIA_TIMEOUT_MS = 120_000
 /** Bound on one chat completion stream, matching `CLINE_CHAT_TIMEOUT_MS`. */
 export const AGNES_CHAT_TIMEOUT_MS = 120_000
 /**
+ * The most completion tokens Agnes accepts on one chat request.
+ *
+ * Measured against the live endpoint: `65536` is answered with a stream while
+ * `131072` is rejected with `HTTP 400 {"error":{"message":"max_tokens exceeds
+ * the limit of 65536"}}`. The Harness fills an unnamed budget from its own far
+ * larger default, so without this cap every Agnes turn failed with a bare `400`
+ * that named neither the field nor the ceiling.
+ */
+export const AGNES_MAX_OUTPUT_TOKENS = 65_536
+/**
  * Bound on one video-status poll.
  *
  * The polling loop repeats every two seconds and owns its own ten minute
@@ -74,6 +94,9 @@ function supportsAgnesReasoning(model: string): boolean {
   return model === 'agnes-3.0-flash'
 }
 
+/**
+ * One signed-in Agnes account, as the settings surface lists it.
+ */
 export interface AgnesAccountStatus {
   readonly id: string
   readonly email?: string
@@ -81,12 +104,17 @@ export interface AgnesAccountStatus {
   readonly apiKeyConfigured: boolean
 }
 
+/** The media kind an Agnes model id names. */
 export type AgnesMediaCategory = 'image' | 'video' | 'audio'
+/** One entry from Agnes' media model directory. */
 export interface AgnesMediaModel { readonly id: string; readonly name: string }
 
 /** Classify a raw Agnes model id by its embedded media keyword. The live
  * `/models` directory is free-form, so this stays a keyword heuristic over
- * the id and display name rather than a pinned id list. */
+ * the id and display name rather than a pinned id list.
+ * @param value - the raw model id or display name to classify.
+ * @returns the media category, or `undefined` when the name names none.
+ */
 export function agnesMediaCategory(value: string): AgnesMediaCategory | undefined {
   const normalized = value.toLowerCase()
   if (/(?:^|[-_.\s])videos?(?:[-_.\s]|\d|$)/u.test(normalized)) return 'video'
@@ -103,6 +131,33 @@ function parseAgnesModelRow(value: unknown): AgnesMediaModel | undefined {
   return { id, name }
 }
 
+/**
+ * Parse one `/models` row as a chat route.
+ *
+ * Deliberately not {@link parseAgnesModelRow}: that parser serves the media
+ * directory and drops `chat`-prefixed ids, which are precisely the ids a chat
+ * directory uses. What the two share is the media filter — a row naming an image
+ * or video generator is not a chat route, whichever half of the document it
+ * arrived in.
+ *
+ * The id is taken from `id`/`model` only, never from a display name: a route id
+ * invented from a label would be sent upstream and 4xx on every call. A
+ * path-shaped id is dropped for the same reason the media parser drops one —
+ * this picker spells a provider-qualified route with a slash of its own, so a
+ * directory id that already carries one cannot be addressed unambiguously.
+ * @param value - the raw directory row.
+ * @returns the row, or `undefined` when it names no usable chat route.
+ */
+function parseAgnesTextRow(value: unknown): AgnesMediaModel | undefined {
+  const row = object(value)
+  const id = string(row.id ?? row.model)
+  if (id === undefined || id.trim() === '' || id.includes('/')) return undefined
+  const name = string(row.displayName ?? row.title) ?? id
+  if (agnesMediaCategory(`${id} ${name}`) !== undefined) return undefined
+  return { id, name }
+}
+
+/** The Agnes account status the settings surface reports. */
 export type AgnesStatus =
   | { readonly status: 'signed-out'; readonly accounts: readonly [] }
   | {
@@ -141,8 +196,6 @@ function sessionUsable(account: AgnesAccount): boolean {
 
 interface AgnesStore { readonly accounts: readonly AgnesAccount[]; readonly activeAccountId?: string }
 
-function object(value: unknown): Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
-function string(value: unknown): string | undefined { return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined }
 function message(value: unknown): string { return typeof value === 'string' ? value : JSON.stringify(value ?? 'request failed') }
 function redact(value: string): string { return redactCredentialShapes(value).replace(/Bearer\s+[^\s"']+/gi, 'Bearer <redacted>').replace(/("(?:token|access_token|api_key|key)"\s*:\s*")[^"]+(")/gi, '$1<redacted>$2').slice(0, 1024) }
 function accountId(email?: string, username?: string): string { return (email ?? username ?? `agnes-${Date.now()}`).trim().toLowerCase() }
@@ -212,8 +265,17 @@ function agnesFetch(url: string, init: RequestInit, timeoutMs: number): Promise<
   return agnesSend(url, init, agnesDeadline(timeoutMs, init.signal), timeoutMs)
 }
 
+/**
+ * One image generation request against the Agnes media API.
+ */
 export interface AgnesImageRequest { readonly prompt: string; readonly model?: string; readonly size?: string; readonly ratio?: string; readonly images?: readonly string[]; readonly signal?: AbortSignal }
+/**
+ * The images one generation produced, as URLs or inline base64 bytes.
+ */
 export interface AgnesImageResult { readonly model: string; readonly images: { readonly url?: string; readonly b64Json?: string }[] }
+/**
+ * One video generation request against the Agnes media API.
+ */
 export interface AgnesVideoRequest {
   readonly prompt: string
   readonly model?: string
@@ -228,24 +290,49 @@ export interface AgnesVideoRequest {
   readonly videos?: readonly string[]
   readonly signal?: AbortSignal
 }
+/**
+ * State of one Agnes video job.
+ */
 export interface AgnesVideoResult { readonly videoId: string; readonly status: string; readonly url?: string; readonly error?: string }
 
+/**
+ * Agnes accounts, keys, and media calls, with sessions kept in the Host credential store.
+ */
 export class AgnesClient {
   private cursor = 0
   private mediaModelsCache: { readonly expiresAt: number; readonly models: readonly AgnesMediaModel[] } | undefined
   private mediaModelsPromise: Promise<readonly AgnesMediaModel[]> | undefined
+  /** Chat rows from the same directory read; cached on the same window. */
+  private textModelsCache: { readonly expiresAt: number; readonly models: readonly AgnesMediaModel[] } | undefined
+  private textModelsPromise: Promise<readonly AgnesMediaModel[]> | undefined
   constructor(private readonly credentials: CredentialProvider) {}
 
-  async sendVerificationCode(email: string, purpose: 'register' | 'reset' = 'register'): Promise<{ readonly sent: boolean }> {
+    /**
+   * Send a verification code for one Agnes flow.
+   * @param email - the address the code is sent to.
+   * @param purpose - whether the code belongs to registration or a password reset.
+   * @returns true once the platform accepted the request.
+   */
+async sendVerificationCode(email: string, purpose: 'register' | 'reset' = 'register'): Promise<{ readonly sent: boolean }> {
     const response = await agnesFetch(`${PLATFORM}/api/verification?email=${encodeURIComponent(email)}&purpose=${purpose}`, {}, AGNES_AUTH_TIMEOUT_MS)
     const data = object(await this.responseJson(response))
     if (data.code !== 200) throw new Error(`Agnes verification failed: ${redact(message(data.message))}`)
     return { sent: true }
   }
 
-  async sendPasswordResetCode(email: string): Promise<{ readonly sent: boolean }> { return this.sendVerificationCode(email, 'reset') }
+    /**
+   * Send the password-reset verification code.
+   * @param email - the address the code is sent to.
+   * @returns true once the platform accepted the request.
+   */
+async sendPasswordResetCode(email: string): Promise<{ readonly sent: boolean }> { return this.sendVerificationCode(email, 'reset') }
 
-  async resetPassword(input: { readonly email: string; readonly password: string; readonly code: string }): Promise<{ readonly updated: boolean }> {
+    /**
+   * Set a new password using the code the platform mailed.
+   * @param input - the address, the new password, and the mailed code.
+   * @returns true once the platform accepted the change.
+   */
+async resetPassword(input: { readonly email: string; readonly password: string; readonly code: string }): Promise<{ readonly updated: boolean }> {
     const response = await agnesFetch(`${PLATFORM}/api/reset_password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -256,14 +343,23 @@ export class AgnesClient {
     return { updated: true }
   }
 
-  async register(input: { readonly email: string; readonly password: string; readonly code: string }): Promise<AgnesStatus> {
+    /**
+   * Register an account, then sign in with the credentials just created.
+   * @param input - the address, password, and mailed code.
+   * @returns the client's state after the sign-in.
+   */
+async register(input: { readonly email: string; readonly password: string; readonly code: string }): Promise<AgnesStatus> {
     const response = await agnesFetch(`${PLATFORM}/api/user/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: input.email, password: input.password, password_confirm: input.password, code: input.code }) }, AGNES_AUTH_TIMEOUT_MS)
     const data = object(await this.responseJson(response))
     if (data.code !== 200) throw new Error(`Agnes registration failed: ${redact(message(data.message))}`)
     return this.login(input.email, input.password)
   }
 
-  /** Adds or replaces only the matching account; existing accounts remain usable. */
+  /** Adds or replaces only the matching account; existing accounts remain usable. 
+   * @returns the agnes Status.
+   * @param username - the account's sign-in name.
+   * @param password - the account's password.
+   */
   async login(username: string, password: string): Promise<AgnesStatus> {
     const response = await agnesFetch(`${PLATFORM}/api/user/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) }, AGNES_AUTH_TIMEOUT_MS)
     const data = object(await this.responseJson(response))
@@ -285,7 +381,11 @@ export class AgnesClient {
     return this.status()
   }
 
-  async status(): Promise<AgnesStatus> {
+    /**
+   * Read the signed-in accounts and which of them is active.
+   * @returns the state the settings surface renders.
+   */
+async status(): Promise<AgnesStatus> {
     const store = await this.readStore()
     if (store.accounts.length === 0) return { status: 'signed-out', accounts: [] }
     const accounts = store.accounts.map(account => ({ id: account.id, ...(account.email === undefined ? {} : { email: account.email }), ...(account.username === undefined ? {} : { username: account.username }), apiKeyConfigured: account.apiKey !== undefined && account.apiKey.trim() !== '', ...(sessionUsable(account) ? {} : { reauthRequired: true }) }))
@@ -297,7 +397,12 @@ export class AgnesClient {
   /** Stable name used for the FreeCodeGo-provisioned Agnes API key. */
   private static readonly API_KEY_NAME = 'freecodego'
 
-  async createApiKey(accountIdValue?: string): Promise<{ readonly configured: boolean; readonly accountId: string }> {
+    /**
+   * Provision, or reuse, this plugin's Agnes API key for one account.
+   * @param accountIdValue - the account to provision for; defaults to the active one.
+   * @returns whether a key is configured, and the account it belongs to.
+   */
+async createApiKey(accountIdValue?: string): Promise<{ readonly configured: boolean; readonly accountId: string }> {
     const store = await this.readStore(); const account = this.pickAccount(store, accountIdValue)
     if (account === undefined) throw new Error('AGNES_LOGIN_REQUIRED: sign in to Agnes first')
     // Provisioning against a rejected session would only surface an upstream
@@ -389,13 +494,21 @@ export class AgnesClient {
     })
   }
 
-  async removeAccount(id: string): Promise<AgnesStatus> {
+    /**
+   * Forget one account locally, leaving the others usable.
+   * @param id - id of the account to remove.
+   * @returns the state after the removal.
+   */
+async removeAccount(id: string): Promise<AgnesStatus> {
     const store = await this.readStore(); const accounts = store.accounts.filter(account => account.id !== id)
     const activeAccountId = activeAccountIdAfterRemoval(accounts, store.activeAccountId)
     await this.saveStore({ accounts, ...(activeAccountId === undefined ? {} : { activeAccountId }) }); return this.status()
   }
 
-  /** Agnes currently exposes session validation rather than a refresh token. */
+  /** Agnes currently exposes session validation rather than a refresh token. 
+   * @returns the agnes Status.
+   * @param accountIdValue - the account to revalidate; defaults to the active one.
+   */
   async refreshAccount(accountIdValue?: string): Promise<AgnesStatus> {
     const store = await this.readStore(); const account = this.pickAccount(store, accountIdValue)
     if (account === undefined) throw new Error('AGNES_LOGIN_REQUIRED: sign in to Agnes first')
@@ -419,7 +532,12 @@ export class AgnesClient {
     return this.status()
   }
 
-  async logout(accountIdValue?: string): Promise<AgnesStatus> {
+    /**
+   * Sign one account out, or every account, revoking its session and clearing the stored keys.
+   * @param accountIdValue - the account to sign out; omitted signs every account out.
+     * @returns the state after the sign-out.
+     */
+async logout(accountIdValue?: string): Promise<AgnesStatus> {
     const store = await this.readStore()
     if (accountIdValue === undefined) {
       for (const account of store.accounts) { try { await agnesFetch(`${PLATFORM}/api/user/logout`, { headers: this.authHeaders(account) }, AGNES_AUTH_TIMEOUT_MS) } catch { /* local removal still wins */ } }
@@ -431,26 +549,76 @@ export class AgnesClient {
   }
 
   /**
-   * Chat-capable Agnes routes only.
+   * Chat-capable Agnes routes: the documented chat model, plus every non-media
+   * route the live directory lists.
    *
-   * The live `/models` directory is a *media* directory — image, video, and
-   * audio generators. Folding it in here put every media model into the chat
-   * picker, which is both wrong and unusable: selecting one starts a chat
-   * request against a route that only accepts an image prompt. Media selection
-   * has its own path (`agnesMediaModels` / `liveMediaCatalog`) feeding the
-   * media defaults, so this method returns the documented chat model and
-   * nothing else.
+   * The document is one directory holding both halves, split here by
+   * {@link agnesMediaCategory}. Media generators stay out because the chat picker
+   * cannot start a chat against a route that only takes an image prompt, and they
+   * have their own path anyway (`agnesMediaModels` / `liveMediaCatalog`). The text
+   * half is *included* because a chat route the directory lists is one the
+   * account can reach: returning only the documented model left every other Agnes
+   * chat route invisible until a plugin release named it.
+   *
+   * A directory that cannot be read is not a reason to lose the seed — the live
+   * rows are an addition to the documented one, never a replacement for it.
+   * @returns the llm Model Info rows, documented rows first.
    */
   async listModels(): Promise<readonly LlmModelInfo[]> {
     await this.requireApiKey()
-    return DOCUMENTED_MODELS
-      .filter(model => agnesMediaCategory(model.id) === undefined)
-      .map(model => ({ provider: 'agnes', ...model }))
+    const merged = new Map<string, LlmModelInfo>()
+    for (const model of DOCUMENTED_MODELS) {
+      if (agnesMediaCategory(model.id) !== undefined) continue
+      merged.set(model.id.toLowerCase(), { provider: 'agnes', ...model })
+    }
+    for (const model of await this.liveTextRows().catch(() => [] as readonly AgnesMediaModel[])) {
+      const key = model.id.toLowerCase()
+      if (merged.has(key)) continue
+      // No availability flag here: the adapter stamps that once for the whole list
+      // (see `AgnesAdapter.listModels`), and a second answer per row would be a
+      // second place for the two to disagree.
+      merged.set(key, { provider: 'agnes', id: model.id, name: model.name, inputModalities: ['text'] })
+    }
+    return [...merged.values()]
   }
 
-  async chat(body: string, signal: AbortSignal): Promise<Response> { return this.requestWithAccounts(`${API_BASE}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body, signal }, AGNES_CHAT_TIMEOUT_MS) }
+  /** The live directory's chat rows, cached like its media rows. 
+   * @returns the non-media routes the directory lists, in backend order.
+   */
+  private async liveTextRows(): Promise<readonly AgnesMediaModel[]> {
+    const cached = this.textModelsCache
+    if (cached !== undefined && cached.expiresAt > Date.now()) return cached.models
+    const inFlight = this.textModelsPromise
+    if (inFlight !== undefined) return inFlight
+    const operation = (async (): Promise<readonly AgnesMediaModel[]> => {
+      const payload = object(await this.directoryJson())
+      const rows = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : []
+      return rows.map(parseAgnesTextRow).filter((model): model is AgnesMediaModel => model !== undefined)
+    })()
+    this.textModelsPromise = operation
+    try {
+      const models = await operation
+      this.textModelsCache = { expiresAt: Date.now() + AGNES_MODELS_CACHE_TTL_MS, models }
+      return models
+    } finally {
+      if (this.textModelsPromise === operation) this.textModelsPromise = undefined
+    }
+  }
 
-  async generateImage(input: AgnesImageRequest): Promise<AgnesImageResult> {
+    /**
+   * Open a streaming chat completion against the Agnes gateway.
+   * @param body - the serialized request body.
+   * @param signal - aborts the request when the turn is cancelled.
+   * @returns the streamed response, with its body still unread.
+   */
+async chat(body: string, signal: AbortSignal): Promise<Response> { return this.requestWithAccounts(`${API_BASE}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body, signal }, AGNES_CHAT_TIMEOUT_MS) }
+
+    /**
+   * Generate images and return their URLs or inline bytes.
+   * @param input - the prompt, model, size, and any seed images.
+   * @returns the resolved model and the images it produced.
+   */
+async generateImage(input: AgnesImageRequest): Promise<AgnesImageResult> {
     const prompt = input.prompt.trim(); if (prompt === '') throw new Error('AGNES_IMAGE_PROMPT_REQUIRED')
     // A caller-provided model must still be an image-capable Agnes route; the
     // live directory decides membership rather than a pinned id list.
@@ -464,7 +632,12 @@ export class AgnesClient {
     return { model: resolved, images }
   }
 
-  async createVideo(input: AgnesVideoRequest): Promise<AgnesVideoResult> {
+    /**
+   * Start a video job and return the handle to poll.
+   * @param input - the prompt, model, and video options.
+   * @returns the job id and its first reported state.
+   */
+async createVideo(input: AgnesVideoRequest): Promise<AgnesVideoResult> {
     const prompt = input.prompt.trim(); if (prompt === '') throw new Error('AGNES_VIDEO_PROMPT_REQUIRED')
     if (input.seconds !== undefined && !AGNES_VIDEO_SECONDS.includes(input.seconds)) throw new Error('AGNES_VIDEO_SECONDS_INVALID: use 4 through 12 seconds')
     // Same live-directory rule as images: honor any video-capable Agnes id,
@@ -478,7 +651,13 @@ export class AgnesClient {
     return this.pollVideo(videoId, input.signal)
   }
 
-  async getVideo(videoId: string, signal?: AbortSignal): Promise<AgnesVideoResult> {
+    /**
+   * Read the state of one previously started Agnes video job.
+   * @param videoId - the id the create call returned.
+   * @param signal - aborts the poll when the caller cancels.
+   * @returns the job's current state.
+   */
+async getVideo(videoId: string, signal?: AbortSignal): Promise<AgnesVideoResult> {
     const id = videoId.trim(); if (id === '') throw new Error('AGNES_VIDEO_ID_REQUIRED')
     const data = object(await this.requestJsonWithAccounts(`${VIDEO_STATUS_BASE}?video_id=${encodeURIComponent(id)}`, { method: 'GET', ...(signal === undefined ? {} : { signal }) }, AGNES_STATUS_TIMEOUT_MS))
     const item = object(data.data ?? data)
@@ -496,7 +675,9 @@ export class AgnesClient {
     return response.json()
   }
 
-  /** Live media directory parsed from Agnes' `/models` endpoint. */
+  /** Live media directory parsed from Agnes' `/models` endpoint. 
+   * @returns the agnes Media Model rows, in backend order.
+   */
   async listLiveMediaModels(): Promise<readonly AgnesMediaModel[]> {
     const cached = this.mediaModelsCache
     if (cached !== undefined && cached.expiresAt > Date.now()) return cached.models
@@ -527,7 +708,10 @@ export class AgnesClient {
   /** Media category of a raw Agnes model id, resolved against the live
    * directory first and the documented fallbacks second. An unreachable
    * directory degrades to the documented ids instead of dropping the
-   * provider from the media fallback chain. */
+   * provider from the media fallback chain. 
+   * @returns the matching names, in the order the backend listed them.
+   * @param category - the media kind to list models for.
+   */
   async agnesMediaModels(category: AgnesMediaCategory): Promise<readonly string[]> {
     const models = await this.listLiveMediaModels().catch(() => AGNES_MEDIA_FALLBACK_MODELS.map(model => ({ id: model.id, name: model.name })))
     return models.filter(model => agnesMediaCategory(model.id) === category).map(model => model.id)
@@ -535,7 +719,9 @@ export class AgnesClient {
 
   /** Live media directory parsed from Agnes' public `/models` endpoint, shared
    * with the plugin-side managed catalog so the settings picker and the media
-   * fallback chain see the same availability facts. */
+   * fallback chain see the same availability facts. 
+   * @returns the agnes Media Model rows, in backend order.
+   */
   async liveMediaCatalog(): Promise<readonly AgnesMediaModel[]> { return this.listLiveMediaModels().catch(() => AGNES_MEDIA_FALLBACK_MODELS.map(model => ({ id: model.id, name: model.name }))) }
 
   private async pollVideo(videoId: string, signal?: AbortSignal): Promise<AgnesVideoResult> {
@@ -624,6 +810,22 @@ export class AgnesClient {
   }
 }
 
+/**
+ * One failed Agnes response as an operator-readable message.
+ *
+ * `logfareResponseError` is the shared bounded, credential-redacted reader for a
+ * failed upstream response; its name is historical (it predates the second
+ * caller) and its body carries no Logfare rule.
+ * @param response - the failed response, whose body is read once.
+ * @returns the message, including the upstream's own explanation when it gave one.
+ */
+function agnesResponseError(response: Response): Promise<string> {
+  return logfareResponseError(response, 'Agnes provider request failed')
+}
+
+/**
+ * LLM adapter that surfaces Agnes chat routes in the Harness model directory.
+ */
 export class AgnesAdapter extends LlmAdapter {
   constructor(
     private readonly client: AgnesClient,
@@ -645,9 +847,14 @@ export class AgnesAdapter extends LlmAdapter {
       throw error
     }
   }
-  override resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
-    const known = DOCUMENTED_MODELS.find(item => item.id === model)
-    return Promise.resolve({
+  override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
+    // The live list, not just the documented seed: a route the directory added
+    // has to resolve to its own display name, or choosing it would put its raw id
+    // in the composer. The read is cached, and an unreadable directory degrades
+    // to the documented row rather than failing the selection.
+    const known = (await this.client.listModels().catch(() => [] as readonly LlmModelInfo[])).find(item => item.id === model)
+      ?? DOCUMENTED_MODELS.find(item => item.id === model)
+    return {
       provider,
       id: model,
       name: known?.name ?? model,
@@ -655,6 +862,7 @@ export class AgnesAdapter extends LlmAdapter {
       // not advertise image input (the chat stream path cannot carry images).
       inputModalities: known?.inputModalities ? [...known.inputModalities] : ['text'],
       context: { contextWindow: 131072 },
+      defaultMaxTokens: AGNES_MAX_OUTPUT_TOKENS,
       ...(supportsAgnesReasoning(model) ? {
         reasoning: {
           efforts: AGNES_REASONING_EFFORTS.map(effort => ({
@@ -664,7 +872,7 @@ export class AgnesAdapter extends LlmAdapter {
           defaultEffort: ReasoningEffortId('high'),
         },
       } : {}),
-    })
+    }
   }
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const request = supportsAgnesReasoning(options.model)
@@ -672,6 +880,14 @@ export class AgnesAdapter extends LlmAdapter {
       : options
     const body = await this.serialize(request, supportsAgnesReasoning(options.model) ? { reasoningWire: 'gateway' } : {})
     delete (body).stream_options
+    // The budget is capped rather than passed through: the caller's default is
+    // sized for the biggest route in the Harness, and Agnes rejects anything
+    // above its own ceiling with a `400` instead of trimming it. An unnamed
+    // budget is dropped so the service picks its own, which is what the omitted
+    // field has always meant on this wire.
+    const budget = clampMaxOutputTokens(typeof body.max_tokens === 'number' ? body.max_tokens : undefined, AGNES_MAX_OUTPUT_TOKENS)
+    if (budget === undefined) delete (body).max_tokens
+    else body.max_tokens = budget
     let response: Response
     try { response = await this.client.chat(JSON.stringify(body), options.signal ?? new AbortController().signal) } catch (error) {
       // The caller's own abort is not a provider failure: reporting it as one
@@ -685,7 +901,13 @@ export class AgnesAdapter extends LlmAdapter {
       if (error instanceof Error && error.message.startsWith(AGNES_TIMEOUT_PREFIX)) throw new LlmError(error.message, 'TRANSPORT', { cause: error })
       throw new LlmError('Agnes request failed', 'TRANSPORT', { cause: error })
     }
-    if (!response.ok) throw new LlmError(`Agnes provider request failed (HTTP ${response.status})`, response.status === 401 ? 'AUTH' : response.status === 429 ? 'RATE_LIMIT' : 'SERVER', { status: response.status })
+    // The upstream's own sentence rides the error. A bare status left the user
+    // (and the next debugging session) unable to tell an unsupported request
+    // field from an unknown model, which are the same `400` and different fixes.
+    // The shared reader also bounds and redacts what it echoes, and Agnes is a
+    // strict endpoint: it rejects a body field it does not know, so what it
+    // names is the field to remove.
+    if (!response.ok) throw new LlmError(await agnesResponseError(response), llmCodeForUpstreamStatus(response.status), { status: response.status })
     if (response.body === null) throw new LlmError('Agnes returned no response body', 'EMPTY_RESPONSE')
     yield* translate(parseSse(response.body))
   }

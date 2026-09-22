@@ -3,7 +3,7 @@ import type { Mock } from 'vitest'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import { LlmError, MessageId } from '@deepseek-ai/dsh-llm'
-import { AGNES_CHAT_TIMEOUT_MS, AgnesAdapter, AgnesClient, agnesMediaCategory } from '../src/agnes.ts'
+import { AGNES_CHAT_TIMEOUT_MS, AGNES_MAX_OUTPUT_TOKENS, AgnesAdapter, AgnesClient, agnesMediaCategory } from '../src/agnes.ts'
 
 /**
  * The credential store the specs inspect. Its members are spies, so they are
@@ -95,27 +95,39 @@ describe('AgnesClient', () => {
     expect(models.some(model => agnesMediaCategory(model.id) !== undefined)).toBe(false)
   })
 
-  it('keeps live /models media rows out of the chat directory while serving media selection', async () => {
+  it('splits one /models document into the chat directory and the media directory', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).includes('/models')) return new Response(JSON.stringify({ data: [
         { id: 'agnes-image-3.0-turbo', name: 'Agnes Image 3.0 Turbo' },
         { id: 'agnes-video-3', name: 'Agnes Video 3' },
         { id: 'agnes-3.0-flash', name: 'Agnes 3.0 Flash' },
+        { id: 'agnes-4.0-pro', name: 'Agnes 4.0 Pro' },
         { id: 'some-legacy-model/preview', name: 'excluded: path id' },
       ] }), { status: 200 })
       return new Response(JSON.stringify({ data: [] }), { status: 200 })
     })
     const client = new AgnesClient(store(JSON.stringify({ accounts: [{ id: 'a', accessToken: 'session', apiKey: 'key' }] })))
     const models = await client.listModels()
-    // The live directory extends *media* routes only; the chat directory stays
-    // chat-only even when the directory advertises new generators.
+    // The chat half of the document is served in full: a text route the product
+    // publishes is selectable without waiting for a plugin release to name it.
+    expect(models.map(model => model.id)).toEqual(['agnes-3.0-flash', 'agnes-4.0-pro'])
+    // A route naming a generator is not a chat route, and a path-shaped id
+    // cannot be addressed unambiguously by this picker.
     expect(models.map(model => model.id)).not.toContain('agnes-image-3.0-turbo')
     expect(models.map(model => model.id)).not.toContain('agnes-video-3')
-    expect(models.map(model => model.id)).toEqual(['agnes-3.0-flash'])
+    expect(models.map(model => model.id)).not.toContain('some-legacy-model/preview')
     // Media candidates still follow the live directory per category.
     await expect(client.agnesMediaModels('image')).resolves.toContain('agnes-image-3.0-turbo')
     await expect(client.agnesMediaModels('video')).resolves.toContain('agnes-video-3')
     await expect(client.agnesMediaModels('audio')).resolves.toEqual([])
+  })
+
+  it('keeps the documented chat route when the live directory cannot be read', async () => {
+    // The live rows are an addition to the seed, never a replacement: an
+    // unreachable directory must not empty the Agnes group in the picker.
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'))
+    const client = new AgnesClient(store(JSON.stringify({ accounts: [{ id: 'a', accessToken: 'session', apiKey: 'key' }] })))
+    await expect(client.listModels()).resolves.toMatchObject([{ id: 'agnes-3.0-flash', name: 'Agnes 3.0 Flash' }])
   })
 
   it('keeps documented media ids selectable when the live directory is unreachable', async () => {
@@ -180,6 +192,15 @@ describe('AgnesClient', () => {
       .then(() => new Error('the request was expected to fail'), (error: unknown) => error instanceof Error ? error : new Error(String(error)))
     expect(failure.message).toContain('Agnes request failed (HTTP 500)')
     expect(failure.message).not.toContain(leaked)
+  })
+
+  it('declares the endpoint ceiling as the budget the model reports', async () => {
+    // The Harness fills an unnamed budget from a much larger default, and Agnes
+    // answers anything above its ceiling with `400 max_tokens exceeds the limit`
+    // rather than trimming it. Declaring the real budget keeps the caller's
+    // request inside the limit before any serialization happens.
+    await expect(new AgnesAdapter(new AgnesClient(store())).resolveModel('agnes', 'agnes-3.0-flash'))
+      .resolves.toMatchObject({ defaultMaxTokens: AGNES_MAX_OUTPUT_TOKENS })
   })
 
   it('honors a live-directory image model id and rejects mismatched media kinds', async () => {
@@ -301,6 +322,9 @@ describe('AgnesAdapter chat failures', () => {
   /** One signed-in account carrying a provisioned key: the chat route needs both. */
   const SIGNED_IN = JSON.stringify({ accounts: [{ id: 'a', accessToken: 'session-token', apiKey: 'secret-key' }], activeAccountId: 'a' })
 
+  /** The smallest stream the adapter's translator accepts as a finished turn. */
+  const DONE_STREAM = 'data: {"id":"1","choices":[{"index":0,"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n'
+
   /** The smallest request the adapter will serialize. */
   const userMessage = (text: string) => ({
     id: MessageId('m1'),
@@ -344,5 +368,26 @@ describe('AgnesAdapter chat failures', () => {
     expect((failure as LlmError).code).toBe('TRANSPORT')
     expect((failure as LlmError).message).toBe(`Agnes request timed out after ${AGNES_CHAT_TIMEOUT_MS / 1_000}s`)
     expect((failure as LlmError).message).not.toContain(leaked)
+  })
+
+  it('caps a caller budget larger than the endpoint ceiling', async () => {
+    // Measured against the live endpoint: this exact shape (the Harness's own
+    // default budget) is answered with `HTTP 400 {"error":{"message":"max_tokens
+    // exceeds the limit of 65536"}}`, while the capped value streams.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(DONE_STREAM, { status: 200 }))
+    const adapter = new AgnesAdapter(new AgnesClient(store(SIGNED_IN)))
+    for await (const _chunk of adapter.stream({ provider: 'agnes', model: 'agnes-3.0-flash', messages: [userMessage('hello')], maxTokens: 131_072 })) { /* drain */ }
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { readonly max_tokens?: number }
+    expect(body.max_tokens).toBe(AGNES_MAX_OUTPUT_TOKENS)
+  })
+
+  it('sends no budget at all when the caller named none', async () => {
+    // The service picks its own default when the field is absent, which is a
+    // legal request; inventing one is what the cap above exists to bound.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(DONE_STREAM, { status: 200 }))
+    const adapter = new AgnesAdapter(new AgnesClient(store(SIGNED_IN)))
+    for await (const _chunk of adapter.stream({ provider: 'agnes', model: 'agnes-3.0-flash', messages: [userMessage('hello')] })) { /* drain */ }
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>
+    expect(body.max_tokens).toBeUndefined()
   })
 })

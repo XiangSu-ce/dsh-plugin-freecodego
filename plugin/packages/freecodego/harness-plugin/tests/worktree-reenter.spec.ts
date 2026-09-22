@@ -32,12 +32,12 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, test } from 'vitest'
 
 import { createWorktree, type WorktreeCreation } from '../src/worktree/creator.ts'
-import { WORKTREE_RELATIVE_DIRECTORY, type TeamWorktree } from '../src/team/worktree.ts'
+import { WORKTREE_RELATIVE_DIRECTORY, type WorktreeEntry } from '../src/worktree/registry.ts'
 import {
   SessionWorktrees,
   sessionWorktreePlan,
   type SessionWorktreePorts,
-  type WorktreeRegistry,
+  type WorktreeRegistryPort,
 } from '../src/worktree/tools.ts'
 
 const scratch = mkdtempSync(join(tmpdir(), 'worktree-reenter-'))
@@ -47,12 +47,12 @@ afterAll(() => {
 })
 
 /** An in-memory registry, like the sibling spec's: these tests are about the operations. */
-class MemoryRegistry implements WorktreeRegistry {
-  readonly entries: TeamWorktree[] = []
-  async list(): Promise<readonly TeamWorktree[]> {
+class MemoryRegistry implements WorktreeRegistryPort {
+  readonly entries: WorktreeEntry[] = []
+  async list(): Promise<readonly WorktreeEntry[]> {
     return [...this.entries]
   }
-  async register(entry: TeamWorktree): Promise<void> {
+  async register(entry: WorktreeEntry): Promise<void> {
     const index = this.entries.findIndex(existing => existing.id === entry.id)
     if (index === -1) this.entries.push(entry)
     else this.entries[index] = entry

@@ -1,5 +1,5 @@
 /**
- * The ten collectors, built from live plugin state.
+ * The collectors, built from live plugin state.
  *
  * This is the layer that answers "where does each section's data actually come
  * from", kept apart from `collect.ts` (which owns isolation and rendering) and
@@ -32,7 +32,7 @@ import type { WorkspaceChangeScope } from '../engineering-quality.ts'
 import { selectScanFiles, type ScanCandidate } from '../scan-selection.ts'
 import { collectHookHandlers } from '../hooks/surface.ts'
 import { loadPersonaRoster } from '../persona/files.ts'
-import { loadHookDocuments } from '../hooks/files.ts'
+import { loadHookDocuments, CLAUDE_DIALECT_FILE, HARNESS_CLAUDE_HOOK_BRIDGE_PACKAGE, type ClaudeHookDialectOwner } from '../hooks/files.ts'
 import {
   collectHooksSection,
   collectRulesSection,
@@ -71,6 +71,14 @@ export interface InspectHostPort {
   readonly dataHome: () => string
   /** The trust resolution for a directory. */
   readonly trust: (directory: string | undefined) => Promise<InspectTrustAnswer>
+  /**
+   * Who owns `.claude/settings.json` in this composition.
+   *
+   * The hooks section reads the same discovery the dispatcher does, so it has to
+   * be told the same thing — otherwise the report lists the file this reader
+   * stands down from and claims a handler count no dispatch would produce.
+   */
+  readonly claudeHookDialect: () => ClaudeHookDialectOwner
   /** The capability registry's own snapshot. */
   readonly capabilities: () => Promise<InspectCapabilitiesSnapshot>
   /** The sandbox profile in force and its deny enforcement state. */
@@ -115,7 +123,11 @@ const PROJECT_RULE_FILES: readonly string[] = ['AGENTS.md', 'CLAUDE.md', '.curso
 const PROJECT_RULE_DIR = '.freecodego/rules'
 
 /**
- * Build the nine collectors.
+ * Build the collectors, one per section this build can answer.
+ *
+ * Deliberately not counted in prose: the count lives in `INSPECT_SECTIONS`, and a
+ * number written here is one that five other headers already managed to disagree
+ * with (they said ten while the list held nine).
  * @param port - the narrow readers described above.
  * @returns the collectors, in an unspecified order (the report orders them).
  */
@@ -227,11 +239,13 @@ async function collectHooks(port: InspectHostPort): Promise<JsonValue> {
   const readable = trust.trusted && trust.enabled
   // The same discovery the runtime dispatches from — see `hooks/files.ts`. The
   // trust gate is applied inside it, before any project file is opened.
+  const claudeDialect = port.claudeHookDialect()
   const documents = await loadHookDocuments({
     workspaceRoot: workspace,
     trusted: readable,
     home: port.home(),
     port: { readFile: async target => await port.readFile(target) },
+    claudeDialect,
   })
   const merged = collectHookHandlers(documents)
   return {
@@ -239,6 +253,13 @@ async function collectHooks(port: InspectHostPort): Promise<JsonValue> {
     files: documents.map(document => document.path),
     // The one thing a reader cannot infer from an empty list.
     projectFilesSkipped: workspace !== undefined && !readable,
+    // Who runs the Claude dialect, and — when it is not this reader — why its
+    // file is absent from `files`. A list that is merely shorter reads as "no
+    // such hooks", which is the same output as a user who has none.
+    claudeDialect,
+    ...(claudeDialect === 'harness'
+      ? { claudeDialectNote: `${CLAUDE_DIALECT_FILE} is read and run by the mounted Harness bridge (${HARNESS_CLAUDE_HOOK_BRIDGE_PACKAGE}), so this reader leaves it to them rather than running every hook in it a second time.` }
+      : {}),
   }
 }
 

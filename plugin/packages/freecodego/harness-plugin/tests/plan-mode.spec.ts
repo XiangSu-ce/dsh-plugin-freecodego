@@ -25,9 +25,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PlanFileStore, PLAN_FILE_NAME, isPlanFile, planDirectory, planFilePath, safeSegment } from '../src/plan/plan-file.ts'
 import { composePlanReworkMessage, planReviewSurface } from '../src/plan/plan-review.ts'
 import { PLAN_SECTIONS, inspectPlanSections } from '../src/plan/plan-sections.ts'
-import { PERSISTED_PLAN_PHASES, derivePlanModeState, persistedPlanPhaseFor, planModeFreezesWorkspace, planModeStateAfterRestart, storedPlanModeFor } from '../src/plan/plan-state.ts'
 import { BUILT_IN_COMMAND_POLICY, compileCommandPolicy } from '../src/command-policy.ts'
-import { PLAN_MODE_ALLOWED_PLUGIN_TOOLS, PLAN_MODE_MUTATING_TOOLS, PlanModeStore, planModeRefusal, planModeSessionKey } from '../src/plan-mode.ts'
+import { PLAN_MODE_ALLOWED_PLUGIN_TOOLS, PLAN_MODE_MUTATING_TOOLS, PlanModeStore, findUpstreamPlanMode, planModeRefusal, planModeSessionKey } from '../src/plan-mode.ts'
 import { nativeToolDenial } from '../src/native-tool-guard.ts'
 
 const PLAN = '/data/freecodego/plans/session-1/plan.md'
@@ -192,55 +191,37 @@ describe('plan sections', () => {
   })
 })
 
-describe('the four-state machine', () => {
-  it('takes `active` from the upstream projection and nothing else', () => {
-    // The copy this replaces is the reason for the whole design: a local flag can
-    // disagree with upstream, and neither side looks wrong on its own.
-    expect(derivePlanModeState({ projectionActive: true })).toBe('active')
-    expect(derivePlanModeState({ projectionActive: true, transient: 'pending' })).toBe('active')
-  })
-
-  it('reports `pending` while a requested plan mode has not been accepted yet', () => {
-    expect(derivePlanModeState({ projectionActive: false, transient: 'pending' })).toBe('pending')
-  })
-
-  it('reports `exit-pending` while a turn drains after the user leaves', () => {
-    expect(derivePlanModeState({ projectionActive: false, transient: 'exit-pending' })).toBe('exit-pending')
-  })
-
-  it('reports `inactive` when upstream is off and nothing is in flight', () => {
-    expect(derivePlanModeState({ projectionActive: false })).toBe('inactive')
-  })
-
-  it('collapses both transients on restart', () => {
-    // They wait on an interaction a restart has already ended; carried across, they
-    // would show the user a state nothing is going to advance.
-    expect(planModeStateAfterRestart('pending')).toBe('inactive')
-    expect(planModeStateAfterRestart('exit-pending')).toBe('inactive')
-  })
-
-  it('leaves the durable states alone across a restart', () => {
-    expect(planModeStateAfterRestart('active')).toBe('active')
-    expect(planModeStateAfterRestart('inactive')).toBe('inactive')
-  })
-
-  it('spells a persisted phase the way the durable store does, not the way this module does', async () => {
-    // The two vocabularies are one fact apart: this module says `active`, the store
-    // writes `plan`. Reading the store with the wrong strings does not fail loudly —
-    // an unparseable record degrades to `execute`, so the symptom is Plan Mode off
-    // after a restart, which is the failure the store exists to prevent. The check is
-    // against the writer rather than against the constant, so a store that changed its
-    // spelling without changing this mapping fails here.
+/**
+ * The durable mode vocabulary, and the store's own behaviour.
+ *
+ * This block used to guard a four-state machine (`plan/plan-state.ts`) sitting
+ * beside the runtime: `inactive | pending | active | exit-pending`, with the two
+ * transients memory-only. That module is gone, because no runtime path ever read
+ * it — the guard reads upstream's `plan` projection first and falls back to this
+ * store, which is `plan`/`execute` and nothing else. Keeping a second vocabulary
+ * for the same fact is the shape that produced the bug it was written against.
+ *
+ * What is left here is the fact that was worth keeping: the spelling in the
+ * record, pinned against the writer rather than against a constant.
+ */
+describe('the persisted mode vocabulary', () => {
+  it('spells a persisted phase the way the store reads it back', async () => {
+    // Reading the store with the wrong strings does not fail loudly — an
+    // unparseable record degrades to `execute`, so the symptom is Plan Mode off
+    // after a restart, which is the failure the store exists to prevent. The
+    // literals are asserted on a record this store wrote, so a store that renamed
+    // its spelling without a reader that follows fails here.
     const root = await mkdtemp(join(tmpdir(), 'freecodego-plan-state-'))
     try {
       const store = new PlanModeStore(join(root, 'modes'))
       await store.write('session-1', 'plan')
       const written = JSON.parse(await readFile(join(root, 'modes', 'session-1.json'), 'utf8')) as { readonly mode: string }
-      expect(written.mode).toBe(storedPlanModeFor('active'))
-      expect(persistedPlanPhaseFor(written.mode as 'plan' | 'execute')).toBe('active')
+      expect(written.mode).toBe('plan')
+      await expect(new PlanModeStore(join(root, 'modes')).read('session-1')).resolves.toBe('plan')
       await store.write('session-2', 'execute')
       const other = JSON.parse(await readFile(join(root, 'modes', 'session-2.json'), 'utf8')) as { readonly mode: string }
-      expect(other.mode).toBe(storedPlanModeFor('inactive'))
+      expect(other.mode).toBe('execute')
+      await expect(new PlanModeStore(join(root, 'modes')).read('session-2')).resolves.toBe('execute')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -301,15 +282,6 @@ describe('the four-state machine', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
-
-  it('maps the two vocabularies both ways, over their whole domain', () => {
-    // Stated over the exported list rather than over two literals: a third persisted
-    // phase added to `PERSISTED_PLAN_PHASES` without a store spelling is a mapping
-    // that cannot be written, and this is where that shows up.
-    for (const phase of PERSISTED_PLAN_PHASES) {
-      expect(persistedPlanPhaseFor(storedPlanModeFor(phase))).toBe(phase)
-    }
-  })
 })
 
 describe('where the edit fence actually lives', () => {
@@ -368,11 +340,10 @@ describe('where the edit fence actually lives', () => {
     }
   })
 
-  it('refuses write_file, which two sibling lists already called a writer and this fence did not', () => {
-    // The name was absent while `verify-on-stop.ts`'s `WORKSPACE_MUTATING_TOOLS` and
-    // `team/roles.ts`'s `WRITE_TOOL_NAMES` both carried it, and while two comments —
-    // one in each of those files — asserted that this fence refused it. The reason
-    // both gave for the omission was that naming it here would fold an MCP server's
+  it('refuses write_file, which a sibling list already called a writer and this fence did not', () => {
+    // The name was absent while `verify-on-stop.ts`'s `WORKSPACE_MUTATING_TOOLS`
+    // carried it, and while a comment in that file asserted that this fence refused
+    // it. The reason it gave for the omission was that naming it here would fold an MCP server's
     // `mcp__filesystem__write_file` into a planning session. No such fold is possible:
     // `planModeRefusal` tests `PLAN_MODE_MUTATING_TOOLS.includes(tool)`, an exact
     // comparison, which the recorded-gap case below still relies on. So this entry
@@ -394,10 +365,41 @@ describe('where the edit fence actually lives', () => {
     expect(planModeRefusal({ mode: 'plan', tool: 'mcp__filesystem__write_file' })).toBeUndefined()
   })
 
+  it('records the boundary for the Harness capabilities this bundle mounts: not this fence’s to refuse', async () => {
+    // The unclassified rule reaches names this plugin registered — by prefix, or from
+    // its own manifest — so a capability that registers under its own name is neither
+    // refused nor permitted *here*. Same shape as the third-party MCP writer above, and
+    // deliberate for the same reason plus one of its own: a browser and a desktop are
+    // not the workspace this mode freezes, a session-history read is the mode's own
+    // business to allow, and a browser provider registers the tool names of the MCP
+    // server it drives — a list this repository cannot read, so naming them here would
+    // be a guess rather than a reading. All three capability rows ship `disabled` in
+    // the composition, so a deployment turns one on before this becomes its question.
+    // This case fails the moment someone closes the gap, which forces the record to be
+    // updated with it.
+    for (const tool of ['browser_navigate', 'computer_screenshot']) {
+      expect(planModeRefusal({ mode: 'plan', tool }), `${tool} is not registered by this plugin`).toBeUndefined()
+    }
+    // The five query tools are read from the package that registers them: a retyped
+    // list that stops matching is a record that stops recording. Absent upstream
+    // source (a tree synced without `packages/`) means there is nothing to compare
+    // against.
+    let source: string
+    try {
+      source = await readFile(new URL('../../../session-query/tool-session-query/src/index.ts', import.meta.url), 'utf8')
+    } catch {
+      return
+    }
+    const names = [...source.matchAll(/name: '(session_[a-z_]+)'/gu)].map(match => match[1]!)
+    expect(names.length, 'the query tool surface changed — re-read this record').toBe(5)
+    for (const tool of names) {
+      expect(planModeRefusal({ mode: 'plan', tool }), `${tool} is not this plugin's to refuse`).toBeUndefined()
+    }
+  })
+
   it('refuses the verification run, whose stages and probes spawn commands', () => {
-    // The tool writes nothing itself, which is why it was allowed here while
-    // `engineering_team_task_update` — a board edit — was the only other entry
-    // that looked like a writer. What it does instead is spawn the project's own
+    // The tool writes nothing itself, which is why it looks like a read. What it
+    // does instead is spawn the project's own
     // build/type/lint/test scripts and up to five probe programs the verifier
     // authored, which is the same authority `bash` has, and `bash` is refused here
     // for any command the policy does not clear. That rule cannot be applied to a
@@ -457,13 +459,23 @@ describe('where the edit fence actually lives', () => {
     expect(planModeRefusal({ mode: 'plan', tool: 'pwsh', args: { command: 'ls' }, policy })).toBeUndefined()
   })
 
-  it('freezes the workspace only while active', () => {
-    // `exit-pending` holds nothing: the user already said the plan is over, and
-    // freezing while a turn drains would be containment nobody asked for by then.
-    expect(planModeFreezesWorkspace('active')).toBe(true)
-    expect(planModeFreezesWorkspace('exit-pending')).toBe(false)
-    expect(planModeFreezesWorkspace('pending')).toBe(false)
-    expect(planModeFreezesWorkspace('inactive')).toBe(false)
+  it('takes the mode from upstream when it is composed, and only there', () => {
+    // This case used to ask a four-state machine (`plan/plan-state.ts`: `inactive |
+    // pending | active | exit-pending`) whether the workspace was frozen. That module
+    // is gone — no runtime path read it — so the mode now arrives from the Harness's own
+    // `plan` projection, and the durable store is only the fallback for a composition
+    // that mounts none. Two rules decide whether the fence exists at all, which is why
+    // they are pinned here: the lookup is total (a realm being torn down must fall back
+    // to the store rather than take a tool call down), and a partial service is not a
+    // service (`get` without `set` would leave the mode readable and unchangeable).
+    const upstream = { get: () => ({ active: true, pending: true }), set: () => 'committed' as const }
+    expect(findUpstreamPlanMode({ get: (name: string) => name === 'planMode' ? upstream : undefined })).toBe(upstream)
+    expect(findUpstreamPlanMode({ get: () => { throw new Error('the realm is being torn down') } })).toBeUndefined()
+    expect(findUpstreamPlanMode({ get: () => ({ get: () => ({ active: true }) }) })).toBeUndefined()
+    expect(findUpstreamPlanMode(undefined)).toBeUndefined()
+    // `pending` is read past on purpose: upstream keeps it as the selection awaiting the
+    // next accepted pre-step, a phase only the interaction can advance. A local freeze
+    // keyed on it would hold the workspace for a conversation nothing is going to move.
   })
 
   it('still refuses a native engine’s own mutating tool', async () => {
@@ -472,7 +484,7 @@ describe('where the edit fence actually lives', () => {
     await expect(nativeToolDenial(
       { name: 'edit', arguments: { path: '/work/a.ts' } },
       {
-        settings: () => ({ envReadGuardEnabled: false, commandPolicyEnabled: false, planModeEnabled: true, doomLoopGuardEnabled: false }),
+        settings: () => ({ envReadGuardEnabled: false, commandPolicyEnabled: false, planModeEnabled: true }),
         planMode: { mode: 'plan' },
       },
     )).resolves.toBeDefined()

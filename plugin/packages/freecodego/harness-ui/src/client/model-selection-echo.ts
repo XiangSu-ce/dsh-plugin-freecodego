@@ -11,6 +11,9 @@
 
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 
+/**
+ * One model selection the native picker publishes.
+ */
 export interface NativeSelection {
   readonly provider: string
   readonly model: string
@@ -24,6 +27,9 @@ interface DirectoryState {
   error: string | null
 }
 
+/**
+ * The slice of the official model directory the echo layer patches.
+ */
 export interface NativeModelDirectory {
   select(selection: NativeSelection): Promise<RemoteResult<void>>
   readonly store: {
@@ -37,6 +43,7 @@ const patched = new WeakSet<object>()
  * The official directory waits for the session event stream before updating its
  * local snapshot. Echo a confirmed selection immediately, then let the event
  * projection reconcile normalized data when it arrives.
+ * @param directory - the native model directory to patch.
  */
 export function installModelSelectionEcho(directory: NativeModelDirectory): void {
   if (patched.has(directory)) return

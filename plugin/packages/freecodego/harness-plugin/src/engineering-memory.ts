@@ -29,20 +29,65 @@ import type {
   FreeCodeGoEngineeringMemoryTrust,
 } from './types.ts'
 
+/**
+ * The trust level carried by a durable memory record.
+ */
 export type EngineeringMemoryTrust = FreeCodeGoEngineeringMemoryTrust
+/**
+ * The kind of knowledge a memory record holds.
+ */
 export type EngineeringMemoryKind = FreeCodeGoEngineeringMemoryKind
+/**
+ * A memory record's index row, carrying no body text.
+ */
 export type EngineeringMemoryIndex = FreeCodeGoEngineeringMemoryIndex
+/**
+ * A memory record with its full body and originating sources.
+ */
 export type EngineeringMemoryDetail = FreeCodeGoEngineeringMemoryDetail
+/**
+ * One page of memory index rows with its optional continuation cursor.
+ */
 export type EngineeringMemoryPage = FreeCodeGoEngineeringMemoryPage
+/**
+ * A memory record with its surrounding time neighborhood.
+ */
 export type EngineeringMemoryTimeline = FreeCodeGoEngineeringMemoryTimeline
+/**
+ * A user review decision applied to a pending record.
+ */
 export type EngineeringMemoryReviewDecision = FreeCodeGoEngineeringMemoryReviewDecision
+/**
+ * The ranked memory selection injected at session start.
+ */
 export type EngineeringMemoryRecall = FreeCodeGoEngineeringMemoryRecall
+/**
+ * The session event a memory record was derived from.
+ */
 export type EngineeringMemorySource = FreeCodeGoEngineeringMemorySource
+/**
+ * The identity and size of one database backup.
+ */
 export type EngineeringMemoryBackup = FreeCodeGoEngineeringMemoryBackup
+/**
+ * How many records and outbox entries a retention sweep removed.
+ */
 export type EngineeringMemoryRetentionResult = FreeCodeGoEngineeringMemoryRetentionResult
+/**
+ * The outcome of distilling one observation into memory facts.
+ */
 export type EngineeringMemoryConsolidation = FreeCodeGoEngineeringMemoryConsolidation
+/**
+ * One fact written by a consolidation pass.
+ */
 export type EngineeringMemoryConsolidationItem = FreeCodeGoEngineeringMemoryConsolidationItem
+/**
+ * An edge between two memory records.
+ */
 export type EngineeringMemoryRelation = FreeCodeGoEngineeringMemoryRelation
+/**
+ * The kind of edge between two memory records.
+ */
 export type EngineeringMemoryRelationKind = FreeCodeGoEngineeringMemoryRelationKind
 
 const MAX_BODY_BYTES = 64 * 1024
@@ -204,6 +249,9 @@ export class EngineeringMemoryStore {
     this.databasePath = resolve(rootDirectory, 'engineering-memory.sqlite')
   }
 
+/**
+ * Open the store's SQLite database, create or migrate its schema, and drain queued observations.
+ */
   async open(): Promise<void> {
     const root = dirname(this.databasePath)
     await mkdir(root, { recursive: true, mode: 0o700 })
@@ -297,11 +345,19 @@ export class EngineeringMemoryStore {
     this.drainOutbox()
   }
 
+/**
+ * Close the underlying database handle if it is open.
+ */
   close(): void {
     this.database?.close()
     this.database = undefined
   }
 
+/**
+ * Save an agent-authored draft record.
+ * @param input - the draft's cwd, title, body, and optional kind, tags, and source engine.
+ * @returns the stored memory detail.
+ */
   saveDraft(input: { readonly cwd: string; readonly title: string; readonly body: string; readonly kind?: EngineeringMemoryKind; readonly tags?: readonly string[]; readonly sourceEngine?: string }): EngineeringMemoryDetail {
     const database = this.requireDatabase()
     const draftedTitle = sanitizeText(stripPrivateSections(input.title), MAX_TITLE_BYTES, 'memory title')
@@ -341,7 +397,11 @@ export class EngineeringMemoryStore {
     return { id, title, kind, trust: 'draft', projectId, body, tags, sources: [], related: [], ...(sourceEngine === undefined ? {} : { sourceEngine }), createdAt: now, detailTokens: estimateTokens(body) }
   }
 
-  /** Queue a deterministic, allowlisted observation. A restart can safely drain this SQLite outbox. */
+/**
+ * Queue a deterministic, allowlisted observation. A restart can safely drain this SQLite outbox.
+ * @param input - the observation payload to queue.
+ * @returns whether the row was queued and its outbox id.
+ */
   enqueueObservation(input: ObservationPayload): { readonly queued: boolean; readonly id: string } {
     const database = this.requireDatabase()
     const payload = normalizeObservation(input)
@@ -353,7 +413,11 @@ export class EngineeringMemoryStore {
     return { queued: result.changes === 1, id }
   }
 
-  /** Convert queued observations to captured records. Failed jobs remain for a later local retry. */
+/**
+ * Convert queued observations to captured records. Failed jobs remain for a later local retry.
+ * @param limit - the maximum number of queued rows to process.
+ * @returns how many rows drained and how many failed.
+ */
   drainOutbox(limit = 20): { readonly drained: number; readonly failed: number } {
     const database = this.requireDatabase()
     // A permanently poisoned payload (storage corruption, newer schema fields)
@@ -399,7 +463,10 @@ export class EngineeringMemoryStore {
     }
   }
 
-  /** Persist one host-derived observation as immediately searchable memory. */
+  /** Persist one host-derived observation as immediately searchable memory. 
+   * @returns the engineering Memory Detail.
+ * @param input - the observation payload to persist.
+   */
   saveCaptured(input: ObservationPayload): EngineeringMemoryDetail {
     const database = this.requireDatabase()
     return this.inTransaction(database, () => this.insertCaptured(database, input))
@@ -477,6 +544,8 @@ export class EngineeringMemoryStore {
    * is needed and the pipeline stays reproducible after a crash. Atomic facts
    * also make retrieval precise: recall picks the handful of records that
    * matter instead of one monolithic turn dump.
+   * @returns the engineering Memory Consolidation.
+ * @param input - the observation payload to distil into facts.
    */
   consolidateObservation(input: ObservationPayload): EngineeringMemoryConsolidation {
     const database = this.requireDatabase()
@@ -531,6 +600,8 @@ export class EngineeringMemoryStore {
    * bonus for blocker/decision records that outlive fashion) and packed into
    * the token budget highest-value first; ties resolve oldest-first so the
    * injected list stays stable across sessions.
+   * @returns the engineering Memory Recall.
+ * @param input - the workspace cwd and the session-start token budget.
    */
   recall(input: { readonly cwd: string; readonly tokenBudget: number }): EngineeringMemoryRecall {
     const projectId = projectIdFor(input.cwd)
@@ -555,14 +626,20 @@ export class EngineeringMemoryStore {
     return { projectId, tokenBudget, usedTokens, records }
   }
 
-  /** Agent-facing search over active AI-managed project memory. */
+  /** Agent-facing search over active AI-managed project memory. 
+   * @returns the engineering Memory Index rows, in backend order.
+ * @param input - the cwd, optional query, row limit, and whether captured records are included.
+   */
   search(input: { readonly cwd: string; readonly query?: string; readonly limit?: number; readonly includeCaptured?: boolean }): readonly EngineeringMemoryIndex[] {
     const trusts: readonly EngineeringMemoryTrust[] = input.includeCaptured === true ? ['reviewed', 'captured'] : ['reviewed']
     // Agent-facing searches reinforce: a queried record is a used record.
     return this.searchByTrust({ ...input, trusts, reinforce: (input.query?.trim() ?? '') !== '' })
   }
 
-  /** User-facing list. It exposes no body text and can be safely paged in the settings surface. */
+  /** User-facing list. It exposes no body text and can be safely paged in the settings surface. 
+   * @returns the engineering Memory Page.
+ * @param input - the cwd, optional trust filter, page limit, and cursor.
+   */
   list(input: { readonly cwd: string; readonly trusts?: readonly EngineeringMemoryTrust[]; readonly limit?: number; readonly cursor?: string }): EngineeringMemoryPage {
     const database = this.requireDatabase()
     const projectId = projectIdFor(input.cwd)
@@ -583,7 +660,10 @@ export class EngineeringMemoryStore {
     return { records: page, ...(hasMore && last !== undefined ? { nextCursor: encodeCursor(last) } : {}) }
   }
 
-  /** User-facing time neighborhood. Bodies remain behind an explicit Get call. */
+  /** User-facing time neighborhood. Bodies remain behind an explicit Get call. 
+   * @returns the engineering Memory Timeline.
+ * @param input - the cwd, anchor id, before/after counts, and trust filter.
+   */
   timeline(input: { readonly cwd: string; readonly id: string; readonly before?: number; readonly after?: number; readonly trusts?: readonly EngineeringMemoryTrust[] }): EngineeringMemoryTimeline {
     const database = this.requireDatabase()
     const projectId = projectIdFor(input.cwd)
@@ -610,18 +690,27 @@ export class EngineeringMemoryStore {
     return state
   }
 
-  /** Agent-facing body lookup for active project memory. */
+  /** Agent-facing body lookup for active project memory. 
+   * @returns the engineering Memory Detail rows, in backend order.
+ * @param input - the cwd, record ids, and whether captured records are included.
+   */
   get(input: { readonly cwd: string; readonly ids: readonly string[]; readonly includeCaptured?: boolean }): readonly EngineeringMemoryDetail[] {
     const trusts: readonly EngineeringMemoryTrust[] = input.includeCaptured === true ? ['reviewed', 'captured'] : ['reviewed']
     return this.getByTrust({ cwd: input.cwd, ids: input.ids, trusts })
   }
 
-  /** User-facing lookup used to inspect and review a draft without exposing it to the Agent. */
+  /** User-facing lookup used to inspect and review a draft without exposing it to the Agent. 
+   * @returns the engineering Memory Detail rows, in backend order.
+ * @param input - the cwd and the ids to inspect.
+   */
   getForReview(input: { readonly cwd: string; readonly ids: readonly string[] }): readonly EngineeringMemoryDetail[] {
     return this.getByTrust({ cwd: input.cwd, ids: input.ids, trusts: TRUSTS })
   }
 
-  /** Only a user Remote may promote, reject, or supersede a pending record. */
+  /** Only a user Remote may promote, reject, or supersede a pending record. 
+   * @returns the engineering Memory Detail.
+ * @param input - the cwd, the record id, and the review decision.
+   */
   review(input: { readonly cwd: string; readonly id: string; readonly trust: EngineeringMemoryReviewDecision }): EngineeringMemoryDetail {
     const database = this.requireDatabase()
     const id = validateMemoryId(input.id)
@@ -636,14 +725,22 @@ export class EngineeringMemoryStore {
     return this.detailFor(database, row)
   }
 
-  /** Permanently erase one user-selected record from the current project. */
+/**
+ * Permanently erase one user-selected record from the current project.
+ * @param input - the cwd and the record id.
+ * @returns confirmation that the record was deleted.
+ */
   delete(input: { readonly cwd: string; readonly id: string }): { readonly deleted: true } {
     const result = this.requireDatabase().prepare('DELETE FROM engineering_memories WHERE project_id = ? AND id = ?').run(projectIdFor(input.cwd), validateMemoryId(input.id))
     if (result.changes !== 1) throw new Error('engineering memory record was not found in this workspace')
     return { deleted: true }
   }
 
-  /** Clear derived records by default. Drafts are always purgeable; reviewed project knowledge requires explicit inclusion. */
+/**
+ * Clear derived records by default. Drafts are always purgeable; reviewed project knowledge requires explicit inclusion.
+ * @param input - the cwd and whether reviewed records are included.
+ * @returns how many records were deleted.
+ */
   purgeProject(input: { readonly cwd: string; readonly includeReviewed?: boolean }): { readonly deleted: number } {
     // "Everything except the reviewed state", expressed as a filter rather than a
     // second hand-written list: a trust added to the vocabulary is then included
@@ -663,6 +760,8 @@ export class EngineeringMemoryStore {
    * promises the opposite in as many words: "Reports records it had to skip". The
    * `skipped` and `failed` lists in `memory-export.ts` report the records that were
    * *read and refused*; this is the other axis, the ones never read at all.
+ * @param input - the cwd whose reviewed records are exported.
+ * @returns the export payload, with `omitted` counting reviewed records the cap left out.
    */
   exportReviewed(input: { readonly cwd: string }): { readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly EngineeringMemoryDetail[]; readonly omitted: number } {
     const database = this.requireDatabase()
@@ -675,7 +774,9 @@ export class EngineeringMemoryStore {
     return { version: 1, exportedAt: Date.now(), projectId, records: rows.map(row => this.detailFor(database, row)), omitted: Math.max(0, reviewed.n - rows.length) }
   }
 
-  /** Create a consistent plugin-private snapshot without copying a live WAL file. */
+  /** Create a consistent plugin-private snapshot without copying a live WAL file. 
+   * @returns the engineering Memory Backup.
+   */
   async backup(): Promise<EngineeringMemoryBackup> {
     const database = this.requireDatabase()
     const createdAt = Date.now()
@@ -689,7 +790,10 @@ export class EngineeringMemoryStore {
     return { id, createdAt, bytes: (await stat(file)).size }
   }
 
-  /** Retain reviewed knowledge and active drafts while trimming stale derived records. */
+  /** Retain reviewed knowledge and active drafts while trimming stale derived records. 
+   * @returns the engineering Memory Retention Result.
+ * @param retentionDays - how many days of derived records to retain.
+   */
   retentionSweep(retentionDays: number): EngineeringMemoryRetentionResult {
     const days = clamp(retentionDays, 1, 365)
     const threshold = Date.now() - days * 86_400_000
@@ -980,7 +1084,11 @@ function normalizeTrusts(value: readonly EngineeringMemoryTrust[] | undefined, f
  * Exported because the semantic recall layer (`memory/memory-recall.ts`) must
  * tokenize a query exactly the way the lexical rerank it falls back to does; two
  * tokenizers would let the selector and its fallback disagree about what the
- * query contains. */
+/**
+ * uery contains.
+ * @param value - the raw query text.
+ * @returns the distinct lowercased query tokens, capped at 12.
+ */
 export function memoryQueryTokens(value: string): readonly string[] {
   const matched = value.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? []
   return [...new Set(matched)].slice(0, 12)
@@ -1017,6 +1125,10 @@ const DENSITY_NORMALIZER_CHARS = 200
  *
  * The function is pure and synchronous: no model call, no network, no new
  * dependency, and identical inputs always produce identical ordering.
+ * @param tokens - the query tokens to score against.
+ * @param title - the record title.
+ * @param body - the record body.
+ * @returns the lexical relevance score, 0 when nothing matches.
  */
 export function lexicalRelevance(tokens: readonly string[], title: string, body: string): number {
   if (tokens.length === 0) return 0

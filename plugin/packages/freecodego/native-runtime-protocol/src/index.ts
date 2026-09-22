@@ -80,7 +80,10 @@ export type NativeSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-a
 /** Every {@link NativeSandboxMode}, for validating a value that arrived as JSON. Narrowest first. */
 export const NATIVE_SANDBOX_MODES: readonly NativeSandboxMode[] = ['read-only', 'workspace-write', 'danger-full-access']
 
-/** Narrow one wire value to a sandbox mode. An unrecognized value is dropped, never guessed. */
+/** Narrow one wire value to a sandbox mode. An unrecognized value is dropped, never guessed. 
+ * @param value - a value decoded from the wire, of unknown shape.
+ * @returns true when `value` is one of {@link NATIVE_SANDBOX_MODES}.
+ */
 export function isNativeSandboxMode(value: unknown): value is NativeSandboxMode {
   return typeof value === 'string' && (NATIVE_SANDBOX_MODES as readonly string[]).includes(value)
 }
@@ -106,13 +109,18 @@ export interface NativeSessionSandboxFields {
  * `undefined` means no policy crossed this boundary. The caller then leaves the
  * engine's own default in place rather than inventing one — a value this
  * protocol cannot read must not become a restriction the user never chose.
+ * @param fields - the `readOnly` floor and logged `sandboxMode` of one session.
+ * @returns the policy to apply, or `undefined` when no policy crossed this boundary.
  */
 export function effectiveSandboxMode(fields: NativeSessionSandboxFields): NativeSandboxMode | undefined {
   if (fields.readOnly === true) return 'read-only'
   return isNativeSandboxMode(fields.sandboxMode) ? fields.sandboxMode : undefined
 }
 
-/** Serialize one protocol message as exactly one JSONL frame. */
+/** Serialize one protocol message as exactly one JSONL frame. 
+ * @param message - the protocol message or request to frame.
+ * @returns one newline-terminated JSONL frame.
+ */
 export function encodeNativeRuntimeMessage(message: NativeRuntimeMessage | NativeRuntimeRequest): string {
   return `${JSON.stringify(message)}\n`
 }
@@ -215,7 +223,11 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
 }
 
-/** Await a runtime operation until the supplied turn aborts. */
+/** Await a runtime operation until the supplied turn aborts. 
+ * @param operation - the runtime operation to await.
+ * @param signal - the abort signal of the turn that owns the operation.
+ * @returns the operation's value, or a rejection carrying the abort cause once the turn aborts.
+ */
 export function withNativeRuntimeAbort<Value>(operation: Promise<Value>, signal: AbortSignal): Promise<Value> {
   if (signal.aborted) return Promise.reject(asError(signal.reason ?? new Error('native runtime turn interrupted')))
   let abort: () => void = () => undefined

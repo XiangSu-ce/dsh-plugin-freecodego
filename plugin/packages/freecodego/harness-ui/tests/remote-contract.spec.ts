@@ -16,8 +16,13 @@ import { describe, expect, it } from 'vitest'
  *  - a boundary type gained a property but the generated Typert contract was
  *    not regenerated, so the browser-side schema **drops that field** and the
  *    call silently degrades to an empty patch. That is not hypothetical: the
- *    Superpowers / starter-Skill / Skill-map switches were dead for exactly
- *    this reason, and `pnpm run build:freecodego` does not regenerate Typert.
+ *    Superpowers / starter-Skill / Skill-map switches were dead for exactly this
+ *    reason, and `pnpm run build:freecodego` used not to regenerate Typert — it
+ *    does now, as that script's first step, because the bundle this family packs
+ *    is built by it and the contract the browser loads has to come from the types
+ *    this tree declares. `node scripts/build-freecodego-bundle.mjs` on its own
+ *    still packs whatever `lib/` holds, which is the right shape for a re-pack of
+ *    bytes that were already built.
  *
  * The last one is why this file reads `lib/typert.remote-client.js`: nothing
  * else compares the shipped contract against the declared types.
@@ -235,6 +240,169 @@ function mentions(text: string, name: string): boolean {
   return new RegExp(`\\b${name}\\b`, 'u').test(text)
 }
 
+/**
+ * Split a parameter or argument list on the commas that separate its entries.
+ *
+ * Depth counting rather than a split: a parameter list holds object types,
+ * generics and arrow types whose own commas are not separators. A list that is
+ * empty or whitespace-only yields nothing, which is what makes arity zero
+ * distinguishable from arity one.
+ */
+function topLevelList(text: string): readonly string[] {
+  const parts: string[] = []
+  let depth = 0
+  let current = ''
+  for (const char of text) {
+    if ('([{<'.includes(char)) depth += 1
+    if (')]}>'.includes(char)) depth -= 1
+    if (char === ',' && depth === 0) { parts.push(current); current = ''; continue }
+    current += char
+  }
+  if (current.trim() !== '') parts.push(current)
+  return parts.map(part => part.trim()).filter(part => part !== '')
+}
+
+/** The text of the parenthesised list whose opening paren sits at `open`. */
+function readParenthesised(source: string, open: number): string {
+  let index = open + 1
+  let depth = 1
+  let text = ''
+  while (index < source.length && depth > 0) {
+    const char = source[index]
+    if (char === '(') depth += 1
+    if (char === ')') depth -= 1
+    if (depth > 0) text += char
+    index += 1
+  }
+  return text
+}
+
+/**
+ * Whether `index` sits inside a comment.
+ *
+ * Source-level scanning reads prose too, and prose about this contract quotes
+ * the calls it describes — the paragraph explaining the arity rule names the
+ * argument-less form of a Remote that is now called correctly, and reading it as
+ * a call site reports a bug that does not exist. Line comments and the `*`
+ * continuations of block comments are what this recognizes; the first line of a
+ * `/* … *\/` block is recognized by its opener, which is where an example would
+ * live. Nothing else in these files can start a comment line, so the check stays
+ * a per-line judgement rather than a tokenizer.
+ */
+function insideComment(source: string, index: number): boolean {
+  const lineStart = source.lastIndexOf('\n', index) + 1
+  const line = source.slice(lineStart, index)
+  if (line.includes('//')) return true
+  if (/^\s*\*/u.test(source.slice(lineStart, index + 1))) return true
+  return false
+}
+
+/** The declared parameter list of every `@Remote` method, in source order. */
+function hostRemoteParameters(source: string): ReadonlyMap<string, readonly string[]> {
+  const parameters = new Map<string, readonly string[]>()
+  const marker = /@Remote\('([A-Za-z0-9_]+)'\)\s*(?:async\s+)?[A-Za-z0-9_]+\s*\(/gu
+  for (const match of source.matchAll(marker)) {
+    if (insideComment(source, match.index)) continue
+    const open = match.index + match[0].length - 1
+    parameters.set(match[1]!, topLevelList(readParenthesised(source, open)))
+  }
+  return parameters
+}
+
+/** One Remote call site and how many arguments it passes. */
+interface RemoteCallSite {
+  readonly file: string
+  readonly name: string
+  readonly passed: number
+}
+
+/** Remote names passed to the shared helper, with their argument counts. */
+function backendCallArgumentCounts(source: string): readonly { readonly name: string; readonly passed: number }[] {
+  const calls: { readonly name: string; readonly passed: number }[] = []
+  const marker = 'backendCall'
+  let from = 0
+  for (;;) {
+    const start = source.indexOf(marker, from)
+    if (start < 0) return calls
+    let index = start + marker.length
+    if (source[index] === '<') {
+      let depth = 0
+      for (; index < source.length; index += 1) {
+        const char = source[index]
+        if (char === '<') depth += 1
+        else if (char === '>') {
+          depth -= 1
+          if (depth === 0) { index += 1; break }
+        }
+      }
+    }
+    while (/\s/u.test(source[index] ?? '')) index += 1
+    if (source[index] !== '(') { from = start + marker.length; continue }
+    index += 1
+    while (/\s/u.test(source[index] ?? '')) index += 1
+    const quote = source[index]
+    if (quote !== '\'' && quote !== '"' && quote !== '`') { from = start + marker.length; continue }
+    const end = source.indexOf(quote, index + 1)
+    if (end < 0) return calls
+    // Everything between the name literal and the call's closing paren: the
+    // commas at depth zero are exactly one per further argument.
+    let cursor = end
+    let depth = 0
+    let passed = 0
+    while (cursor < source.length) {
+      const char = source[cursor] ?? ''
+      if ('([{'.includes(char)) depth += 1
+      else if (char === ')' && depth === 0) break
+      else if (')]}'.includes(char)) depth -= 1
+      else if (char === ',' && depth === 0) passed += 1
+      cursor += 1
+    }
+    if (!insideComment(source, start)) calls.push({ name: source.slice(index + 1, end), passed })
+    from = end + 1
+  }
+}
+
+/**
+ * Every Remote call in the UI package, both call shapes, across every file.
+ *
+ * Shape one is the shared `backendCall` helper. Shape two calls the method on
+ * the identifier `ctx.get('remote.freeCodeGoHarness')` was bound to, which is
+ * how the account Remotes are reached; the receiver there is a local name, so
+ * the scan has to discover the bindings first rather than look for a literal.
+ */
+async function uiRemoteCallSites(): Promise<readonly RemoteCallSite[]> {
+  const files: string[] = []
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) await walk(full)
+      else if (/\.[jt]sx?$/u.test(entry.name) && !entry.name.endsWith('.d.ts')) files.push(full)
+    }
+  }
+  await walk(uiSourceRoot)
+  const sites: RemoteCallSite[] = []
+  for (const file of files) {
+    const text = await readFile(file, 'utf8')
+    const relative = file.slice(uiSourceRoot.length + 1)
+    for (const call of backendCallArgumentCounts(text)) {
+      sites.push({ file: relative, name: call.name, passed: call.passed })
+    }
+    const bindings = new Set<string>()
+    for (const match of text.matchAll(/const\s+([A-Za-z0-9_]+)\s*=\s*(?:await\s+)?ctx\.get\('remote\.freeCodeGoHarness'\)/gu)) {
+      bindings.add(match[1]!)
+    }
+    for (const binding of bindings) {
+      const call = new RegExp(`\\b${binding}\\??\.([A-Za-z0-9_]+)\\s*\\(`, 'gu')
+      for (const match of text.matchAll(call)) {
+        if (insideComment(text, match.index)) continue
+        const open = match.index + match[0].length - 1
+        sites.push({ file: relative, name: match[1]!, passed: topLevelList(readParenthesised(text, open)).length })
+      }
+    }
+  }
+  return sites
+}
+
 /** Property names of every `export interface *SectionInjected` face. */
 function requiredSectionProps(source: string): readonly { readonly face: string; readonly props: readonly string[] }[] {
   return [...source.matchAll(/export interface (\w*SectionInjected) \{([^}]*)\}/gu)].map(match => ({
@@ -352,6 +520,31 @@ describe('FreeCodeGo Remote contract', () => {
     expect(unwired).toStrictEqual(Object.keys(UNWIRED_REMOTES).sort())
     const unexplained = unwired.filter(name => (UNWIRED_REMOTES[name] ?? '').trim() === '')
     expect(unexplained).toStrictEqual([])
+  })
+
+  // A Remote call is refused before the Host ever runs when it passes fewer
+  // arguments than the Host declares, because an **optional** parameter still
+  // counts toward arity: `trustFolderStatus(directory?: string)` demands one
+  // argument and answered the panel's argument-less call with `expected 1
+  // argument(s), got 0`, which rendered as "授信状态读取失败" over an empty
+  // section. The same shape hid behind `accountMfaComplete(totpCode, deviceId?)`.
+  // Neither is a type error — the UI declares its own wrapper signature — so the
+  // only place this can be caught is here, by reading both sides.
+  it('passes each Remote at least the arguments the Host declares', async () => {
+    const declared = hostRemoteParameters(hostSource)
+    expect(declared.size).toBeGreaterThan(0)
+    const sites = await uiRemoteCallSites()
+    // A floor rather than `> 0`: the two call shapes are found by pattern, and a
+    // pattern that stops matching would leave this test passing while measuring
+    // almost nothing. The current tree measures well over this many sites.
+    expect(sites.length).toBeGreaterThan(150)
+    const shortfalls = sites.flatMap((site) => {
+      const parameters = declared.get(site.name)
+      if (parameters === undefined) return []
+      if (site.passed >= parameters.length) return []
+      return [`${site.file}: ${site.name} passes ${String(site.passed)} of ${String(parameters.length)}`]
+    }).sort()
+    expect(shortfalls).toStrictEqual([])
   })
 
   it('ships a Typert contract that still knows every declared field', async () => {

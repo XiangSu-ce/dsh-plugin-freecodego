@@ -15,6 +15,8 @@ English | [中文](README.zh.md)
 
 - [Child process contract](#child-process-contract)
 - [Managed runtime files](#managed-runtime-files)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
 
 -----
@@ -37,8 +39,25 @@ Removal deletes the complete managed runtime directory, including artifacts and 
 
 -----
 
+<a id="model-experience"></a>
+## Model Experience
+
+Indirectly, through the worker whose events the host relays into the Harness session.
+
+#### KV Cache effect
+
+The host adds no request text of its own; the cached prefix follows the session's own event projections.
+
+## Known Limitations and Deferred Work
+<a id="known-limitations-and-deferred-work"></a>
+
+- **One isolated child process per worker** — bounded JSONL framing, request correlation, and monotonic event sequence checks are the contract.
+- **No credentials in protocol messages** — the host refuses secret-like fields rather than forwarding them.
+- **Managed runtime files live below the Harness home** — an installed official runtime stays available across Host worker updates while its platform and protocol match.
+- **Cleanup is escalated, not best-effort** — timeout and abort handling end in escalated process cleanup.
+
 <a id="dev-note"></a>
-## Dev Note
+### Dev Note
 
 <details>
 <summary>Working context for maintainers — click to expand</summary>

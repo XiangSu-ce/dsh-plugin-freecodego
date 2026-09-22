@@ -25,16 +25,18 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the `mainView` reference-source key out of the retain map.
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import { mainViewSessionId as retainedSessionId } from './companion/signals.ts'
 
 /**
- * Find the Session the main view retains, in Host-list order.
+ * Find the Session the main view retains, in `byId` order — the renderer's own
+ * `publishMain` fallback, which is the branch readable from outside it.
+ *
+ * The rule itself is the companion's (`./companion/signals.ts`), which reads it
+ * off a snapshot the same way: this is the convenience face for a caller holding
+ * the context rather than the snapshot, not a second reading of the question.
  * @param ctx - client root context carrying the Session Controller.
  * @returns the displayed Session id, or undefined while no Session is shown.
  */
 export function mainViewSessionId(ctx: ClientContext): string | undefined {
-  const list = ctx.sessions.list.getSnapshot()
-  for (const id of list.ids) {
-    if ((list.byId[id]?.retainedBy.mainView ?? 0) > 0) return id
-  }
-  return undefined
+  return retainedSessionId(ctx.sessions.list.getSnapshot())
 }

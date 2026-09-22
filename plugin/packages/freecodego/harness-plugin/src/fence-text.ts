@@ -22,7 +22,11 @@ function tagSource(tag: string): string {
 }
 
 /** Escape the delimiters of `tag` in `value`, before it is interpolated into a
- *  block fenced by that tag. */
+ *  block fenced by that tag.
+ * @param value - the text to neutralize.
+ * @param tag - the tag whose delimiters to escape.
+ * @returns the text with any delimiters of that tag escaped.
+ */
 export function neutralizeFenceTags(value: string, tag: string): string {
   return value.replace(new RegExp(`<(/?)(${tagSource(tag)})`, 'gi'), '&lt;$1$2')
 }

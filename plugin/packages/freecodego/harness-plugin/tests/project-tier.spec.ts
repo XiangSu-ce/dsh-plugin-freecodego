@@ -26,7 +26,7 @@ import { describe, expect, it } from 'vitest'
 
 import { BUILT_IN_COMMAND_POLICY, commandPolicyDenial, compileCommandPolicy } from '../src/command-policy.ts'
 import { projectTierFrom } from '../src/project-tier.ts'
-import { DoomLoopGuard, freeCodeGoToolGuard, projectCommandPolicyDenial } from '../src/tool-guards.ts'
+import { freeCodeGoToolGuard, projectCommandPolicyDenial } from '../src/tool-guards.ts'
 
 const ROOT = '/work/checkout'
 /** An absolute path on whichever platform the suite is running on. */
@@ -189,7 +189,6 @@ describe('a project command policy is monotonic', () => {
 
   const guard = (project: ReturnType<typeof compileCommandPolicy> | undefined) => freeCodeGoToolGuard({
     settings: () => ({ commandPolicyEnabled: true, envReadGuardEnabled: false, doomLoopGuardEnabled: false }),
-    doomLoop: { deny: () => undefined } as unknown as DoomLoopGuard,
     projectPolicy: () => project,
   })
 

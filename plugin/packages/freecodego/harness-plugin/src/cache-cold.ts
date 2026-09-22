@@ -32,6 +32,35 @@
  * of the decision — may we fire, and what may we clear — need to agree on the
  * same session history to be worth anything.
  *
+ * Two properties of the second half were wrong here, and both had already been
+ * solved in the sibling implementation that reached this same design from the
+ * other direction (ZCode's `packages/core/src/compact/microcompact.ts`, which
+ * splits its keep window the same way but measures it differently). These are
+ * both about *what the keep window protects*:
+ *
+ * - **The window counts turns, not results.** A turn that issues twelve parallel
+ *   reads is one unit of work the model is still holding; a window of "the newest
+ *   five results" kept five of those twelve and cleared the other seven, which is
+ *   the opposite of keeping what the model is working against. A group is the
+ *   candidates sharing one assistant turn.
+ * - **A result made of anything but text is never clearable.** Clearing replaces
+ *   a result's entire content array with one text marker, so a block that is not
+ *   text is *destroyed* by the rewrite rather than shrunk — and nothing in the
+ *   accounting shows it, because the reclaimed figure counts only text. An image
+ *   block reaches a tool result today (`tool-fs`'s `read_image`), and the list of
+ *   clearable tools below is a policy list that has already been wrong once in
+ *   production, so the guard belongs on the transform and not on the list.
+ *
+ * One thing that reference does and this module deliberately does not: it also
+ * fires on **token pressure**
+ * (its threshold is `min(0.9 × autocompact, autocompact − 2000)`), which clears a
+ * warm prefix on purpose. Everything above exists to avoid exactly that — "we
+ * never force a miss that wouldn't have happened" — and the reference can afford
+ * it because clearing is its last resort beneath full compaction. Here the same
+ * question is answered in money instead (`compaction-economics.ts`), so the
+ * pressure trigger is not a gap to be filled: adding it would buy a cache write
+ * whose worth this repository already computes somewhere else.
+ *
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/cache-cold
  */
 
@@ -67,10 +96,19 @@ export const CLEARABLE_TOOL_KINDS: readonly string[] = [
   'web_fetch', 'web_search', 'fetch',
 ]
 
+/**
+ * The thresholds that decide when a cache is provably cold.
+ */
 export interface CacheColdConfig {
   /** Gap since the last assistant message at or above which the cache is presumed cold. */
   readonly gapThresholdMs: number
-  /** Most-recent compactable tool results to keep, in order of appearance. */
+  /**
+   * Most-recent compactable **turns** to keep, in order of appearance.
+   *
+   * The unit is the assistant turn, not the individual result: every result that
+   * answers one assistant message is one unit, however many calls it made. See
+   * {@link clearableWindow} for why the unit is a turn.
+   */
   readonly keepRecentResults: number
   /** Minimum wait between two clearing passes, so a burst cannot thrash the transcript. */
   readonly cooldownMs: number
@@ -102,6 +140,14 @@ export interface ClearableResult {
   readonly seq: number
   readonly tool: string
   readonly tokens: number
+  /**
+   * Ordinal of the assistant turn this result answers, when the caller knows it.
+   *
+   * Results sharing a turn share a keep slot. A candidate with no turn is its own
+   * group, because a result that cannot be proven to belong with others cannot be
+   * protected by them.
+   */
+  readonly turn?: number | undefined
 }
 
 /**
@@ -119,6 +165,9 @@ export interface ClearableResultPayload extends ClearableResult {
   readonly text: string
 }
 
+/**
+ * The facts about one conversation a trigger check reads.
+ */
 export interface CacheColdInput {
   /** Epoch ms of the last assistant message, when the conversation has one. */
   readonly lastAssistantAt?: number | undefined
@@ -130,6 +179,9 @@ export interface CacheColdInput {
   readonly candidates: readonly ClearableResult[]
 }
 
+/**
+ * Why a clearing pass did not fire.
+ */
 export type CacheColdRefusal =
   | 'no-assistant-message'
   | 'gap-below-threshold'
@@ -138,6 +190,9 @@ export type CacheColdRefusal =
   | 'nothing-clearable'
   | 'below-reclaim-floor'
 
+/**
+ * The outcome of one caching-policy decision.
+ */
 export interface CacheColdDecision {
   readonly fire: boolean
   /** Present when `fire` is false. */
@@ -158,6 +213,9 @@ export interface CacheColdDecision {
  * to different responses: `cooldown-active` means wait, `session-cap-reached`
  * means stop trying this conversation, and `nothing-clearable` means the policy
  * is fine but the transcript has nothing worth clearing.
+ * @param input - the conversation facts the check reads.
+ * @param config - the thresholds; defaults to the shipped configuration.
+ * @returns whether the policy may fire, with the refusal or measured gap.
  */
 export function evaluateCacheColdTrigger(input: CacheColdInput, config: CacheColdConfig = CACHE_COLD_DEFAULTS): { fire: boolean; refusal?: CacheColdRefusal; gapMs?: number } {
   if (input.lastAssistantAt === undefined || !Number.isFinite(input.lastAssistantAt)) return { fire: false, refusal: 'no-assistant-message' }
@@ -171,31 +229,81 @@ export function evaluateCacheColdTrigger(input: CacheColdInput, config: CacheCol
 }
 
 /**
+ * Split ordered candidates into the newest groups that survive and the older ones
+ * that are cleared.
+ *
+ * The window's unit is the **assistant turn**, not the result. A turn that issues
+ * twelve parallel reads produced twelve results, all of them answers to one
+ * question the model is still holding; a window counted in results keeps five of
+ * them and clears seven, which contradicts the reason the window exists. Grouping
+ * makes the window mean what the policy says it means.
+ *
+ * Consecutive candidates declaring the same turn form one group; a candidate with
+ * no declared turn stands alone, so a caller that supplies only sizes keeps
+ * per-result behavior. Order is preserved within a group, so the cleared set is
+ * still an ascending span.
+ *
+ * This is the single implementation of the window because three callers must
+ * agree on it: the policy counts what it will do, {@link CacheColdView.clearTargets}
+ * parks exactly that set, and {@link clearOldToolResults} performs it. A window
+ * computed twice is a window that can disagree with itself, and the disagreement
+ * would be invisible — the plan would report a saving the transform did not make.
+ * @param ordered - clearable candidates in ascending transcript order.
+ * @param keepRecent - how many newest groups survive.
+ * @returns the older candidates to clear and the newest groups to keep.
+ */
+function clearableWindow<T extends { readonly seq: number; readonly turn?: number | undefined }>(
+  ordered: readonly T[],
+  keepRecent: number,
+): { readonly clear: readonly T[]; readonly keep: readonly T[] } {
+  const keep = Math.max(1, keepRecent)
+  const groups: T[][] = []
+  let current: T[] | undefined
+  let currentTurn: number | undefined
+  for (const candidate of ordered) {
+    const turn = candidate.turn
+    if (current !== undefined && turn !== undefined && currentTurn === turn) {
+      current.push(candidate)
+      continue
+    }
+    current = [candidate]
+    currentTurn = turn
+    groups.push(current)
+  }
+  const split = Math.max(0, groups.length - keep)
+  return { clear: groups.slice(0, split).flat(), keep: groups.slice(split).flat() }
+}
+
+/**
  * Choose which results to clear.
  *
- * Selection is by **position**, not by size: the newest N results are kept
- * whatever they weigh, because the newest results are the ones the model is
- * still working against. Clearing a huge old result is tempting and wrong if it
- * is also the current file.
+ * Selection is by **position**, not by size: the newest turns are kept whatever
+ * they weigh, because the newest turns are the ones the model is still working
+ * against. Clearing a huge old result is tempting and wrong if it is also the
+ * current file.
  *
  * A result whose tool is not in {@link CLEARABLE_TOOL_KINDS} is never a candidate
  * — edit and write results are the record of what changed, and the model
  * byte-patches against them.
+ * @param candidates - the tool results already in the transcript.
+ * @param config - the thresholds; defaults to the shipped configuration.
+ * @returns the seqs to clear, the recent seqs kept, and the tokens reclaimed.
  */
 export function selectResultsToClear(candidates: readonly ClearableResult[], config: CacheColdConfig = CACHE_COLD_DEFAULTS): { clearSeqs: readonly number[]; keptSeqs: readonly number[]; reclaimedTokens: number } {
-  const ordered = [...candidates]
+  const ordered = candidates
     .filter(candidate => CLEARABLE_TOOL_KINDS.includes(candidate.tool))
     .sort((left, right) => left.seq - right.seq)
-  const keep = Math.max(1, config.keepRecentResults)
-  const kept = ordered.slice(-keep)
-  const clearable = ordered.slice(0, Math.max(0, ordered.length - keep))
+  const window = clearableWindow(ordered, config.keepRecentResults)
   return {
-    clearSeqs: clearable.map(candidate => candidate.seq),
-    keptSeqs: kept.map(candidate => candidate.seq),
-    reclaimedTokens: clearable.reduce((sum, candidate) => sum + Math.max(0, candidate.tokens), 0),
+    clearSeqs: window.clear.map(candidate => candidate.seq),
+    keptSeqs: window.keep.map(candidate => candidate.seq),
+    reclaimedTokens: window.clear.reduce((sum, candidate) => sum + Math.max(0, candidate.tokens), 0),
   }
 }
 
+/**
+ * A decision plus the transcript span it replaces.
+ */
 export interface CacheColdPlan extends CacheColdDecision {
   /** The span to hand the compaction engine, when there is one. */
   readonly span?: { readonly start: number; readonly end: number } | undefined
@@ -214,10 +322,20 @@ export class CacheColdPolicy {
 
   constructor(private readonly config: CacheColdConfig = CACHE_COLD_DEFAULTS) {}
 
+/**
+ * The configuration this policy was built with.
+ * @returns the policy's configuration.
+ */
   limits(): CacheColdConfig {
     return this.config
   }
 
+/**
+ * Measure whether this conversation may clear, without recording it.
+ * @param sessionId - the conversation the plan is measured for.
+ * @param input - the conversation facts, minus the state this policy owns.
+ * @returns the plan, including the span to replace when it fires.
+ */
   plan(sessionId: string, input: Omit<CacheColdInput, 'clearedCount' | 'lastClearedAt'>): CacheColdPlan {
     const state = this.cleared.get(sessionId)
     const trigger = evaluateCacheColdTrigger({
@@ -249,19 +367,36 @@ export class CacheColdPolicy {
     }
   }
 
+/**
+ * Record that a plan fired for this conversation.
+ * @param sessionId - the conversation the plan fired for.
+ * @param now - the time the pass ran.
+ */
   commit(sessionId: string, now: number): void {
     const state = this.cleared.get(sessionId)
     this.cleared.set(sessionId, { at: now, count: (state?.count ?? 0) + 1 })
   }
 
+/**
+ * This conversation's clearing state, when it has one.
+ * @param sessionId - the conversation to read.
+ * @returns the last-clear time and pass count, or `undefined` when none is recorded.
+ */
   state(sessionId: string): { at: number; count: number } | undefined {
     return this.cleared.get(sessionId)
   }
 
+/**
+ * Drop this conversation's clearing state.
+ * @param sessionId - the conversation to forget.
+ */
   forget(sessionId: string): void {
     this.cleared.delete(sessionId)
   }
 
+/**
+ * Drop every conversation's clearing state.
+ */
   clear(): void {
     this.cleared.clear()
   }
@@ -279,6 +414,25 @@ export class CacheColdPolicy {
  * avoid.
  */
 export const CLEARED_RESULT_PREFIX = '[Old tool result content cleared to reclaim context;'
+
+/**
+ * The marker the Harness's own pruner leaves inside a tool result it shrank.
+ *
+ * `@deepseek-ai/dsh-compaction-tool-result-pruner` replaces an oversized result's
+ * middle with this text (`PRUNE_MARKER`) as a durable `tool/result` replacement the
+ * token meter prices, so a result carrying it has already been shrunk by the
+ * Harness. Clearing it here would be the plugin taking over a result the Harness
+ * owns, and the cost is worse than duplicated work: the text this module would park
+ * is the *remnant* (head + marker + tail) while the marker it writes promises the
+ * **full** result is at the locator. A false claim about what is retrievable is
+ * worse than the bytes it reclaims — and there are few of those, because the
+ * remnant is bounded by the pruner's own `thresholdChars` (8 KiB by default).
+ *
+ * A literal rather than an import, because the plugin also runs in compositions
+ * that mount no pruner; `tests/cache-cold.spec.ts` reads `PRUNE_MARKER` out of the
+ * pruner's source so the copy cannot drift away from the real thing.
+ */
+export const HARNESS_PRUNE_MARKER = '[... tool result middle pruned ...]'
 
 /** Marker for a cleared result whose text was not parked anywhere retrievable. */
 export const CLEARED_RESULT_MARKER = `${CLEARED_RESULT_PREFIX} it was already re-sent at full price and is not recoverable from this view]`
@@ -299,6 +453,8 @@ export interface ClearedResultLocation {
  * re-run the tool, and that spends the tokens the clear just saved. The prefix is
  * shared with {@link CLEARED_RESULT_MARKER} because the extra text is addressed
  * to the model, not to this module, and must not change what counts as cleared.
+ * @param location - the parked copy's locator and retrieval hint.
+ * @returns the marker text the model sees in place of the result.
  */
 export function clearedResultMarker(location: ClearedResultLocation): string {
   return `${CLEARED_RESULT_PREFIX} the full text was parked instead, and can be read back: ${location.locator} (${location.retrievalHint})]`
@@ -328,6 +484,27 @@ function toolNamesByCallId(messages: readonly MessageLike[]): Map<string, string
   return byId
 }
 
+/**
+ * True when this message is an assistant turn that asked for at least one tool.
+ *
+ * The turn ordinal is counted from these messages rather than read from a seq,
+ * because a turn is exactly what the transcript already encodes here: an
+ * assistant message, then the results answering its calls. Incrementing on the
+ * assistant side and tagging the results that follow gives every result the same
+ * ordinal without a second index.
+ * @param message - the transcript entry to classify.
+ * @returns whether this message opens a tool-using turn.
+ */
+function isAssistantToolCallTurn(message: MessageLike): boolean {
+  if (message.role !== 'assistant' || !Array.isArray(message.content)) return false
+  // The element type admits `undefined` deliberately, so the guard below is a real
+  // one rather than a redundant `?.` a type-aware lint would strip: a message's
+  // content array is untrusted input, and the sibling scan in `toolNamesByCallId`
+  // already guards each block for the same reason.
+  return (message.content as readonly ({ readonly type?: unknown } | undefined)[])
+    .some(block => block?.type === 'tool-call')
+}
+
 /** Characters of model-visible text inside one content block, recursively. */
 function textCharsIn(block: unknown): number {
   if (block === null || typeof block !== 'object') return 0
@@ -346,6 +523,70 @@ function textCharsIn(block: unknown): number {
 function isAlreadyCleared(message: MessageLike, prefix: string = CLEARED_RESULT_PREFIX): boolean {
   const text = resultText(message)
   return text !== undefined && text.startsWith(prefix)
+}
+
+/**
+ * True when the Harness's own pruner already replaced part of this result.
+ *
+ * Not the same question as {@link isAlreadyCleared}: that one asks whether this
+ * module's marker is what the model sees, while this asks whether the *Harness* has
+ * already shrunk the result and owns what is left of it. See
+ * {@link HARNESS_PRUNE_MARKER} for why clearing the remnant is worse than leaving
+ * it — the parked text would be the remnant under a marker promising the original.
+ * @param message - the transcript entry to inspect.
+ * @returns whether the result text carries the Harness's prune marker.
+ */
+function isHarnessPruned(message: MessageLike): boolean {
+  const text = resultText(message)
+  return text !== undefined && text.includes(HARNESS_PRUNE_MARKER)
+}
+
+/**
+ * True when this result is made of nothing but text blocks.
+ *
+ * This is a *destructive* test rather than a measuring one, and that is the whole
+ * reason it exists. Clearing replaces a result's entire content array with one
+ * text marker, so any block that is not text is deleted by the rewrite instead of
+ * being shrunk — and the accounting would not show it, because the reclaimed
+ * figure sums text. An `image` block reaches a tool result today
+ * (`tool-fs`'s `read_image` returns one beside its text block), and the tool list
+ * that gates clearing is a policy list this module's own history records as
+ * having already been wrong in production once, so the guard is written on the
+ * transform rather than trusted to the list.
+ *
+ * The test is an allowlist — every block must be text, and there must be at least
+ * one — rather than ZCode's denylist of `image`/`video`/`file`, which is the same
+ * guard with a hole in it: a block kind added later would be destroyed silently,
+ * where an allowlist protects it until someone decides otherwise.
+ * @param message - the transcript entry to inspect.
+ * @returns whether every content block in this tool result is visible text.
+ */
+function hasOnlyTextContent(message: MessageLike): boolean {
+  if (message.role !== 'user' || !Array.isArray(message.content)) return false
+  const outer = (message.content as readonly { readonly type?: unknown; readonly content?: unknown }[])[0]
+  if (outer?.type !== 'tool-result' || !Array.isArray(outer.content)) return false
+  const blocks = outer.content as readonly ({ readonly type?: unknown } | undefined)[]
+  if (blocks.length === 0) return false
+  return blocks.every(block => block?.type === 'text')
+}
+
+/**
+ * Whether this message is a tool result this module may replace.
+ *
+ * The rule lives in one place because the policy counts what the transform will
+ * do: enforced in only one of the two callers, the plan's reclaimed-token figure
+ * would describe a different transform than the one that runs.
+ * @param message - the transcript entry to test.
+ * @param tool - the tool this result answers, when it could be resolved.
+ * @param clearable - the tool names eligible for clearing.
+ * @param clearedMarker - the marker text that already counts as cleared.
+ * @returns whether clearing this result is permitted.
+ */
+function isClearableResult(message: MessageLike, tool: string | undefined, clearable: readonly string[], clearedMarker: string): boolean {
+  if (tool === undefined || !clearable.includes(tool)) return false
+  if (isAlreadyCleared(message, clearedMarker)) return false
+  if (isHarnessPruned(message)) return false
+  return hasOnlyTextContent(message)
 }
 
 /**
@@ -384,12 +625,14 @@ function resultCallId(message: MessageLike): string | undefined {
  *
  * Messages that are not clearable results are returned by reference, so nothing
  * unrelated is rebuilt and the transform costs one pass.
+ * @param messages - the transcript to transform.
+ * @param options - the keep window, clearable tools, and marker overrides.
+ * @returns the transformed messages and the cleared and kept call ids.
  */
 export function clearOldToolResults(
   messages: readonly MessageLike[],
   options: { readonly keepRecentResults?: number; readonly clearableTools?: readonly string[]; readonly marker?: string; readonly markers?: ReadonlyMap<string, string> } = {},
 ): { readonly messages: readonly MessageLike[]; readonly clearedCallIds: readonly string[]; readonly reclaimedChars: number; readonly keptCallIds: readonly string[] } {
-  const keep = Math.max(1, options.keepRecentResults ?? CACHE_COLD_DEFAULTS.keepRecentResults)
   const clearable = options.clearableTools ?? CLEARABLE_TOOL_KINDS
   const marker = options.marker ?? CLEARED_RESULT_MARKER
   const markers = options.markers
@@ -401,21 +644,31 @@ export function clearOldToolResults(
   const clearedMarker = options.marker ?? CLEARED_RESULT_PREFIX
   const names = toolNamesByCallId(messages)
 
-  const eligible: number[] = []
+  // Eligible results in transcript order, each carrying the assistant turn it
+  // answers so the window can group them. The eligibility rule is
+  // `isClearableResult`, the same one the policy counts with — an already-cleared
+  // result still looks eligible (same tool, same call id), so without that check a
+  // second pass reports clearing it again, and a shrink that is not idempotent
+  // moves the cache break from the first request to the second.
+  const eligible: { seq: number; turn?: number }[] = []
+  let turn = 0
+  let current: number | undefined
   for (const [index, message] of messages.entries()) {
+    if (isAssistantToolCallTurn(message)) { turn += 1; current = turn; continue }
     const callId = resultCallId(message)
     if (callId === undefined) continue
-    // An already-cleared result still looks eligible — same tool, same call id — so
-    // without this check a second pass reports clearing it again, and a shrink that
-    // is not idempotent moves the cache break from the first request to the second.
-    if (isAlreadyCleared(message, clearedMarker)) continue
-    const tool = names.get(callId)
-    if (tool === undefined || !clearable.includes(tool)) continue
-    eligible.push(index)
+    if (!isClearableResult(message, names.get(callId), clearable, clearedMarker)) continue
+    eligible.push(current === undefined ? { seq: index } : { seq: index, turn: current })
   }
-  if (eligible.length <= keep) return { messages, clearedCallIds: [], reclaimedChars: 0, keptCallIds: eligible.map(index => resultCallId(messages[index]!)!).filter(Boolean) }
+  const window = clearableWindow(eligible, options.keepRecentResults ?? CACHE_COLD_DEFAULTS.keepRecentResults)
+  if (window.clear.length === 0) {
+    const keptCallIds = window.keep
+      .map(entry => resultCallId(messages[entry.seq]!)!)
+      .filter(Boolean)
+    return { messages, clearedCallIds: [], reclaimedChars: 0, keptCallIds }
+  }
 
-  const clearing = new Set(eligible.slice(0, eligible.length - keep))
+  const clearing = new Set(window.clear.map(entry => entry.seq))
   const keptCallIds: string[] = []
   const clearedCallIds: string[] = []
   let reclaimedChars = 0
@@ -449,18 +702,33 @@ export function clearOldToolResults(
 function eligibleResults(messages: readonly MessageLike[]): readonly ClearableResultPayload[] {
   const names = toolNamesByCallId(messages)
   const candidates: ClearableResultPayload[] = []
+  // The turn ordinal is counted here exactly as the transform counts it, so the
+  // keep window the policy prices is the window the transform will apply.
+  let turn = 0
+  let current: number | undefined
   for (const [index, message] of messages.entries()) {
+    if (isAssistantToolCallTurn(message)) { turn += 1; current = turn; continue }
     const callId = resultCallId(message)
     if (callId === undefined) continue
-    const tool = names.get(callId)
-    if (tool === undefined || !CLEARABLE_TOOL_KINDS.includes(tool)) continue
     // Already-cleared results are not candidates: their text is the marker, and
     // both the reclaimed-token estimate and the spill path would be counting a
-    // marker as payload. This is the same set `clearOldToolResults` will act on,
-    // which is what lets the caller park exactly what it is about to replace.
-    if (isAlreadyCleared(message)) continue
+    // marker as payload. A harness-pruned result is not one either: it holds no
+    // payload the model could still lose, and a keep slot spent on a remnant is a
+    // slot taken from a result that has one. Both rules and the text-only guard
+    // live in `isClearableResult`, which is the same set `clearOldToolResults`
+    // acts on — that is what lets the caller park exactly what it is about to
+    // replace, and never one that survives.
+    const tool = names.get(callId)
+    if (tool === undefined || !isClearableResult(message, tool, CLEARABLE_TOOL_KINDS, CLEARED_RESULT_PREFIX)) continue
     const text = resultText(message) ?? ''
-    candidates.push({ seq: index, tool, tokens: tokensFromChars(text.length), callId, text })
+    candidates.push({
+      seq: index,
+      tool,
+      tokens: tokensFromChars(text.length),
+      callId,
+      text,
+      ...(current === undefined ? {} : { turn: current }),
+    })
   }
   return candidates
 }
@@ -488,7 +756,10 @@ export class CacheColdView {
     return this.policy
   }
 
-  /** Whether this session's view is currently shrunk. */
+  /** Whether this session's view is currently shrunk. 
+   * @param sessionId - the Harness session this operation acts on.
+ * @returns whether this session's view is currently shrunk.
+   */
   shrunk(sessionId: string): boolean {
     return this.active.has(sessionId)
   }
@@ -503,6 +774,9 @@ export class CacheColdView {
    * Recording happens here rather than in `apply` because the decision to clear is
    * the thing that must not repeat: a second `plan` inside the cooldown must be
    * refused even though the view stays shrunk.
+   * @param sessionId - the Harness session this operation acts on.
+ * @param input - the conversation facts the plan is measured from.
+ * @returns the decision, with the reclaimed tokens and the number of results to clear.
    */
   plan(sessionId: string, input: { readonly lastAssistantAt?: number | undefined; readonly now: number; readonly messages: readonly MessageLike[] }): { readonly fire: boolean; readonly refusal?: CacheColdRefusal; readonly gapMs?: number; readonly reclaimTokens: number; readonly clearCount: number } {
     const eligible = eligibleResults(input.messages)
@@ -535,16 +809,21 @@ export class CacheColdView {
    * keep window, so the caller parks exactly the set that is about to disappear
    * and never one that survives. Returns nothing while the view is unshrunk —
    * there is no replacement to justify touching storage.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the clearable Result Payload rows, in backend order.
+ * @param messages - the transcript the candidates are derived from.
    */
   clearTargets(sessionId: string, messages: readonly MessageLike[]): readonly ClearableResultPayload[] {
     const state = this.active.get(sessionId)
     if (state === undefined) return []
-    const eligible = eligibleResults(messages)
-    const keep = Math.max(1, state.keepRecentResults)
-    return eligible.slice(0, Math.max(0, eligible.length - keep))
+    return clearableWindow(eligibleResults(messages), state.keepRecentResults).clear
   }
 
-  /** Whether this result already has a marker, so it is never parked a second time. */
+  /** Whether this result already has a marker, so it is never parked a second time. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @param callId - id of the tool call this answer belongs to.
+ * @returns whether this result already carries a marker.
+   */
   hasMarker(sessionId: string, callId: string): boolean {
     return this.active.get(sessionId)?.markers.has(callId) ?? false
   }
@@ -555,6 +834,8 @@ export class CacheColdView {
    * Stored per session and consulted on every later `apply`, because the view is
    * rebuilt on every request and must rebuild the *same* text each time or the
    * cache break moves to the second request.
+   * @param sessionId - the Harness session this operation acts on.
+ * @param markers - the marker to use, keyed by tool call id.
    */
   recordMarkers(sessionId: string, markers: ReadonlyMap<string, string>): void {
     const state = this.active.get(sessionId)
@@ -567,6 +848,9 @@ export class CacheColdView {
    *
    * Idempotent by construction: the transform skips results that already carry the
    * marker, so applying it on every step is the same as applying it once.
+   * @param sessionId - the Harness session this operation acts on.
+ * @param messages - the transcript to reproduce.
+ * @returns the transformed messages and what changed.
    */
   apply(sessionId: string, messages: readonly MessageLike[]): { readonly messages: readonly MessageLike[]; readonly changed: boolean; readonly clearedCallIds: readonly string[]; readonly reclaimedChars: number } {
     const state = this.active.get(sessionId)
@@ -575,18 +859,26 @@ export class CacheColdView {
     return { messages: applied.messages, changed: applied.clearedCallIds.length > 0, clearedCallIds: applied.clearedCallIds, reclaimedChars: applied.reclaimedChars }
   }
 
+  /** Drop this session's view and its policy state.
+   * @param sessionId - the conversation to forget.
+   */
   forget(sessionId: string): void {
     this.active.delete(sessionId)
     this.policy.forget(sessionId)
   }
 
+  /** Drop every session's view and policy state. */
   clear(): void {
     this.active.clear()
     this.policy.clear()
   }
 }
 
-/** One-line reason, for a panel row or a log line. */
+/**
+ * One-line reason, for a panel row or a log line.
+ * @param refusal - the refusal to describe.
+ * @returns the one-line reason.
+ */
 export function describeCacheColdRefusal(refusal: CacheColdRefusal): string {
   switch (refusal) {
     case 'no-assistant-message': return 'the conversation has no assistant message yet, so no cache can exist'

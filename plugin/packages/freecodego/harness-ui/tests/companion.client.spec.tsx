@@ -25,6 +25,7 @@ import { SHAPES } from '../src/client/companion/engine/skins.ts'
 import { STATE_BY_ID } from '../src/client/companion/engine/states.ts'
 import { en, zh } from '../src/client/companion/companion-locale.ts'
 import { IDLE_AFTER_MS } from '../src/client/companion/signals.ts'
+import { activityFixture } from './companion-activity.fixture.ts'
 import type { BotFrame } from '../src/client/companion/engine/engine.ts'
 
 /** Monotonic for the whole file, for the reason in the header. */
@@ -315,11 +316,14 @@ function pendingStatuses(pending: ReadonlySet<string>): ReadonlyMap<string, Sess
 }
 
 /** Render the seat against stub standard-prop hooks. */
-function setup(sessions: SessionsState, pending: ReadonlySet<string> = new Set()) {
+function setup(sessions: SessionsState, pending: ReadonlySet<string> = new Set(), activity = activityFixture()) {
   const props = {
     size: 24,
     useSessions: (selector: (state: SessionsState) => unknown) => selector(sessions),
     useSessionStatus: (selector: (map: ReadonlyMap<string, SessionStatus>) => unknown) => selector(pendingStatuses(pending)),
+    // The live feed is injected rather than read from a store, by design: the rail
+    // mark is outside any session scope and still shows the phases inside a turn.
+    activity,
   }
   return render(<FreeCodeGoCompanion {...props as CompanionProps} />)
 }
@@ -408,7 +412,10 @@ describe('companion seat: session activity drives the pose', () => {
 
   it('celebrates a turn ending once the running pose has served its floor', () => {
     const sessions = state({ current: 's1', byId: { s1: { running: true, blank: false } } })
-    const view = setup(sessions)
+    // The same feed across the rerender, so the seat keeps one source: a fresh one
+    // would be a different feed object for the same character.
+    const activity = activityFixture()
+    const view = setup(sessions, new Set(), activity)
     pump()
     expect(pose(view.container)).toBe('thinking')
 
@@ -417,6 +424,7 @@ describe('companion seat: session activity drives the pose', () => {
       size: 24,
       useSessions: (selector: (value: SessionsState) => unknown) => selector(sessions),
       useSessionStatus: (selector: (map: ReadonlyMap<string, SessionStatus>) => unknown) => selector(new Map()),
+      activity,
     }) as CompanionProps} />)
     // The completion outranks the resting pose but not an in-flight one, so the
     // turn's own floor passes first — this is the dwell doing its job...
@@ -447,10 +455,24 @@ describe('companion: taking its seats', () => {
     const injected: string[] = []
     const registered: Record<string, unknown>[] = []
     const dictionaries: { ns: string; values: unknown }[] = []
+    const disposers: (() => void)[] = []
     const ctx = {
       // The real context registers the namespace inside an effect; the stub runs
-      // the callback so the registration is observable here.
-      effect: (callback: () => unknown) => { callback() },
+      // the callback so the registration is observable here, and keeps the
+      // disposer so a seat that watches the document has to hand one back.
+      effect: (callback: () => unknown) => {
+        const result = callback()
+        if (typeof result === 'function') disposers.push(result as () => void)
+      },
+      // The transcript seat reads the same two stores the slot Hooks are built
+      // over; both are empty here, since this case is about the seating itself.
+      sessions: {
+        list: {
+          getSnapshot: () => ({ ids: [], byId: {}, jobsBySession: {} }),
+          subscribe: () => () => {},
+        },
+      },
+      uiSession: { sessionStatus: { getSnapshot: () => new Map(), subscribe: () => () => {} } },
       locale: {
         register: (ns: string, values: unknown) => {
           dictionaries.push({ ns, values })
@@ -481,9 +503,23 @@ describe('companion: taking its seats', () => {
         locale: 'freecodego.companion',
         registrant: 'freecodego-companion',
       },
-    ])
+    ].map(entry => ({ ...entry, inject: expect.any(Function) })))
     // One namespace carrying both languages: the strip's label resolves through it.
     expect(dictionaries).toEqual([{ ns: 'freecodego.companion', values: { zh, en } }])
+    // The transcript's three seats are injections rather than registrations, so the
+    // evidence that they were taken is their stylesheets — and that each handed
+    // back the disposer the effect above is the only thing that can ever call.
+    const sheets = [
+      '[data-fcg-running-row-style]',
+      '[data-fcg-step-row-style]',
+      '[data-fcg-dot-row-style]',
+    ]
+    for (const selector of sheets) expect(document.head.querySelector(selector)).not.toBeNull()
+    // The three injections and the live feed; the feed is the one every seat reads,
+    // so it has to be disposed with the fiber that created it.
+    expect(disposers).toHaveLength(5)
+    for (const dispose of disposers) dispose()
+    for (const selector of sheets) document.head.querySelector(selector)?.remove()
   })
 })
 

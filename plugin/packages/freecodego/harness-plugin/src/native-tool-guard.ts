@@ -90,8 +90,13 @@ export interface NativeToolGuardDeps {
   /** Plan Mode view for this call's agent; when absent, Plan Mode is not enforced. */
   readonly planMode?: { readonly mode: PlanMode | undefined; readonly policy?: CompiledCommandPolicy }
   /**
-   * The doom-loop guard, which the caller wires against the *same* instance the
-   * Harness pipeline uses so both transports share one fingerprint space.
+   * The doom-loop guard.
+   *
+   * Wired here and *only* here: a native engine's tools run inside the engine's
+   * process, so they never cross `tools/pre-execute`, and the Harness's advisory
+   * `dsh-repeat-tool-reminder` cannot count what it cannot see. Calls the Host
+   * does dispatch are that guard's to judge, which is why
+   * `freeCodeGoToolGuard` carries no loop tier for them.
    *
    * It is called with the projected call only. The caller closes over the agent
    * the request belongs to, because the guard keys its fingerprints by agent and
@@ -244,8 +249,13 @@ export function nativeCallsFromPermission(request: {
  *
  * Ordering mirrors `freeCodeGoToolGuard`: credential material first (a call
  * that reads a secret is refused whatever else it does), then the command
- * policy, then Plan Mode. Each tier is skipped by the same setting that
- * disables it on the Harness pipeline, so one user preference controls both.
+ * policy, then Plan Mode, then the sandbox deny list. Each tier is skipped by
+ * the same setting that disables it on the Harness pipeline, so one user
+ * preference controls both.
+ *
+ * One tier is this path's alone — the doom loop, last. The Harness pipeline has
+ * no loop tier left to mirror: every call it judges was dispatched, so
+ * `dsh-repeat-tool-reminder` already counts it.
  *
  * @param call - a call from {@link nativeToolCall}.
  * @param deps - the plugin's guard settings, policy, and Plan Mode view.
@@ -294,7 +304,8 @@ export async function nativeToolDenial(call: NativeToolCall, deps: NativeToolGua
   }
   // Last, and after the monotonic tiers: a call refused for a policy reason must
   // be reported as that reason, never as a loop (the same ordering the Harness
-  // pipeline uses).
+  // pipeline uses). This is the plugin's only loop tier — see
+  // `NativeToolGuardDeps.doomLoop`.
   if (settings?.doomLoopGuardEnabled !== false && deps.doomLoop !== undefined && !isBridgedCall(call)) {
     const denial = deps.doomLoop.deny({ name: call.name, arguments: call.arguments })
     if (denial !== undefined) return denial

@@ -172,6 +172,320 @@ describe('CommunityPluginsPage installed plugin actions', () => {
     expect(alert.textContent).not.toContain('marketplace is unavailable')
   })
 
+  const installableSkill = {
+    id: 'skill:example/example-skill',
+    kind: 'skill' as const,
+    title: 'example-skill',
+    description: 'example',
+    category: 'developer tools',
+    sourceUrl: 'https://skills.sh/example/example-skill',
+    author: 'example',
+    popularity: 1,
+    installed: false,
+    installable: true,
+  }
+
+  it('reports the version a Skill install pinned, read from the record it returned', async () => {
+    // A page that marked the entry "added" without reading this would look the
+    // same whether the install had been recorded or silently lost.
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [installableSkill] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn().mockResolvedValue({ ok: true as const, value: {
+        mcpEnabled: true,
+        skillEnabled: true,
+        skillInstall: { name: 'example-skill', resolvedCommit: 'a'.repeat(40), locked: true, idempotent: false, verification: [], collisions: [] },
+      } })}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+    fireEvent.click(await screen.findByRole('button', { name: '一键添加' }))
+
+    const note = await screen.findByRole('status')
+    expect(note.textContent).toContain('example-skill')
+    // The pin, shortened: the whole point of the record is naming a version.
+    expect(note.textContent).toContain('aaaaaaa')
+    expect(note.textContent).not.toContain('未能写入安装记录')
+  })
+
+  it('says so when a Skill landed without a record, rather than reporting a plain success', async () => {
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [installableSkill] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn().mockResolvedValue({ ok: true as const, value: {
+        mcpEnabled: true,
+        skillEnabled: true,
+        skillInstall: { name: 'example-skill', resolvedCommit: 'b'.repeat(40), locked: false, idempotent: false, lockfileWarning: 'the state directory is not writable', verification: [], collisions: [] },
+      } })}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+    fireEvent.click(await screen.findByRole('button', { name: '一键添加' }))
+
+    const note = await screen.findByRole('status')
+    expect(note.textContent).toContain('未能写入安装记录')
+    expect(note.textContent).toContain('the state directory is not writable')
+  })
+
+  it('lets an install choose its destination, and names where it landed', async () => {
+    // The placement matrix decides where a Skill goes; the page has to be able to show
+    // the *reasons* its unusable rows carry, because a disabled option alone cannot
+    // tell an untrusted checkout from a combination that does not exist. And the chosen
+    // axes — not a cached path — are what the Host is handed.
+    const skillPresetInstall = vi.fn().mockResolvedValue({ ok: true as const, value: {
+      mcpEnabled: true,
+      skillEnabled: true,
+      skillInstall: { name: 'example-skill', resolvedCommit: 'c'.repeat(40), locked: true, idempotent: false, verification: [], collisions: [], placement: { root: 'C:\\home\\data\\skills', provenance: 'user, harness native' } },
+    } })
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [installableSkill] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={skillPresetInstall}
+      skillPlacements={vi.fn().mockResolvedValue({ ok: true as const, value: {
+        workspace: '/repo',
+        projectTrusted: false,
+        defaultRoot: '/home/profile/skills',
+        rows: [
+          { agent: 'harness', scope: 'project', ok: false, reason: 'installing into the project requires a trusted folder; trust it, or install with --scope user' },
+          { agent: 'harness', scope: 'user', ok: true, root: 'C:\\home\\data\\skills', provenance: 'user, harness native' },
+          { agent: 'agents', scope: 'user', ok: true, root: '/home/user/.agents/skills', provenance: 'user, shared agents' },
+        ],
+      } })}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+    const selector = await screen.findByRole('combobox', { name: '安装位置' })
+    // The default is the community root, named as the default rather than as a row.
+    expect((selector as HTMLSelectElement).value).toBe('')
+    const unavailable = (selector as HTMLSelectElement).querySelector('option[value="harness/project"]') as HTMLOptionElement
+    expect(unavailable.disabled).toBe(true)
+    expect(unavailable.textContent).toContain('不可用')
+    // The reason travels with the option: it is the only thing that distinguishes an
+    // untrusted folder from a placement this build cannot offer.
+    expect(unavailable.title).toContain('trusted folder')
+
+    fireEvent.change(selector, { target: { value: 'harness/user' } })
+    fireEvent.click(await screen.findByRole('button', { name: '一键添加' }))
+
+    await waitFor(() => { expect(skillPresetInstall).toHaveBeenCalledWith('skill:example/example-skill', { agent: 'harness', scope: 'user' }) })
+    const note = await screen.findByRole('status')
+    expect(note.textContent).toContain('user, harness native')
+  })
+
+  it('starts on the destination the user chose last time', async () => {
+    // The preference is read from the matrix payload, which is the same read the rows come
+    // from: a page whose selection came from a second read could show one destination and
+    // install into another.
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [installableSkill] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn().mockResolvedValue({ ok: true as const, value: { mcpEnabled: true, skillEnabled: true, skillInstall: { name: 'example-skill', resolvedCommit: 'e'.repeat(40), locked: true, idempotent: false, verification: [], collisions: [] } } })}
+      skillPlacements={vi.fn().mockResolvedValue({ ok: true as const, value: {
+        workspace: '/repo',
+        projectTrusted: true,
+        defaultRoot: '/home/profile/skills',
+        preferred: { agent: 'harness', scope: 'user' },
+        rows: [
+          { agent: 'harness', scope: 'project', ok: true, root: '/repo/.dsh/skills', provenance: 'project, harness native' },
+          { agent: 'harness', scope: 'user', ok: true, root: 'C:\\home\\data\\skills', provenance: 'user, harness native' },
+        ],
+      } })}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+
+    const selector = await screen.findByRole('combobox', { name: '安装位置' }) as HTMLSelectElement
+    await waitFor(() => { expect(selector.value).toBe('harness/user') })
+  })
+
+  it('remembers a destination as it is picked, and clears it when the default is chosen again', async () => {
+    // Written when the choice is made, not when an install uses it: the request is
+    // "remember what I picked", and a user who picks a destination and then closes the
+    // panel has still chosen one.
+    const skillPlacementPrefer = vi.fn().mockResolvedValue({ ok: true as const, value: {} })
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [installableSkill] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn()}
+      skillPlacements={vi.fn().mockResolvedValue({ ok: true as const, value: {
+        workspace: '/repo',
+        projectTrusted: true,
+        defaultRoot: '/home/profile/skills',
+        rows: [
+          { agent: 'harness', scope: 'project', ok: true, root: '/repo/.dsh/skills', provenance: 'project, harness native' },
+          { agent: 'agents', scope: 'user', ok: true, root: '/home/user/.agents/skills', provenance: 'user, shared agents' },
+        ],
+      } })}
+      skillPlacementPrefer={skillPlacementPrefer}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+    const selector = await screen.findByRole('combobox', { name: '安装位置' })
+
+    fireEvent.change(selector, { target: { value: 'agents/user' } })
+    await waitFor(() => { expect(skillPlacementPrefer).toHaveBeenCalledWith({ agent: 'agents', scope: 'user' }) })
+
+    // Back to the community root: absent axes are the clear, which is a different
+    // request from "remember the destination named <already stored>"
+    fireEvent.change(selector, { target: { value: '' } })
+    await waitFor(() => { expect(skillPlacementPrefer).toHaveBeenLastCalledWith(undefined) })
+  })
+
+  it('keeps a remembered destination whose row is unusable, and refuses rather than redirecting', async () => {
+    // The remembered project destination in a folder that is no longer trusted. Sending
+    // nothing instead would install into the community root — the silent redirection the
+    // matrix exists to prevent; the Host refuses with the reason the page shows.
+    const skillPresetInstall = vi.fn()
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [installableSkill] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={skillPresetInstall}
+      skillPlacements={vi.fn().mockResolvedValue({ ok: true as const, value: {
+        workspace: '/repo',
+        projectTrusted: false,
+        defaultRoot: '/home/profile/skills',
+        preferred: { agent: 'agents', scope: 'project' },
+        rows: [
+          { agent: 'agents', scope: 'project', ok: false, reason: 'installing into the project requires a trusted folder; trust it, or install with --scope user' },
+          { agent: 'harness', scope: 'user', ok: true, root: '/home/.dsh/skills', provenance: 'user, harness native' },
+        ],
+      } })}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+    const selector = await screen.findByRole('combobox', { name: '安装位置' }) as HTMLSelectElement
+    await waitFor(() => { expect(selector.value).toBe('agents/project') })
+    // The reason is on screen before anything is clicked: a disabled option alone cannot
+    // tell an untrusted folder from a combination this build cannot offer.
+    expect((await screen.findByRole('alert')).textContent).toContain('trusted folder')
+
+    fireEvent.click(await screen.findByRole('button', { name: '一键添加' }))
+
+    await waitFor(() => { expect(skillPresetInstall).toHaveBeenCalledWith('skill:example/example-skill', { agent: 'agents', scope: 'project' }) })
+  })
+
+  it('says the destination was not remembered instead of blaming the install', async () => {
+    const skillPlacementPrefer = vi.fn().mockRejectedValue(new Error('FreeCodeGo settings are not configured'))
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [installableSkill] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn()}
+      skillPlacements={vi.fn().mockResolvedValue({ ok: true as const, value: {
+        workspace: '/repo',
+        projectTrusted: true,
+        defaultRoot: '/home/profile/skills',
+        rows: [{ agent: 'harness', scope: 'user', ok: true, root: '/home/.dsh/skills', provenance: 'user, harness native' }],
+      } })}
+      skillPlacementPrefer={skillPlacementPrefer}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+    fireEvent.change(await screen.findByRole('combobox', { name: '安装位置' }), { target: { value: 'harness/user' } })
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('安装位置偏好未能保存')
+    expect(alert.textContent).toContain('FreeCodeGo settings are not configured')
+    // The choice still applies here, which is why this is not the install banner.
+    expect(alert.textContent).toContain('本次选择仍在本页生效')
+  })
+
+  it('installs into the community root when no matrix is declared, without a selector', async () => {
+    // A Host older than the placement Remote still installs. The page must not render a
+    // destination control it cannot fill, and the install must stay the one-argument
+    // call those Hosts accept.
+    const skillPresetInstall = vi.fn().mockResolvedValue({ ok: true as const, value: {
+      mcpEnabled: true,
+      skillEnabled: true,
+      skillInstall: { name: 'example-skill', resolvedCommit: 'd'.repeat(40), locked: true, idempotent: false, verification: [], collisions: [] },
+    } })
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [installableSkill] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={skillPresetInstall}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+    fireEvent.click(await screen.findByRole('button', { name: '一键添加' }))
+
+    await waitFor(() => { expect(skillPresetInstall).toHaveBeenCalledWith('skill:example/example-skill', undefined) })
+    expect(screen.queryByRole('combobox', { name: '安装位置' })).toBeNull()
+  })
+
+  it('offers Remove on an installed Skill and turns the card back into an installable one', async () => {
+    // Installed is a claim the record supports, and removal is the answer to it: a
+    // grid that could only ever add would leave the page's own badge with no way to
+    // undo it.
+    const skillPresetRemove = vi.fn().mockResolvedValue({ ok: true as const, value: {
+      mcpEnabled: true,
+      skillEnabled: true,
+      skillRemove: { name: 'example-skill', directory: 'example-skill', recorded: true, detail: 'removed', verification: [] },
+    } })
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'skill', total: 1, offset: 0, limit: 24, categories: [], items: [{ ...installableSkill, installed: true }] } })}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn()}
+      skillPresetRemove={skillPresetRemove}
+      language="zh"
+    />)
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Skills' }))
+    // The entry is added, so the add button is spent and removal is what is offered.
+    expect(await screen.findByRole('button', { name: '已添加' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '移除' }))
+
+    await waitFor(() => { expect(skillPresetRemove).toHaveBeenCalledWith('skill:example/example-skill') })
+    const note = await screen.findByRole('status')
+    expect(note.textContent).toContain('已移除')
+    expect(note.textContent).toContain('example-skill')
+    // And the card is installable again, without re-reading the directory.
+    expect(await screen.findByRole('button', { name: '一键添加' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '移除' })).toBeNull()
+  })
+
   it('prefers the upstream Chinese README for the plugin dialog', async () => {
     const fetchMock = vi.fn((url: string) => Promise.resolve(url.endsWith('/README.zh.md')
       ? { ok: true, text: async () => '# 中文说明\n插件功能。' }

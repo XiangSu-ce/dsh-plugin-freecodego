@@ -442,3 +442,26 @@ describe('read_document tool', () => {
     await expect(tool.execute({ file_path: join(directory, 'missing.pdf') }, {})).rejects.toThrow(/not found/)
   })
 })
+
+describe('the schema the provider is handed', () => {
+  it('declares required as the sibling array, not a per-field flag', () => {
+    // Measured on the Agnes route, which validates the entire tool list before
+    // it starts a request: a per-field `required: true` on `file_path` failed
+    // every turn with `400 Tool 27 function has invalid 'parameters' schema:
+    // True is not of type 'array'` — a chat route unusable while the tool itself
+    // worked against every laxer provider. `required` belongs beside
+    // `properties`, as an array of names.
+    const parameters = readDocumentToolDefinition().parameters as {
+      readonly type?: unknown
+      readonly properties?: Readonly<Record<string, Record<string, unknown>>>
+      readonly required?: unknown
+    }
+    expect(parameters.type, 'a schema must declare its root type').toBe('object')
+    expect(parameters.required).toEqual(['file_path'])
+    // Every required name must exist in `properties`, or the schema is unsatisfiable.
+    for (const name of parameters.required as readonly string[]) expect(parameters.properties).toHaveProperty(name)
+    for (const [name, property] of Object.entries(parameters.properties ?? {})) {
+      expect(property, `${name} still carries a per-field required flag`).not.toHaveProperty('required')
+    }
+  })
+})

@@ -3,7 +3,7 @@
  * notice; PROVENANCE.md in this directory holds its source and upstream hash.
  */
 /* v8 ignore file -- vendored third-party engine; PROVENANCE.md records its source and per-file hashes, and the behaviour built on the engine is covered by this package's companion specs. */
-import { TAU, clamp, createRng, r2 } from './math'
+import { TAU, clamp, createRng, r2 } from './math.ts'
 
 /* ------------------------------------------------------------------ couleurs */
 
@@ -113,6 +113,8 @@ export interface ArcSeed {
  * arriere est dessinee avant le corps, donc occultee par lui. C'est ce vrai tri
  * en profondeur qui fait lire les anneaux comme des orbites et pas comme un
  * dessin plat.
+ * @returns the arc Render.
+ * @param scale - scale factor the value is expressed in.
  */
 export function arcRender(seed: ArcSeed, t: number, scale: number, id: string, opacity = 1): ArcRender {
   const spin = seed.phase + t * seed.speed * TAU
@@ -224,6 +226,8 @@ const PARTICLES = Array.from({ length: 5 }, (_, i) => ({
  * Les particules ne partent pas en ligne droite : elles spiralent vers le
  * centre (rayon x0.75 par frame, angle +100 deg/s) en grossissant, et passent
  * derriere le noyau ou elles sont avalees.
+ * @returns the dot Render rows, in backend order.
+ * @param scale - scale factor the value is expressed in.
  */
 export function particles(t: number, scale: number): DotRender[] {
   const out: DotRender[] = []

@@ -14,9 +14,8 @@
  * ---------------------------------
  * The harness keeps per-session files under a private layout it is free to change
  * between releases; a plugin that reached into it would break on an upgrade with no
- * warning and no compile error. The plan therefore lives under this plugin's own
- * data root, which `data-home.ts` already owns for engineering memory, checkpoints
- * and team state.
+ * warning and no compile error. The plan therefore lives under this plugin's own * data root, which `data-home.ts` already owns for engineering memory, checkpoints
+ * and plan state.
  *
  * The one writer
  * --------------
@@ -129,12 +128,14 @@ export function safeSegment(sessionId: string): string {
  * This comment used to call the function "the edit fence's only allowed
  * destination". No fence does. Plan Mode's containment is implemented by name in
  * `plan-mode.ts`, which refuses every mutating tool and every unclassified plugin
- * tool, and `plan/plan-state.ts` records that a path-based fence was written for
- * this module, could not tell a write from a read (`read` names a `path` too), and
- * was withdrawn rather than shipped. So this stays for the path arithmetic the
- * spec pins, and for a future fence able to make that distinction: such a fence
- * would call it, and would need the `realpath` comparison above before treating a
- * `true` as permission.
+ * tool. A path-based fence was written for this module and withdrawn: it judged a
+ * call by whether the path it named was the plan file, and that judgment cannot
+ * tell a write from a read (`read` names a `path` too), so wired in it would have
+ * refused the searching and checking Plan Mode exists to allow. A rule that cannot
+ * make the distinction it needs is not a stricter rule — it is a broken one. So
+ * this stays for the path arithmetic the spec pins, and for a future fence able to
+ * make that distinction: such a fence would call it, and would need the `realpath`
+ * comparison above before treating a `true` as permission.
  * @param sessionId - the session whose plan file is the reference.
  * @param path - the path a caller is asking about.
  * @returns whether the two name the same file, by spelling once resolved.

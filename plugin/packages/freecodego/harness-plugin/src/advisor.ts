@@ -2,8 +2,8 @@
 
 import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { readFile, readdir, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { load as parseYaml } from 'js-yaml'
 import type { Context } from '@deepseek-ai/cordis'
 import { BlockAssembler, createAssistantMessage, createToolResultMessage, createUserMessage, type ContentBlock, type GenerateOptions, type Message, type TokenUsage, type ToolCallBlock, type ToolSchema } from '@deepseek-ai/dsh-llm'
@@ -11,7 +11,6 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent, SessionEventMap } from '@deepseek-ai/dsh-session'
 import type { FreeCodeGoSettingsPort } from './policy.ts'
 import { jsonObjectsIn } from './json-text.ts'
-import { isCredentialPath } from './tool-guards.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 import type { FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorSettings, FreeCodeGoAdvisorStatus } from './types.ts'
 import { OPENCODE_AUTO_MODEL } from './managed-catalog-utils.ts'
@@ -56,16 +55,23 @@ const BACKOFF_THRESHOLD = 2
 /** Turn multiplier per additional consecutive failure; capped at ten turns. */
 const BACKOFF_TURN_PENALTY = 2
 const BACKOFF_MAX_TURNS = 10
+/** Characters of one review tool result handed to the reviewer, with the cut named. */
 const READ_MAX_CHARS = 8_000
-const SEARCH_MAX_FILES = 160
-const SEARCH_MAX_MATCHES = 60
-/** Directory levels the review tools walk below the workspace root. */
-const MAX_WALK_DEPTH = 7
-const REVIEW_TOOLS: readonly ToolSchema[] = [
-  { name: 'freecodego_advisor_read', description: 'Read a UTF-8 text file under the current workspace. This tool is read-only.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'], additionalProperties: false } },
-  { name: 'freecodego_advisor_glob', description: 'List workspace files matching a simple glob such as src/**/*.ts. This tool is read-only.', parameters: { type: 'object', properties: { pattern: { type: 'string' } }, required: ['pattern'], additionalProperties: false } },
-  { name: 'freecodego_advisor_grep', description: 'Find literal text in workspace files. This tool is read-only and does not execute commands.', parameters: { type: 'object', properties: { query: { type: 'string' }, pattern: { type: 'string' } }, required: ['query'], additionalProperties: false } },
-]
+
+/**
+ * The Harness's read-only tools the reviewer may be offered.
+ *
+ * Named rather than implemented: the plugin used to ship its own `read`,
+ * `glob`, and `grep` — a bounded walk, a literal-text scan, and a private read
+ * cap — which were a second answer to questions the Harness's tools already
+ * answer through the seam that matters (a sandboxed or remote filesystem), the
+ * registry's own policy pipeline, and its output paging. The reviewer is handed
+ * the Harness's schemas and its calls are dispatched through
+ * `ctx.tools.execute`, so a composition that mounts them gets its tools and one
+ * that mounts none runs the review without evidence instead of against the wrong
+ * filesystem.
+ */
+export const ADVISOR_REVIEW_TOOLS = ['read', 'glob', 'grep'] as const
 /**
  * Turn penalty applied after a run of upstream review failures.
  *
@@ -83,7 +89,13 @@ export function advisorBackoffTurns(failures: number): number {
   return Math.min(BACKOFF_MAX_TURNS, (failures - BACKOFF_THRESHOLD + 1) * BACKOFF_TURN_PENALTY)
 }
 
-/** Whether an automatic review must be skipped because the session is backing off. */
+/** Whether an automatic review must be skipped because the session is backing off.
+ * @param failures - consecutive failures observed for the session.
+ * @param turn - the current turn number.
+ * @param backoffUntilTurn - the first turn at which reviews may run again.
+ * @param force - an explicit review bypasses the backoff.
+ * @returns true when an automatic review must be skipped.
+ */
 export function advisorBackoffActive(failures: number, turn: number, backoffUntilTurn: number, force: boolean): boolean {
   return !force && failures >= BACKOFF_THRESHOLD && turn < backoffUntilTurn
 }
@@ -97,6 +109,7 @@ export function advisorBackoffActive(failures: number, turn: number, backoffUnti
  * acting on it. `record` is the answer to both "do not touch my agent" and
  * "report only blockers", which is why it is reachable two ways.
  *
+ * @param input - the finding's severity, the configured mode, and the session's steer state.
  * @returns the channel this finding should use.
  */
 export function advisorDeliveryChannel(input: {
@@ -120,6 +133,7 @@ const COUNCIL_ROLES = {
   testing: 'Review behavioral regression risk, missing deterministic tests, cancellation/recovery paths, and insufficient evidence.',
 } as const
 
+/** How serious one advisor finding is, from a nit to a blocker. */
 export type AdvisorSeverity = 'nit' | 'concern' | 'blocker'
 type ActiveReview = { readonly controller: AbortController; readonly turn: number; readonly completion: Promise<void> }
 type SessionState = {
@@ -222,7 +236,9 @@ export class FreeCodeGoAdvisorRuntime {
     })
   }
 
-  /** Browser-safe aggregate state; no transcript content or credentials leave the Host. */
+  /** Browser-safe aggregate state; no transcript content or credentials leave the Host. 
+   * @returns the advisor Status.
+   */
   status(): FreeCodeGoAdvisorStatus {
     const settings = this.configuration()
     const route = normalizeAdvisorRoute(settings.advisorProvider, settings.advisorModel)
@@ -255,7 +271,10 @@ export class FreeCodeGoAdvisorRuntime {
     }
   }
 
-  /** Persist a partial settings update and cancel active review work when disabled. */
+  /** Persist a partial settings update and cancel active review work when disabled.
+   * @param input - the settings fields to change.
+   * @returns the advisor Status.
+   */
   async update(input: Partial<FreeCodeGoAdvisorSettings>): Promise<FreeCodeGoAdvisorStatus> {
     if (this.settings === undefined) throw new Error('FreeCodeGo settings are not configured')
     const patch = normalizeUpdate(input)
@@ -266,7 +285,10 @@ export class FreeCodeGoAdvisorRuntime {
     return this.status()
   }
 
-  /** Run an explicit review and return the new durable finding, if any. */
+  /** Run an explicit review and return the new durable finding, if any.
+   * @param agent - the agent this call applies to.
+   * @returns the new finding, or `undefined` when the review produced none.
+   */
   async reviewNow(agent: Agent): Promise<{ readonly id: string; readonly severity: AdvisorSeverity; readonly note: string; readonly turn: number } | undefined> {
     const previousIds = new Set(sessionEvents(agent.session).filter(event => event.type === 'advisor/note').map(event => event.data.id))
     const turn = sessionEvents(agent.session).findLast(event => event.type === 'turn/end')?.data.turn ?? 0
@@ -279,7 +301,10 @@ export class FreeCodeGoAdvisorRuntime {
     return event?.type === 'advisor/note' ? event.data : undefined
   }
 
-  /** Run read-only, independent reviewer perspectives without steering the primary Agent. */
+  /** Run read-only, independent reviewer perspectives without steering the primary Agent. 
+   * @param agent - the agent this call applies to.
+   * @returns the advisor Council Report.
+   */
   async councilReviewNow(agent: Agent): Promise<FreeCodeGoAdvisorCouncilReport> {
     const settings = this.configuration()
     const route = resolveRoute(settings, agent)
@@ -302,7 +327,7 @@ export class FreeCodeGoAdvisorRuntime {
       // One evidence cache per council run, shared by every perspective: the
       // three reviewers inspect the same workspace, so their identical reads
       // should cost one execution, not three. The cache dies with this run.
-      const evidence = new AdvisorEvidenceCache()
+      const evidence = new AdvisorEvidenceCache((call, signal) => executeReviewTool(this.ctx, agent, call, signal))
       const findings = await Promise.all((Object.entries(COUNCIL_ROLES) as readonly [keyof typeof COUNCIL_ROLES, string][]).map(async ([role, instruction]) => {
         const messages: Message[] = [createUserMessage({
           source: { kind: 'plugin', plugin: 'freecodego-advisor-council' },
@@ -323,7 +348,11 @@ export class FreeCodeGoAdvisorRuntime {
     }
   }
 
-  /** Recent findings belonging to one Agent's durable session. */
+  /** Recent findings belonging to one Agent's durable session.
+   * @param agent - the agent this call applies to.
+   * @param limit - the maximum number of findings to return.
+   * @returns the findings, newest first, with their delivery channel.
+   */
   notes(agent: Agent, limit = 10): readonly { readonly id: string; readonly severity: AdvisorSeverity; readonly note: string; readonly turn: number; readonly delivery: 'record' | 'inject' | 'steer' }[] {
     const deliveries = new Map<string, 'record' | 'inject' | 'steer'>()
     for (const event of sessionEvents(agent.session)) {
@@ -483,6 +512,7 @@ export class FreeCodeGoAdvisorRuntime {
    * channel that was over the line once will be again, whereas "the last call was
    * small" proves nothing. Empty when no threshold has been observed yet, because
    * judging a footprint against an unknown line is not a judgement.
+   * @returns the warnings, worst first, or an empty list before any threshold is known.
    */
   sideChannelWarnings(): readonly { readonly channel: string; readonly verdict: SideChannelBudgetVerdict }[] {
     const threshold = this.lastCompactionThresholdTokens
@@ -491,14 +521,21 @@ export class FreeCodeGoAdvisorRuntime {
 
   /** Keep the reviewer separate from the primary Agent's tools and history. */
   private async runReviewLoop(agent: Agent, route: { provider: string; model: string }, messages: Message[], signal: AbortSignal, perspective = '', evidence?: AdvisorEvidenceCache): Promise<{ severity: AdvisorSeverity; note: string } | undefined> {
+    // The Harness's own read-only schemas, in a stable order; empty when the
+    // composition mounts none, and the system prompt says so rather than
+    // promising a tool the reviewer does not have.
+    const tools = reviewToolSchemas(this.ctx)
+    const offered = tools.length === 0
+      ? 'No read-only review tools are mounted in this deployment: answer from the supplied transcript alone.'
+      : 'Review only supplied transcript facts and evidence obtained with your read-only review tools. Never use shell commands, edits, network access, or tools outside this list.'
     for (let step = 0; step < MAX_REVIEW_STEPS; step += 1) {
       const assembler = new BlockAssembler()
       const options: GenerateOptions = {
         provider: route.provider,
         model: route.model,
         messages,
-        tools: REVIEW_TOOLS.slice(),
-        system: `You are a concise software reviewer. Review only supplied transcript facts and evidence obtained with your read-only review tools. Never use shell commands, edits, network access, or tools outside this list. Return exactly one JSON object with fields severity (nit, concern, blocker) and note. Return severity nit with an empty note when no concrete issue exists. Do not claim facts without evidence.${perspective === '' ? '' : `\nPerspective: ${perspective}`}`,
+        tools: tools.slice(),
+        system: `You are a concise software reviewer. ${offered} Return exactly one JSON object with fields severity (nit, concern, blocker) and note. Return severity nit with an empty note when no concrete issue exists. Do not claim facts without evidence.${perspective === '' ? '' : `\nPerspective: ${perspective}`}`,
         maxTokens: 700,
         sessionId: agent.session.id,
         signal,
@@ -520,7 +557,7 @@ export class FreeCodeGoAdvisorRuntime {
       messages.push(createAssistantMessage({ content: blocks, source: route }))
       for (const call of calls) {
         const result = evidence === undefined
-          ? await executeReadOnlyTool(agent.session.header.cwd, call, signal)
+          ? await executeReviewTool(this.ctx, agent, call, signal)
           : await evidence.execute(agent.session.header.cwd, call, signal)
         messages.push(createToolResultMessage({ callId: call.id, content: [{ type: 'text', text: result.text }], isError: !result.ok }))
       }
@@ -790,6 +827,19 @@ const EVIDENCE_CACHE_MAX_ENTRIES = 256
  * bytes can never outlive the review that produced them.
  */
 export class AdvisorEvidenceCache {
+  /**
+   * The execution the cache sits in front of.
+   *
+   * Injected rather than reached for: the cache's subject is *what to run once*,
+   * and the caller is the only party that knows which agent and registry a call
+   * belongs to.
+   * @param run - the read-only execution to serve entries from. It takes no
+   *   workspace: the Harness's tools resolve their own paths against the calling
+   *   agent's session, and the workspace stays in this cache's key only because
+   *   two checkouts are two different questions.
+   */
+  constructor(private readonly run: (call: ToolCallBlock, signal: AbortSignal) => Promise<ToolExecution>) {}
+
   private readonly entries = new Map<string, ToolExecution>()
   /**
    * Executions still running, keyed exactly like {@link entries}.
@@ -826,6 +876,7 @@ export class AdvisorEvidenceCache {
    * @param cwd - workspace root; an absent one short-circuits as usual.
    * @param call - the model's tool call.
    * @param signal - review cancellation.
+   * @returns the tool Execution.
    */
   async execute(cwd: string | undefined, call: ToolCallBlock, signal: AbortSignal): Promise<ToolExecution> {
     const key = AdvisorEvidenceCache.key(cwd, call)
@@ -833,7 +884,7 @@ export class AdvisorEvidenceCache {
     if (cached !== undefined) return cached
     const running = this.inFlight.get(key)
     if (running !== undefined) return running
-    const operation = executeReadOnlyTool(cwd, call, signal).then((result) => {
+    const operation = this.run(call, signal).then((result) => {
       // Failures stay out of the cache: another perspective retrying a transient
       // error is exactly the behaviour we want, and a cached failure would read
       // as corroborating evidence.
@@ -862,238 +913,80 @@ export class AdvisorEvidenceCache {
  * this function and abort the entire review instead of being reported to the
  * model as a failed tool call it can recover from.
  */
-async function executeReadOnlyTool(cwd: string | undefined, call: ToolCallBlock, signal: AbortSignal): Promise<ToolExecution> {
-  if (cwd === undefined || cwd.trim() === '') return { ok: false, text: 'No workspace is associated with this session.' }
+/**
+ * The Harness's read-only tools, as this deployment mounts them.
+ *
+ * A name the composition does not mount is simply absent from the offered list
+ * rather than advertised and then refused when the reviewer calls it.
+ * @param ctx - the plugin context carrying the tool registry.
+ * @returns the mounted schemas, in {@link ADVISOR_REVIEW_TOOLS} order.
+ */
+function reviewToolSchemas(ctx: Context): readonly ToolSchema[] {
+  const tools = reviewToolRegistry(ctx)
+  const available = tools?.schemas?.() ?? []
+  return ADVISOR_REVIEW_TOOLS.flatMap(name => available.filter(schema => schema.name === name))
+}
+
+/**
+ * Dispatch one reviewer tool call through the Harness's own tool pipeline.
+ *
+ * The registry is the whole point: it runs the call with the caller's agent (so
+ * the workspace is the session's), through the mounted filesystem seam, through
+ * `tools/pre-execute` — where this plugin's own credential-path guard and the
+ * deployment's approval policy already sit — and with the tool's own output
+ * paging. Answers are bounded once more here, with the cut named in the text: a
+ * reviewer that reads a prefix without being told cannot weigh its own evidence,
+ * and the system prompt asks it to claim nothing it has not seen.
+ * @param ctx - the plugin context carrying the tool registry.
+ * @param agent - the agent whose session's workspace the call resolves against.
+ * @param call - the reviewer's own tool call.
+ * @param signal - review cancellation.
+ * @returns the reviewer-facing text and whether the call succeeded.
+ */
+async function executeReviewTool(ctx: Context, agent: Agent, call: ToolCallBlock, signal: AbortSignal): Promise<ToolExecution> {
+  if (!ADVISOR_REVIEW_TOOLS.includes(call.name as typeof ADVISOR_REVIEW_TOOLS[number])) {
+    return { ok: false, text: `Unknown Advisor review tool: ${call.name}` }
+  }
+  const tools = reviewToolRegistry(ctx)
+  if (tools?.execute === undefined) return { ok: false, text: 'No tool registry is mounted in this deployment, so the review tools are unavailable.' }
+  let input: unknown
   try {
-    const input = JSON.parse(call.arguments) as Record<string, unknown>
-    switch (call.name) {
-      case 'freecodego_advisor_read': return await readWorkspaceFile(cwd, stringArgument(input, 'path'), signal)
-      case 'freecodego_advisor_glob': return await globWorkspaceFiles(cwd, stringArgument(input, 'pattern'), signal)
-      case 'freecodego_advisor_grep': return await grepWorkspaceFiles(cwd, stringArgument(input, 'query'), optionalStringArgument(input, 'pattern'), signal)
-      default: return { ok: false, text: `Unknown Advisor review tool: ${call.name}` }
-    }
+    input = JSON.parse(call.arguments)
+  } catch {
+    // Masked: the text this can quote is the model's own arguments, and it is fed
+    // back into the review loop and its transcript.
+    return { ok: false, text: `Read-only review tool failed: ${redactCredentialShapes('arguments were not valid JSON')}` }
+  }
+  try {
+    const result = await tools.execute({ callId: String(call.id), name: call.name, arguments: input, agent, signal })
+    const text = renderToolText(result.content)
+    const shown = text.slice(0, READ_MAX_CHARS)
+    const omission = text.length > shown.length ? `\n\n… (truncated: showing the first ${READ_MAX_CHARS} of ${text.length} characters)` : ''
+    return { ok: !result.isError, text: `${shown}${omission}` }
   } catch (error) {
-    // Masked: the parse that can throw here is the model's own tool arguments,
-    // and this text is fed back into the review loop and its transcript. The
-    // parse error quotes at most ten characters of them, which is what bounds
-    // this channel; the masking covers the shapes that fit in that window.
     return { ok: false, text: `Read-only review tool failed: ${redactCredentialShapes(error instanceof Error ? error.message : String(error))}` }
   }
 }
 
-function stringArgument(input: Record<string, unknown>, key: string): string {
-  const value = input[key]
-  if (typeof value !== 'string' || value.trim() === '' || value.length > 512) throw new Error(`${key} must be a non-empty string of at most 512 characters`)
-  return value.trim()
-}
-
-function optionalStringArgument(input: Record<string, unknown>, key: string): string | undefined {
-  const value = input[key]
-  if (value === undefined) return undefined
-  return stringArgument(input, key)
-}
-
-async function readWorkspaceFile(cwd: string, requested: string, signal: AbortSignal): Promise<ToolExecution> {
-  signal.throwIfAborted()
-  const file = await resolveWorkspaceFile(cwd, requested)
-  const info = await stat(file)
-  if (!info.isFile()) throw new Error('path is not a file')
-  if (info.size > 1_000_000) throw new Error('file exceeds the 1 MB read-only review limit')
-  const content = await readFile(file, 'utf8')
-  if (content.includes('\u0000')) throw new Error('binary files are not exposed to Advisor')
-  // The cut is reported in the text, not just applied. A reviewer that reads 8000
-  // of 40000 characters and is not told cannot weigh its own evidence, and the
-  // system prompt asks it to claim nothing it has not seen — "the handler never
-  // validates this" is exactly the claim a truncated read invites.
-  const text = sanitizeReviewText(content)
-  const shown = text.slice(0, READ_MAX_CHARS)
-  const omission = text.length > shown.length
-    ? `\n\n… (truncated: showing the first ${READ_MAX_CHARS} of ${text.length} characters)`
-    : ''
-  // Labelled against the *canonical* root, the same one the walk uses. `cwd` may
-  // reach this module carrying an 8.3 short name (`ADMINI~1`) or another
-  // non-canonical spelling, and `relative()` against that prints
-  // `..\..\..\..\..\Administrator\AppData\...` for a file that sits directly in the
-  // workspace — while `glob` and `grep` call the same file `notes.md`. A reviewer
-  // told to check its claims against its evidence cannot cross-reference two names
-  // for one file, so the label has to agree with the other two tools.
-  const label = relative(await realpath(cwd), file)
-  return { ok: true, text: `${label}\n\n${shown}${omission}` }
-}
-
-async function globWorkspaceFiles(cwd: string, pattern: string, signal: AbortSignal): Promise<ToolExecution> {
-  const walk = await collectWorkspaceFiles(cwd, signal)
-  const matcher = globMatcher(pattern)
-  const matched = walk.files.filter(file => matcher(file))
-  const shown = matched.slice(0, SEARCH_MAX_FILES)
-  return { ok: true, text: withOmissions(shown, '(no matching files)', [
-    matched.length > shown.length ? `${matched.length - shown.length} more matching files not shown` : undefined,
-    walk.truncated,
-  ]) }
-}
-
-async function grepWorkspaceFiles(cwd: string, query: string, pattern: string | undefined, signal: AbortSignal): Promise<ToolExecution> {
-  const matcher = pattern === undefined ? () => true : globMatcher(pattern)
-  const walk = await collectWorkspaceFiles(cwd, signal)
-  const matches: string[] = []
-  let limitReached = false
-  for (const name of walk.files) {
-    if (matches.length >= SEARCH_MAX_MATCHES) { limitReached = true; break }
-    if (!matcher(name)) continue
-    // A grep is the credential read one layer out: it returns the matching line
-    // verbatim, so `query: "TOKEN"` over a workspace holding `.env` would print
-    // the secret the read tool above refuses. Resolved-path checking happens in
-    // `resolveWorkspaceFile`; this skips the file before it is opened at all.
-    if (isCredentialPath(name)) continue
-    signal.throwIfAborted()
-    const file = await resolveWorkspaceFile(cwd, name)
-    const info = await stat(file)
-    if (info.size > 1_000_000) continue
-    let content: string
-    try { content = await readFile(file, 'utf8') } catch { continue }
-    if (content.includes('\u0000')) continue
-    for (const [index, line] of content.split(/\r?\n/u).entries()) {
-      if (line.includes(query)) matches.push(`${name}:${index + 1}: ${sanitizeReviewText(line).slice(0, 500)}`)
-      if (matches.length >= SEARCH_MAX_MATCHES) { limitReached = true; break }
-    }
-  }
-  return { ok: true, text: withOmissions(matches, '(no matches)', [
-    limitReached ? `stopped at the ${SEARCH_MAX_MATCHES}-match limit` : undefined,
-    walk.truncated,
-  ]) }
-}
-
 /**
- * Join tool output and name every reason it may be incomplete.
+ * The tool registry behind this review, when the context can reach one.
  *
- * The two omissions are separate facts and are kept separate: one says the tool
- * had more to show than it was allowed to, the other says the workspace itself
- * was only partly looked at. Both make an answer partial, and a reviewer told
- * "no matches" from a walk that never reached the file cannot tell the difference
- * between "this does not exist" and "I did not look there" — which is the claim
- * its instructions forbid it to make.
- *
- * @param lines - what the tool produced, already bounded.
- * @param empty - what to say when it produced nothing.
- * @param reasons - one clause per way the result may be short, or undefined.
- * @returns the text to hand the reviewer.
+ * `get` is itself optional: a context that carries no service accessor at all is
+ * a composition with no registry, which is a review without evidence rather than
+ * a review that throws before it can answer.
  */
-function withOmissions(lines: readonly string[], empty: string, reasons: readonly (string | undefined)[]): string {
-  const omissions = reasons.filter((reason): reason is string => reason !== undefined)
-  const body = lines.length === 0 ? [empty] : [...lines]
-  // "may" is load-bearing on both clauses: neither limit is a measurement of how
-  // much more exists, only of the point the tool stopped at.
-  return [...body, ...omissions.map(reason => `… (${reason}; more may exist)`)].join('\n')
+function reviewToolRegistry(ctx: Context): {
+  schemas?(): readonly ToolSchema[]
+  execute?(input: { callId: string; name: string; arguments: unknown; agent: Agent; signal: AbortSignal }): Promise<{ readonly isError: boolean; readonly content: readonly ContentBlock[] }>
+} | undefined {
+  const get = (ctx as { get?: (name: string) => unknown }).get
+  if (typeof get !== 'function') return undefined
+  return get.call(ctx, 'tools') as ReturnType<typeof reviewToolRegistry>
 }
 
-/**
- * Every workspace file the read-only review tools may look at.
- *
- * Credential files are still *listed* — this plugin never hides a name (a shell
- * can `ls` the same file), and the review tools' job is to reason about the
- * workspace. Their contents are what the guard withholds, which is enforced
- * where the file is opened.
- */
-/**
- * What one workspace walk found, and whether it stopped before the workspace ran out.
- *
- * The second field is the point of the shape. The reviewer's system prompt says
- * "Do not claim facts without evidence", and a walk that quietly stops at a file
- * ceiling or a depth limit hands it a prefix of the workspace as though it were
- * the whole of it: `grep` answers "(no matches)" for a symbol that lives one
- * directory too deep, and the reviewer reports the absence as a finding. The
- * walker cannot decide how much of the workspace the reviewer needed, but it is
- * the only party that knows the answer was partial, so it says so and the tools
- * carry it into the text.
- */
-interface WorkspaceWalk {
-  readonly files: readonly string[]
-  /** Why the walk may be incomplete, or undefined when it covered the workspace. */
-  readonly truncated?: string
-}
-
-async function collectWorkspaceFiles(cwd: string, signal: AbortSignal): Promise<WorkspaceWalk> {
-  const root = await realpath(cwd)
-  const output: string[] = []
-  const queue: Array<{ readonly directory: string; readonly depth: number }> = [{ directory: root, depth: 0 }]
-  let depthCapped = false
-  let fileCapped = false
-  // The ceiling is tested *before each push*, against a file that would have to be
-  // dropped, rather than after the fact against `output.length`. A directory whose
-  // `readdir` returns more names than the walk may keep crosses the ceiling inside
-  // one pass, and a post-hoc `output.length >= ceiling` test cannot tell that pass
-  // apart from a workspace that simply held exactly that many files — the walk
-  // reported completeness for a listing it had just cut short. Stopping on the one
-  // file it cannot keep is the only observation that distinguishes the two.
-  walk: while (queue.length > 0) {
-    signal.throwIfAborted()
-    const current = queue.shift()!
-    let entries
-    try { entries = await readdir(current.directory, { withFileTypes: true }) } catch { continue }
-    for (const entry of entries) {
-      if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.freecodego') continue
-      const candidate = join(current.directory, entry.name)
-      if (entry.isDirectory()) {
-        if (current.depth < MAX_WALK_DEPTH) queue.push({ directory: candidate, depth: current.depth + 1 })
-        // A directory the walk refuses to descend into is a silent hole: nothing
-        // below it is ever listed, matched or searched, and the tools would report
-        // the emptiness as an answer.
-        else depthCapped = true
-      } else if (entry.isFile()) {
-        if (output.length >= SEARCH_MAX_FILES * 4) { fileCapped = true; break walk }
-        output.push(relative(root, candidate).replaceAll('\\', '/'))
-      }
-    }
-  }
-  const reasons = [
-    fileCapped ? `the walk stopped at its ${SEARCH_MAX_FILES * 4}-file ceiling` : undefined,
-    depthCapped ? `the walk did not descend past ${MAX_WALK_DEPTH} directory levels` : undefined,
-  ].filter(reason => reason !== undefined)
-  return { files: output.sort(), ...(reasons.length === 0 ? {} : { truncated: reasons.join('; ') }) }
-}
-
-async function resolveWorkspaceFile(cwd: string, requested: string): Promise<string> {
-  const root = await realpath(cwd)
-  const candidate = resolve(root, requested)
-  if (!isWorkspaceDescendant(root, candidate)) throw new Error('path must remain inside the workspace')
-  const resolved = await realpath(candidate)
-  if (!isWorkspaceDescendant(root, resolved)) throw new Error('symlink target leaves the workspace')
-  // Staying inside the workspace is not enough on its own: `.env`, `.npmrc`,
-  // `secrets.json` and friends live there, and every other reader in this plugin
-  // refuses them by name — the Host's `read`, the native engine's file tools,
-  // and `read_document`. These three tools run inside this module rather than
-  // through the guarded tool registry, so the shield has to be applied here or
-  // the whole guard suite has a workspace-shaped hole. Checked on the *resolved*
-  // path so a symlink to the same file is refused too.
-  if (isCredentialPath(requested) || isCredentialPath(resolved)) {
-    throw new Error('Blocked by the FreeCodeGo credential guard: this path looks like a credential or secret file. Ask the user for the needed value instead of reading it.')
-  }
-  return resolved
-}
-
-/** `relative()` can return a second absolute drive path on Windows. The workspace
- * root itself (empty relative path) is allowed; read callers still require a file. */
-function isWorkspaceDescendant(root: string, candidate: string): boolean {
-  const path = relative(root, candidate)
-  return !isAbsolute(path) && path !== '..'
-    && !path.startsWith(`..${String.fromCharCode(92)}`) && !path.startsWith('../')
-}
-
-function globMatcher(pattern: string): (value: string) => boolean {
-  const normalized = pattern.replaceAll('\\', '/').replace(/^\.\//, '')
-  if (normalized.includes('..') || normalized.length > 512) throw new Error('glob pattern is invalid')
-  let expression = '^'
-  for (let index = 0; index < normalized.length; index += 1) {
-    const character = normalized[index]!
-    const next = normalized[index + 1]
-    if (character === '*' && next === '*' && normalized[index + 2] === '/') { expression += '(?:.*/)?'; index += 2 }
-    else if (character === '*' && next === '*') { expression += '.*'; index += 1 }
-    else if (character === '*') expression += '[^/]*'
-    else if (character === '?') expression += '[^/]'
-    else expression += character.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')
-  }
-  const expressionMatcher = new RegExp(`${expression}$`, 'u')
-  return value => expressionMatcher.test(value)
+/** The text blocks of one tool result, as the reviewer reads them. */
+function renderToolText(content: readonly ContentBlock[]): string {
+  return content.map((block) => block.type === 'text' ? block.text : `[${block.type}]`).join('\n')
 }
 
 function sanitizeReviewText(value: string): string {

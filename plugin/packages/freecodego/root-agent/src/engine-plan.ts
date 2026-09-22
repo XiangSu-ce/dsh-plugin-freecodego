@@ -92,7 +92,10 @@ export interface FreeCodeGoAgentOptions {
   readonly freeCodeGoReadOnly?: boolean
 }
 
-/** Durable event binding that prevents an incompatible runtime from resuming. */
+/** Durable event binding that prevents an incompatible runtime from resuming. 
+ * @param session - the durable session the binding belongs to.
+ * @param plan - the engine plan this session is being opened with.
+ */
 export function ensureAgentEngineBinding(session: Session, plan: AgentEnginePlan): void {
   const existing = session.snapshotEvents().find(event => event.type === 'agent-engine/selected')
   if (existing === undefined) {
@@ -130,6 +133,8 @@ export function ensureAgentEngineBinding(session: Session, plan: AgentEnginePlan
  * `harness:<provider>:<model>` text as a provider name — reads it through here.
  * Bindings have carried this format since the first alpha release, so an older
  * session's binding parses like a current one.
+ * @param routeBindingId - the durable `harness:<provider>:<model>` route binding.
+ * @returns the provider that binding was minted with, or `undefined` when it is not in that format.
  */
 export function routeProvider(routeBindingId: string): string | undefined {
   return /^harness:([^:]+):/u.exec(routeBindingId)?.[1]

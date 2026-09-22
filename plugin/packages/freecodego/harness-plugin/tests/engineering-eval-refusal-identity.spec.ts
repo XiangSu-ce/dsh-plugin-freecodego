@@ -22,7 +22,7 @@ import { describe, expect, it, vi } from 'vitest'
 /** `honest` ships the guard's own wording; the other two are drifts. */
 type Mode = 'honest' | 'renamed' | 'unreadable-fixture'
 
-const state = vi.hoisted(() => ({ mode: 'honest' as 'honest' | 'renamed' | 'unreadable-fixture' }))
+const state = vi.hoisted(() => ({ mode: 'honest' as Mode }))
 
 vi.mock('../src/token-usage.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/token-usage.ts')>()

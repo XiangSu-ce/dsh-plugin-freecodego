@@ -52,6 +52,8 @@ class ContentIntegrityError extends Error {}
  * connection); an integrity failure is NOT — that content is simply wrong. The
  * partial file is removed on every failure path, so a caller never picks up a
  * half-written artifact.
+ * @param input - the asset to fetch, its destination, and the digest to verify against.
+ * @param fetchImpl - the fetch implementation to download through.
  */
 export async function downloadVerifiedAsset(input: VerifiedDownload, fetchImpl: typeof fetch = fetch): Promise<void> {
   try {
@@ -105,6 +107,8 @@ async function downloadVerifiedOnce(input: VerifiedDownload, fetchImpl: typeof f
  * Create a private directory (mode 0700) and refuse to operate through a
  * symlinked leaf or parent: everything under it is code the plugin later
  * executes, so a link planted in DSH_HOME must never be followed or written to.
+ * @param directory - directory the operation runs against.
+ * @param label - the label to record with the entry.
  */
 export async function ensurePrivateDirectory(directory: string, label: string): Promise<void> {
   const parent = dirname(directory)
@@ -190,7 +194,10 @@ export async function replaceVerifiedRuntimeDirectory(input: {
   if (previous !== undefined) await rm(previous, { recursive: true, force: true })
 }
 
-/** Write the manifest that makes an installed runtime self-describing. */
+/** Write the manifest that makes an installed runtime self-describing.
+ * @param directory - directory the operation runs against.
+ * @param manifest - the manifest object to serialize.
+ */
 export async function writeRuntimeManifest(directory: string, manifest: unknown): Promise<void> {
   await writeFile(join(directory, RUNTIME_MANIFEST_FILE), JSON.stringify(manifest), { encoding: 'utf8', mode: 0o600 })
 }
@@ -199,6 +206,9 @@ export async function writeRuntimeManifest(directory: string, manifest: unknown)
  * Read a runtime manifest. A missing, unreadable, or malformed file reports as
  * "not installed" (undefined) instead of throwing: every caller renders that as
  * `state: 'unavailable'`, and a corrupted manifest must never break startup.
+ * @param directory - directory the operation runs against.
+ * @param validate - narrows the parsed record, returning `undefined` when it is unusable.
+ * @returns the validated manifest, or `undefined` when none is installed.
  */
 export async function readRuntimeManifest<T>(directory: string, validate: (value: Record<string, unknown>) => T | undefined): Promise<T | undefined> {
   try {
@@ -226,27 +236,41 @@ export class BuildTracker {
   private readonly building = new Set<string>()
   private readonly controllers = new Map<string, AbortController>()
 
-  /** True while a build holds this workspace: the concurrency guard and the `building` status. */
+  /** True while a build holds this workspace: the concurrency guard and the `building` status.
+   * @param projectId - project this operation is scoped to.
+   * @returns true while a build holds the workspace.
+   */
   isBuilding(projectId: string): boolean { return this.building.has(projectId) }
 
-  /** Take the workspace for one build, or refuse when another already holds it. */
+  /** Take the workspace for one build, or refuse when another already holds it.
+   * @param projectId - project this operation is scoped to.
+   * @param message - the error message thrown when the workspace is already claimed.
+   */
   claim(projectId: string, message: string): void {
     if (this.building.has(projectId)) throw new Error(message)
     this.building.add(projectId)
   }
 
-  /** Publish the abort handle of a claimed workspace once its runner exists. */
+  /** Publish the abort handle of a claimed workspace once its runner exists.
+   * @param projectId - project this operation is scoped to.
+   * @param controller - the controller whose abort cancels the build.
+   */
   attach(projectId: string, controller: AbortController): void {
     this.controllers.set(projectId, controller)
   }
 
-  /** Release the workspace whether the build succeeded, failed, or was aborted. */
+  /** Release the workspace whether the build succeeded, failed, or was aborted. 
+   * @param projectId - project this operation is scoped to.
+   */
   release(projectId: string): void {
     this.building.delete(projectId)
     this.controllers.delete(projectId)
   }
 
-  /** Abort the plugin-owned build for one workspace; false when none is running. */
+  /** Abort the plugin-owned build for one workspace; false when none is running.
+   * @param projectId - project this operation is scoped to.
+   * @returns whether a running build was cancelled.
+   */
   cancel(projectId: string): { readonly cancelled: boolean } {
     const controller = this.controllers.get(projectId)
     if (controller === undefined) return { cancelled: false }

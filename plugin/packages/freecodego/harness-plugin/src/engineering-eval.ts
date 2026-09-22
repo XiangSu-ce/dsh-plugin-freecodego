@@ -33,12 +33,13 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/engineering-eval
  */
 
-import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { AttachmentId, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import { createUserMessage, ToolCallId, type GenerateOptions } from '@deepseek-ai/dsh-llm'
+import type { FreeCodeGoCatalog, FreeCodeGoModelRouteOption, FreeCodeGoRouteChoice } from '@deepseek-ai/dsh-freecodego-api'
 import { isCredentialPath, DoomLoopGuard } from './tool-guards.ts'
 import { extractDefinitions, pagerank } from './engineering-repo-map.ts'
 import { lexicalRelevance } from './engineering-memory.ts'
@@ -48,14 +49,11 @@ import { mergeCouncilFindings } from './engine-council.ts'
 import { deriveSpecTasks, specDirectory } from './engineering-spec.ts'
 import { gatewayModelId, inferMediaCategory, mediaFailureBelongsToRequest, mediaFallbackAllowed, unknownImageParameter } from './media-utils.ts'
 import { latestTodos, rehydrationText } from './rehydration.ts'
+import { describeMemoryAge, memoryFreshnessNote } from './memory/memory-age.ts'
 import { serializeRequest } from './openai-wire.ts'
 import { scanPluginResourceClaims } from './plugin-conflicts.ts'
 import { buildLocalTokenUsageSnapshot, type LocalTokenUsageQuery } from './token-usage.ts'
 import { isUnsafeVerificationScript, scriptForStage } from './engineering-quality.ts'
-import { TeamBoard } from './team/board.ts'
-import { TeamMembers } from './team/members.ts'
-import { BUILT_IN_TEAM_ROLES, resolveRoleTools } from './team/roles.ts'
-import { TeamWorktrees } from './team/worktree.ts'
 import { compareVersions } from './plugin-update.ts'
 import { CcrStore, computeKey } from './headroom/ccr.ts'
 import { advisorBackoffActive, advisorBackoffTurns, advisorDeliveryChannel } from './advisor.ts'
@@ -96,8 +94,27 @@ import { FreeCodeGoLspMount } from './lsp-mount.ts'
 import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
 import { GATEWAY_HEALTH_CACHE_TTL_MS, MANAGED_MODEL_CATALOG_CACHE_TTL_MS, MODEL_REASON_FREECODEGO_LOGIN, MODEL_REASON_OPENCODE_UNAVAILABLE, OPENCODE_CATALOG_CACHE_TTL_MS, OPENCODE_CATALOG_MAX_AGE_MS, isDirectReasoningEffort, isGatewayReasoningEffort } from './managed-catalog-utils.ts'
 import { GROUP_LOCKED_REASON, GROUP_UNAVAILABLE_REASON } from './model-catalog.ts'
+import { expandBraces, matchesGlob, matchAnyGlob } from './review/glob.ts'
+import { addedLineNumbers, parseQuotedPath, parseUnifiedDiff } from './review/diff.ts'
+import { relocateComment } from './review/relocate.ts'
+import { missingReasons, summarizeCoverage, unaccountedFiles, type ReviewFileOutcome } from './review/coverage.ts'
+import { createReviewRuleResolver, groupByRule, parseReviewRuleDocument, SYSTEM_REVIEW_RULE } from './review/rules.ts'
+import { loadReviewRules } from './review/config.ts'
+import { compareComments, type ReviewComment } from './review/comments.ts'
+import { filterComments } from './review/filter.ts'
+import { groupChanges } from './review/grouping.ts'
+import { planGroup, shouldPlan } from './review/plan.ts'
+import { admitGroup, admitRound, consumeFinalRound, createBudgetState, DEFAULT_REVIEW_BUDGET, recordSpend, summarizeBudget } from './review/budget.ts'
+import { assembleReviewReport, renderReviewSarif, renderReviewText, type ReviewReport } from './review/report.ts'
+import { changeFingerprint, DEFAULT_REVIEW_GATE_SETTINGS, renderGateMessage } from './review/gate.ts'
+import { normalizeReviewPatch, reviewStartInputs } from './review/remotes.ts'
+import { sumSubagentUsage } from './review/subagent-reviewer.ts'
+import { narrowTurnScope, turnChangePaths } from './review/turn-scope.ts'
+import type { ReviewGroup } from './review/grouping.ts'
+import type { ReviewModelPort } from './review/model.ts'
+import { resolveReviewTarget, type ReviewableFile, type ReviewGitPort } from './review/targets.ts'
 import type { AdvisorSeverity } from './advisor.ts'
-import type { FreeCodeGoEngineeringEvalCase, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringEvalSuite } from './types.ts'
+import type { FreeCodeGoEngineeringEvalCase, FreeCodeGoManagedCatalog, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringEvalSuite } from './types.ts'
 
 /** Await real time. Cache cases reason about elapsed wall-clock, not fake timers. */
 function sleep(ms: number): Promise<void> {
@@ -528,7 +545,7 @@ const REHYDRATION_CASES: readonly CaseSpec[] = [
   {
     id: 'rehydration.stale-memory-is-flagged',
     suite: 'rehydration',
-    claim: 'Memory older than the staleness window is injected with an explicit caveat.',
+    claim: 'A memory the shared freshness vocabulary calls stale is injected with that caveat, and a fresh one is not.',
     measure: () => {
       const now = Date.now()
       const record = (createdAt: number, id: string) => ({ id, title: 't', kind: 'decision', trust: 'reviewed', projectId: 'p', createdAt, detailTokens: 1 })
@@ -536,8 +553,18 @@ const REHYDRATION_CASES: readonly CaseSpec[] = [
         memory: { projectId: 'p', tokenBudget: 1_000, usedTokens: 2, records: [record(now - 30 * 86_400_000, 'mem_a'), record(now, 'mem_b')] } as never,
         memoryBodies: new Map([['mem_a', 'old'], ['mem_b', 'new']]),
       })
-      const flaggedLines = text.split('\n').filter(line => line.includes('may be outdated')).length
-      return { observed: flaggedLines === 1 ? 1 : 0, required: 1, detail: `stale-flagged lines=${flaggedLines} (expected exactly 1)` }
+      // The expected sentence is read from the vocabulary itself rather than
+      // copied here, so this case cannot go stale when the wording changes: what
+      // it measures is whether rehydration wires that sentence in, for the band
+      // the vocabulary declares, and leaves a fresh record alone. Before that
+      // wiring existed this file carried its own seven-day threshold, and this
+      // case only had to trust the phrase it happened to look for.
+      const stale = memoryFreshnessNote(describeMemoryAge(now - 30 * 86_400_000, now))
+      if (stale === undefined) return { observed: 0, required: 1, detail: 'the shared vocabulary calls a 30-day-old record fresh' }
+      const lines = text.split('\n')
+      const flagged = lines.filter(line => line.includes(stale) && line.includes('Recorded ')).length
+      const freshFlagged = lines.some(line => line.includes(': new') && line.includes('Recorded '))
+      return { observed: flagged === 1 && !freshFlagged ? 1 : 0, required: 1, detail: `caveat on ${flagged} line(s) (expected 1), fresh record flagged=${freshFlagged}` }
     },
   },
   {
@@ -561,21 +588,39 @@ const REHYDRATION_CASES: readonly CaseSpec[] = [
   },
 ]
 
+/**
+ * The `messages` array of a serialized wire body.
+ *
+ * `serializeRequest` returns `Record<string, unknown>` on purpose — the body is
+ * the provider's payload, not a typed model — so the three wire cases state that
+ * boundary once here instead of each re-describing it. A body whose messages are
+ * missing or not an array reads as empty, which fails every assertion below
+ * rather than passing one vacuously.
+ */
+function wireMessages(body: Record<string, unknown>): readonly { readonly role?: unknown; readonly content?: unknown }[] {
+  const messages = body.messages
+  return Array.isArray(messages) ? messages as readonly { readonly role?: unknown; readonly content?: unknown }[] : []
+}
+
 const WIRE_CASES: readonly CaseSpec[] = [
   {
     id: 'wire.tool-results-stay-adjacent',
     suite: 'wire',
     claim: 'Tool results immediately follow their assistant frame; trailing text becomes a later user turn.',
     measure: () => {
-      const body = serializeRequest({
-        provider: 'logfare', model: 'gpt-5.6-sol', messages: [{
-          role: 'user', source: { kind: 'user' }, content: [
+      // A message the loop could actually hand over: the factory mints its id, the
+      // call id carries its brand, and the source tag comes from the producer.
+      const request: GenerateOptions = {
+        provider: 'logfare', model: 'gpt-5.6-sol', messages: [createUserMessage({
+          source: { kind: 'user' },
+          content: [
             { type: 'text', text: 'Continue the discussion.' },
-            { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'ok' }] },
+            { type: 'tool-result', toolCallId: ToolCallId('call-1'), content: [{ type: 'text', text: 'ok' }] },
           ],
-        }],
-      } as never)
-      const roles = (body.messages as readonly { readonly role: string }[]).map(message => message.role)
+        })],
+      }
+      const body = serializeRequest(request)
+      const roles = wireMessages(body).map(message => message.role)
       // Interleaving a user turn between tool_calls and their results is a hard
       // rejection on strict providers, so the order is the whole contract.
       const adjacent = roles.join(',') === 'tool,user'
@@ -587,15 +632,17 @@ const WIRE_CASES: readonly CaseSpec[] = [
     suite: 'wire',
     claim: 'An image inside a historical tool result becomes a text marker rather than rejecting the turn.',
     measure: () => {
-      const attachment = { attachmentId: 'att-1', mediaType: 'image/png', bytes: 4, width: 1, height: 1 }
-      const body = serializeRequest({
-        provider: 'logfare', model: 'gpt-5.6-sol', messages: [{
-          role: 'user', source: { kind: 'user' }, content: [
-            { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'image', attachment }] },
+      const attachment: ImageAttachmentRef = { attachmentId: AttachmentId('att-1'), mediaType: 'image/png', bytes: 4, width: 1, height: 1 }
+      const request: GenerateOptions = {
+        provider: 'logfare', model: 'gpt-5.6-sol', messages: [createUserMessage({
+          source: { kind: 'user' },
+          content: [
+            { type: 'tool-result', toolCallId: ToolCallId('call-1'), content: [{ type: 'image', attachment }] },
           ],
-        }],
-      } as never)
-      const first = (body.messages as readonly { readonly content?: unknown }[])[0]
+        })],
+      }
+      const body = serializeRequest(request)
+      const first = wireMessages(body)[0]
       const downgraded = typeof first?.content === 'string' && first.content.includes('att-1')
       return { observed: downgraded ? 1 : 0, required: 1, detail: `content=${JSON.stringify(first?.content)}` }
     },
@@ -605,10 +652,11 @@ const WIRE_CASES: readonly CaseSpec[] = [
     suite: 'wire',
     claim: 'The system prompt reaches the wire as a leading system message.',
     measure: () => {
-      const body = serializeRequest({
-        provider: 'logfare', model: 'm', system: 'You are a reviewer.', messages: [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }],
-      } as never)
-      const messages = body.messages as readonly { readonly role: string; readonly content: unknown }[]
+      const request: GenerateOptions = {
+        provider: 'logfare', model: 'm', system: 'You are a reviewer.', messages: [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] })],
+      }
+      const body = serializeRequest(request)
+      const messages = wireMessages(body)
       const leading = messages[0]?.role === 'system' && messages[0]?.content === 'You are a reviewer.'
       return { observed: leading ? 1 : 0, required: 1, detail: `first=${JSON.stringify(messages[0])}` }
     },
@@ -2020,17 +2068,20 @@ const VALIDATOR_CASES: readonly CaseSpec[] = [
     measure: () => {
       // A cycle must be reported, not overflow the stack: the previous
       // implementation recursed until `RangeError`, which tells the caller
-      // nothing about which value was unencodable.
+      // nothing about which value was unencodable. Only the message separates
+      // the report from that crash — a bare "did it throw" scored the old
+      // `RangeError` as the fix.
       const cyclic: Record<string, unknown> = { name: 'loop' }
       cyclic.self = cyclic
-      let reported = false
-      try { toJsonValue(cyclic) } catch { reported = true }
+      let refusal = ''
+      try { toJsonValue(cyclic) } catch (error) { refusal = error instanceof Error ? error.message : String(error) }
+      const reported = refusal === 'value contains a reference cycle and cannot be serialised'
       const plain = toJsonValue({ a: [1, 'two', true, null], b: { c: 3 } })
       const preserved = JSON.stringify(plain) === JSON.stringify({ a: [1, 'two', true, null], b: { c: 3 } })
       // A nested but acyclic repeat of the same object is legal and must pass.
       const shared = { v: 1 }
       const noFalsePositive = toJsonValue({ x: shared, y: shared }) !== undefined
-      return { observed: reported && preserved && noFalsePositive ? 1 : 0, required: 1, detail: `cycle-reported=${reported} plain-preserved=${preserved} shared-not-cyclic=${noFalsePositive}` }
+      return { observed: reported && preserved && noFalsePositive ? 1 : 0, required: 1, detail: `cycle-refusal=${JSON.stringify(refusal)} plain-preserved=${preserved} shared-not-cyclic=${noFalsePositive}` }
     },
   },
 ]
@@ -2378,13 +2429,38 @@ const EVENT_CASES: readonly CaseSpec[] = [
   },
 ]
 
+/** One route of a catalog row, shaped the way the backend reports the row. */
+function catalogRoute(routeKey: string, zeroPrice: boolean, rateMultiplier?: number): FreeCodeGoRouteChoice {
+  return { routeKey, label: routeKey, availability: 'available', compatibleEngines: [], zeroPrice, locked: false, ...(rateMultiplier === undefined ? {} : { rateMultiplier }) }
+}
+
+/** One route option the adapter reports for a model, carrying the fields a case sets. */
+function adapterRoute(routeKey: string, extra: { readonly zeroPrice?: boolean; readonly rateMultiplier?: number; readonly groupName?: string } = {}): FreeCodeGoModelRouteOption['options'][number] {
+  return {
+    // A group id is present on every backend row, and enrichment spreads it onto
+    // the choice it builds: a row without one cannot be pinned or ordered.
+    groupId: 1,
+    routeKey,
+    enabled: true,
+    locked: false,
+    zeroPrice: extra.zeroPrice ?? false,
+    ...(extra.rateMultiplier === undefined ? {} : { rateMultiplier: extra.rateMultiplier }),
+    ...(extra.groupName === undefined ? {} : { groupName: extra.groupName }),
+  }
+}
+
+/** A catalog row the gateway serves, carrying the routes a case needs. */
+function catalogRow(id: string, choices: readonly FreeCodeGoRouteChoice[]): FreeCodeGoCatalog['models'][number] {
+  return { id, displayName: id, provider: 'freecodego', protocol: 'openai_chat_completions', availability: 'available', compatibleEngines: [], choices }
+}
+
 const CATALOG_FILTER_CASES: readonly CaseSpec[] = [
   {
     id: 'catalog-filter.drops-direct-provider-rows',
     suite: 'catalog-filter',
     claim: 'Only rows the gateway itself serves survive in the gateway catalog.',
     measure: () => {
-      const model = (id: string, provider: string) => ({ id, provider, displayName: id, protocol: 'openai_chat_completions', availability: 'available', compatibleEngines: [], choices: [] }) as never
+      const model = (id: string, provider: string): FreeCodeGoManagedCatalog['models'][number] => ({ id, provider, displayName: id, protocol: 'openai_chat_completions', availability: 'available', compatibleEngines: [], choices: [] })
       const rows = [
         model('gpt-5.6-terra', 'freecodego'),
         // A direct provider's row is never a gateway route, whichever way the
@@ -2399,7 +2475,7 @@ const CATALOG_FILTER_CASES: readonly CaseSpec[] = [
         model('openrouter/foo', 'freecodego'),
         model('ox-alpha-1', 'freecodego'),
       ]
-      const kept = mergeCatalogModels(rows).map(entry => (entry as unknown as { id: string }).id)
+      const kept = mergeCatalogModels(rows).map(entry => entry.id)
       // The gateway owns the billing path, so every direct-provider shape is
       // filtered and only the gateway's own route remains. An earlier version
       // of this case expected a provider-owned `logfare` row to survive, which
@@ -2415,11 +2491,11 @@ const CATALOG_FILTER_CASES: readonly CaseSpec[] = [
     suite: 'catalog-filter',
     claim: 'Filtering does not depend on the casing or padding of an id or provider.',
     measure: () => {
-      const model = (id: string, provider: string) => ({ id, provider, displayName: id, protocol: 'openai_chat_completions', availability: 'available', compatibleEngines: [], choices: [] }) as never
+      const model = (id: string, provider: string): FreeCodeGoManagedCatalog['models'][number] => ({ id, provider, displayName: id, protocol: 'openai_chat_completions', availability: 'available', compatibleEngines: [], choices: [] })
       // A differently-cased duplicate would otherwise slip past the filter and
       // expose the same route twice, one of them unmetered.
       const rows = [model('  LOGFARE/Auto  ', 'FreeCodeGo'), model('OpenCode:Foo', 'freecodego'), model('OK-Model', 'freecodego')]
-      const kept = mergeCatalogModels(rows).map(entry => (entry as unknown as { id: string }).id.trim())
+      const kept = mergeCatalogModels(rows).map(entry => entry.id.trim())
       return { observed: kept.length === 1 && kept[0] === 'OK-Model' ? 1 : 0, required: 1, detail: `kept=${kept.join(',') || 'none'}` }
     },
   },
@@ -2428,7 +2504,7 @@ const CATALOG_FILTER_CASES: readonly CaseSpec[] = [
     suite: 'catalog-filter',
     claim: 'A zero-price route reads as ×0, duplicates collapse, and an unknown set says so.',
     measure: () => {
-      const withChoices = (choices: readonly { zeroPrice?: boolean; rateMultiplier?: number }[]) => ({ choices }) as never
+      const withChoices = (choices: readonly { zeroPrice?: boolean; rateMultiplier?: number }[]) => ({ choices })
       const free = modelMultiplierDescription(withChoices([{ zeroPrice: true }, { rateMultiplier: 1.5 }]))
       const unknown = modelMultiplierDescription(withChoices([]))
       const deduped = modelMultiplierDescription(withChoices([{ rateMultiplier: 2 }, { rateMultiplier: 2 }]))
@@ -2460,9 +2536,11 @@ const CATALOG_FILTER_CASES: readonly CaseSpec[] = [
     suite: 'catalog-filter',
     claim: 'A route the adapter reports free is marked free even when the catalog did not know.',
     measure: () => {
-      const models = [{ id: 'glm-5.3', choices: [{ routeKey: 'r1', zeroPrice: false }, { routeKey: 'r2', zeroPrice: false }] }] as never
-      const options = [{ model: 'glm-5.3', options: [{ routeKey: 'r1', zeroPrice: true }, { routeKey: 'r2', rateMultiplier: 0, groupName: 'free' }] }] as never
-      const enriched = enrichCatalogChoices(models, options) as unknown as { choices: readonly { routeKey: string; zeroPrice: boolean; rateMultiplier?: number; groupName?: string }[] }[]
+      const models = [catalogRow('glm-5.3', [catalogRoute('r1', false), catalogRoute('r2', false)])]
+      // The adapter's own view of the same two routes: r1 it calls free outright,
+      // r2 it reports with a zero multiplier and a group name.
+      const options = [{ model: 'glm-5.3', options: [adapterRoute('r1', { zeroPrice: true }), adapterRoute('r2', { rateMultiplier: 0, groupName: 'free' })] }]
+      const enriched = enrichCatalogChoices(models, options)
       const first = enriched[0]!.choices[0]!
       const second = enriched[0]!.choices[1]!
       // Both signals mean free: an explicit flag and a zero multiplier. Missing
@@ -2475,8 +2553,8 @@ const CATALOG_FILTER_CASES: readonly CaseSpec[] = [
     suite: 'catalog-filter',
     claim: 'A model with no matching route option is returned unchanged rather than blanked.',
     measure: () => {
-      const models = [{ id: 'unmatched', choices: [{ routeKey: 'keep', zeroPrice: false, rateMultiplier: 3 }] }] as never
-      const enriched = enrichCatalogChoices(models, []) as unknown as { choices: readonly { routeKey: string; rateMultiplier?: number }[] }[]
+      const models = [catalogRow('unmatched', [catalogRoute('keep', false, 3)])]
+      const enriched = enrichCatalogChoices(models, [])
       // Clearing the choices would delete a route the catalog had already priced.
       return { observed: enriched[0]!.choices[0]!.routeKey === 'keep' && enriched[0]!.choices[0]!.rateMultiplier === 3 ? 1 : 0, required: 1, detail: `choices=${JSON.stringify(enriched[0]!.choices)}` }
     },
@@ -2538,13 +2616,16 @@ const ACCOUNT_CASES: readonly CaseSpec[] = [
       const throwing = { setAvailability: () => { throw new Error('router not mounted') } }
       // Availability is advisory: a router that is not mounted yet must not turn
       // a boot into a failure.
-      let threw = false
+      // The claim is that nothing escapes, so the assertion is on the absence of
+      // a failure — but a failure still has to say what it was, or the report
+      // cannot tell a mounted-router bug from an arithmetic one.
+      let failure = ''
       try {
         setEngineAvailability(undefined, 'codex', 'unavailable')
         setEngineAvailability(throwing, 'claude', 'updating')
         setEngineAvailability(working, 'codex', 'available')
-      } catch { threw = true }
-      return { observed: !threw && recorded.join(',') === 'codex:available' ? 1 : 0, required: 1, detail: `threw=${threw} recorded=${recorded.join(',')}` }
+      } catch (error) { failure = error instanceof Error ? error.message : String(error) }
+      return { observed: failure === '' && recorded.join(',') === 'codex:available' ? 1 : 0, required: 1, detail: `threw=${failure === '' ? 'no' : failure} recorded=${recorded.join(',')}` }
     },
   },
 ]
@@ -2639,95 +2720,6 @@ const JOB_CASES: readonly CaseSpec[] = [
         const interrupted = reopened.state === 'interrupted'
         second.close()
         return { observed: interrupted ? 1 : 0, required: 1, detail: `state-after-reopen=${reopened.state}` }
-      } finally { await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }) }
-    },
-  },
-  {
-    id: 'team.claim-is-exclusive-and-dependency-gated',
-    suite: 'team',
-    claim: 'A claimed task cannot be taken by another member, and a task whose dependency is unfinished is refused by name.',
-    measure: async () => {
-      const root = await mkdtemp(join(tmpdir(), 'freecodego-eval-team-'))
-      try {
-        const board = new TeamBoard('t', join(root, 'board.json'))
-        await board.create({ createdBy: 'parent', tasks: [{ title: 'a' }, { title: 'b', dependsOn: ['$1'] }] })
-        await board.claim('t1', 'm1')
-        const stolen = await board.claim('t1', 'm2').then(() => '', (error: unknown) => String(error))
-        const gated = await board.claim('t2', 'm2').then(() => '', (error: unknown) => String(error))
-        // Both refusals must name the obstacle, not merely fail: "someone else has
-        // it" and "it is not ready" lead to different next actions.
-        const exclusive = stolen.includes('claimed by "m1"')
-        const named = gated.includes('blocked by t1')
-        return { observed: exclusive && named ? 1 : 0, required: 1, detail: `exclusive=${stolen.slice(0, 60)} gated=${gated.slice(0, 60)}` }
-      } finally { await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }) }
-    },
-  },
-  {
-    id: 'team.membership-outlives-the-process-that-took-the-work',
-    suite: 'team',
-    claim: 'A claim held by a member that has since exited is still traceable, because membership is durable on disk while liveness is never mirrored.',
-    measure: async () => {
-      const root = await mkdtemp(join(tmpdir(), 'freecodego-eval-team-'))
-      try {
-        const file = join(root, 'members.json')
-        const before = new TeamMembers('t', file)
-        const member = await before.register({ label: 'impl-1', role: 'implementer', worktree: join(root, 'wt-impl-1') })
-        await before.update(member.id, { state: 'working', taskId: 't1' })
-        // A fresh instance stands in for a restart: the registry is on disk, so
-        // an orphaned claim is still traceable back to the member that took it.
-        const after = new TeamMembers('t', file)
-        const found = await after.member('impl-1')
-        const traced = found?.taskId === 't1' && found.worktree !== undefined && found.state === 'working'
-        await after.markStopped(member.id, 'stopped')
-        const stopped = (await after.member(member.id))?.state === 'stopped'
-        return { observed: traced && stopped ? 1 : 0, required: 1, detail: `task=${found?.taskId ?? 'none'} state-after-stop=${(await after.member(member.id))?.state ?? 'none'}` }
-      } finally { await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }) }
-    },
-  },
-  {
-    id: 'team.read-only-role-cannot-hold-write-tools',
-    suite: 'team',
-    claim: 'Naming a write or shell tool in a read-only role still does not grant it, because the allow list is intersected with capabilities.',
-    measure: async () => {
-      const explorer = { ...BUILT_IN_TEAM_ROLES.find(role => role.id === 'explorer')!, toolAllow: ['write', 'edit', 'bash', 'read'] }
-      const allowed = resolveRoleTools(explorer, ['read', 'grep', 'write', 'edit', 'bash'])
-      // The escalation the check exists to stop: a role record that asks for a
-      // writer tool must not receive one.
-      const contained = !allowed.includes('write') && !allowed.includes('edit') && !allowed.includes('bash') && allowed.includes('read')
-      const verifier = BUILT_IN_TEAM_ROLES.find(role => role.id === 'verifier')!
-      return { observed: contained && verifier.sandbox === 'read-only' ? 1 : 0, required: 1, detail: `allowed=${allowed.join(',')} verifier=${verifier.sandbox}` }
-    },
-  },
-  {
-    id: 'team.conflicting-merge-is-aborted-not-left-half-merged',
-    suite: 'team',
-    claim: 'A merge that conflicts is aborted, names the conflicting files, and leaves the workspace without unmerged paths.',
-    measure: async () => {
-      const root = await mkdtemp(join(tmpdir(), 'freecodego-eval-team-'))
-      try {
-        const cwd = join(root, 'workspace')
-        await mkdir(cwd, { recursive: true })
-        const gitIn = async (directory: string, args: readonly string[]): Promise<string> => (await promisify(execFile)('git', ['-C', directory, ...args], { windowsHide: true })).stdout
-        await gitIn(cwd, ['init', '-b', 'main'])
-        await gitIn(cwd, ['config', 'user.email', 'eval@example.test'])
-        await gitIn(cwd, ['config', 'user.name', 'Eval'])
-        await writeFile(join(cwd, 'shared.txt'), 'base\n', 'utf8')
-        await gitIn(cwd, ['add', '.'])
-        await gitIn(cwd, ['commit', '-m', 'base'])
-        const worktrees = new TeamWorktrees(cwd, join(root, 'state', 'worktrees.json'))
-        const allocated = await worktrees.allocate('member-1')
-        await writeFile(join(allocated.path, 'shared.txt'), 'member\n', 'utf8')
-        await gitIn(allocated.path, ['add', '.'])
-        await gitIn(allocated.path, ['commit', '-m', 'member edit'])
-        await writeFile(join(cwd, 'shared.txt'), 'workspace\n', 'utf8')
-        await gitIn(cwd, ['add', '.'])
-        await gitIn(cwd, ['commit', '-m', 'workspace edit'])
-        const outcome = await worktrees.integrate('member-1')
-        const unmerged = (await gitIn(cwd, ['diff', '--name-only', '--diff-filter=U'])).trim()
-        // Isolation is only useful if a failure stays local: the workspace must
-        // still be a tree somebody can build.
-        const clean = unmerged === ''
-        return { observed: !outcome.merged && outcome.conflicts.includes('shared.txt') && clean ? 1 : 0, required: 1, detail: `merged=${String(outcome.merged)} conflicts=${outcome.conflicts.join(',')} unmerged=${unmerged}` }
       } finally { await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }) }
     },
   },
@@ -3471,6 +3463,514 @@ const COUNCIL_CASES: readonly CaseSpec[] = [
   },
 ]
 
+// ─── The code review pipeline ────────────────────────────────────────────────
+
+/** The diff every review case measures against. Real git output, parsed for real. */
+const REVIEW_FIXTURE_DIFF = [
+  'diff --git a/src/app.ts b/src/app.ts',
+  'index 1111111..2222222 100644',
+  '--- a/src/app.ts',
+  '+++ b/src/app.ts',
+  '@@ -1,3 +1,4 @@',
+  ' const a = 1',
+  '-const b = 2',
+  '+const b = 3',
+  '+const c = 4',
+  ' const d = 0',
+  'diff --git a/src/gone.ts b/src/gone.ts',
+  'deleted file mode 100644',
+  '--- a/src/gone.ts',
+  '+++ /dev/null',
+  '@@ -1,2 +0,0 @@',
+  '-old line',
+  '-another',
+  'diff --git a/src/new.ts b/src/new.ts',
+  'new file mode 100644',
+  '--- /dev/null',
+  '+++ b/src/new.ts',
+  '@@ -0,0 +1,1 @@',
+  '+export const n = 1',
+].join('\n')
+
+/** One finding, as the reviewer hands it to the pipeline. */
+function reviewComment(overrides: Partial<ReviewComment> = {}): ReviewComment {
+  return {
+    id: 'c1',
+    path: 'src/app.ts',
+    content: 'b is now 3 but every caller still passes 2',
+    startLine: 2,
+    endLine: 2,
+    category: 'bug',
+    severity: 'high',
+    state: 'kept',
+    ...overrides,
+  }
+}
+
+/** One file outcome, as the coverage accounting sees it. */
+function reviewOutcome(path: string, state: ReviewFileOutcome['state'], reason?: string): ReviewFileOutcome {
+  return { path, change: 'modified', state, comments: 0, ...(reason === undefined ? {} : { reason }) }
+}
+
+/** The review pipeline's own claims, measured against the shipped implementation. */
+const REVIEW_CASES: readonly CaseSpec[] = [
+  {
+    id: 'review.glob-is-gitignore-shaped',
+    suite: 'review',
+    claim: 'Rule path matching follows gitignore: `**` crosses separators, a bare name matches at any depth, and `*` does not cross a directory, with brace lists as the one extension upstream adds.',
+    measure: () => {
+      const expectations: readonly [boolean, boolean][] = [
+        [matchesGlob('src/**', 'src'), true],
+        [matchesGlob('src/**', 'src/a/b.ts'), true],
+        [matchesGlob('src/*', 'src/a/b.ts'), false],
+        [matchesGlob('src/*', 'src/a.ts'), true],
+        [matchesGlob('*.ts', 'deep/dir/a.ts'), true],
+      ]
+      const wrong = expectations.filter(([actual, expected]) => actual !== expected)
+      return { observed: (expectations.length - wrong.length) / expectations.length, required: 1, detail: `${expectations.length - wrong.length}/${expectations.length} glob semantics matched` }
+    },
+  },
+  {
+    id: 'review.brace-lists-expand-as-upstream-expands-them',
+    suite: 'review',
+    claim: 'A brace list matches every alternative it names — in a rule entry and in an exclude filter alike — including a second group, while a one-option group stays literal and an oversized list is used as written.',
+    measure: () => {
+      // Upstream expands `{a,b,c}` before matching; without it `**\/*.{gen,min}.ts`
+      // matches a file literally named `a.{gen,min}.ts`, so a project's exclusion
+      // silently does nothing. The three checked deviations are deliberate: upstream
+      // rewrites `a{b}.ts` to `ab.ts`, expands only the first group (leaving the rest
+      // to match literally, which is to say nothing), and has no ceiling.
+      const expectations: readonly [boolean, boolean][] = [
+        [matchesGlob('**/*.{gen,min}.ts', 'src/a.gen.ts'), true],
+        [matchesGlob('**/*.{gen,min}.ts', 'src/a.min.ts'), true],
+        [matchesGlob('**/*.{gen,min}.ts', 'src/a.ts'), false],
+        [matchAnyGlob(['**/*.{gen,min}.ts'], 'deep/a.min.ts'), true],
+        [matchesGlob('**/*.{test,spec}.{ts,tsx}', 'src/a.spec.tsx'), true],
+        [matchesGlob('**/*.{test,spec}.{ts,tsx}', 'src/a.test.js'), false],
+        [matchesGlob('a{b}.ts', 'a{b}.ts'), true],
+        [matchesGlob('a{b}.ts', 'ab.ts'), false],
+        [matchesGlob('*.{go,py', 'a.{go,py'), true],
+        [expandBraces('*.{go,py}').join(',') === '*.go,*.py', true],
+      ]
+      const wrong = expectations.filter(([actual, expected]) => actual !== expected)
+      return { observed: (expectations.length - wrong.length) / expectations.length, required: 1, detail: `${expectations.length - wrong.length}/${expectations.length} brace semantics matched` }
+    },
+  },
+  {
+    id: 'review.diff-keeps-both-coordinate-systems',
+    suite: 'review',
+    claim: 'A parsed diff knows each file\'s status and which new-file lines the change added.',
+    measure: () => {
+      const files = parseUnifiedDiff(REVIEW_FIXTURE_DIFF)
+      const app = files.find(file => file.path === 'src/app.ts')
+      const statuses = files.map(file => file.status).join(',')
+      const added = app === undefined ? new Set<number>() : addedLineNumbers(app)
+      const correct = statuses === 'modified,deleted,added'
+        && added.has(2) && added.has(3) && !added.has(1) && !added.has(4)
+      return { observed: correct ? 1 : 0, required: 1, detail: `files=${files.length} statuses=${statuses} added=[${[...added].join(',')}]` }
+    },
+  },
+  {
+    id: 'review.relocation-refuses-a-deleted-line',
+    suite: 'review',
+    claim: 'A comment on a line the diff deletes is reported unpositioned instead of being published at a line that no longer exists.',
+    measure: () => {
+      const gone = parseUnifiedDiff(REVIEW_FIXTURE_DIFF).find(file => file.path === 'src/gone.ts')!
+      const outcome = relocateComment(reviewComment({ path: 'src/gone.ts', startLine: 1, endLine: 1 }), gone)
+      return { observed: outcome.startLine === 0 && outcome.endLine === 0 && outcome.reason === 'not-found' ? 1 : 0, required: 1, detail: `line=${outcome.startLine} reason=${outcome.reason}` }
+    },
+  },
+  {
+    id: 'review.relocation-accepts-evidence',
+    suite: 'review',
+    claim: 'A wrong line is corrected when the quoted code appears exactly once among the added lines.',
+    measure: () => {
+      const app = parseUnifiedDiff(REVIEW_FIXTURE_DIFF).find(file => file.path === 'src/app.ts')!
+      const outcome = relocateComment(reviewComment({ startLine: 99, endLine: 99, existingCode: 'const c = 4' }), app)
+      return { observed: outcome.startLine === 3 && outcome.reason === 'matched-existing-code' ? 1 : 0, required: 1, detail: `line=${outcome.startLine} reason=${outcome.reason}` }
+    },
+  },
+  {
+    id: 'review.coverage-accounts-for-every-state',
+    suite: 'review',
+    claim: 'Coverage counts every file that entered, and a skip or failure without a reason is named.',
+    measure: () => {
+      const outcomes = [
+        reviewOutcome('a.ts', 'reviewed'),
+        reviewOutcome('b.ts', 'skipped', 'binary'),
+        reviewOutcome('c.ts', 'failed', 'reviewer threw'),
+        reviewOutcome('d.ts', 'skipped'),
+      ]
+      const coverage = summarizeCoverage(outcomes)
+      const missing = missingReasons(outcomes)
+      const correct = coverage.totalFiles === 4 && coverage.reviewedFiles === 1 && coverage.skippedFiles === 2
+        && coverage.failedFiles === 1 && coverage.coverageRate === 0.25
+        && missing.join(',') === 'd.ts'
+      return { observed: correct ? 1 : 0, required: 1, detail: `total=${coverage.totalFiles} rate=${coverage.coverageRate} missing=${missing.join(',')}` }
+    },
+  },
+  {
+    id: 'review.unfinished-files-are-refused',
+    suite: 'review',
+    claim: 'A file still pending at the end is reported as unaccounted for rather than silently dropped from the denominator.',
+    measure: () => {
+      const pending = unaccountedFiles([reviewOutcome('a.ts', 'reviewed'), reviewOutcome('b.ts', 'pending')])
+      return { observed: pending.join(',') === 'b.ts' ? 1 : 0, required: 1, detail: `unaccounted=${pending.join(',')}` }
+    },
+  },
+  {
+    id: 'review.rule-layers-are-priority-ordered',
+    suite: 'review',
+    claim: 'Rule precedence is a property of the layer name, not of the argument order, and an exclusion names the layer that made it.',
+    measure: () => {
+      // Deliberately passed weakest-first: the documented order is custom > project >
+      // global > system, and a resolver that trusted caller order would invert it.
+      const resolver = createReviewRuleResolver([
+        { source: 'global', entries: [{ path: '**/*.ts', rule: 'global rule', mergeSystemRule: false }] },
+        { source: 'project', entries: [{ path: '**/*.ts', rule: 'project rule', mergeSystemRule: true }] },
+        { source: 'system', defaultRule: SYSTEM_REVIEW_RULE, entries: [], exclude: ['vendor/**'] },
+      ])
+      const resolved = resolver.resolve('src/app.ts')
+      const correct = resolved.source === 'project' && resolved.rule === 'project rule'
+        && typeof resolved.mergedRule === 'string' && resolved.mergedRule.includes('Review the change, not the file')
+        && resolver.excludeSource('vendor/lib.ts') === 'system' && !resolver.isExcluded('src/app.ts')
+      return { observed: correct ? 1 : 0, required: 1, detail: `source=${resolved.source} merged=${resolved.mergedRule !== undefined} exclusion=${resolver.excludeSource('vendor/lib.ts')}` }
+    },
+  },
+  {
+    id: 'review.rule-document-accepts-both-spellings',
+    suite: 'review',
+    claim: 'A rule file is read whether it spells the merge key in snake_case or camelCase, and a malformed one is reported rather than ignored.',
+    measure: () => {
+      const snake = parseReviewRuleDocument(JSON.stringify({ rules: [{ path: '**/*.ts', rule: 'r', merge_system_rule: true }] }))
+      const camel = parseReviewRuleDocument(JSON.stringify([{ path: '**/*.ts', rule: 'r', mergeSystemRule: true }]))
+      const broken = parseReviewRuleDocument('{ not json')
+      const correct = snake.ok && snake.entries[0]?.mergeSystemRule === true
+        && camel.ok && camel.entries[0]?.mergeSystemRule === true
+        && !broken.ok && broken.reason.includes('not valid JSON')
+      return { observed: correct ? 1 : 0, required: 1, detail: `snake=${snake.ok} camel=${camel.ok} broken=${broken.ok ? 'accepted' : 'reported'}` }
+    },
+  },
+  {
+    id: 'review.severity-outranks-path',
+    suite: 'review',
+    claim: 'Findings are ordered by severity before position, so the worst finding is the first thing a reader sees.',
+    measure: () => {
+      const ordered = [reviewComment({ id: 'a', path: 'zz.ts', severity: 'low' }), reviewComment({ id: 'b', path: 'aa.ts', severity: 'critical' })].sort(compareComments)
+      return { observed: ordered[0]?.id === 'b' ? 1 : 0, required: 1, detail: `first=${ordered[0]?.id}/${ordered[0]?.severity}` }
+    },
+  },
+  {
+    id: 'review.fact-check-fails-open',
+    suite: 'review',
+    claim: 'When the post-filter cannot run, every finding is published with the failure recorded — never dropped.',
+    measure: async () => {
+      const failing: ReviewModelPort = { generate: async () => { throw new Error('no route') } }
+      const outcome = await filterComments(failing, [reviewComment()], 'diff text')
+      const correct = outcome.failedOpen && outcome.kept.length === 1 && outcome.removed.length === 0 && outcome.reason !== undefined
+      return { observed: correct ? 1 : 0, required: 1, detail: `failedOpen=${outcome.failedOpen} kept=${outcome.kept.length} removed=${outcome.removed.length}` }
+    },
+  },
+  {
+    id: 'review.grouping-degrades-without-losing-a-file',
+    suite: 'review',
+    claim: 'A rejected grouping proposal is replaced by the deterministic one, and every file is in exactly one group.',
+    measure: async () => {
+      const nonsense: ReviewModelPort = { generate: async () => ({ text: 'I grouped them, but not as JSON.', inputTokens: 0, outputTokens: 0 }) }
+      const files: ReviewableFile[] = ['a.ts', 'b.ts', 'c.ts'].map(path => ({ path, status: 'modified', added: 1, deleted: 0, untracked: false, diff: null }))
+      const resolver = createReviewRuleResolver([{ source: 'system', defaultRule: SYSTEM_REVIEW_RULE, entries: [] }])
+      const { grouped } = await groupChanges(nonsense, files, groupByRule(resolver, files.map(file => file.path)))
+      const seen = grouped.groups.flatMap(group => group.files.map(file => file.path))
+      const correct = grouped.source === 'fallback' && grouped.note !== undefined
+        && seen.length === files.length && new Set(seen).size === files.length
+      return { observed: correct ? 1 : 0, required: 1, detail: `source=${grouped.source} groups=${grouped.groups.length} files=${seen.length}` }
+    },
+  },
+  {
+    id: 'review.budget-refuses-rather-than-overruns',
+    suite: 'review',
+    claim: 'A budget admits what fits, refuses what does not with a reason, and still lets an over-budget group finish its final round.',
+    measure: () => {
+      const limits = { maxGroupTokens: 100, maxTotalTokens: 1_000 }
+      const over = recordSpend(createBudgetState(), 'g1', 150)
+      // Over its own ceiling: one last round, announced as the last one.
+      const finalRound = admitRound(over, 'g1', limits)
+      const afterFinal = admitRound(consumeFinalRound(over, 'g1'), 'g1', limits)
+      // Over the run ceiling: no further group is dispatched at all.
+      const runOut = admitGroup(recordSpend(over, 'g2', 900), limits)
+      const correct = finalRound.ok && finalRound.final && !afterFinal.ok
+        && !runOut.ok && runOut.reason.includes('budget exhausted')
+      return { observed: correct ? 1 : 0, required: 1, detail: `finalRound=${finalRound.ok ? String(finalRound.final) : 'refused'} afterFinal=${afterFinal.ok} runRefused=${!runOut.ok}` }
+    },
+  },
+  {
+    id: 'review.planning-trigger-matches-upstream',
+    suite: 'review',
+    claim: 'A risky batch earns a planning call by the upstream threshold: 50 changed lines in one file, or 100 across a group.',
+    measure: () => {
+      const file = (path: string, added: number): ReviewableFile => ({ path, status: 'modified', added, deleted: 0, untracked: false, diff: null })
+      const group = (files: readonly ReviewableFile[], changedLines: number): ReviewGroup => ({ id: 1, files, ruleGroupIds: [1], changedLines })
+      const big = shouldPlan(group([file('a.ts', 50)], 50))
+      const wide = shouldPlan(group([file('a.ts', 0), file('b.ts', 0)], 100))
+      const small = shouldPlan(group([file('a.ts', 3)], 3))
+      return { observed: big && wide && !small ? 1 : 0, required: 1, detail: `single=${big} group=${wide} small=${small}` }
+    },
+  },
+  {
+    id: 'review.sarif-locates-the-finding',
+    suite: 'review',
+    claim: 'The SARIF renderer emits a valid document whose result carries the finding\'s file and line.',
+    measure: () => {
+      const report = evalReviewReport([reviewComment()])
+      const sarif = JSON.parse(renderReviewSarif(report)) as { version: string; runs: { results: { ruleId: string; locations: { physicalLocation: { region: { startLine: number } } }[] }[] }[] }
+      const result = sarif.runs[0]?.results[0]
+      const correct = sarif.version === '2.1.0' && result?.ruleId === 'review/high'
+        && result.locations[0]?.physicalLocation.region.startLine === 2
+      return { observed: correct ? 1 : 0, required: 1, detail: `version=${sarif.version} results=${sarif.runs[0]?.results.length ?? 0}` }
+    },
+  },
+  {
+    id: 'review.report-states-what-it-suppressed',
+    suite: 'review',
+    claim: 'A filtered finding stays in the report and in its count, is left out of the published SARIF, and the text renderer says how many were suppressed.',
+    measure: () => {
+      const filtered = reviewComment({ id: 'c2', severity: 'low', state: 'filtered', filteredReason: 'the diff shows the caller was updated' })
+      const report = evalReviewReport([reviewComment(), filtered])
+      const sarif = JSON.parse(renderReviewSarif(report)) as { runs: { results: unknown[] }[] }
+      const text = renderReviewText(report)
+      const correct = report.filteredCount === 1 && report.comments.length === 2
+        && sarif.runs[0]?.results.length === 1 && /suppress|filtered|removed/i.test(text)
+      return { observed: correct ? 1 : 0, required: 1, detail: `filtered=${report.filteredCount} inSarif=${sarif.runs[0]?.results.length ?? 0}` }
+    },
+  },
+  {
+    id: 'review.stop-time-review-ships-off',
+    suite: 'review',
+    claim: 'The stop-time review is off in a composition with no settings, so nothing reviews — or spends — unless a user turned it on.',
+    measure: () => {
+      const d = DEFAULT_REVIEW_GATE_SETTINGS
+      const off = d.mode === 'off'
+      // The threshold and cooldown keep the values the modes use, so switching the
+      // mode on is the only decision left to make.
+      const ready = d.threshold === 'high' && d.cooldownTurns === 3
+      return { observed: off && ready ? 1 : 0, required: 1, detail: `mode=${d.mode} threshold=${d.threshold} cooldown=${d.cooldownTurns}` }
+    },
+  },
+  {
+    id: 'review.change-fingerprint-tracks-content',
+    suite: 'review',
+    claim: 'The review latch key ignores path order but changes when the same paths hold different content.',
+    measure: () => {
+      const left = changeFingerprint(['a.ts', 'b.ts'], 'rev-1')
+      const reordered = changeFingerprint(['b.ts', 'a.ts'], 'rev-1')
+      const edited = changeFingerprint(['a.ts', 'b.ts'], 'rev-2')
+      const different = changeFingerprint(['a.ts'], 'rev-1')
+      return { observed: left === reordered && left !== edited && left !== different ? 1 : 0, required: 1, detail: `order-stable=${left === reordered} revision-sensitive=${left !== edited}` }
+    },
+  },
+  {
+    id: 'review.gate-message-is-actionable',
+    suite: 'review',
+    claim: 'The injected gate message names each blocking finding with its severity, category, and location, and points at the full report.',
+    measure: () => {
+      const comment = reviewComment()
+      const message = renderGateMessage(evalReviewReport([comment]), [comment], 2)
+      const correct = message.includes('review #2') && message.includes('src/app.ts:2')
+        && message.includes('[high/bug]') && message.includes('engineering_review_report')
+      return { observed: correct ? 1 : 0, required: 1, detail: `length=${message.length} located=${message.includes('src/app.ts:2')}` }
+    },
+  },
+  {
+    id: 'review.turn-scope-is-narrowed-only-with-evidence',
+    suite: 'review',
+    claim: 'A review narrows to the files the stopping turn changed when the Host records them, refuses another turn\u2019s record, and refuses any narrowing that is not provably inside the change set.',
+    measure: () => {
+      // The wide scope is the workspace's uncommitted set, which is not what a turn
+      // touched: a file already dirty before the turn would be reviewed and its
+      // findings injected as this turn's. The narrow scope is only used when it is
+      // provably this turn's *and* spelled the way the change set spells paths — a
+      // narrowing on the wrong spelling reviews nothing at all, which is the worse
+      // failure, so every refusal falls back to the wide set.
+      const changed = ['plugin/src/a.ts', 'plugin/src/b.ts']
+      const matching = turnChangePaths({
+        sessionId: 's1',
+        turn: 4,
+        events: [{ type: 'workspace/changes', seq: 9, data: { turn: 4 } }],
+        summarize: () => ({ files: [{ path: 'plugin/src/a.ts' }] }),
+      })
+      const wrongTurn = turnChangePaths({
+        sessionId: 's1',
+        turn: 5,
+        events: [{ type: 'workspace/changes', seq: 9, data: { turn: 4 } }],
+        summarize: () => ({ files: [{ path: 'plugin/src/a.ts' }] }),
+      })
+      const narrowed = narrowTurnScope(matching, changed)
+      const refused = narrowTurnScope(['src/a.ts'], changed)
+      const widened = narrowTurnScope(undefined, changed)
+      const correct = matching?.length === 1
+        && wrongTurn === undefined
+        && narrowed.length === 1
+        && refused.length === 2
+        && widened.length === 2
+      return { observed: correct ? 1 : 0, required: 1, detail: `turn=${String(matching?.length)} other-turn=${String(wrongTurn)} narrowed=${narrowed.length} refused-subset=${refused.length} no-record=${widened.length}` }
+    },
+  },
+  {
+    id: 'review.empty-plan-is-not-a-plan-of-no-risks',
+    suite: 'review',
+    claim: 'An empty planning response is reported as unavailable, while the prompt\u2019s \u201c(none)\u201d sentinel stays a real answer.',
+    measure: async () => {
+      const group = {
+        id: 1,
+        files: [{ path: 'a.ts', status: 'modified' as const, added: 60, deleted: 0, untracked: false, diff: null }],
+        ruleGroupIds: [],
+        changedLines: 60,
+      }
+      const empty = await planGroup({ generate: async () => ({ text: '', inputTokens: 1, outputTokens: 1 }) }, group, [])
+      const sentinel = await planGroup({ generate: async () => ({ text: 'Issues\n\n(none)\n', inputTokens: 1, outputTokens: 1 }) }, group, [])
+      const correct = empty.outcome.kind === 'unavailable' && sentinel.outcome.kind === 'planned'
+      return { observed: correct ? 1 : 0, required: 1, detail: `empty=${empty.outcome.kind} sentinel=${sentinel.outcome.kind}` }
+    },
+  },
+  {
+    id: 'review.project-rule-exclusions-are-applied',
+    suite: 'review',
+    claim: "A project rule file's own exclude patterns remove its files from review, and the exclusion names the layer that decided it.",
+    measure: async () => {
+      // Upstream's `rule.json` carries `exclude` beside `rules`, and a review that
+      // applies the rules while dropping the exclusions reports exactly the generated
+      // and vendored paths the project already decided it does not want — with the
+      // review looking, to whoever wrote that file, like one that honored it.
+      const loaded = await loadReviewRules({
+        workspace: '/repo',
+        readFile: async path => (path === '/repo/.opencodereview/rule.json'
+          ? '{"rules":[{"path":"**/*.ts","rule":"no any"}],"exclude":["**/*.gen.ts","vendor/**"]}'
+          : undefined),
+        joinPath: (left, right) => `${left}/${right}`,
+      })
+      const excluded = loaded.resolver.excludeSource('src/api.gen.ts')
+      const vendored = loaded.resolver.excludeSource('vendor/lib.ts')
+      const untouched = loaded.resolver.excludeSource('src/api.ts')
+      const standard = loaded.resolver.resolve('src/api.ts').source
+      const correct = excluded === 'project' && vendored === 'project' && untouched === undefined && standard === 'project'
+      return { observed: correct ? 1 : 0, required: 1, detail: `by-layer=${String(excluded)}/${String(vendored)} untouched=${String(untouched)} rule-layer=${standard}` }
+    },
+  },
+  {
+    id: 'review.settings-patch-is-whitelisted',
+    suite: 'review',
+    claim: 'A review settings write carries only the fields the settings page owns, whatever the browser sent.',
+    measure: () => {
+      const patch = normalizeReviewPatch(invalidInput({ reviewMode: 'gate', reviewDeep: true, engineeringEnabled: false }))
+      const keys = Object.keys(patch).sort().join(',')
+      return { observed: keys === 'reviewDeep,reviewMode' ? 1 : 0, required: 1, detail: `keys=${keys}` }
+    },
+  },
+  {
+    id: 'review.refs-cannot-become-git-options',
+    suite: 'review',
+    claim: 'A ref from the settings page is refused when git would read it as an option or as two arguments.',
+    measure: async () => {
+      const option = await refusedFor(() => reviewStartInputs({ mode: 'range', from: '--upload-pack=touch x' }, '/repo'), 'not a valid git ref')
+      const split = await refusedFor(() => reviewStartInputs({ mode: 'range', to: 'main extra' }, '/repo'), 'not a valid git ref')
+      const accepted = reviewStartInputs({ mode: 'range', from: 'main', to: 'feature' }, '/repo').request
+      const correct = option && split && accepted.cwd === '/repo' && accepted.from === 'main'
+      return { observed: correct ? 1 : 0, required: 1, detail: `option=${option} split=${split} accepted=${accepted.from ?? '-'}` }
+    },
+  },
+  {
+    id: 'review.unreviewable-workspace-is-not-an-empty-review',
+    suite: 'review',
+    claim: 'A workspace git cannot diff is reported as a failure, not as a change set with nothing in it.',
+    measure: async () => {
+      // The failure this rules out is the quietest one the pipeline can make: a bad
+      // ref, a directory that is not a repository, and a diff past the output ceiling
+      // all used to produce empty output, and "no findings" is what a clean review
+      // reports. Both are the same sentence to whoever reads the result.
+      const broken: ReviewGitPort = {
+        async run() { return { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' } },
+        async readFileSize() { return undefined },
+      }
+      const refused = await refusedFor(
+        () => resolveReviewTarget(broken, { mode: 'workspace', cwd: '/not-a-repo' }),
+        'not a git repository',
+      )
+      return { observed: refused ? 1 : 0, required: 1, detail: `refused=${refused}` }
+    },
+  },
+  {
+    id: 'review.untracked-paths-share-one-coordinate-system',
+    suite: 'review',
+    claim: 'Untracked files are listed root-relative and unquoted, so every path in a review names the same file the diff named.',
+    measure: async () => {
+      // `ls-files` answers relative to the directory git ran in while `diff` answers
+      // relative to the worktree root, so a review from a subdirectory would hold two
+      // names for the same file: a rule pattern would match one and not the other.
+      const calls: string[][] = []
+      const git: ReviewGitPort = {
+        async run(args) {
+          calls.push([...args])
+          // A non-ASCII path, C-quoted by git as it quotes one on the wire.
+          if (args.includes('ls-files')) return { exitCode: 0, stdout: 'plugin/a.ts\n"plugin/caf\\303\\251.ts"\n', stderr: '' }
+          return { exitCode: 0, stdout: '', stderr: '' }
+        },
+        async readFileSize() { return undefined },
+      }
+      const target = await resolveReviewTarget(git, { mode: 'workspace', cwd: '/repo/plugin' })
+      const askedForFullName = calls.some(args => args.includes('ls-files') && args.includes('--full-name'))
+      const paths = target.files.map(file => file.path).join(',')
+      const correct = askedForFullName && paths === 'plugin/a.ts,plugin/café.ts'
+      return { observed: correct ? 1 : 0, required: 1, detail: `full-name=${askedForFullName} paths=${paths}` }
+    },
+  },
+  {
+    id: 'review.octal-quoted-paths-decode',
+    suite: 'review',
+    claim: 'git quotes a non-ASCII path one byte at a time, and the decoder reassembles the characters.',
+    measure: () => {
+      // Decoding each escape on its own, as the parser first did, produced
+      // `caf303251.ts`: a path that matches no file, no rule pattern and no diff
+      // entry, in any repository whose filenames are not ASCII.
+      const accented = parseQuotedPath('"caf\\303\\251.ts"')
+      const han = parseQuotedPath('"\\344\\270\\255\\346\\226\\207.ts"')
+      const escapeBesideBytes = parseQuotedPath('"tab\\t\\303\\251.ts"')
+      const correct = accented === 'café.ts' && han === '中文.ts' && escapeBesideBytes === 'tab\té.ts'
+      return { observed: correct ? 1 : 0, required: 1, detail: `accented=${accented} han=${han}` }
+    },
+  },
+  {
+    id: 'review.subagent-cost-is-measured-not-guessed',
+    suite: 'review',
+    claim: 'A deep review\'s cost is the sum of every step its child ran, and an unmeasured step counts as zero rather than as NaN.',
+    measure: () => {
+      const spent = sumSubagentUsage([
+        { type: 'assistant/message', data: { usage: { inputTokens: 100, outputTokens: 10 } } },
+        { type: 'tool/result' },
+        { type: 'assistant/message', data: { usage: { inputTokens: 200, outputTokens: 20 } } },
+        { type: 'assistant/message', data: {} },
+      ])
+      return { observed: spent.inputTokens === 300 && spent.outputTokens === 30 ? 1 : 0, required: 1, detail: `in=${spent.inputTokens} out=${spent.outputTokens}` }
+    },
+  },
+]
+
+/** Assemble a report for the eval cases from the fixtures above. */
+function evalReviewReport(comments: readonly ReviewComment[]): ReviewReport {
+  const files = [...new Set(comments.map(comment => comment.path))]
+  return assembleReviewReport({
+    id: 'review-eval',
+    state: 'completed',
+    target: { mode: 'workspace', cwd: '/repo' },
+    reviewers: ['eval'],
+    createdAt: 0,
+    completedAt: 1,
+    coverage: summarizeCoverage(files.map(path => reviewOutcome(path, 'reviewed'))),
+    files: files.map(path => reviewOutcome(path, 'reviewed')),
+    comments,
+    budget: summarizeBudget(createBudgetState(), DEFAULT_REVIEW_BUDGET),
+  })
+}
+
 const ALL_CASES: readonly CaseSpec[] = [
   ...GUARD_CASES, ...REPO_MAP_CASES, ...MEMORY_CASES, ...HEADROOM_CASES,
   ...COUNCIL_CASES, ...SPEC_CASES, ...MEDIA_CASES, ...REHYDRATION_CASES,
@@ -3483,6 +3983,7 @@ const ALL_CASES: readonly CaseSpec[] = [
   ...VALIDATOR_CASES, ...COMMUNITY_CASES, ...SIZER_CASES, ...CRUSH_CASES,
   ...CHECKPOINT_CASES, ...EVENT_CASES, ...CATALOG_FILTER_CASES, ...ACCOUNT_CASES,
   ...JOB_CASES, ...ADAPTER_CASES, ...ROUTING_CASES, ...PRESET_CASES, ...LSP_MOUNT_CASES,
+  ...REVIEW_CASES,
 ]
 
 /** Distinct suites in report order; derived so adding a case cannot desync it. */

@@ -1,10 +1,19 @@
 import type { AgentOptions } from '@deepseek-ai/dsh-agent'
 
+/**
+ * The execution engines the router can pin a session to.
+ */
 export type AgentEngineId = 'deepseek' | 'codex' | 'claude'
+/**
+ * The engine a caller asked for by name, when it crossed the router itself.
+ */
 export interface FreeCodeGoAgentOptions {
   readonly freeCodeGoEngine?: AgentEngineId
 }
 
+/**
+ * Agent options the router has stamped with the engine and route it chose.
+ */
 export type RoutedAgentOptions = AgentOptions & FreeCodeGoAgentOptions & {
   readonly engine?: string
   readonly provider?: string
@@ -24,7 +33,10 @@ export type RoutedAgentOptions = AgentOptions & FreeCodeGoAgentOptions & {
  */
 export type EngineMarkedAgentOptions = AgentOptions & FreeCodeGoAgentOptions & { readonly engine?: string }
 
-/** Read the durable engine marker from a live parent agent. */
+/** Read the durable engine marker from a live parent agent. 
+ * @param options - the options of a live agent, which may carry the router's marker.
+ * @returns the engine those options were routed to, or `undefined` when the agent never crossed the router.
+ */
 export function inheritedEngineOf(options: EngineMarkedAgentOptions | undefined): AgentEngineId | undefined {
   return options?.engine === 'deepseek' || options?.engine === 'codex' || options?.engine === 'claude'
     ? options.engine
@@ -33,7 +45,11 @@ export function inheritedEngineOf(options: EngineMarkedAgentOptions | undefined)
       : undefined
 }
 
-/** Force a child request to stay on its parent's execution engine. */
+/** Force a child request to stay on its parent's execution engine. 
+ * @param options - the child's requested options.
+ * @param parentOptions - the live parent's options, whose marker the child has to keep.
+ * @returns the child options with the parent's engine stamped on, left as asked when the parent carries no marker.
+ */
 export function enforceSameEngine(
   options: EngineMarkedAgentOptions | undefined,
   parentOptions: EngineMarkedAgentOptions | undefined,
@@ -97,6 +113,8 @@ function namesForeignEngine(engine: AgentEngineId | undefined, provider: string 
  * ordinary route belongs to the DeepSeek engine. Letting one default stand for
  * all three minted a durable binding that named `deepseek-official` for a native
  * session, and the native-or-loop decision read from that same value.
+ * @param engine - the engine being routed to.
+ * @returns the provider id that engine runs when the caller named none.
  */
 export function defaultProviderForEngine(engine: AgentEngineId): string {
   if (engine === 'codex') return 'codex'
@@ -104,13 +122,21 @@ export function defaultProviderForEngine(engine: AgentEngineId): string {
   return 'deepseek-official'
 }
 
-/** The provider a session is admitted with: the caller's value, or the engine's own. */
+/** The provider a session is admitted with: the caller's value, or the engine's own. 
+ * @param engine - the engine the session is admitted with.
+ * @param provider - the caller's provider, possibly blank or absent.
+ * @returns the caller's provider, or the engine's own default when none was named.
+ */
 export function effectiveProviderOf(engine: AgentEngineId, provider: string | undefined): string {
   const named = provider?.trim()
   return named === undefined || named === '' ? defaultProviderForEngine(engine) : named
 }
 
-/** Preserve the parent's route when a Team child omits provider/model fields. */
+/** Preserve the parent's route when a Team child omits provider/model fields. 
+ * @param options - the child's requested options.
+ * @param parentOptions - the live parent's options the route may be inherited from.
+ * @returns the child options carrying the parent's route when that route fits the enforced engine.
+ */
 export function inheritSameEngineRoute(
   options: EngineMarkedAgentOptions | undefined,
   parentOptions: EngineMarkedAgentOptions | undefined,

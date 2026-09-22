@@ -184,6 +184,10 @@ function identifySpans(text: string, compressTaggedContent: boolean): readonly S
   return spans
 }
 
+/**
+ * Result of protecting tag blocks: the placeholdered text plus the pairs a
+ * later `restoreTags` swaps back in.
+ */
 export interface ProtectResult {
   /** Text with protected spans replaced by placeholders. */
   readonly cleaned: string
@@ -194,6 +198,9 @@ export interface ProtectResult {
 /**
  * Protect custom XML tag blocks (or just the tag markers when
  * `compressTaggedContent`) from compression via placeholders.
+ * @param text - the text to process.
+ * @param compressTaggedContent - true to protect only the tag markers.
+ * @returns the protection result.
  */
 export function protectTags(text: string, compressTaggedContent = false): ProtectResult {
   if (text === '' || !text.includes('<')) return { cleaned: text, blocks: [] }

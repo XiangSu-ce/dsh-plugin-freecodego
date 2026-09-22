@@ -36,7 +36,13 @@ export type JsonObject = { readonly [key: string]: JsonValue }
 /** A decoded JSON value must be at least this fraction of the wrapped content. */
 export const JSON_MIN_BULK_FRACTION = 0.6
 
-/** Locate the balanced JSON container span starting at or after `from` (string/escape aware). */
+/**
+ * Locate the balanced JSON container span starting at or after `from`,
+ * tracking string literals and escapes so brackets inside strings do not count.
+ * @param text - the text to scan.
+ * @param from - the offset to start scanning at.
+ * @returns the half-open span of the container, or undefined when unbalanced.
+ */
 export function findJsonSpan(text: string, from = 0): readonly [number, number] | undefined {
   let start = -1
   for (let i = from; i < text.length; i += 1) {
@@ -85,6 +91,9 @@ export function findJsonSpan(text: string, from = 0): readonly [number, number] 
  * every later bracket would re-scan the tail per candidate (quadratic on
  * pathological payloads) to salvage a shape the callers can already read another
  * way.
+ * @param text - the text to scan.
+ * @param minFraction - the share of the trimmed content the span must cover.
+ * @returns the parsed bulk span, or undefined when no candidate qualifies.
  */
 export function findBulkJsonSpan(text: string, minFraction = JSON_MIN_BULK_FRACTION): { readonly span: readonly [number, number]; readonly value: JsonValue } | undefined {
   const bulk = text.trim().length * minFraction
@@ -105,7 +114,11 @@ export function findBulkJsonSpan(text: string, minFraction = JSON_MIN_BULK_FRACT
   return undefined
 }
 
-/** Decode a run of whitespace-separated top-level JSON objects (`{...} {...}`). */
+/**
+ * Decode a run of whitespace-separated top-level JSON objects (`{...} {...}`).
+ * @param stripped - the whitespace-separated object run to decode.
+ * @returns the decoded objects, or undefined when any run fails to decode.
+ */
 export function decodeConcatenatedObjects(stripped: string): readonly JsonObject[] | undefined {
   const items: JsonObject[] = []
   let pos = 0

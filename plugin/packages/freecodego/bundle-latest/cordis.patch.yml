@@ -1,8 +1,19 @@
 # Standard DeepSeek Harness 0.1.6-alpha.2 FreeCodeGo composition.
-- id: llm-deepseek
-  disabled: true
-- id: web-search-deepseek
-  disabled: true
+# Neither official route is disabled. `llm-deepseek` is the only row that
+# registers provider `deepseek-official`, and the base composition names that
+# provider twice (`agent-default-model.provider`, `web.searchProvider`) — so
+# disabling it leaves both the default model selection and the deepseek search
+# provider pointing at an id no mounted row supplies. The plugin registers its
+# own model adapters beside the official one rather than in place of it.
+#
+# The Harness's own search provider stays enabled. The base composition pins
+# `web.searchProvider: deepseek-official`, and `@deepseek-ai/dsh-web-search-deepseek`
+# is the only row that registers that provider — disabling it makes every
+# `web_search` call fail with the Harness's own `WEB_PROVIDER_CONFIGURED_MISSING`
+# (`packages/web/web/src/index.ts`), which is a capability this plugin supplies
+# no replacement for: it registers model adapters, not a search provider. A
+# deployment without `DEEPSEEK_API_KEY` gets that route reported unavailable,
+# which is the Harness's own credential error rather than a broken tool.
 - id: system-prompt
   config:
     persona: >-
@@ -18,13 +29,28 @@
 - insert:
     - id: freecodego-session-events
       name: 'freecodego/session-events'
-    # The Harness's team runtime, loaded BEFORE the FreeCodeGo plugin. The order is
-    # load-bearing: the plugin decides at construction whether to register its own
-    # board and member lifecycle, and that decision has to be settled before the
-    # first request catalog is assembled rather than changing mid-session. Nothing
-    # here depends on FreeCodeGo, so the earlier position costs nothing.
+    # The Harness's team runtime, mounted before the FreeCodeGo plugin's own row.
+    # Nothing in the plugin depends on that position: it registers no team board
+    # and no member lifecycle of its own.
+    #
+    # These two rows are upstream's own modules — `packages/experimental/agent-team`
+    # and `-tool-agent-team`, published as `@deepseek-ai/dsh-experimental-agent-team`
+    # and `-tool-agent-team` — compiled into this bundle, and they exist only so a
+    # composition that never selected the official team bundles still has
+    # `ctx.agentTeams` and the team tools. When the official
+    # `@deepseek-ai/dsh-experimental-agent-team-profile` IS selected the official
+    # layer already mounts both, and this pair would then claim `spawn_teammate`
+    # twice. The installer's conflict guard resolves that by disabling one of two
+    # identical implementations, which is a coin flip the user cannot see; standing
+    # down here is the same outcome, decided before mounting. Official-first costs
+    # no capability, because the plugin owns no team service to lose: it classifies
+    # `spawn_teammate` (`plan-mode.ts`'s mutating set, `verify-on-stop.ts`'s
+    # delegation set) and its `engineering_team_*` tools orchestrate engines
+    # directly — a council over Codex/Claude/DeepSeek in `agent-tools.ts`, a
+    # different mechanism from this service rather than a second copy of it.
     - id: freecodego-agent-team
       name: 'freecodego/agent-team'
+      disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-experimental-agent-team-profile') ?? false"
       config:
         maxMembers: 8
         maxTasks: 256
@@ -33,6 +59,7 @@
         disposalTimeoutMs: 5000
     - id: freecodego-tool-agent-team
       name: 'freecodego/tool-agent-team'
+      disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-experimental-agent-team-profile') ?? false"
       config:
         freshProvider: spawn
         forkProvider: fork
@@ -51,6 +78,114 @@
     # preset (see action-reviewer.ts), so an Auto action gets one verdict, not two.
     - id: freecodego-auto-review
       name: 'freecodego/auto-review'
+
+    # ── optional Harness capabilities, off by default ──────────────────────
+    #
+    # Browser control, desktop control, and session-history retrieval each ship
+    # in the Harness as a service plus one provider or tool package, and no
+    # bundle mounts any of them: mounting them is how a deployment says yes.
+    # Every row below is `disabled` for two reasons that hold for all three,
+    # plus the capability-specific ones stated beside each row.
+    #
+    # 1. **They are not part of the install contract.** This bundle's
+    #    `peerDependencies` is what the Harness must supply for the composition
+    #    to load, and none of these packages is in it — upstream's own words are
+    #    that the browser and desktop providers "activate only when explicitly
+    #    mounted", and `tool-session-query` documents itself as opt-in. An
+    #    *enabled* row naming a package the Harness need not supply is a row that
+    #    fails on an install that lacks it, so these rows are `disabled` and carry
+    #    the recipe for whoever wants them.
+    # 2. **They fail closed at different grains, so the grain decides.** Mounted
+    #    in a *preset*, one unresolvable enabled row makes the whole preset
+    #    unselectable — `packages/preset/agent-presets/src/discovery.ts`,
+    #    `unresolvableRows`, skips a row only while `Boolean(row.disabled)` — which
+    #    is the "Failed to load" failure the bundled presets already record once.
+    #    Mounted here, an enabled row that cannot load fails *that entry alone*:
+    #    `Entry._init` catches the import error, logs it and returns, and the rest
+    #    of the tree keeps running. The host plane is therefore the plane that can
+    #    hold an optional capability at all.
+    #
+    # Enabling one is a Loader decision, not an edit here: the Loader owns entry
+    # enablement (`plugin-conflicts.ts` says the same about entry ownership), so a
+    # row is turned on where the user's other entries are managed.
+    #
+    # ── browser and desktop control ─────────────────────────────────────────
+    #
+    # Each takes exactly ONE provider: `ctx.browserUse` and `ctx.computerUse`
+    # hold a single slot and reject a second registration, so an alternative is a
+    # swap rather than an addition:
+    #   browser — dsh-experimental-browser-use-chrome-devtools-mcp (Chrome DevTools
+    #             over MCP), dsh-experimental-browser-use-stagehand-native
+    #             (AI-assisted actions on its own configured model)
+    #   desktop — dsh-experimental-computer-use-cua-driver-mcp (an already
+    #             installed `cua-driver` executable owns permissions instead)
+    #
+    # A third reason holds for these two rows alone: their prerequisites are the
+    # user's machine, not ours. A launched browser follows the upstream Playwright
+    # runtime's browser installation, and the native desktop provider needs OS
+    # permission grants plus npm optional dependencies left enabled — and it
+    # shares the host process, so a native crash can take the Host with it (its
+    # README says so in those words).
+    #
+    # `mode` is required by the Playwright provider and has no default; `launch`
+    # with `headless: true` is the pair its README documents. The native desktop
+    # provider takes no configuration at all. Both providers are mounted before
+    # the plugin's own row, which is the position the provider README asks for
+    # ("mount both entries before creating or resuming a Session").
+    - id: browser-use
+      name: '@deepseek-ai/dsh-browser-use'
+      disabled: true
+    - id: browser-use-playwright-mcp
+      name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp'
+      disabled: true
+      config:
+        mode: launch
+        headless: true
+    - id: computer-use
+      name: '@deepseek-ai/dsh-computer-use'
+      disabled: true
+    - id: computer-use-cua-driver-native
+      name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native'
+      disabled: true
+
+    # ── session-history retrieval ──────────────────────────────────────────
+    #
+    # `tool-session-query` gives the model five read-only tools over earlier
+    # sessions (`session_search`, `session_event_search`, `session_trace`,
+    # `session_event_trace`, `session_event_read`), authorized per call by exact
+    # `cwd` equality with the caller's session. This one row is the whole opt-in:
+    # the package injects `['tools', 'systemPrompt', 'sessionQuery',
+    # 'sessionProjections']`, and the base composition already mounts both
+    # services — `session-query-sqlite` is the owner of `ctx.sessionQuery` and
+    # `session-projection` is mounted beside it. Nothing else has to be added for
+    # the tools to load and work.
+    #
+    # ⚠ Content search is a second, separate switch, and this caveat is the
+    # reason this note is long. The base mounts `session-query-sqlite` with
+    # `openAt: never` on purpose: `ctx.sessionQuery` stays mounted (exact reads,
+    # titles, lineage traces) while SQLite is never opened, so `session_search`
+    # and `session_event_search` answer `SESSION_QUERY_SEARCH_DISABLED` — and the
+    # Web sidebar searches titles and workspace names only. Enabling the tools
+    # without the override below is therefore three working tools and two that
+    # always fail. This file is exactly the "later patch layer" the base comment
+    # points at, so the pair belongs together; it is stated rather than mounted
+    # because it changes search for *every* deployment, sidebar included, and
+    # that is the same decision as turning the tools on rather than a default:
+    #
+    #     - id: session-query-sqlite
+    #       config:
+    #         path: !!js dshHomePath('session-index.db')   # durable, or `:memory:`
+    #         openAt: first-search                          # or `startup`
+    #
+    # Upstream has a second reason for keeping this opt-in, and it is measurable
+    # here: the package's README states that enabling it adds fixed guidance plus
+    # five tool schemas to every model request, which
+    # `engineering_surface_report` reports as injected bytes against the reviewed
+    # lock in `.freecodego/surface-lock.json`.
+    - id: tool-session-query
+      name: '@deepseek-ai/dsh-tool-session-query'
+      disabled: true
+
     - id: freecodego
       name: 'freecodego'
       config: {}

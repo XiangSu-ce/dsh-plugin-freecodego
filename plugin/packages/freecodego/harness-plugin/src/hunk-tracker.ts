@@ -97,6 +97,9 @@ const MAX_TARGETS_PER_CALL = 8
  * a detail: `../../id_rsa` and an absolute path both resolve outside the workspace,
  * and a pre-image read of either would put a credential's contents in a journal the
  * model can ask about later. Names that resolve outside are dropped, not clamped.
+ * @param args - the arguments the call was made with, of unknown shape.
+ * @param cwd - working directory the command runs in.
+ * @returns the workspace-contained target paths, at most {@link MAX_TARGETS_PER_CALL} of them.
  */
 export function hunkTargetPaths(args: unknown, cwd: string): readonly string[] {
   const root = resolve(cwd)
@@ -211,6 +214,9 @@ function commonEdges(before: readonly string[], after: readonly string[]): { rea
  * revision with the *i*-th of the other reports a change for every line after an
  * insertion at the top. Regions separated by an unchanged line are separate
  * hunks; regions that merely touch are one.
+ * @param before - the pre-image lines.
+ * @param after - the post-image lines.
+ * @returns the line Change rows, in backend order.
  */
 export function diffLines(before: readonly string[], after: readonly string[]): readonly LineChange[] {
   const { prefix, suffix } = commonEdges(before, after)
@@ -313,6 +319,31 @@ export interface Hunk {
    * no lines and so has no ending to restore.
    */
   readonly removedEol?: string
+  /**
+   * What ended each line this hunk removed, in the revision it removed it from.
+   *
+   * {@link Hunk.removedEol} answers for the last one, and one answer is not
+   * enough: a file's lines do not have to agree about their endings, so a revert
+   * that spelled every line it put back with that one separator rewrote endings
+   * the pre-image had — the whole-file-diff this module's per-line reading exists
+   * to prevent. One entry per line of {@link Hunk.removed}, in that order; the
+   * last entry is the one {@link Hunk.removedEol} holds. Absent for a pure
+   * insertion, which restores no lines and so has no ending to restore.
+   */
+  readonly removedSeparators?: readonly string[]
+  /**
+   * What ended the pre-image line immediately before this region, if it had one.
+   *
+   * The line before a region is a line the revert *keeps*, so its ending is not in
+   * {@link Hunk.removedSeparators}. It still has to be answerable: when the region
+   * sits at the end of the file being reverted into, the line in front of it is the
+   * one that ended that file — no separator at all — and putting a line after it
+   * gives it one. The neighbour heuristic (ask the line that now follows) covers
+   * most of that, and this covers the rest, which is exactly the shape where the
+   * following lines are the region's own: a pre-image ending (`\r\n`) rather than
+   * the guess the current text's separator list can offer.
+   */
+  readonly contextEolBefore?: string
   /** The later hunk that covered this one's lines, when there is one. */
   readonly supersededBy?: string
   /**
@@ -334,10 +365,12 @@ export type HunkRevertFailure =
   | { readonly ok: false; readonly reason: 'already-reverted'; readonly hunkId: string }
   | { readonly ok: false; readonly reason: 'drifted'; readonly hunkId: string; readonly detail: string }
 
+/** The outcome of reverting one hunk, against the file's current text. */
 export type HunkRevertResult =
   | { readonly ok: true; readonly text: string; readonly relocated: boolean }
   | HunkRevertFailure
 
+/** The outcome of reverting every hunk recorded for one call. */
 export type HunkCallRevertResult =
   | { readonly ok: true; readonly text: string; readonly hunks: number; readonly relocated: boolean }
   | { readonly ok: false; readonly failures: readonly HunkRevertFailure[] }
@@ -356,6 +389,8 @@ interface MutableHunk {
   contextBefore: readonly string[]
   contextAfter: readonly string[]
   removedEol?: string
+  removedSeparators?: readonly string[]
+  contextEolBefore?: string
   supersededBy?: string
   reverted?: boolean
 }
@@ -403,6 +438,8 @@ export class HunkTracker {
    * held for this file are shifted by this edit, and any hunk this edit covered is
    * marked superseded — both here, so that a hunk's offset is maintained by the
    * single code path that can invalidate it.
+   * @param input - the file, its call id, the pre- and post-images, and an optional timestamp.
+   * @returns the hunk rows, in backend order.
    */
   record(input: {
     readonly file: string
@@ -448,8 +485,21 @@ export class HunkTracker {
       ranges.push({ pre, removed: hunk.removed.length, added: hunk.added.length, id: hunk.id })
       skew += hunk.added.length - hunk.removed.length
       if (hunk.removed.length > 0) {
-        const separator = beforeSeparators[pre + hunk.removed.length - 1]
+        // Every removed line's own ending, not just the last one's: the revert
+        // rebuilds those lines one at a time and puts each one back with the bytes
+        // it had, which a single separator for the region cannot do for a file
+        // whose lines disagree about their endings.
+        const endings = beforeSeparators.slice(pre, pre + hunk.removed.length)
+        if (endings.length > 0) hunk.removedSeparators = endings
+        const separator = endings.at(-1)
         if (separator !== undefined) hunk.removedEol = separator
+      }
+      // The line in front of the region is kept, so its ending is not in the list
+      // above — and a revert that appends the region at the end of the file is
+      // exactly the shape that has to give it one.
+      if (pre > 0) {
+        const predecessor = beforeSeparators[pre - 1]
+        if (predecessor !== undefined) hunk.contextEolBefore = predecessor
       }
     }
     const next: MutableHunk[] = []
@@ -494,6 +544,9 @@ export class HunkTracker {
    * again. The alternative is not a harmless no-op — for a deletion the pre-image
    * is re-inserted, and a deletion with nothing after it in the file leaves no
    * neighbour that can tell the two states apart.
+   * @param hunkId - the hunk to revert.
+   * @param current - the file's current text.
+   * @returns the hunk Revert Result.
    */
   revert(hunkId: string, current: string): HunkRevertResult {
     const hunk = this.journal.find(entry => entry.id === hunkId)
@@ -505,11 +558,12 @@ export class HunkTracker {
     if ('reason' in placed) return { ok: false, reason: 'drifted', hunkId, detail: placed.reason }
     const added = hunk.added.length
     const separators = lineSeparators(current)
-    // What the lines this revert puts back should end in. The pre-image's own
-    // separator is the only answer that restores the bytes — and the file being
+    // The fallback ending for a line whose own is not recorded: a hunk with no
+    // removed lines, a line that ended the pre-image file so it wrote down no
+    // separator, and a restore whose recorded endings do not reach this far. The
+    // recorded ending is the only answer that restores the bytes — the file being
     // spliced into cannot supply it, since the call may have changed exactly that
-    // ending. So the recorded one comes first; the rest are for a hunk with no
-    // removed lines and for a region that ended the file without a separator.
+    // ending — so the region's own last one comes first, then the surroundings.
     const spelling = firstSeparator(
       hunk.removedEol,
       separators[placed.offset + added - 1],
@@ -521,7 +575,12 @@ export class HunkTracker {
     const spelled: { text: string; separator: string }[] = []
     for (let index = 0; index <= lines.length; index += 1) {
       if (index === placed.offset) {
-        for (const line of hunk.removed) spelled.push({ text: line, separator: spelling })
+        // Each restored line keeps its own ending. A line the pre-image ended the
+        // file with has none recorded, and falls back to the region's spelling —
+        // which the fixup below re-decides if that line is no longer the last.
+        for (const [position, line] of hunk.removed.entries()) {
+          spelled.push({ text: line, separator: hunk.removedSeparators?.[position] ?? spelling })
+        }
       }
       if (index === lines.length) break
       if (index < placed.offset || index >= placed.offset + added) {
@@ -529,9 +588,21 @@ export class HunkTracker {
       }
     }
     // A line that kept no separator was the end of the file, and it is no longer:
-    // without one, every line after it would run into it.
-    for (const [index, entry] of spelled.entries()) {
-      if (index < spelled.length - 1 && entry.separator === '') entry.separator = spelling
+    // without one, every line after it would run into it. The neighbour it gained
+    // is asked first, and walking right to left is what makes that answer reach a
+    // whole run of such lines: the entry after this one has already been decided.
+    // `spelling` is only for the case with no neighbour left to ask — a restored
+    // line whose own ending the pre-image did not write down (it ended that file)
+    // and which now sits before the current file's end.
+    for (let index = spelled.length - 2; index >= 0; index -= 1) {
+      const entry = spelled[index]
+      if (entry === undefined || entry.separator !== '') continue
+      const next = spelled[index + 1]
+      // The entry directly in front of the restored region is the one whose own
+      // pre-image ending was recorded; anything else asks the line it gained.
+      const predecessor = index === placed.offset - 1 ? hunk.contextEolBefore : undefined
+      if (predecessor !== undefined && predecessor !== '') entry.separator = predecessor
+      else entry.separator = next !== undefined && next.separator !== '' ? next.separator : spelling
     }
     const last = spelled.at(-1)
     if (last !== undefined) last.separator = ''
@@ -572,6 +643,7 @@ export class HunkTracker {
    * reverted stay consumed by a revert the caller was told never happened, and the
    * retry after the file is fixed is refused with `already-reverted`.
    * @param input - the call, the file its hunks are in, and that file's current text.
+   * @returns the hunk Call Revert Result.
    */
   revertCall(input: {
     readonly callId: string
@@ -610,7 +682,10 @@ export class HunkTracker {
     return { ok: true, text, hunks: callHunks.length, relocated }
   }
 
-  /** Drop every hunk for one file, for a file that was deleted or replaced. */
+  /** Drop every hunk for one file, for a file that was deleted or replaced.
+   * @param file - the file path whose hunks to drop.
+   * @returns the number of hunks removed.
+   */
   forget(file: string): number {
     const normalized = normalizeHunkFile(file)
     const kept = this.journal.filter(hunk => hunk.file !== normalized)
@@ -632,6 +707,8 @@ export class HunkTracker {
       contextBefore: hunk.contextBefore,
       contextAfter: hunk.contextAfter,
       ...(hunk.removedEol === undefined ? {} : { removedEol: hunk.removedEol }),
+      ...(hunk.removedSeparators === undefined ? {} : { removedSeparators: hunk.removedSeparators }),
+      ...(hunk.contextEolBefore === undefined ? {} : { contextEolBefore: hunk.contextEolBefore }),
       ...(hunk.supersededBy === undefined ? {} : { supersededBy: hunk.supersededBy }),
       ...(hunk.reverted === true ? { reverted: true } : {}),
     }

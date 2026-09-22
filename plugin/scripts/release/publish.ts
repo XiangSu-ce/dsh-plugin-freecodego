@@ -12,14 +12,13 @@
  * the same artifact safe.
  */
 
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { parseArgs } from 'node:util'
 import { releaseFamily } from './families.ts'
+import { npmInvocation } from '../pnpm-invocation.ts'
 import { attempt, attemptEchoed, isEntry } from './process.ts'
-import { packedIdentity, readPublishOrder } from './tarball.ts'
+import { integrityOf, packedIdentity, readPublishOrder } from './tarball.ts'
 
 /**
  * Registry codes that answer a write which did not settle, rather than a
@@ -56,22 +55,14 @@ function isTransientFailure(output: string): boolean {
 }
 
 /**
- * The subresource integrity string npm records for a tarball.
- * @param tarball - absolute tarball path.
- * @returns A `sha512-<base64>` string.
- */
-function integrityOf(tarball: string): string {
-  return `sha512-${createHash('sha512').update(readFileSync(tarball)).digest('base64')}`
-}
-
-/**
  * Ask the registry whether a version exists, and with what integrity.
  * @param name - package name.
  * @param version - package version.
  * @returns The registry state for that version.
  */
 function registryState(name: string, version: string): RegistryState {
-  const result = attempt('npm', ['view', `${name}@${version}`, 'dist.integrity', '--json'])
+  const view = npmInvocation(['view', `${name}@${version}`, 'dist.integrity', '--json'])
+  const result = attempt(view.command, view.args)
   if (result.status !== 0) {
     const output = `${result.stdout}${result.stderr}`
     if (output.includes('E404') || output.includes('404 Not Found')) return { kind: 'absent' }
@@ -106,7 +97,8 @@ async function publishTarball(
     // No --access: every release member declares its own publishConfig, and
     // a command-line flag would override it. check-workspace-constraints
     // requires a public access level on every release member.
-    const result = attemptEchoed('npm', ['publish', tarball, ...tagArgs])
+    const publish = npmInvocation(['publish', tarball, ...tagArgs])
+    const result = attemptEchoed(publish.command, publish.args)
     const output = `${result.stdout}${result.stderr}`
     if (result.status === 0) return
 

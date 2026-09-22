@@ -2,6 +2,9 @@
 
 export type ThirdPartyProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages'
 
+/**
+ * One model a third-party route offers.
+ */
 export interface ThirdPartyModel {
   readonly id: string
   readonly displayName: string
@@ -11,6 +14,9 @@ export interface ThirdPartyModel {
   readonly vision: boolean
 }
 
+/**
+ * One user-configured third-party provider route.
+ */
 export interface ThirdPartyRoute {
   readonly id: string
   readonly displayName: string
@@ -31,7 +37,11 @@ export interface ThirdPartyRoute {
 // pass-through bearer credentials and are never legitimate route config.
 const SECRET_HEADER = /(?:^|[-_ ])(?:authorization|cookie|proxy[-_ ]?authorization|api[-_ ]?key|api[-_ ]?token|access[-_ ]?token|auth[-_ ]?token|refresh[-_ ]?token|session[-_ ]?token|bearer(?:[-_ ]?token)?|jwt)(?:$|[-_ ])|(?:^|[-_ ])(?:token|secret|password|credential|auth(?:entication)?|private[-_ ]?key)(?:$|[-_ ])/i
 
-/** Reject unsafe endpoint/secret settings before a route is registered. */
+/** Reject unsafe endpoint/secret settings before a route is registered. 
+ * @returns the third Party Route.
+ * @param route - the route settings to screen.
+ * @param allowInsecureLocalhost - permits plain HTTP when the endpoint is on localhost.
+ */
 export function validateThirdPartyRoute(route: ThirdPartyRoute, allowInsecureLocalhost = false): ThirdPartyRoute {
   if (!/^[a-z][a-z0-9-]{1,63}$/i.test(route.id)) throw new Error('third-party provider id is invalid')
   if (route.displayName.trim() === '') throw new Error('third-party display name is required')

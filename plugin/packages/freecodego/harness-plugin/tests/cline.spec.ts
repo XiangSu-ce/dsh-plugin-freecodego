@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import { LlmError, MessageId } from '@deepseek-ai/dsh-llm'
-import { ClineAdapter, ClineClient, ClineUpstreamError } from '../src/cline.ts'
+import { ClineAdapter, ClineClient, ClineUpstreamError, readClineFeed } from '../src/cline.ts'
 
 const HOUR = 3_600_000
 
@@ -376,6 +376,62 @@ describe('ClineAdapter', () => {
     // Live-only: with no account there is no authenticated feed, and inventing
     // model ids would 4xx on every call. The picker simply shows no Cline rows.
     await expect(adapter.listModels('cline')).resolves.toEqual([])
+  })
+
+  it('reads the subscription half of the feed too, which the picker had been dropping', async () => {
+    const credentials = store(JSON.stringify({ accounts: [account('a')] }))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      free: [{ id: 'stepfun/step-3.7-flash', name: 'StepFun 3.7 Flash' }],
+      recommended: [
+        { id: 'mimo-v2.5', name: 'MiMo v2.5' },
+        // Listed in both halves: the free answer is the one that holds.
+        { id: 'stepfun/step-3.7-flash', name: 'StepFun 3.7 Flash' },
+      ],
+    }), { status: 200 }))
+    const client = new ClineClient(credentials)
+    // The status card's list is still free-only.
+    await expect(client.freeModels()).resolves.toMatchObject([{ id: 'stepfun/step-3.7-flash' }])
+    // The whole roster is what the settings checklist draws from.
+    const all = await client.allModels()
+    expect(all.map(model => model.id)).toEqual(['stepfun/step-3.7-flash', 'mimo-v2.5'])
+    expect(all.map(model => model.free)).toEqual([true, false])
+  })
+
+  it('finds the metered half by shape, so a non-model array cannot become a route', async () => {
+    // Which key the subscription rows arrive under is not fixed by anything this
+    // code can see, so the rule is stated by shape: anything `parseClineModel`
+    // rejects is not a route, and an id in both halves stays free.
+    const feed = readClineFeed({
+      free: [{ id: 'stepfun/step-3.7-flash', name: 'StepFun 3.7 Flash' }],
+      notices: [{ message: 'maintenance' }, 'plain string', null],
+      categories: [{ label: 'coding' }],
+      cline_pass: [{ id: 'glm-5.3', name: 'GLM 5.3' }],
+    })
+    expect(feed.free.map(model => model.id)).toEqual(['stepfun/step-3.7-flash'])
+    expect(feed.metered.map(model => model.id)).toEqual(['glm-5.3'])
+  })
+
+  it('keeps reading a single-list feed as free, so no route is switched off by a shape change', () => {
+    // `models` is the key this reader accepted before the second half existed. A
+    // feed that reports only that list used to be entirely free; reading it as the
+    // subscription half would hide every route behind a price that is not there.
+    const feed = readClineFeed({ models: [{ id: 'newco/new-free', name: 'New Free' }] })
+    expect(feed.free.map(model => model.id)).toEqual(['newco/new-free'])
+    expect(feed.metered).toEqual([])
+  })
+
+  it('states a metered rate for the subscription half instead of offering it as free', async () => {
+    // A subscription row that arrived with the free rate would be tagged FREE and
+    // switched on by default — money the user never asked to spend.
+    const credentials = store(JSON.stringify({ accounts: [account('a')] }))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      free: [{ id: 'newco/new-free', name: 'New Free' }],
+      recommended: [{ id: 'mimo-v2.5', name: 'MiMo v2.5' }],
+    }), { status: 200 }))
+    const rows = await new ClineAdapter(new ClineClient(credentials)).listModels('cline')
+    expect(rows.map(row => row.id)).toEqual(['newco/new-free', 'mimo-v2.5'])
+    expect(rows[0]!.description).toContain('×0')
+    expect(rows[1]!.description).toContain('tag:metered')
   })
 
   it('advertises the live feed as available once an account exists', async () => {

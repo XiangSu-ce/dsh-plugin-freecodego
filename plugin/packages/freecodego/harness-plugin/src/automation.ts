@@ -55,6 +55,7 @@ import { toolDefinition as rawTool, type ToolDefinitionShape } from './tool-defi
 import { CRON_SEARCH_HORIZON_YEARS, describeCronExpression, parseCronExpression, cronFixedRateSeconds, nextCronOccurrences, type CronOccurrence } from './scheduler/cron.ts'
 import type { FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate } from './types.ts'
 
+/** Settings schema for the automation switches: hook chains and calendar planning. */
 export const FreeCodeGoAutomationSettingsSchema = z.object({
   /** Master switch for declarative failure recovery. */
   hookChainsEnabled: z.boolean().default(true),
@@ -70,6 +71,7 @@ export const FreeCodeGoAutomationSettingsSchema = z.object({
 // the projection, and the shapes they act on.
 export type { FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate } from './types.ts'
 
+/** What the automation runtime currently has in force and has done. */
 export interface FreeCodeGoAutomationStatus {
   readonly hookChains: HookChainStatus & { readonly enabledBySettings: boolean; readonly configError?: string }
   readonly schedule: {
@@ -178,6 +180,8 @@ export interface AutomationEventHost {
  * Anything unrecognised is `unknown` rather than a throw: this runs on the
  * session append path, and a reason a future Harness adds must not turn a turn
  * ending into a turn that cannot end.
+ * @param reason - the `turn/end` reason the Harness recorded.
+ * @returns the hook Chain Outcome.
  */
 export function outcomeOfTurnEnd(reason: unknown): HookChainOutcome {
   const kind = typeof reason === 'object' && reason !== null ? (reason as { readonly kind?: unknown }).kind : undefined
@@ -190,11 +194,13 @@ export function outcomeOfTurnEnd(reason: unknown): HookChainOutcome {
 }
 
 
+/** Optional collaborators and clock the automation runtime is constructed with. */
 export interface AutomationRuntimeOptions {
   readonly collaborators?: AutomationCollaborators
   readonly now?: () => number
 }
 
+/** Default values for the automation switches, matching the schema's own defaults. */
 export const AUTOMATION_SETTINGS_DEFAULTS: FreeCodeGoAutomationSettings = {
   hookChainsEnabled: true,
   hookChainsMaxDepth: 2,
@@ -211,6 +217,8 @@ const NUMBER_KEYS = ['hookChainsMaxDepth', 'hookChainsCooldownMs'] as const
  * Every field falls back independently, so a settings document written by an
  * older version (or hand-edited) still yields a usable policy instead of
  * poisoning all seven switches at once.
+ * @returns the automation Settings.
+ * @param value - the value to interpret, of unknown shape.
  */
 export function normalizeAutomationSettings(value: unknown): FreeCodeGoAutomationSettings {
   if (typeof value !== 'object' || value === null) return AUTOMATION_SETTINGS_DEFAULTS
@@ -250,6 +258,8 @@ export function normalizeAutomationSettings(value: unknown): FreeCodeGoAutomatio
  *
  * The type test is the same one the reader applies, so a value this accepts is a
  * value that read would honor.
+ * @returns the automation Settings Update.
+ * @param value - the value to interpret, of unknown shape.
  */
 export function automationSettingsPatch(value: unknown): FreeCodeGoAutomationSettingsUpdate {
   if (typeof value !== 'object' || value === null) return {}
@@ -266,6 +276,7 @@ export function automationSettingsPatch(value: unknown): FreeCodeGoAutomationSet
   return patch
 }
 
+/** Declarative failure recovery (hook chains) plus the calendar planner for one Host. */
 export class FreeCodeGoAutomationRuntime {
   private readonly tools: ToolService | undefined
   private readonly registrations: ToolRegistration[] = []
@@ -331,6 +342,8 @@ export class FreeCodeGoAutomationRuntime {
    * in a loop is the one outcome worth refusing outright, which is why the
    * depth and cooldown guards come from settings and are re-applied here even
    * when the file tries to widen them.
+   * @param cwd - working directory the command runs in.
+   * @returns whether a ruleset is configured, and the load error when there was one.
    */
   async loadHookChains(cwd: string): Promise<{ readonly configured: boolean; readonly error?: string }> {
     this.configError = undefined
@@ -406,6 +419,9 @@ export class FreeCodeGoAutomationRuntime {
    * The first call for a workspace installs that workspace's rules; a call for a
    * different workspace reloads, so a session that changed directories does not
    * keep firing the previous repository's recovery rules.
+   * @param toolName - name of the tool call being answered.
+   * @returns the hook Chain Dispatch Result.
+   * @param cwd - working directory the command runs in.
    */
   async dispatchToolFailure(toolName: string, cwd: string = process.cwd()): Promise<HookChainDispatchResult> {
     await this.ensureChainsFor(cwd)
@@ -438,7 +454,10 @@ export class FreeCodeGoAutomationRuntime {
       .then(() => { if (this.pendingLoads.get(root) === pending) this.pendingLoads.delete(root) })
   }
 
-  /** Dispatch a chain because a task reached a terminal status. */
+  /** Dispatch a chain because a task reached a terminal status.
+   * @param status - the terminal outcome to dispatch for.
+   * @returns the hook Chain Dispatch Result.
+   */
   async dispatchTaskCompleted(status: HookChainOutcome): Promise<HookChainDispatchResult> {
     return this.chains.dispatch({ event: 'TaskCompleted', outcome: status, taskStatus: status, now: this.now() })
   }
@@ -457,6 +476,9 @@ export class FreeCodeGoAutomationRuntime {
    * Never throws, for the same reason `dispatchToolFailure` does not: this is
    * called from a session observer, and a failure inside recovery must not turn
    * one ended turn into a rejected append.
+   * @param reason - the `turn/end` reason that just fired.
+   * @returns the hook Chain Dispatch Result.
+   * @param cwd - working directory the command runs in.
    */
   async dispatchTurnEnd(reason: unknown, cwd: string = process.cwd()): Promise<HookChainDispatchResult> {
     await this.ensureChainsFor(cwd)
@@ -498,6 +520,7 @@ export class FreeCodeGoAutomationRuntime {
     void this.registerTools()
   }
 
+  /** Release the runtime's tool registrations and reset the chain guards. */
   dispose(): void {
     for (const registration of this.registrations.splice(0)) {
       if (typeof registration === 'function') registration()
@@ -513,11 +536,15 @@ export class FreeCodeGoAutomationRuntime {
    * one says what policy is in force (so a caller that just wrote a switch can
    * read back what landed, including the values `status` does not report), while
    * `status` says what the runtime has done with it.
+   * @returns the automation Settings.
    */
   effectiveSettings(): FreeCodeGoAutomationSettings {
     return this.configuration()
   }
 
+  /** What the runtime has done with the current policy, for the status surface.
+   * @returns the automation status.
+   */
   status(): FreeCodeGoAutomationStatus {
     const settings = this.configuration()
     return {
@@ -543,6 +570,8 @@ export class FreeCodeGoAutomationRuntime {
    * `count` is capped rather than trusted: a caller asking for a thousand
    * `at` selectors is building the chain one reminder at a time, and the cap is
    * what keeps a typo in an argument from becoming a thousand durable events.
+   * @param input - the cron expression and the number of occurrences wanted.
+   * @returns the schedule Plan.
    */
   schedulePlan(input: { readonly cron: string; readonly count?: number }): FreeCodeGoSchedulePlan {
     if (!this.configuration().scheduledTasksEnabled) throw new Error('calendar scheduling is disabled in the FreeCodeGo automation settings')

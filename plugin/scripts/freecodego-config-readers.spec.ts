@@ -253,7 +253,11 @@ function objectBodyAt(text: string, from: number): { readonly start: number; rea
  *
  * Both forms are supported: the inline `z.object({...})` and the reference to a
  * named schema (`static Config = FreeCodeGoConfigSchema`), which is resolved to
- * its defining module so the fields, not the alias, are what gets checked.
+ * its defining module so the fields, not the alias, are what gets checked. Both
+ * packages use the inline form today — a package-relative named schema is
+ * invisible to `gen-config-catalog`, which only follows a local const or a
+ * workspace-package import — so the named branch is kept as a guard for the
+ * form the scanner still has to recognize.
  */
 function configSchemas(): readonly ConfigSchema[] {
   const schemas: ConfigSchema[] = []
@@ -351,11 +355,11 @@ describe('FreeCodeGo config fields', () => {
   }))
 
   it('finds the schemas to guard, so an empty scan cannot pass silently', () => {
-    // Two today: the engine router's inline schema and the plugin's named one.
+    // Two today, both inline: the engine router's and the plugin's.
     expect(schemas.length).toBeGreaterThanOrEqual(2)
     expect(schemas.map(schema => schema.declaredIn).sort()).toEqual([
       'packages/freecodego/agent-engine-router/src/index.ts',
-      'packages/freecodego/harness-plugin/src/plugin-config.ts',
+      'packages/freecodego/harness-plugin/src/index.ts',
     ])
     expect(byPackage.find(entry => entry.directory === 'agent-engine-router')!.fields)
       .toContain('agent-engine-router:codex.workerPath')

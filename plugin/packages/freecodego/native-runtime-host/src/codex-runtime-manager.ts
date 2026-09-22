@@ -7,6 +7,9 @@ import { currentRuntimePlatform, resolveContained, validateRuntimeManifest, veri
 import { downloadRuntimeArchive, extractRuntimeArchive, preserveRuntimeArchive } from './runtime-download.ts'
 import { codexRuntimePackages } from './runtime-packages.ts'
 
+/**
+ * What the Host reports about the installed Codex runtime.
+ */
 export interface CodexRuntimeStatus {
   readonly installed: boolean
   readonly platform: string
@@ -17,6 +20,9 @@ export interface CodexRuntimeStatus {
   readonly reason?: string
 }
 
+/**
+ * Where the Codex runtime is installed, and how large one artifact may be.
+ */
 export interface CodexRuntimeConfig {
   readonly rootDirectory?: string
   /** Retained for profile compatibility. Official runtime packages now download on demand. */
@@ -24,6 +30,9 @@ export interface CodexRuntimeConfig {
   readonly maxArtifactBytes?: number
 }
 
+/**
+ * One downloadable official runtime package, as the install surface lists it.
+ */
 export interface CodexRuntimePackage {
   readonly id: string
   readonly platform: string
@@ -43,7 +52,10 @@ export interface CodexRuntimePackage {
  * the user's global CODEX_HOME.
  */
 export class CodexRuntimeManager {
-  readonly rootDirectory: string
+    /**
+   * Directory the runtime is installed into; artifacts and the completion marker live under it.
+   */
+readonly rootDirectory: string
   private readonly maxArtifactBytes: number
   private operation: Promise<unknown> | undefined
 
@@ -54,7 +66,11 @@ export class CodexRuntimeManager {
     if (!Number.isSafeInteger(this.maxArtifactBytes) || this.maxArtifactBytes <= 0) throw new Error('Codex runtime maxArtifactBytes is invalid')
   }
 
-  status(): CodexRuntimeStatus {
+    /**
+   * Report whether a usable runtime is installed, from its manifest and completion marker.
+   * @returns the current install state, carrying a reason code whenever it is not usable.
+   */
+status(): CodexRuntimeStatus {
     const platformId = currentRuntimePlatform()
     const manifestPath = join(this.rootDirectory, 'artifacts', artifactDirectory(platformId), 'manifest.json')
     if (!existsSync(manifestPath)) return { installed: false, platform: platformId, reason: 'CODEX_RUNTIME_NOT_INSTALLED' }
@@ -67,7 +83,11 @@ export class CodexRuntimeManager {
     }
   }
 
-  async runtime(): Promise<{ readonly manifest: NativeRuntimeManifest; readonly executable: string; readonly args?: readonly string[]; readonly rootDirectory: string }> {
+    /**
+   * Read the artifact a session is opened from, after checking its digest and size.
+   * @returns the validated manifest and the executable to launch.
+   */
+async runtime(): Promise<{ readonly manifest: NativeRuntimeManifest; readonly executable: string; readonly args?: readonly string[]; readonly rootDirectory: string }> {
     const platformId = currentRuntimePlatform()
     const manifestPath = join(this.rootDirectory, 'artifacts', artifactDirectory(platformId), 'manifest.json')
     let manifest: NativeRuntimeManifest
@@ -81,7 +101,11 @@ export class CodexRuntimeManager {
     return { manifest, executable, ...(manifest.args === undefined ? {} : { args: manifest.args }), rootDirectory: this.rootDirectory }
   }
 
-  async packages(): Promise<readonly CodexRuntimePackage[]> {
+    /**
+   * List the official runtime packages this machine could install.
+   * @returns one row per known package, flagged for platform compatibility.
+   */
+async packages(): Promise<readonly CodexRuntimePackage[]> {
     const currentPlatform = currentRuntimePlatform()
     return codexRuntimePackages.map(spec => ({
       id: spec.id,
@@ -96,7 +120,12 @@ export class CodexRuntimeManager {
     }))
   }
 
-  async install(packageID = currentCodexPackage().id): Promise<CodexRuntimeStatus> {
+    /**
+   * Download, verify, and atomically swap in a runtime package.
+   * @param packageID - the package to install; defaults to the one for this platform.
+   * @returns the install state after the swap.
+   */
+async install(packageID = currentCodexPackage().id): Promise<CodexRuntimeStatus> {
     return this.serialize(async () => {
       const platformId = currentRuntimePlatform()
       const spec = codexRuntimePackages.find(item => item.id === packageID)
@@ -156,7 +185,11 @@ export class CodexRuntimeManager {
     })
   }
 
-  async remove(): Promise<CodexRuntimeStatus> {
+    /**
+   * Delete the installed runtime, leaving the machine unconfigured rather than half-installed.
+   * @returns the install state after removal.
+   */
+async remove(): Promise<CodexRuntimeStatus> {
     return this.serialize(async () => {
       await rm(this.rootDirectory, { recursive: true, force: true })
       if (existsSync(this.rootDirectory)) throw new Error(`Codex runtime directory still exists after removal: ${this.rootDirectory}`)

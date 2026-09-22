@@ -74,6 +74,7 @@ export type EngineeringVerificationProbe = {
   readonly rationale: string
 }
 
+/** One probe's outcome, paired with the probe it was declared as. */
 export type EngineeringVerificationProbeResult = EngineeringVerificationProbe & {
   readonly state: ProcessState
   readonly exitCode?: number
@@ -92,6 +93,7 @@ export type EngineeringVerificationProbeResult = EngineeringVerificationProbe & 
  */
 export type EngineeringVerificationVerdict = 'verified' | 'unverified' | 'failed'
 
+/** Everything one verification run observed, and the verdict it reached. */
 export type EngineeringVerificationResult = {
   readonly cwd: string
   readonly stages: readonly EngineeringVerificationStageResult[]
@@ -169,6 +171,10 @@ export function probeCommandDenial(command: readonly string[], policy?: Compiled
   return commandPolicyDenial(COMPILED_BUILT_IN_COMMAND_POLICY, line) ?? (policy === undefined ? undefined : commandPolicyDenial(policy, line))
 }
 
+/** Run one verification: the declared stages, then the independent probes.
+ * @param input - the workspace, stages, probes, and cancellation signal.
+ * @returns the verification result and verdict.
+ */
 export async function runEngineeringVerification(input: {
   readonly cwd: string
   readonly stages?: readonly EngineeringVerificationStage[]
@@ -292,6 +298,8 @@ export function normalizeEngineeringProbes(input: unknown): readonly Engineering
  * shell metacharacters are inert arguments rather than composition, and the
  * workspace's content is revised on both sides of each probe so a check that mutates the tree
  * cannot also be the evidence that the tree is fine.
+ * @param input - the workspace, probes, signal, and optional project policy.
+ * @returns the engineering Verification Probe Result rows, in backend order.
  */
 export async function runEngineeringProbes(input: {
   readonly cwd: string
@@ -660,6 +668,9 @@ const GIT_OUTPUT_LIMIT = 4_000_000
  * caller keeps its own stages rather than guessing at a change size it cannot
  * see. A partial answer would be worse than none: the whole point of the tier is
  * that an unknown shape is not quietly under-checked.
+ * @param signal - aborts the request when the caller cancels.
+ * @param cwd - working directory the command runs in.
+ * @returns the workspace change scope, or `undefined` when git cannot answer.
  */
 export async function readWorkspaceChangeScope(cwd: string, signal?: AbortSignal): Promise<WorkspaceChangeScope | undefined> {
   const status = await readGitOutput(cwd, ['status', '--porcelain=v1', '--untracked-files=all'], signal)

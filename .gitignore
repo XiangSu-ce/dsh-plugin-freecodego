@@ -8,9 +8,24 @@
 # carried 816 of its 817 files because `git check-ignore -v README.md` reported
 # `.gitignore:4:/*`. The same applies to anything added at the root later
 # (a LICENSE, CI, or release output), which is the trade the blanket rule makes.
+#
+# The prediction came true twice in one pass: the front page gained a Chinese
+# companion and a ``LICENSE`` so the repository's license is machine-readable
+# from the root, and both would have been dropped silently without a name here.
 !/README.md
+!/README.zh.md
+!/LICENSE
 !/plugin/
 !/plugin/**
+
+# GitHub resolves workflows, issue and pull-request templates and Dependabot
+# against `<repository root>/.github` only, so the copy that used to ship inside
+# `plugin/` was published without ever being loaded — the release workflow
+# included, and that workflow is what creates the release asset the community
+# listing's entry pins. The metadata lives at the root now, and the blanket `/*`
+# above is why it has to be named here.
+!/.github/
+!/.github/**
 
 # The former nested repository is retained locally as a migration backup.
 /plugin/.git/

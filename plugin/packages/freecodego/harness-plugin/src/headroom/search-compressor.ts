@@ -13,6 +13,9 @@
 
 import type { CcrStore } from './ccr.ts'
 import { computeKey } from './ccr.ts'
+// "What the terminal renders" has one definition in this subsystem, and the
+// search test needs it for the same reason the detector does.
+import { stripAnsi } from './lossless-compaction.ts'
 // The detection rule is the detector's, not this module's: `looksLikeSearchOutput`
 // used to re-derive "is this a `path:line:` line?" from `parseMatchLine`, which
 // lacks the detector's exclusions (clock/date prefixes, `=`/`<`/`>` fragments).
@@ -21,6 +24,10 @@ import { computeKey } from './ccr.ts'
 // search branch claimed payloads the detector had already called logs.
 import { isSearchResultLine } from './content-detector.ts'
 
+/**
+ * Tunables for search-output compaction: when to engage, how many matches and
+ * files survive, and the ratio the rendering must beat to be accepted.
+ */
 export interface SearchCompressorConfig {
   /** Minimum match lines before compression is attempted. */
   minMatches: number
@@ -34,6 +41,7 @@ export interface SearchCompressorConfig {
   maxRatio: number
 }
 
+/** Default search-compressor tunables. */
 export const SEARCH_COMPRESSOR_DEFAULTS: SearchCompressorConfig = {
   minMatches: 10,
   perFileCap: 5,
@@ -86,6 +94,10 @@ function parseMatchLine(line: string): { file: string; line: number; content: st
   return { file, line: Number(match[2]!), content: match[3] ?? '' }
 }
 
+/**
+ * Outcome of one search compaction: the rendering, whether it was adopted,
+ * how many matches were seen and kept, and the CCR key when one was stashed.
+ */
 export interface SearchCompressionResult {
   readonly compressed: string
   readonly applied: boolean
@@ -100,6 +112,12 @@ export interface SearchCompressionResult {
  * with per-file omission notes. Returns `applied: false` for short or
  * non-search text. `contextWords` boosts query-relevant matches; `bias` > 1
  * keeps more (conservative), < 1 fewer (aggressive).
+ * @param text - the text to process.
+ * @param cfg - the search-compressor settings to apply.
+ * @param store - the store to read, when one is mounted.
+ * @param contextWords - query words that boost a match's score.
+ * @param bias - multiplier on the keep budget (>1 keeps more).
+ * @returns the search compaction result.
  */
 export function compressSearch(text: string, cfg: SearchCompressorConfig, store: CcrStore | undefined, contextWords: readonly string[] = [], bias = 1.0): SearchCompressionResult {
   const lines = text.split('\n')
@@ -213,8 +231,11 @@ export function compressSearch(text: string, cfg: SearchCompressorConfig, store:
   let cacheKey: string | undefined
   let compressed = rendered
   if (store !== undefined) {
-    cacheKey = computeKey(text)
-    store.put(cacheKey, text)
+    const key = computeKey(text)
+    // Dropped matches may ship only with their original stored; a refused write
+    // means the marker would name nothing, so the rendering is declined.
+    if (store.put(key, text) !== true) return { compressed: text, applied: false, matchCount: matches.length, keptCount: kept.size, cacheKey: undefined }
+    cacheKey = key
     compressed += `\n[${matches.length} matches compressed to ${kept.size}. Retrieve more: hash=${cacheKey}]`
   }
   return { compressed, applied: true, matchCount: matches.length, keptCount: kept.size, cacheKey }
@@ -228,9 +249,21 @@ export function compressSearch(text: string, cfg: SearchCompressorConfig, store:
  * (which a `2026-09-19T09:01:01Z INFO ...` log line can), while detection has to
  * answer "is this a search result?" — and a timestamp is a log line, which the
  * log compressor reads far better.
+ *
+ * SGR colour is removed before the test, and the reason is the same guard: the
+ * line test rejects a line that *starts* with a clock or a date, and a coloured
+ * line starts with `\x1b[32m`, so a coloured application log passed this predicate
+ * at ≥0.8 of its lines and the runtime's search branch claimed it before the log
+ * branch was asked — the misrouting `headroom-log-routing.spec.ts` pins, reaching
+ * it through a spelling those fixtures do not carry. `detectContentType` strips
+ * the same escapes at its own entry point; these are the two predicates the
+ * runtime asks, so each normalises its own input rather than relying on the other
+ * to have done it first.
+ * @param raw - the text to test.
+ * @returns true when the text reads as grep/rg output.
  */
-export function looksLikeSearchOutput(text: string): boolean {
-  const lines = text.split('\n')
+export function looksLikeSearchOutput(raw: string): boolean {
+  const lines = stripAnsi(raw).split('\n')
   let matchLines = 0
   let nonEmpty = 0
   for (const line of lines) {

@@ -5,6 +5,15 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+
+// The community marketplace asks `dsh plugin` to edit a profile's packages
+// instead of editing the manifest itself, so a spec that runs an install or an
+// uninstall has to answer for that CLI. Only `runDsh` is replaced: everything
+// else in the module stays real, and no test spawns the `dsh` on this machine.
+vi.mock('../src/plugin-update.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/plugin-update.ts')>()
+  return { ...actual, runDsh: vi.fn() }
+})
 // Imported from source, not `../lib/index.js`: the bundle carries no
 // declarations (`tsdown` runs with `dts: false`), so a spec that imported it
 // could not be type-checked at all. The legacy `@Remote` decorators were the
@@ -15,6 +24,8 @@ import { COUNCIL_ENGINES, VERIFICATION_STAGES } from '../src/engineering-remote-
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
 import { AUDIO_FORMATS } from '../src/media-generation.ts'
 import type { SessionDeletionPersistence, SessionEventsPersistence } from '../src/session-storage-utils.ts'
+import { runDsh } from '../src/plugin-update.ts'
+import { modelDshPluginCli } from './support/dsh-plugin-cli.ts'
 import { idleAgent, liveSession, provideHostService, provideHostServiceAs, registrationHandle, runContext, settingsValue, type AgentEnginesFace, type EngineRouterFace, type WorkspaceRegistryFace } from './support/host-services.ts'
 
 function AgentEngineRegistry(ctx: Context): void {
@@ -78,22 +89,40 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     const plugin = new FreeCodeGoHarnessPlugin(ctx, {}) as unknown as {
       vyceStatus: () => Promise<{ readonly configured: boolean; readonly models: readonly { readonly id: string; readonly name: string }[] }>
       vyceSetKey: (value: string) => Promise<{ readonly configured: boolean; readonly models: readonly { readonly id: string; readonly name: string }[] }>
-      listVyceModels: (provider: string) => Promise<readonly { readonly id: string; readonly availability?: string; readonly unavailableReason?: string; readonly description: string }[]>
+      listVyceModels: (provider: string) => Promise<readonly { readonly id: string; readonly name: string; readonly availability?: string; readonly unavailableReason?: string; readonly description: string }[]>
     }
     try {
-      // Signed out: the roster is advertised but every route is locked.
+      // Signed out there is no directory to read, so the plugin's own rows are
+      // the roster; every route stays locked behind the missing key.
       await expect(plugin.vyceStatus()).resolves.toEqual({ configured: false, models: [
         { id: 'deepseek-v4.1', name: 'DeepSeek V4.1' },
+        { id: 'qwen3.8-flash', name: 'Qwen 3.8 Flash' },
       ] })
       const locked = await plugin.listVyceModels('vyce')
-      expect(locked).toHaveLength(1)
-      expect(locked[0]).toMatchObject({ id: 'vyce/deepseek-v4.1', availability: 'unavailable', unavailableReason: 'VYCE_API_KEY_REQUIRED' })
-      await expect(plugin.vyceSetKey('vyce-test-key')).resolves.toMatchObject({ configured: true })
-      const open = await plugin.listVyceModels('vyce')
-      expect(open[0]).toMatchObject({ id: 'vyce/deepseek-v4.1', availability: 'available' })
-      // The picker row carries the metered price and the check-in pitch.
-      expect(open[0]!.description).toContain('$0.15/$0.6')
-      expect(open[0]!.description).toContain('签到')
+      expect(locked.map(row => row.id)).toEqual(['vyce/deepseek-v4.1', 'vyce/qwen3.8-flash'])
+      expect(locked[0]).toMatchObject({ availability: 'unavailable', unavailableReason: 'VYCE_API_KEY_REQUIRED' })
+      // Once a key is saved, the provider's own directory is the authority: a
+      // route the plugin never knew about is served too.
+      vi.stubGlobal('fetch', vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: [{ id: 'deepseek-v4.1' }, { id: 'qwen3.8-flash' }, { id: 'glm-5.3' }] }),
+      })))
+      try {
+        await expect(plugin.vyceSetKey('vyce-test-key')).resolves.toMatchObject({ configured: true })
+        const open = await plugin.listVyceModels('vyce')
+        expect(open.map(row => row.id)).toEqual(['vyce/deepseek-v4.1', 'vyce/qwen3.8-flash', 'vyce/glm-5.3'])
+        expect(open[0]).toMatchObject({ id: 'vyce/deepseek-v4.1', availability: 'available' })
+        // A known row carries the metered price and the check-in pitch...
+        expect(open[0]!.description).toContain('$0.15/$0.6')
+        expect(open[0]!.description).toContain('签到')
+        // ...while a row read off the directory is listed by id, with no price
+        // the plugin cannot substantiate.
+        expect(open[2]!.name).toBe('Glm 5.3')
+        expect(open[2]!.description).toContain('签到')
+        expect(open[2]!.description).not.toContain('$')
+      } finally {
+        vi.unstubAllGlobals()
+      }
       await expect(plugin.vyceSetKey('')).resolves.toMatchObject({ configured: false })
     } finally {
       await ctx.fiber.dispose()
@@ -414,16 +443,29 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
         // the surface report describes what every other registration injected.
         'engineering_plan_mode',
         'engineering_surface_report',
-        // The unified inspect surface: one collection pass, ten sections,
-        // registered here so the answer to "what is actually loaded?" exists
-        // before any sub-runtime starts.
+        // The unified inspect surface: one collection pass over every declared
+        // section, registered here so the answer to "what is actually loaded?"
+        // exists before any sub-runtime starts.
         'engineering_inspect',
+        // The review set: run a review, preview its coverage without a model
+        // call, read what is running, and re-render the last report. Registered
+        // here because a review reads the workspace and nothing else, so it is
+        // available before any sub-runtime starts — and because the four names
+        // are one surface whose doors would otherwise be registered apart.
+        'engineering_code_review',
+        'engineering_review_rules',
+        'engineering_review_status',
+        'engineering_review_report',
         // Paged recall of a parked tool result. Registered next to the inspect
         // surface because both are diagnostics the model reaches for while
         // something is already going wrong; the locator it reads comes from a
         // cleared-result marker.
         'spill_recall',
         'engineering_context_budget',
+        // Manual context control: compacting or snipping on request, registered
+        // beside the readout that tells the model when either is worth doing.
+        'engineering_context_compact',
+        'engineering_context_snip',
         'engineering_context_prompt',
         'read_document',
         // Worktree lifecycle: entering and leaving an isolated checkout is a
@@ -434,23 +476,9 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
         'engineering_worktree_status',
         'engineering_worktree_list',
         // Personas and the subagent launcher: both are how a turn picks who
-        // does the work, and both are named by the guidance this plugin injects,
-        // so they are registered before the team runtime that consumes them.
+        // does the work, and both are named by the guidance this plugin injects.
         'engineering_persona_list',
         'engineering_subagent_start',
-        // Then the team runtime, which owns the board, member lifecycle, worktree
-        // merges, and manual context control. Every name here matches the
-        // deferred prefix rule, so none of them costs a request that never uses it.
-        'engineering_team_board',
-        'engineering_team_plan',
-        'engineering_team_claim',
-        'engineering_team_task_update',
-        'engineering_team_member_start',
-        'engineering_team_member_stop',
-        'engineering_team_merge',
-        'engineering_team_recover',
-        'engineering_context_compact',
-        'engineering_context_snip',
         'advisor_status',
         'advisor_review',
         'advisor_notes',
@@ -1005,8 +1033,12 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
         communityUninstall: (url: string) => Promise<{ readonly ok: true; readonly packageNames: readonly string[]; readonly restartRequired: true }>
       }
       plugin.communityCatalog = async () => ({ plugins: [{ name: 'community-plugin', url: sourceUrl, npm: packageName }] })
+      const cli = modelDshPluginCli(runDsh, () => profile)
 
       await expect(plugin.communityUninstall(sourceUrl)).resolves.toEqual({ ok: true, packageNames: [packageName], restartRequired: true })
+      // The removal that reaches the profile is the CLI's own `remove` for this
+      // profile: the plugin asks for it rather than editing the manifest.
+      expect(cli.verbs()).toEqual([`remove ${packageName}`])
       const profileManifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8')) as { dependencies?: Record<string, string>; dsh?: { profile?: { bundles?: readonly string[] } } }
       expect(profileManifest.dependencies?.[packageName]).toBeUndefined()
       expect(profileManifest.dsh?.profile?.bundles).not.toContain(packageName)
@@ -1362,7 +1394,7 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     }
   })
 
-  it('discovers OpenCode free routes from the public directory and caches them for a day', async () => {
+  it('discovers OpenCode free routes from the public directory and caches them for ten minutes', async () => {
     const originalFetch = globalThis.fetch
     const originalHome = process.env.DSH_HOME
     const dshHome = await mkdtemp(join(tmpdir(), 'freecodego-opencode-dynamic-'))

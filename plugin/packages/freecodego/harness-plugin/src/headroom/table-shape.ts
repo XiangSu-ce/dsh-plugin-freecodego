@@ -26,6 +26,10 @@ export const MD_SEP_CELL_RE = /^:?-{2,}:?$/
  */
 export const DELIMITERS: readonly (readonly [string, number])[] = [[',', 0.85], ['\t', 0.7], [';', 0.85], ['|', 0.85]]
 
+/**
+ * Shape of a detected table: which format the payload uses, the delimiter that
+ * best fits it, the column count and how confident the detector is.
+ */
 export interface TableShape {
   readonly format: 'markdown' | 'csv'
   readonly delimiter: string
@@ -33,18 +37,30 @@ export interface TableShape {
   readonly confidence: number
 }
 
-/** Cells in a `| a | b |` row, counting the outer pipes' contents only. */
+/**
+ * Cells in a `| a | b |` row, counting the outer pipes' contents only.
+ * @param row - the candidate markdown row to count cells in.
+ * @returns the cell count.
+ */
 export function mdCellCount(row: string): number {
   return row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').length
 }
 
-/** Markdown separator row: at least two `---`-style cells. */
+/**
+ * Markdown separator row: at least two `---`-style cells.
+ * @param row - the candidate markdown row to test.
+ * @returns true when the row is a markdown alignment separator.
+ */
 export function isMdSeparator(row: string): boolean {
   const cells = row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim()).filter(c => c !== '')
   return cells.length >= 2 && cells.every(c => MD_SEP_CELL_RE.test(c))
 }
 
-/** First piped header row followed by a separator row, anywhere in `lines`. */
+/**
+ * First piped header row followed by a separator row, anywhere in `lines`.
+ * @param lines - the candidate lines to scan, in order.
+ * @returns the detected Table Shape, or undefined when no markdown table is present.
+ */
 export function detectMarkdownTable(lines: readonly string[]): TableShape | undefined {
   for (let i = 0; i + 1 < lines.length; i += 1) {
     const line = lines[i]
@@ -62,6 +78,9 @@ export function detectMarkdownTable(lines: readonly string[]): TableShape | unde
  * Prose guard: sentences (ender ratio ≥0.5) or wordy cells (avg >3 words)
  * reject. Empty cells are not words — counting them as one let a sparse table
  * with many blank fields read as prose.
+ * @param sample - the sample rows to inspect.
+ * @param delim - the delimiter whose cells are counted.
+ * @returns true when the sample reads as prose rather than tabular data.
  */
 export function looksLikeProse(sample: readonly string[], delim: string): boolean {
   const enders = sample.filter(row => /[.!?]$/.test(row.trimEnd())).length
@@ -71,7 +90,11 @@ export function looksLikeProse(sample: readonly string[], delim: string): boolea
   return avgWords > 3
 }
 
-/** Best delimiter whose per-row count is consistent enough, prose rejected. */
+/**
+ * Best delimiter whose per-row count is consistent enough, prose rejected.
+ * @param lines - the candidate lines to scan, in order.
+ * @returns the detected Table Shape, or undefined when no delimiter fits.
+ */
 export function detectDelimited(lines: readonly string[]): TableShape | undefined {
   const sample = lines.slice(0, 20)
   if (sample.length < 3) return undefined

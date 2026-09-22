@@ -103,7 +103,10 @@ export interface ForgetContext {
   readonly realPath?: (path: string) => string
 }
 
-/** Hash the bytes of a file the way the evidence format specifies. */
+/** Hash the bytes of a file the way the evidence format specifies.
+ * @param bytes - the file contents to hash.
+ * @returns the hex SHA-256 digest.
+ */
 export function hashEvidence(bytes: string): string {
   return createHash('sha256').update(bytes).digest('hex')
 }

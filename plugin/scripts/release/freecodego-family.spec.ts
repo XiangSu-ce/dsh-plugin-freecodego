@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { officialClientBuildEnvironment, writeClientBuildRecord } from '../client-build-environment.ts'
-import { releaseFamily, type ReleaseMember } from './families.ts'
+import { releaseFamily, tarballName, type ReleaseMember } from './families.ts'
 
 const root = resolve(import.meta.dirname, '../..')
 
 const bundleManifest = JSON.parse(
   readFileSync(join(root, 'packages/freecodego/bundle-latest/package.json'), 'utf8'),
-) as { name: string; version: string }
+) as { name: string; version: string; engines: { node: string; dsh: string }; freecodego: { harnessBaseline: string } }
 
 /**
  * Every path the bundle's manifest resolves to, as a host loading it would see
@@ -104,12 +104,56 @@ describe('freecodego release family', () => {
     expect(extension).toEqual([])
   })
 
-  it('names one tag for the whole family and publishes a prerelease under next', () => {
+  it('names one tag for the whole family', () => {
+    // No dist-tag assertion: a channel belongs to publishing into a registry, and
+    // this family publishes a GitHub release instead, where a prerelease is marked
+    // by the release itself. `families.spec.ts` covers the tags the families that
+    // still publish to a registry use.
     const family = releaseFamily('freecodego')
     const bundle = member('packages/freecodego/bundle-latest', bundleManifest.name)
     expect(family.tagFor({ ...bundle, version: '0.1.6-alpha.1' })).toBe('freecodego-v0.1.6-alpha.1')
-    expect(family.distTagForVersion('0.1.6-alpha.1')).toBe('next')
-    expect(family.distTagForVersion('0.1.6')).toBeUndefined()
+  })
+
+  it('publishes the bundle under the name the update checker looks for', () => {
+    // One naming rule, two implementations: this family publishes the asset and
+    // `packages/freecodego/harness-plugin/src/plugin-update.ts` looks it up, and
+    // neither can import the other — the checker ships inside the published
+    // package, and a relative import out of a project reference is one
+    // TypeScript refuses to rewrite. So the rule is written down here and in the
+    // checker's own spec, and this is the half that decides what a release
+    // carries: a change on either side that the other does not make shows up as
+    // a failure here or as an update that never appears.
+    const family = releaseFamily('freecodego')
+    const bundle = family.members(root)[0]!
+    expect(family.assetNameFor(bundle)).toBe(`freecodego-${bundleManifest.freecodego.harnessBaseline}.tgz`)
+  })
+
+  it('renames a hotfix from its packed version to the Harness line it publishes on', () => {
+    // The case the rule exists for: a hotfix is a deeper version on the same
+    // Harness line, so the file `pnpm pack` writes and the file the release
+    // uploads are different names.
+    const family = releaseFamily('freecodego')
+    const bundle = family.members(root)[0]!
+    const hotfix: ReleaseMember = { ...bundle, version: `${bundle.version}.1` }
+    expect(tarballName(hotfix)).toBe(`freecodego-${hotfix.version}.tgz`)
+    expect(family.assetNameFor(hotfix)).toBe(`freecodego-${bundleManifest.freecodego.harnessBaseline}.tgz`)
+  })
+
+  it('states the Harness floor in the field the marketplace reads', () => {
+    // `engines.dsh` is what dsh-market reads for a host-aware card, and it is a
+    // floor rather than a pin: a host below it is hidden from discovery, a host
+    // above it stays visible. It has to move with
+    // `freecodego.harnessBaseline` — a bump that leaves it behind would offer a
+    // bundle on a line it was no longer built for, to the users least able to
+    // tell — so the two are asserted to be one fact rather than two.
+    expect(bundleManifest.engines.dsh).toBe(`>=${bundleManifest.freecodego.harnessBaseline}`)
+  })
+
+  it('refuses a bundle that cannot name the Harness line it publishes on', () => {
+    const family = releaseFamily('freecodego')
+    const bundle = family.members(root)[0]!
+    const undeclared: ReleaseMember = { ...bundle, manifest: { name: bundle.name, version: bundle.version } }
+    expect(() => family.assetNameFor(undeclared)).toThrow(/declares no freecodego\.harnessBaseline/)
   })
 
   it('rejects a version this repository cannot publish, and members that disagree', () => {

@@ -1,9 +1,12 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   CACHE_COLD_DEFAULTS,
   CLEARED_RESULT_MARKER,
   CacheColdPolicy,
   CacheColdView,
+  HARNESS_PRUNE_MARKER,
   type MessageLike,
   clearOldToolResults,
   clearedResultMarker,
@@ -281,6 +284,36 @@ describe('the view transform', () => {
     expect(applied.messages[0]).toBe(history[0])
   })
 
+  it('leaves a result the Harness already pruned to the Harness', () => {
+    // The Harness's pruner replaces an oversized result's middle durably and the
+    // meter prices that replacement, so what is left in the session is head +
+    // marker + tail. Clearing that remnant would park the *remnant* under a marker
+    // promising the full result is at the locator — a false claim about what is
+    // retrievable — and would take over a result the Harness owns. So it is not a
+    // candidate, while the unpruned read beside it still is, which is what proves
+    // the exclusion is by marker rather than by position or size.
+    const pruned = `${'h'.repeat(2_000)}${HARNESS_PRUNE_MARKER}${'t'.repeat(2_000)}`
+    const history = [
+      call('p1', 'read'), result('p1', pruned),
+      call('c2', 'read'), result('c2', 'y'.repeat(4_000)),
+      call('c3', 'read'), result('c3', 'z'.repeat(10)),
+    ]
+    const applied = clearOldToolResults(history, { keepRecentResults: 1 })
+    expect(applied.clearedCallIds).toEqual(['c2'])
+    expect(applied.messages[1]).toBe(history[1])
+  })
+
+  it('recognizes the marker the Harness pruner actually writes', () => {
+    // `${HARNESS_PRUNE_MARKER}` above is a copy, and a copy that stops matching is a
+    // guard that stops guarding. Read from the pruner's own source rather than from a
+    // second copy of the same guess. Absent upstream source (a tree synced without
+    // `packages/`) means there is nothing to compare against.
+    const configPath = resolve(import.meta.dirname, '../../../compaction/compaction-tool-result-pruner/src/config.ts')
+    if (!existsSync(configPath)) return
+    const source = readFileSync(configPath, 'utf8')
+    expect(source).toContain(`export const PRUNE_MARKER = '\\n\\n${HARNESS_PRUNE_MARKER}\\n\\n'`)
+  })
+
   it('accepts a custom marker and a custom clearable set', () => {
     const history = [call('c1', 'grep'), result('c1', 'x'.repeat(100)), call('c2', 'grep'), result('c2', 'y'.repeat(10))]
     const applied = clearOldToolResults(history, { keepRecentResults: 1, clearableTools: ['grep'], marker: '<gone>' })
@@ -382,5 +415,137 @@ describe('the retrieval path', () => {
     expect(view.plan('s1', { lastAssistantAt: 1_000, now: 1_000 + HOUR * 2, messages: later }).fire).toBe(true)
     expect(view.hasMarker('s1', 'c1')).toBe(true)
     expect(markerText(view.apply('s1', later).messages[1])).toBe(clearedResultMarker({ locator: '/spill/c1.txt', retrievalHint: 'grep' }))
+  })
+})
+
+describe('the keep window counts assistant turns', () => {
+  const call = (id: string, name: string): MessageLike => ({ role: 'assistant', content: [{ type: 'tool-call', id, name }] })
+  // One assistant message carrying several calls is what a parallel turn looks
+  // like on the wire, and it is the only shape where a turn differs from a result.
+  const parallelCall = (...ids: string[]): MessageLike => ({ role: 'assistant', content: ids.map(id => ({ type: 'tool-call', id, name: 'read' })) })
+  const result = (callId: string, text: string): MessageLike => ({ role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] })
+
+  it('keeps a fat recent turn whole rather than keeping five of its twelve results', () => {
+    // Twelve parallel reads in one turn all answer the question the model just
+    // asked, so the turn is the unit it is working against. Counting the window in
+    // results kept five of the twelve and cleared the other seven — discarding most
+    // of the newest turn in the name of protecting it. Every other test in this
+    // file puts one result in each turn, which is exactly why this one exists.
+    const ids = Array.from({ length: 12 }, (_, index) => `p${index}`)
+    const history = [
+      call('old', 'read'), result('old', 'y'.repeat(4_000)),
+      parallelCall(...ids),
+      ...ids.map(id => result(id, 'x'.repeat(1_000))),
+    ]
+    const applied = clearOldToolResults(history, { keepRecentResults: 1 })
+    expect(applied.clearedCallIds).toEqual(['old'])
+    for (const id of ids) expect(applied.clearedCallIds).not.toContain(id)
+  })
+
+  it('clears an old turn in full and keeps a newer turn in full', () => {
+    // The discriminating shape: one single-result turn, one three-result turn, one
+    // single-result turn, with a window of two turns. Grouped, the only turn older
+    // than the window is the first, so exactly its one result goes. Counted per
+    // result, the window reaches into the middle turn and clears two of its three
+    // questions' worth of context while leaving the third answer orphaned.
+    const history = [
+      call('a1', 'read'), result('a1', 'x'.repeat(2_000)),
+      parallelCall('b1', 'b2', 'b3'),
+      result('b1', 'y'.repeat(2_000)), result('b2', 'y'.repeat(2_000)), result('b3', 'y'.repeat(2_000)),
+      call('c1', 'read'), result('c1', 'z'.repeat(10)),
+    ]
+    const applied = clearOldToolResults(history, { keepRecentResults: 2 })
+    expect(applied.clearedCallIds).toEqual(['a1'])
+    expect(applied.keptCallIds).toEqual(['b1', 'b2', 'b3', 'c1'])
+  })
+
+  it('groups candidates that declare a turn and leaves turn-less ones on their own', () => {
+    const grouped = selectResultsToClear([
+      { seq: 1, tool: 'read', tokens: 10, turn: 1 },
+      { seq: 2, tool: 'read', tokens: 10, turn: 1 },
+      { seq: 3, tool: 'read', tokens: 10, turn: 2 },
+    ], { ...CACHE_COLD_DEFAULTS, keepRecentResults: 1 })
+    expect(grouped.clearSeqs).toEqual([1, 2])
+    expect(grouped.keptSeqs).toEqual([3])
+    // A candidate with no declared turn cannot be proven to belong with another, so
+    // it stands alone rather than being sheltered by a turn it never claimed.
+    const ungrouped = selectResultsToClear([
+      { seq: 1, tool: 'read', tokens: 10 },
+      { seq: 2, tool: 'read', tokens: 10 },
+    ], { ...CACHE_COLD_DEFAULTS, keepRecentResults: 1 })
+    expect(ungrouped.clearSeqs).toEqual([1])
+    expect(ungrouped.keptSeqs).toEqual([2])
+  })
+})
+
+describe('a result that is not all text is never clearable', () => {
+  const call = (id: string, name: string): MessageLike => ({ role: 'assistant', content: [{ type: 'tool-call', id, name }] })
+  const result = (callId: string, text: string): MessageLike => ({ role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] })
+  const blockTypes = (message: unknown): readonly unknown[] =>
+    (message as { content: { content: { type: unknown }[] }[] }).content[0]!.content.map(block => block.type)
+  // `tool-fs`'s `read_image` returns exactly this shape: a text summary beside the
+  // image itself. The text is what `resultText` measures, so nothing about the
+  // accounting reveals that a rewrite would delete the block next to it.
+  const imageResult = (callId: string): MessageLike => ({
+    role: 'user',
+    content: [{
+      type: 'tool-result',
+      toolCallId: callId,
+      content: [{ type: 'text', text: '<type>image</type>' }, { type: 'image', attachment: { id: 'a1' } }],
+    }],
+  })
+
+  it('leaves an image result untouched, because the rewrite would delete the image', () => {
+    const history = [
+      call('i1', 'read'), imageResult('i1'),
+      call('r1', 'read'), result('r1', 'x'.repeat(4_000)),
+      call('r2', 'read'), result('r2', 'y'.repeat(10)),
+    ]
+    const applied = clearOldToolResults(history, { keepRecentResults: 1 })
+    expect(applied.clearedCallIds).toEqual(['r1'])
+    // Returned by reference, so not one byte of the image result was rebuilt.
+    expect(applied.messages[1]).toBe(history[1])
+    expect(blockTypes(applied.messages[1])).toEqual(['text', 'image'])
+  })
+
+  it('protects a block kind no denylist names', () => {
+    // The guard is an allowlist — every block must be text — rather than ZCode's
+    // list of the kinds it knows about, which is the same guard with a hole: a kind
+    // added later would be destroyed silently, which is the failure mode the list of
+    // clearable tools already demonstrated once.
+    const reasoningResult: MessageLike = {
+      role: 'user',
+      content: [{ type: 'tool-result', toolCallId: 'g1', content: [{ type: 'reasoning', text: 'r' }, { type: 'text', text: 't' }] }],
+    }
+    const history = [call('g1', 'read'), reasoningResult, call('r1', 'read'), result('r1', 'x'.repeat(4_000)), call('r2', 'read'), result('r2', 'y'.repeat(10))]
+    const applied = clearOldToolResults(history, { keepRecentResults: 1 })
+    expect(applied.clearedCallIds).toEqual(['r1'])
+    expect(applied.messages[1]).toBe(history[1])
+  })
+
+  it('does not let a protected result consume a keep slot', () => {
+    // The image result is the newest thing in the transcript. If it were a
+    // candidate it would be its own group and push the older read out of the
+    // window; because it is not, the read survives. A protected result that still
+    // occupied a slot would silently cost the model a result it could have kept.
+    const history = [call('r1', 'read'), result('r1', 'x'.repeat(4_000)), call('i1', 'read'), imageResult('i1')]
+    expect(clearOldToolResults(history, { keepRecentResults: 1 }).clearedCallIds).toEqual([])
+  })
+
+  it('is invisible to the policy as well, so no plan prices clearing it', () => {
+    // The policy and the transform have to agree on eligibility: a plan that priced
+    // a result the transform refuses would promise a saving the model never sees,
+    // and would report the conversation as relieved when it was not.
+    const history = [
+      call('i1', 'read'), imageResult('i1'),
+      call('c1', 'read'), result('c1', 'x'.repeat(40_000)),
+      call('c2', 'read'), result('c2', 'y'.repeat(40_000)),
+      ...['c3', 'c4', 'c5', 'c6', 'c7'].flatMap(id => [call(id, 'read'), result(id, 'z'.repeat(100))]),
+    ]
+    const view = new CacheColdView()
+    view.plan('s1', { lastAssistantAt: 1_000, now: 1_000 + HOUR, messages: history })
+    const applied = view.apply('s1', history)
+    expect(view.clearTargets('s1', history).map(target => target.callId)).toEqual(applied.clearedCallIds)
+    expect(applied.clearedCallIds).not.toContain('i1')
   })
 })

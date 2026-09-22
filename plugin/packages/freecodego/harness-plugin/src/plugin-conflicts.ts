@@ -1,4 +1,27 @@
-/** Static third-party Loader-resource conflict detection and automatic entry disablement. */
+/**
+ * Static third-party Loader-resource conflict detection and opt-in entry disablement.
+ *
+ * Why the default is off
+ * ----------------------
+ * The Loader owns entry enablement — its own manager writes it, its own page shows
+ * it, and `dsh plugin` addresses it. The Harness's registries (`tools.register`,
+ * `commands.register`, the provider maps) already refuse a duplicate with the
+ * precise message that names the colliding resource, and a refused `init()` fails
+ * that entry alone: the deployment keeps running and the user is told which entry
+ * failed and why. Against that, this module decides the same question from a
+ * *regex scan of a package's source text*, applies the result by rewriting a
+ * Loader entry's `disabled`, and reports it in FreeCodeGo's own panel rather than
+ * where the Harness reports a failed entry. That is the plugin taking a decision
+ * the Harness owns, on weaker evidence, through a private seam (`init`/`_start`
+ * wrapping — a seam the Loader moved once already, in 0.1.6).
+ *
+ * So it is now an override rather than a default: with the switch off — and off is
+ * what an absent settings key means — nothing is intercepted and the Harness's own
+ * behaviour is what a deployment gets. With it on, the owner already kept is
+ * preserved and the later claimant is disabled before its code runs, which is the
+ * one thing the Harness does not offer: a plugin that cannot start is not the same
+ * as a plugin that is told why it cannot.
+ */
 
 import { createRequire } from 'node:module'
 import { readFile, stat } from 'node:fs/promises'
@@ -32,11 +55,42 @@ type OwnedClaim = ResourceClaim & {
   /** Loader entry that owns the claim; effective ids may be composite. */
   readonly ownerId: string
   readonly moduleName: string
+  /** The owning entry, kept so a claim can be released at runtime rather than only on unload. */
+  readonly entry: Entry
+}
+
+/**
+ * Modules and entry ids this plugin's own bundle patch mounts as stand-ins for a
+ * Harness capability that official bundles can also supply: `freecodego/agent-team`
+ * and `freecodego/tool-agent-team`, next to the official
+ * `@deepseek-ai/dsh-experimental-agent-team` / `-tool-agent-team` pair.
+ *
+ * They exist for a composition that never selected the official team bundles, and
+ * they are the only mounts whose loss cannot cost the deployment a capability:
+ * when both are present the official pair is the one it asked for.
+ */
+const OWN_STAND_IN_MODULES: ReadonlySet<string> = new Set(['freecodego/agent-team', 'freecodego/tool-agent-team'])
+const OWN_STAND_IN_ENTRY_IDS: ReadonlySet<string> = new Set(['freecodego-agent-team', 'freecodego-tool-agent-team'])
+
+/** Official Harness packages are published under this scope. */
+function isOfficialModuleName(moduleName: string): boolean {
+  return moduleName.startsWith('@deepseek-ai/dsh-')
+}
+
+/** True when this claim belongs to one of this plugin's own stand-in mounts. 
+ * @param moduleName - the module the owning entry imports.
+ * @param entryId - the owning entry's effective id, which may be composite.
+ * @returns whether the claim is this plugin's own fallback capability.
+ */
+function isOwnStandIn(moduleName: string, entryId: string): boolean {
+  if (OWN_STAND_IN_MODULES.has(moduleName)) return true
+  const tail = entryId.slice(entryId.lastIndexOf(':') + 1)
+  return OWN_STAND_IN_ENTRY_IDS.has(tail)
 }
 
 /** Schema embedded in the FreeCodeGo settings namespace. */
 export const FreeCodeGoPluginConflictSettingsSchema = z.object({
-  pluginConflictProtectionEnabled: z.boolean().default(true),
+  pluginConflictProtectionEnabled: z.boolean().default(false),
   pluginConflictRecords: z.array(z.object({
     id: z.string().min(1).max(256),
     detectedAt: z.number(),
@@ -48,12 +102,19 @@ export const FreeCodeGoPluginConflictSettingsSchema = z.object({
     disabledModuleName: z.string().min(1).max(512),
     keptEntryId: z.string().min(1).max(512),
     keptModuleName: z.string().min(1).max(512),
+    // Declared so the flag survives the settings document round trip: an
+    // undeclared key is dropped when the document is parsed, and the panel would
+    // then describe a stand-down as a repair that the Harness lost. Schemastery
+    // leaves a field without `.required()` optional, so an old record parses too.
+    yieldedToOfficial: z.boolean(),
   })).default([]),
 }) as z<FreeCodeGoPluginConflictSettings>
 
 /**
  * Extract only literal registrations that have a globally exclusive identity.
  * Dynamic registrations are intentionally ignored rather than guessed.
+ * @param source - the plugin source text to scan.
+ * @returns the resource Claim rows, in backend order.
  */
 export function scanPluginResourceClaims(source: string): readonly ResourceClaim[] {
   const claims = new Map<string, ResourceClaim>()
@@ -116,6 +177,7 @@ export class FreeCodeGoPluginConflictGuard {
   private seedTask: Promise<void> | undefined
   private preflightTask = Promise.resolve()
   private started = false
+  private interceptionInstalled = false
   private enabled: boolean
 
   constructor(
@@ -127,10 +189,24 @@ export class FreeCodeGoPluginConflictGuard {
     this.enabled = settings?.get()?.pluginConflictProtectionEnabled ?? bootstrapConflictProtectionEnabled()
   }
 
-  /** Install plugin-owned Loader lifecycle wrappers and seed active entry claims. */
+  /**
+   * Install plugin-owned Loader lifecycle wrappers and seed active entry claims.
+   *
+   * Nothing is intercepted while the switch is off: a wrapper left installed
+   * "just in case" would still be this plugin reading every entry's package
+   * before it starts, which is the decision the switch is about. `configure`
+   * installs the wrappers when the setting is turned on.
+   */
   start(): void {
     if (this.started) return
     this.started = true
+    this.installInterception()
+  }
+
+  /** Wrap every entry's start path, once, and only while the switch is on. */
+  private installInterception(): void {
+    if (this.interceptionInstalled || !this.protectionEnabled()) return
+    this.interceptionInstalled = true
     this.seedTask ??= this.seed()
     this.ctx.effect(() => {
       const disposeEntryInit = this.ctx.on('loader/entry-init', (entry) => {
@@ -151,11 +227,16 @@ export class FreeCodeGoPluginConflictGuard {
     }, 'freecodego: plugin conflict lifecycle guard')
   }
 
-  /** Attach settings after a pre-Loader bootstrap installation. */
+  /** Attach settings after a pre-Loader bootstrap installation.
+   * @param settings - the plugin settings port, when one is available.
+   */
   configure(settings: FreeCodeGoSettingsPort | undefined): void {
     if (settings === undefined || settings === this.settings) return
     this.settings = settings
-    this.enabled = settings.get()?.pluginConflictProtectionEnabled ?? true
+    this.enabled = settings.get()?.pluginConflictProtectionEnabled ?? bootstrapConflictProtectionEnabled()
+    // The switch may already be on when the settings port arrives (the guard is
+    // installed before the Loader, where only the raw settings file was readable).
+    if (this.started) this.installInterception()
     const persisted = settings.get()?.pluginConflictRecords ?? []
     const merged = [...persisted, ...this.records.filter(record => !persisted.some(item => sameConflict(item, record)))].slice(-MAX_RECORDS)
     this.records = merged
@@ -164,16 +245,55 @@ export class FreeCodeGoPluginConflictGuard {
     if (merged.length !== persisted.length) void settings.update({ pluginConflictRecords: merged }).catch(() => undefined)
   }
 
-  /** Return the browser-safe policy and automatic-repair history. */
+  /** Return the browser-safe policy and automatic-repair history. 
+   * @returns the plugin Conflict Status.
+   */
   snapshot(): FreeCodeGoPluginConflictStatus {
-    const current = this.settings?.get()
     return {
-      pluginConflictProtectionEnabled: current?.pluginConflictProtectionEnabled ?? this.enabled,
+      pluginConflictProtectionEnabled: this.protectionEnabled(),
       pluginConflictRecords: this.records,
+      pluginConflictActiveRecords: this.activeRecordIds(),
     }
   }
 
-  /** Persist the global automatic-repair switch. */
+  /**
+   * The stored records the running tree still matches.
+   *
+   * History is what makes this necessary. A record is written once and kept, so a
+   * boot that followed a live bundle change carries a repair whose polarity the
+   * tree has since reversed — the entry it says it stopped is the one running,
+   * and the entry it says it kept is the one standing down. Reporting that as a
+   * current repair claims the Harness disabled a plugin it is using.
+   */
+  private activeRecordIds(): readonly string[] {
+    const loader = this.ctx.get('loader')
+    if (loader === undefined) return []
+    const entries = new Map<string, Entry>()
+    for (const entry of loader.entries()) entries.set(effectiveEntryId(entry, entry.options), entry)
+    return this.records.flatMap((record) => {
+      const disabled = entries.get(record.disabledEntryId)
+      const kept = entries.get(record.keptEntryId)
+      // Both halves have to hold, and the disabled one has to be stopped by its
+      // own effective options: that is the state the record describes.
+      const stopped = disabled !== undefined && disabled.disabled
+      const running = kept !== undefined && kept.fiber !== undefined && kept.fiber.uid !== null
+      return stopped && running ? [record.id] : []
+    })
+  }
+
+  /**
+   * The switch as the settings port reports it right now, rather than as it was
+   * read when this guard was built: the panel can turn it on or off while the
+   * Loader is running, and the running Loader is what the answer acts on.
+   */
+  private protectionEnabled(): boolean {
+    return this.settings?.get()?.pluginConflictProtectionEnabled ?? this.enabled
+  }
+
+  /** Persist the global automatic-repair switch. 
+   * @param enabled - whether this capability is switched on.
+   * @returns the plugin Conflict Status.
+   */
   async setEnabled(enabled: boolean): Promise<FreeCodeGoPluginConflictStatus> {
     this.enabled = enabled
     await this.settings?.update({ pluginConflictProtectionEnabled: enabled })
@@ -233,13 +353,16 @@ export class FreeCodeGoPluginConflictGuard {
   }
 
   private async preflight(entry: Entry, candidate: EntryOptions): Promise<void> {
+    // Off: the Harness's registries decide, and its own error names the resource.
+    // Checked before the scan rather than after, so an off switch costs no reads.
+    if (!this.protectionEnabled()) return
     if (candidate.group || candidate.disabled) return
     const candidateEntryId = effectiveEntryId(entry, candidate)
     const candidateClaims = await this.claimsFor(entry, candidate)
     const candidateFiles = await this.scannedFilesFor(entry, candidate)
-    const conflict = this.snapshot().pluginConflictProtectionEnabled
+    const conflicts = this.protectionEnabled()
       ? candidateClaims.map(claim => ({ claim, existing: this.claims.get(resourceKey(claim)) }))
-        .find((value): value is { claim: ResourceClaim; existing: OwnedClaim } =>
+        .filter((value): value is { claim: ResourceClaim; existing: OwnedClaim } =>
           value.existing !== undefined
           && value.existing.entryId !== candidateEntryId
           // A package may be mounted more than once with different config
@@ -254,21 +377,85 @@ export class FreeCodeGoPluginConflictGuard {
           // registration and must not disable each other. Independent plugins
           // in separate files scan disjoint file sets and still conflict.
           && !this.claimsReadFromOverlappingSources(value.existing.entryId, candidateFiles))
-      : undefined
-    if (conflict === undefined) {
-      this.rememberClaims(entry, candidate, candidateClaims)
-      this.resolvedScannedFiles.set(candidateEntryId, new Set(candidateFiles))
+      : []
+
+    for (const conflict of conflicts) {
+      // Official capability outranks this plugin's stand-in for it. The vendored
+      // pair is mounted only for a composition that never selected the official
+      // team bundles, and its `!!js` stand-down reads the launch-time bundle
+      // list — which a live bundle change leaves stale, so both mount and the
+      // claim order, not the intent, decides the winner. Yielding here makes the
+      // Harness's own plugin the one that keeps the resource in that window too.
+      if (this.yieldsToOfficial(candidate, conflict.existing)) {
+        await this.yieldToOfficial(entry, candidate, candidateEntryId, conflict)
+        continue
+      }
+      candidate.disabled = true
+      await this.record({
+        resource: conflict.claim.resource,
+        resourceName: conflict.claim.resourceName,
+        disabledEntryId: candidateEntryId,
+        disabledModuleName: candidate.name,
+        keptEntryId: conflict.existing.entryId,
+        keptModuleName: conflict.existing.moduleName,
+      })
       return
     }
 
-    candidate.disabled = true
+    this.rememberClaims(entry, candidate, candidateClaims)
+    this.resolvedScannedFiles.set(candidateEntryId, new Set(candidateFiles))
+  }
+
+  /** Whether the Harness's own module should take a resource from this plugin's stand-in.
+   * @param candidate - options of the entry whose start was intercepted.
+   * @param existing - the active claim the candidate duplicates.
+   * @returns true when the candidate is official and the holder is our own fallback.
+   */
+  private yieldsToOfficial(candidate: EntryOptions, existing: OwnedClaim): boolean {
+    return isOfficialModuleName(candidate.name) && isOwnStandIn(existing.moduleName, existing.ownerId)
+  }
+
+  /**
+   * Stop this plugin's own stand-in and hand its resource to the official entry
+   * that is starting.
+   *
+   * `update` is the Loader's own enablement path: it merges the option and unloads
+   * the running fiber, so the fallback neither serves the resource nor restarts
+   * behind the official mount. Its remaining claims are released with it — a
+   * stopped entry holds nothing, and a claim left behind would disable the next
+   * third-party plugin that names a resource nothing is serving.
+   * @param entry - the Loader entry being started.
+   * @param candidate - options of the entry being started.
+   * @param candidateEntryId - effective id of the entry being started.
+   * @param conflict - the claim and the stand-in that currently holds it.
+   */
+  private async yieldToOfficial(
+    entry: Entry,
+    candidate: EntryOptions,
+    candidateEntryId: string,
+    conflict: { claim: ResourceClaim; existing: OwnedClaim },
+  ): Promise<void> {
+    if (!conflict.existing.entry.disabled) {
+      // A Loader that refuses the update still has an official entry on the same
+      // name: this is a best effort, and the recorded repair is what the user reads.
+      await conflict.existing.entry.update({ disabled: true }).catch(() => undefined)
+    }
+    this.forget(conflict.existing.ownerId)
+    this.claims.set(resourceKey(conflict.claim), {
+      ...conflict.claim,
+      entryId: candidateEntryId,
+      ownerId: entry.id,
+      moduleName: candidate.name,
+      entry,
+    })
     await this.record({
       resource: conflict.claim.resource,
       resourceName: conflict.claim.resourceName,
-      disabledEntryId: candidateEntryId,
-      disabledModuleName: candidate.name,
-      keptEntryId: conflict.existing.entryId,
-      keptModuleName: conflict.existing.moduleName,
+      disabledEntryId: conflict.existing.entryId,
+      disabledModuleName: conflict.existing.moduleName,
+      keptEntryId: candidateEntryId,
+      keptModuleName: candidate.name,
+      yieldedToOfficial: true,
     })
   }
 
@@ -282,7 +469,7 @@ export class FreeCodeGoPluginConflictGuard {
     const entryId = effectiveEntryId(entry, options)
     for (const claim of claims) {
       const key = resourceKey(claim)
-      if (!this.claims.has(key)) this.claims.set(key, { ...claim, entryId, ownerId: entry.id, moduleName: options.name })
+      if (!this.claims.has(key)) this.claims.set(key, { ...claim, entryId, ownerId: entry.id, moduleName: options.name, entry })
     }
   }
 
@@ -432,10 +619,13 @@ function bootstrapConflictProtectionEnabled(): boolean {
   try {
     const source = readFileSync(settingsPath, 'utf8')
     const match = source.match(/^freecodego-harness:\s*\r?\n(?:[ \t]+[^\r\n]*\r?\n)*?[ \t]+pluginConflictProtectionEnabled:\s*(true|false)\s*(?:#.*)?$/m)
-    return match?.[1] === undefined ? true : match[1] === 'true'
+    // Absent means off, and the file is read raw because this runs before the
+    // settings service exists — a guard installed pre-Loader has no other way to
+    // know whether this deployment asked for the override.
+    return match?.[1] === 'true'
   } catch {
     // The settings document is absent before the profile's first start.
-    return true
+    return false
   }
 }
 
@@ -450,7 +640,11 @@ function sameConflict(left: FreeCodeGoPluginConflictRecord, right: FreeCodeGoPlu
 
 const installedGuards = new WeakMap<Context, FreeCodeGoPluginConflictGuard>()
 
-/** Install the guard before Loader starts the profile's configured entries. */
+/** Install the guard before Loader starts the profile's configured entries. 
+ * @param ctx - context carrying the services this call reads.
+ * @returns the plugin Conflict Guard.
+ * @param settings - the Host settings handle the guard reads command conflicts through.
+ */
 export function installFreeCodeGoPluginConflictGuard(
   ctx: Context,
   settings?: FreeCodeGoSettingsPort,

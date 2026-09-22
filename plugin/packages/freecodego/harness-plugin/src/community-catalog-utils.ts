@@ -1,19 +1,32 @@
 import fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { assertExternalEngineeringAssetSafe } from './engineering.ts'
 import { childProcessEnvironment } from './engineering-graphify.ts'
 import { readJsonFile } from './community-storage.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
+import { asRecord as record } from './untrusted-json.ts'
 import type { CommunityCatalogPlugin } from './types.ts'
 
 const COMMUNITY_ASSET_HOSTS = new Set(['raw.githubusercontent.com', 'user-images.githubusercontent.com', 'camo.githubusercontent.com', 'github.com'])
-function record(value: unknown): Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
 function marketplaceUrl(value: unknown): string | undefined { if (typeof value !== 'string' || value.trim() === '') return undefined; try { const url = new URL(value.trim()); if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined; url.username = ''; url.password = ''; return url.toString() } catch { return undefined } }
+/**
+ * Accept an asset URL only when it points at an allow-listed GitHub host.
+ * @param value - the candidate URL.
+ * @returns the normalized URL, or `undefined` when it is not allowed.
+ */
 export function communityCatalogAssetUrl(value: unknown): string | undefined { const normalized = marketplaceUrl(value); if (normalized === undefined) return undefined; try { return COMMUNITY_ASSET_HOSTS.has(new URL(normalized).hostname.toLowerCase()) ? normalized : undefined } catch { return undefined } }
+/**
+ * Accept an asset URL only when it is a raw.githubusercontent.com URL.
+ * @param value - the candidate URL.
+ * @returns the normalized URL, or `undefined` when it is not a verified raw URL.
+ */
 export function verifiedGithubAssetUrl(value: unknown): string | undefined { const normalized = marketplaceUrl(value); if (normalized === undefined) return undefined; try { return new URL(normalized).hostname.toLowerCase() === 'raw.githubusercontent.com' ? normalized : undefined } catch { return undefined } }
+/**
+ * Parse a marketplace catalog document, dropping malformed rows.
+ * @param value - the parsed JSON document.
+ * @returns the catalog, or `undefined` when it carries no valid rows.
+ */
 export function parseCommunityCatalog(value: unknown): { readonly updated?: string; readonly plugins: readonly CommunityCatalogPlugin[] } | undefined {
   const root = record(value)
   const plugins = Array.isArray(root.plugins) ? root.plugins.flatMap((item) => {
@@ -26,7 +39,15 @@ export function parseCommunityCatalog(value: unknown): { readonly updated?: stri
   if (plugins.length === 0) return undefined
   return { ...(typeof root.updated === 'string' ? { updated: root.updated } : {}), plugins }
 }
+/**
+ * A GitHub repository, optionally pinned to a ref and directory.
+ */
 export interface GithubCommunityRepository { readonly owner: string; readonly repository: string; readonly ref?: string; readonly directory?: string }
+/**
+ * Parse a GitHub URL into its repository, ref, and directory.
+ * @param value - the URL to parse.
+ * @returns the parsed repository, or `undefined` when the URL is not a GitHub repo.
+ */
 export function githubCommunityRepository(value: string): GithubCommunityRepository | undefined {
   try { const url = new URL(value); if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com') return undefined; const parts = url.pathname.split('/').filter(Boolean); if (parts.length < 2) return undefined; const owner = parts[0]!; const repository = parts[1]!.replace(/\.git$/i, ''); if (parts[2]?.toLowerCase() !== 'tree' || parts[3] === undefined) return { owner, repository }; const directory = parts.slice(4).join('/'); return { owner, repository, ref: parts[3], ...(directory === '' ? {} : { directory }) } } catch { return undefined }
 }
@@ -37,6 +58,8 @@ export function githubCommunityRepository(value: string): GithubCommunityReposit
  * `value.includes('icon')` is true for `favicon.png`, so the previous order
  * scored a favicon as a first-class icon and ranked it *above* a logo. A
  * favicon is the lowest-quality option, not the highest.
+ * @param name - the candidate icon file name.
+ * @returns the sort key; lower ranks higher.
  */
 export function communityIconScore(name: string): number {
   const value = name.toLowerCase()
@@ -63,6 +86,11 @@ interface CommunityIconCache {
   readonly entries: Readonly<Record<string, { readonly expiresAt: number; readonly iconUrl: string | null }>>
 }
 
+/**
+ * Fetch and parse a marketplace catalog document.
+ * @param url - the catalog URL.
+ * @returns the catalog document.
+ */
 export async function fetchCommunityCatalog(url: string): Promise<{ readonly updated?: string; readonly plugins: readonly CommunityCatalogPlugin[] }> {
   const response = await fetch(url, {
     headers: { accept: 'application/json', 'user-agent': 'FreeCodeGo-Harness' },
@@ -77,6 +105,11 @@ export async function fetchCommunityCatalog(url: string): Promise<{ readonly upd
   return catalog
 }
 
+/**
+ * Read the persisted catalog cache.
+ * @param file - the cache file path.
+ * @returns the cached catalog, or `undefined` when none is stored.
+ */
 export async function readCommunityCatalogCache(file: string): Promise<CommunityCatalogCache | undefined> {
   const value = record(await readJsonFile(file))
   if (value.version !== 1 || typeof value.savedAt !== 'number') return undefined
@@ -88,6 +121,9 @@ export async function readCommunityCatalogCache(file: string): Promise<Community
  * Buffer a response body up to `maxBytes` while streaming, so a server that
  * lies about (or omits) Content-Length cannot balloon memory before the cap
  * is checked. Mirrors native-runtime-host's downloadToFile byte accounting.
+ * @param response - the streaming response to read.
+ * @param maxBytes - the byte cap the body may not exceed.
+ * @returns the decoded body text.
  */
 export async function readBodyWithCap(response: Response, maxBytes: number): Promise<string> {
   const declared = Number(response.headers.get('content-length'))
@@ -113,6 +149,11 @@ export async function readBodyWithCap(response: Response, maxBytes: number): Pro
   return body + decoder.decode()
 }
 
+/**
+ * Read a package manifest for its declared icon URL.
+ * @param manifestUrl - the verified manifest URL.
+ * @returns the icon URL, `null` for a definitive absence, or `undefined` when retryable.
+ */
 export async function communityManifestIcon(manifestUrl: string): Promise<string | null | undefined> {
   let response: Response
   try {
@@ -135,6 +176,11 @@ export async function communityManifestIcon(manifestUrl: string): Promise<string
   return null
 }
 
+/**
+ * Read a README for its first allow-listed image.
+ * @param readmeUrl - the verified README URL.
+ * @returns the image URL, `null` for a definitive absence, or `undefined` when retryable.
+ */
 export async function communityReadmeImage(readmeUrl: string): Promise<string | null | undefined> {
   let response: Response
   try {
@@ -164,6 +210,11 @@ export async function communityReadmeImage(readmeUrl: string): Promise<string | 
   return null
 }
 
+/**
+ * Discover an icon from one repository directory via the GitHub contents API.
+ * @param repository - the repository, ref, and directory to read.
+ * @returns the icon URL, `null` for a definitive absence, or `undefined` when retryable.
+ */
 export async function resolveCommunityRepositoryDirectoryIcon(repository: GithubCommunityRepository): Promise<string | null | undefined> {
   const directory = repository.directory?.split('/').map(encodeURIComponent).join('/')
   const endpoint = new URL(`https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/contents${directory === undefined ? '' : `/${directory}`}`)
@@ -195,7 +246,11 @@ export async function resolveCommunityRepositoryDirectoryIcon(repository: Github
   return readmeUrl === undefined ? null : communityReadmeImage(readmeUrl)
 }
 
-/** `null` means the repository was checked but provides no icon; `undefined` is retryable. */
+/**
+ * `null` means the repository was checked but provides no icon; `undefined` is retryable.
+ * @param sourceUrl - the catalog entry's repository URL.
+ * @returns the icon URL, `null` for a definitive absence, or `undefined` when retryable.
+ */
 export async function resolveCommunityRepositoryIcon(sourceUrl: string): Promise<string | null | undefined> {
   const repository = githubCommunityRepository(sourceUrl)
   if (repository === undefined) return null
@@ -206,6 +261,11 @@ export async function resolveCommunityRepositoryIcon(sourceUrl: string): Promise
   return resolveCommunityRepositoryDirectoryIcon({ owner: repository.owner, repository: repository.repository, ...(repository.ref === undefined ? {} : { ref: repository.ref }) })
 }
 
+/**
+ * Read the persisted icon cache.
+ * @param file - the cache file path.
+ * @returns the icon cache, empty when none is stored.
+ */
 export async function readCommunityIconCache(file: string): Promise<CommunityIconCache> {
   const value = record(await readJsonFile(file))
   if (value.version !== 2) return { version: 2, entries: {} }
@@ -261,134 +321,7 @@ export async function assertSkillPayloadHasNoLinks(root: string, prefix = '', se
   }
 }
 
-/** The filesystem steps a promotion takes, injected so its failure paths are testable. */
-export interface SkillPromotionIo {
-  readonly mkdir: (path: string) => Promise<void>
-  readonly copy: (from: string, to: string) => Promise<void>
-  readonly move: (from: string, to: string) => Promise<void>
-  readonly remove: (path: string) => Promise<void>
-  readonly exists: (path: string) => Promise<boolean>
-}
 
-/** The real filesystem, as a promotion uses it. */
-export const NODE_SKILL_PROMOTION_IO: SkillPromotionIo = {
-  mkdir: async (path) => { await fs.mkdir(path, { recursive: true }) },
-  copy: async (from, to) => { await fs.cp(from, to, { recursive: true }) },
-  move: async (from, to) => { await fs.rename(from, to) },
-  remove: async (path) => { await fs.rm(path, { recursive: true, force: true }) },
-  exists: async (path) => fs.stat(path).then(() => true, () => false),
-}
-
-/**
- * The two transient paths a promotion uses, both beside the destination.
- *
- * Beside it rather than in the system temp directory because a rename across
- * filesystems is a copy, and a copy is the step that cannot be undone. Named
- * after the destination rather than with a random token because the names are
- * how a promotion that was killed between its two renames is recognized and
- * finished by the next one — and because two installs of the same Skill should
- * collide loudly instead of interleaving silently.
- */
-export function skillPromotionPaths(destination: string): { readonly staged: string; readonly backup: string } {
-  const parent = path.dirname(destination)
-  const name = path.basename(destination)
-  return {
-    staged: path.join(parent, `.freecodego-skill-staging-${name}`),
-    backup: path.join(parent, `.freecodego-skill-backup-${name}`),
-  }
-}
-
-/**
- * Install a prepared payload directory at its destination, recoverably.
- *
- * The three rules, borrowed from `skills/installer.ts` because they apply to any
- * Skill an agent reads at discovery time:
- *
- * 1. **Nothing appears at the destination until the payload is complete.** The
- *    copy lands in a staging directory, so a copy that fails halfway is a
- *    directory nobody reads rather than a Skill whose `SKILL.md` promises files
- *    that are not there — which no later session can tell from an intentionally
- *    small Skill.
- * 2. **A replaced Skill is recoverable.** The installed version is renamed
- *    aside first and renamed back if the promotion fails, so an upgrade that
- *    fails leaves the working version working.
- * 3. **An interrupted promotion is finished, not stacked.** The names are
- *    derived from the destination, so a promotion killed between its two renames
- *    is found by the next one: the version under the backup name is put back if
- *    the destination is gone, and cleared if it is not. Either way no copy of a
- *    Skill is left lying beside the real one — the Skill service lists every
- *    directory under a root, so a leftover is not invisible to it.
- * @param source - the directory to install, already screened.
- * @param destination - where the Skill belongs.
- * @param io - the filesystem steps, injectable so the failure paths can be driven.
- */
-export async function promoteSkillDirectory(source: string, destination: string, io: SkillPromotionIo = NODE_SKILL_PROMOTION_IO): Promise<void> {
-  const { staged, backup } = skillPromotionPaths(destination)
-  await io.mkdir(path.dirname(destination))
-  if (await io.exists(backup)) {
-    if (await io.exists(destination)) await io.remove(backup)
-    else await io.move(backup, destination)
-  }
-  // A staging directory left by an interrupted attempt holds an unknown mixture;
-  // copying over it would keep every file this payload does not have.
-  await io.remove(staged)
-  try {
-    await io.copy(source, staged)
-  } catch (error) {
-    await io.remove(staged)
-    throw new Error(`the Skill payload could not be staged, so the installed version was left untouched: ${detail(error)}`)
-  }
-  let moved = false
-  try {
-    // A rename is the existence probe as well as the move, so there is no window
-    // between "is it there" and "move it" for another install to slip into.
-    await io.move(destination, backup)
-    moved = true
-  } catch (error) {
-    if (errorCode(error) !== 'ENOENT') {
-      await io.remove(staged)
-      throw new Error(`the Skill installed at ${destination} could not be moved aside, so the payload was not promoted: ${detail(error)}`)
-    }
-  }
-  try {
-    await io.move(staged, destination)
-  } catch (error) {
-    if (moved) await io.move(backup, destination).catch(() => undefined)
-    await io.remove(staged)
-    throw new Error(`the Skill could not be promoted${moved ? '; the previously installed version was restored' : ''}: ${detail(error)}`)
-  }
-  if (moved) await io.remove(backup)
-}
-
-function detail(error: unknown): string { return error instanceof Error ? error.message : String(error) }
-function errorCode(error: unknown): string | undefined { return (error as { readonly code?: string } | undefined)?.code }
-
-export async function importGithubSkill(input: { readonly source: string; readonly skillName: string; readonly destination: string }): Promise<void> {
-  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'freecodego-skill-marketplace-'))
-  try {
-    const repository = `https://github.com/${input.source}.git`
-    const clone = await runCommand('git', ['clone', '--depth', '1', '--filter=blob:none', repository, temporary], process.cwd())
-    if (clone.code !== 0) throw new Error(clone.stderr.trim() || 'git could not clone the Skill repository')
-    const found = await findSkillDirectory(temporary, input.skillName)
-    // "Not there" and "not looked for" are different answers, and the search's own
-    // budget is why: past it, a repository that holds the Skill is indistinguishable
-    // from one that does not, so the refusal has to describe the search instead of
-    // telling the user their repository is missing something it may well have.
-    if (found === 'exhausted') {
-      throw new Error(`the Skill repository holds more entries than the Skill search walks (${String(SKILL_SEARCH_ENTRY_LIMIT)}), so a SKILL.md named "${input.skillName}" could not be looked for; install it from a repository that keeps the Skill nearer its root`)
-    }
-    if (found === 'not-found') throw new Error(`repository does not contain a SKILL.md named "${input.skillName}"`)
-    const source = found.directory
-    // Before the body is read: a link in the payload would otherwise decide both
-    // which file this scan inspects and which file the installed Skill names.
-    await assertSkillPayloadHasNoLinks(source)
-    const skill = await fs.readFile(path.join(source, 'SKILL.md'), 'utf8')
-    assertExternalEngineeringAssetSafe(`skill:${input.source}/${input.skillName}`, skill, true)
-    await promoteSkillDirectory(source, input.destination)
-  } finally {
-    await fs.rm(temporary, { recursive: true, force: true })
-  }
-}
 
 /** Entries one Skill search may visit before it stops looking. */
 export const SKILL_SEARCH_ENTRY_LIMIT = 4_000
@@ -416,6 +349,7 @@ export type SkillDirectorySearch =
  * @param root - the cloned repository directory.
  * @param expectedName - the Skill name, matched against the frontmatter or the directory.
  * @param entryLimit - how many entries one search may visit.
+ * @returns the skill Directory Search.
  */
 export async function findSkillDirectory(root: string, expectedName: string, entryLimit = SKILL_SEARCH_ENTRY_LIMIT): Promise<SkillDirectorySearch> {
   const queue: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }]
@@ -444,14 +378,41 @@ export async function findSkillDirectory(root: string, expectedName: string, ent
 /** Community CLI timeout: a hung child must not hold the install mutex forever. */
 const COMMUNITY_COMMAND_TIMEOUT_MS = 10 * 60_000
 
-export function runCommand(command: string, args: readonly string[], cwd: string): Promise<{ readonly code: number; readonly stderr: string }> {
+/** Bytes of a captured stdout one community command may produce before the rest is dropped. */
+export const COMMUNITY_COMMAND_STDOUT_LIMIT = 64 * 1024
+
+/**
+ * Run one community CLI command, bounded by a timeout.
+ *
+ * `captureStdout` exists for the one command whose *answer* is stdout —
+ * `git rev-parse HEAD`, which is how a Skill install pins the commit it received
+ * rather than the ref it asked for. It stays off by default: a pipe nobody drains
+ * blocks a chatty child forever, which is the reason stdout was discarded here in
+ * the first place, and starting a drain for every clone would pay that cost for
+ * callers that never read the result.
+ * @param command - the executable to spawn.
+ * @param args - the arguments, passed as an array.
+ * @param cwd - the working directory.
+ * @param options - `captureStdout` collects stdout, bounded by {@link COMMUNITY_COMMAND_STDOUT_LIMIT}.
+ * @returns the exit code, redacted stderr, and stdout when it was captured.
+ */
+export function runCommand(command: string, args: readonly string[], cwd: string, options: { readonly captureStdout?: boolean } = {}): Promise<{ readonly code: number; readonly stderr: string; readonly stdout?: string }> {
   // Args are always passed as an array (git clone paths may contain spaces),
   // so no shell quoting layer is needed or safe here.
+  const capture = options.captureStdout === true
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: childProcessEnvironment() })
+    const child = spawn(command, args, { cwd, shell: false, windowsHide: true, stdio: ['ignore', capture ? 'pipe' : 'ignore', 'pipe'], env: childProcessEnvironment() })
     let stderr = ''
+    let stdout = ''
     let timedOut = false
     child.stderr?.on('data', (chunk) => { stderr += String(chunk) })
+    if (capture) {
+      // Read continuously so the child never blocks on a full pipe, and keep the
+      // first window of it: the commands this exists for answer in one short line.
+      child.stdout?.on('data', (chunk) => {
+        if (stdout.length < COMMUNITY_COMMAND_STDOUT_LIMIT) stdout += String(chunk).slice(0, COMMUNITY_COMMAND_STDOUT_LIMIT - stdout.length)
+      })
+    }
     // A full stdout pipe would block the child forever; stdout is discarded
     // on purpose and the timer bounds a child that never exits (otherwise it
     // would hold the community install mutex until Host restart).
@@ -460,14 +421,24 @@ export function runCommand(command: string, args: readonly string[], cwd: string
     child.once('exit', (code) => {
       clearTimeout(timer)
       const detail = redactCredentialShapes(timedOut ? `${stderr}\ncommunity command timed out after ${COMMUNITY_COMMAND_TIMEOUT_MS / 1_000}s`.trim() : stderr.trim())
-      resolve({ code: timedOut ? 1 : code ?? 1, stderr: detail })
+      resolve({ code: timedOut ? 1 : code ?? 1, stderr: detail, ...(capture ? { stdout } : {}) })
     })
   })
 }
 
+/**
+ * Whether a community CLI command is available on this host.
+ * @param command - the executable to probe.
+ * @returns whether the command answered.
+ */
 export function commandAvailable(command: string): Promise<boolean> {
-  // On Windows the executor (runPnpm) only accepts the corepack-bundled pnpm;
-  // probing PATH would report ready while every install then fails.
+  // Installs run through `dsh plugin`, whose child finds `pnpm` on the PATH this
+  // plugin hands it — a PATH that starts with the directory `node.exe` lives in,
+  // which is where Node's own corepack shims (`pnpm`, `pnpm.cmd`) sit. On
+  // Windows that shim is the pnpm an install will actually use, so the probe
+  // answers about it rather than about whatever `PATH` happens to hold: a
+  // user-writable pnpm reported ready while the shim was missing is the answer
+  // that turns every install into a failure after the button was offered.
   if (command === 'pnpm' && process.platform === 'win32') return Promise.resolve(existsSync(pnpmCorepackPath()))
   return new Promise((resolve) => {
     const child = spawn(command, ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' })
@@ -479,30 +450,11 @@ export function commandAvailable(command: string): Promise<boolean> {
 
 function pnpmCorepackPath(): string { return path.join(path.dirname(process.execPath), 'node_modules', 'corepack', 'dist', 'pnpm.js') }
 
-export function runPnpm(cwd: string, args: readonly string[]): Promise<{ readonly code: number; readonly stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const corepackPnpm = pnpmCorepackPath()
-    const command = process.platform === 'win32' ? process.execPath : 'pnpm'
-    const commandArgs = process.platform === 'win32' ? [corepackPnpm, ...args] : args
-    if (process.platform === 'win32' && !existsSync(corepackPnpm)) {
-      reject(new Error(`pnpm CLI is unavailable at ${corepackPnpm}`))
-      return
-    }
-    const child = spawn(command, commandArgs, { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'], env: childProcessEnvironment() })
-    let stderr = ''
-    let timedOut = false
-    child.stderr?.on('data', (chunk) => { stderr += String(chunk) })
-    // Same mutex concern as runCommand: bound a child that never exits.
-    const timer = setTimeout(() => { timedOut = true; child.kill() }, COMMUNITY_COMMAND_TIMEOUT_MS)
-    child.once('error', (error) => { clearTimeout(timer); reject(error) })
-    child.once('exit', (code) => {
-      clearTimeout(timer)
-      const detail = redactCredentialShapes(timedOut ? `${stderr}\npnpm command timed out after ${COMMUNITY_COMMAND_TIMEOUT_MS / 1_000}s`.trim() : stderr.trim())
-      resolve({ code: timedOut ? 1 : code ?? 1, stderr: detail })
-    })
-  })
-}
-
+/**
+ * Resolve the pnpm install target for a catalog entry.
+ * @param entry - the catalog entry's npm name and URL.
+ * @returns the pnpm target, or `undefined` when none can be derived.
+ */
 export function communityInstallTarget(entry: Pick<CommunityCatalogPlugin, 'npm' | 'url'>): string | undefined {
   if (typeof entry.npm === 'string' && NPM_PACKAGE_RE.test(entry.npm)) return entry.npm
   if (typeof entry.url !== 'string') return undefined

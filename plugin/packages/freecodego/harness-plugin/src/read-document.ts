@@ -592,6 +592,7 @@ function extractContentText(data: Uint8Array): string[] {
   return lines
 }
 
+/** What one PDF extraction produced, and the evidence behind a text-less result. */
 export interface PdfExtraction {
   readonly lines: readonly string[]
   readonly truncated: boolean
@@ -645,6 +646,9 @@ export function describePdfLimitation(extraction: PdfExtraction): string | undef
  * Extract text lines from PDF bytes: decode every content stream, skip
  * streams without text operators (fonts, images, xref), deduplicate identical
  * streams (incremental saves re-emit them), and stop at the character budget.
+ * @param data - the PDF's bytes.
+ * @param maxChars - the character budget for the extracted text.
+ * @returns the pdf Extraction.
  */
 export function extractPdfLines(data: Uint8Array, maxChars: number): PdfExtraction {
   const seen = new Set<string>()
@@ -788,6 +792,7 @@ function formatOutput(output: Record<string, unknown>, cellIndex: number, output
   return []
 }
 
+/** The formatted notebook and the metadata carried alongside its lines. */
 export interface NotebookFormat {
   readonly lines: readonly string[]
   readonly cells: number
@@ -799,6 +804,10 @@ export interface NotebookFormat {
 /**
  * Format a notebook's JSON into lines. nbformat 3 keeps cells under
  * `worksheets`; nbformat 4 under `cells` — both accepted.
+ * @param source - the notebook's raw JSON text.
+ * @param includeOutputs - whether to render cell outputs as well as sources.
+ * @param maxChars - the character budget for the formatted text.
+ * @returns the notebook Format.
  */
 export function formatNotebookLines(source: string, includeOutputs: boolean, maxChars = DEFAULT_MAX_CHARS): NotebookFormat {
   // A leading byte-order mark is a legal prefix of a UTF-8 text file, and Windows
@@ -859,6 +868,7 @@ export function formatNotebookLines(source: string, includeOutputs: boolean, max
 // Tool definition
 // ---------------------------------------------------------------------------
 
+/** The arguments `read_document` accepts. */
 export interface ReadDocumentArgs {
   readonly file_path?: string
   readonly offset?: number
@@ -867,6 +877,7 @@ export interface ReadDocumentArgs {
   readonly include_outputs?: boolean
 }
 
+/** The execution context `read_document` receives from the Host. */
 export interface ReadDocumentExec {
   readonly signal?: AbortSignal
 }
@@ -905,6 +916,7 @@ export type ReadDocumentToolDefinition = ToolDefinitionShape & {
 /**
  * The `read_document` literal, built by the plugin and registered through the
  * same `ctx.get('tools')` seam as the other plugin tools.
+ * @returns the read Document Tool Definition.
  */
 export function readDocumentToolDefinition(): ReadDocumentToolDefinition {
   return {
@@ -914,7 +926,12 @@ export function readDocumentToolDefinition(): ReadDocumentToolDefinition {
       type: 'object',
       additionalProperties: false,
       properties: {
-        file_path: { type: 'string', required: true, description: 'Path to a .pdf or .ipynb file.' },
+        // `required` is the sibling array below, not a per-property flag. The
+        // per-field form here was not merely ignored: Agnes validates the whole
+        // tool list on every request and answered `400 Tool 27 function has
+        // invalid 'parameters' schema: True is not of type 'array'`, so the chat
+        // route failed before the model saw anything.
+        file_path: { type: 'string', description: 'Path to a .pdf or .ipynb file.' },
         offset: { type: 'number', description: '1-based first line to return. Defaults to 1.' },
         limit: { type: 'number', description: `Maximum number of lines to return. Defaults to ${DEFAULT_WINDOW}.` },
         max_chars: { type: 'number', description: `Extraction budget in characters. Defaults to ${DEFAULT_MAX_CHARS}.` },

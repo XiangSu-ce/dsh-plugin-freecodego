@@ -223,7 +223,10 @@ function bareProgram(token: string | undefined): string {
   return name.replace(/\.(?:exe|cmd|bat|ps1|mjs|cjs)$/u, '')
 }
 
-/** Split a shell line on separators and pipes, keeping the segments in reading order. */
+/** Split a shell line on separators and pipes, keeping the segments in reading order.
+ * @param line - the shell line to split.
+ * @returns the non-empty segments, in reading order.
+ */
 export function shellSegments(line: string): readonly string[] {
   return line
     .replace(/\r\n?/gu, '\n')
@@ -232,13 +235,19 @@ export function shellSegments(line: string): readonly string[] {
     .filter(segment => segment !== '')
 }
 
-/** Whether an inline `-e`/`-p`/`-c` script contains a construct that can report failure. */
+/** Whether an inline `-e`/`-p`/`-c` script contains a construct that can report failure.
+ * @param script - the inline script text to inspect.
+ * @returns true when the script can report failure.
+ */
 export function inlineScriptCanFail(script: string): boolean {
   const text = script.toLowerCase()
   return FAILURE_CAPABLE_TOKENS.some(token => text.includes(token))
 }
 
-/** Whether a path names a temporary location, which is never part of the workspace. */
+/** Whether a path names a temporary location, which is never part of the workspace. 
+ * @param path - path the operation acts on.
+ * @returns true when the path names a temporary location.
+ */
 export function isTemporaryPath(path: string): boolean {
   const normalized = path.replace(/\\/gu, '/').toLowerCase()
   return normalized.startsWith('/tmp/') || normalized.startsWith('/var/tmp/') || normalized.startsWith('/private/var/') ||

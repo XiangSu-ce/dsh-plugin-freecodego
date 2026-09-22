@@ -10,9 +10,20 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { CompanionArbiter, IDLE_SIGNALS, type CompanionSignals } from '../src/client/companion/arbiter.ts'
-import { COMPLETION_HOLD_MS, FAILURE_HOLD_MS, IDLE_AFTER_MS, emptyMemory, projectSignals, type CompanionObservation } from '../src/client/companion/signals.ts'
-import { STATE_BY_ID } from '../src/client/companion/engine/states.ts'
+import { CompanionArbiter, FLOURISHES, IDLE_SIGNALS, type CompanionSignals } from '../src/client/companion/arbiter.ts'
+import {
+  COMPLETION_HOLD_MS,
+  FAILURE_HOLD_MS,
+  FLOURISH_PERIOD_MS,
+  FLOURISH_WINDOW_MS,
+  IDLE_AFTER_MS,
+  NOTICE_HOLD_MS,
+  START_HOLD_MS,
+  emptyMemory,
+  projectSignals,
+  type CompanionObservation,
+} from '../src/client/companion/signals.ts'
+import { STATE_BY_ID, type StateId } from '../src/client/companion/engine/states.ts'
 
 const signals = (over: Partial<CompanionSignals> = {}): CompanionSignals => ({ ...IDLE_SIGNALS, ...over })
 
@@ -37,13 +48,84 @@ describe('companion arbiter: which state the activity calls for', () => {
   it('maps each rung to its own state', () => {
     const arbiter = new CompanionArbiter()
     expect(arbiter.requested(signals({ longIdle: true }))).toBe('sleep')
+    expect(arbiter.requested(signals({ restless: true }))).toBe('egg')
     expect(arbiter.requested(signals({ notified: true }))).toBe('notify')
-    expect(arbiter.requested(signals({ streaming: true }))).toBe('comet')
     expect(arbiter.requested(signals({ justCompleted: true }))).toBe('burst')
+    expect(arbiter.requested(signals({ streaming: true }))).toBe('comet')
+    expect(arbiter.requested(signals({ starting: true }))).toBe('play')
     expect(arbiter.requested(signals({ thinking: true }))).toBe('thinking')
     expect(arbiter.requested(signals({ working: true }))).toBe('orbit')
     expect(arbiter.requested(signals({ failed: true }))).toBe('exclaim')
     expect(arbiter.requested(signals({ awaitingApproval: true }))).toBe('alert')
+  })
+
+  it('ranks every phase inside a turn above the turn itself', () => {
+    // The list reports `running` for the whole turn, so `thinking` is true beside
+    // every in-turn phase. A rung below it could never be observed for the length of
+    // a turn at all — which is exactly the defect this pins: `streaming` and
+    // `notified` used to sit under `thinking`, so the two poses with their own
+    // signals never appeared. Raising one of them under `thinking` again fails here.
+    const arbiter = new CompanionArbiter()
+    expect(arbiter.requested(signals({ thinking: true, working: true }))).toBe('orbit')
+    expect(arbiter.requested(signals({ thinking: true, streaming: true }))).toBe('comet')
+    expect(arbiter.requested(signals({ thinking: true, starting: true }))).toBe('play')
+    expect(arbiter.requested(signals({ thinking: true, notified: true }))).toBe('notify')
+  })
+
+  it('plays the greeting once, then hands the turn to its phases', () => {
+    const arbiter = new CompanionArbiter()
+    expect(arbiter.decide(signals({ starting: true, thinking: true }), 0).state).toBe('play')
+    // The start is still news when the reply begins: the greeting yields to the
+    // turn's own phase once its beat is over, rather than holding the row.
+    expect(arbiter.decide(signals({ starting: true, thinking: true, streaming: true }), 1_700).state).toBe('comet')
+  })
+
+  it('plays the whole resting catalogue before the session powers down', () => {
+    // The two halves driven together, on one clock, the way a seat drives them: the
+    // period decides when a flourish is due and which step it is, and the arbiter
+    // reads the pose out of that step. One pose per period, then round again, and the
+    // catalogue is short enough to finish inside a quiet stretch — the last entry is
+    // reachable, and a fifth period finds the session powered down instead.
+    const arbiter = new CompanionArbiter()
+    /** The catalogue as a rotation starting at a step: what a stretch of rest plays. */
+    const rotation = (from: number): StateId[] => [...FLOURISHES.slice(from), ...FLOURISHES.slice(0, from)]
+    const played: StateId[] = []
+    // The first window a session can be in is the end of its first full period of rest.
+    let memory = emptyMemory(0)
+    for (let period = 1; period <= FLOURISHES.length; period += 1) {
+      const at = FLOURISH_PERIOD_MS * period
+      const due = projectSignals(observation(), at, memory)
+      memory = due.memory
+      expect(due.signals.restless).toBe(true)
+      expect(due.signals.restlessStep).toBe(period)
+      played.push(arbiter.decide(due.signals, at).state)
+      // The pose serves its floor and then falls through to rest, while the window is
+      // still open — a held rung must not walk a catalogue it has not played.
+      expect(arbiter.decide(due.signals, at + 2_200).state).toBe('idle')
+      expect(arbiter.decide(due.signals, at + 2_200).state).toBe('idle')
+      // The window closes inside the period, which is what releases the one-shot
+      // latch: a level signal would be latched away after the first flourish.
+      const closed = projectSignals(observation(), at + FLOURISH_WINDOW_MS, memory)
+      memory = closed.memory
+      expect(closed.signals.restless).toBe(false)
+      expect(closed.signals.restlessStep).toBe(0)
+      expect(arbiter.decide(closed.signals, at + FLOURISH_WINDOW_MS).state).toBe('idle')
+    }
+    // The step is the clock's period index, so the rotation starts wherever the phase
+    // happened to be and runs in catalogue order from there — four windows, four
+    // poses, none repeated.
+    expect(played).toEqual(rotation(1))
+    expect(new Set(played).size).toBe(FLOURISHES.length)
+    // And the wrap is the catalogue's own length, so a fifth window — were one
+    // reachable — would open on the first entry again.
+    const wrapping = new CompanionArbiter()
+    expect(wrapping.requested(signals({ restless: true, restlessStep: FLOURISHES.length }))).toBe(FLOURISHES[0])
+
+    const asleepAt = FLOURISH_PERIOD_MS * (FLOURISHES.length + 1)
+    const asleep = projectSignals(observation(), asleepAt, memory)
+    expect(asleep.signals.longIdle).toBe(true)
+    expect(asleep.signals.restless).toBe(false)
+    expect(arbiter.decide(asleep.signals, asleepAt).state).toBe('sleep')
   })
 
   it('lets the most urgent simultaneous signal win', () => {
@@ -160,7 +242,114 @@ describe('companion signals: session facts to activity', () => {
     expect(out.thinking).toBe(true)
     expect(out.working).toBe(false)
     expect(out.longIdle).toBe(false)
-    expect(memory).toEqual({ running: true, lastActivityMs: 0, completionUntilMs: 0, failedJobKey: undefined, failureUntilMs: 0 })
+    expect(memory).toEqual({
+      running: true,
+      lastActivityMs: 0,
+      completionUntilMs: 0,
+      failedJobKey: undefined,
+      failureUntilMs: 0,
+      startKey: undefined,
+      startUntilMs: 0,
+      turnFailureKey: undefined,
+      turnFailureUntilMs: 0,
+      noticeKey: undefined,
+      noticeUntilMs: 0,
+    })
+  })
+
+  it('reads a tool in flight and a reply being written as the work they are', () => {
+    // The event log's two facts for the inside of a turn: the turn is running in
+    // both cases, so neither reading is a different *turn* state — they are the
+    // phases the session list cannot separate.
+    const tool = projectSignals(observation({ running: true, toolRunning: true }), 0, emptyMemory(0)).signals
+    expect(tool.working).toBe(true)
+    expect(tool.streaming).toBe(false)
+    const writing = projectSignals(observation({ running: true, streaming: true }), 0, emptyMemory(0)).signals
+    expect(writing.streaming).toBe(true)
+    expect(writing.working).toBe(false)
+  })
+
+  it('counts a tool in flight as activity, so it never powers down mid-call', () => {
+    const idle = projectSignals(observation(), IDLE_AFTER_MS, emptyMemory(0))
+    expect(idle.signals.longIdle).toBe(true)
+    const calling = projectSignals(observation({ toolRunning: true }), IDLE_AFTER_MS + 1, idle.memory)
+    expect(calling.signals.longIdle).toBe(false)
+  })
+
+  it('offers a turn start once, for its own window, and again for the next turn', () => {
+    const started = projectSignals(observation({ startKey: '12' }), 0, emptyMemory(0))
+    expect(started.signals.starting).toBe(true)
+    const held = projectSignals(observation({ startKey: '12' }), START_HOLD_MS - 1, started.memory)
+    expect(held.signals.starting).toBe(true)
+    expect(projectSignals(observation({ startKey: '12' }), START_HOLD_MS, held.memory).signals.starting).toBe(false)
+    // A turn that starts before the previous window closed is still a new start.
+    const again = projectSignals(observation({ startKey: '40' }), START_HOLD_MS, held.memory)
+    expect(again.signals.starting).toBe(true)
+  })
+
+  it('draws a failed turn, which no job list could report', () => {
+    // The measured gap: a turn that fails ends with an error and no job, so the
+    // job-derived `failed` was silent for exactly the failure the reader saw on
+    // screen. The failure identity is the event's own sequence number.
+    const failed = projectSignals(observation({ failureKey: '31' }), 0, emptyMemory(0))
+    expect(failed.signals.failed).toBe(true)
+    const settled = projectSignals(observation({ failureKey: '31' }), FAILURE_HOLD_MS, failed.memory)
+    expect(settled.signals.failed).toBe(false)
+  })
+
+  it('announces a message injected from outside the turn, and not the prompt itself', () => {
+    const injected = projectSignals(observation({ noticeKey: '7' }), 0, emptyMemory(0))
+    expect(injected.signals.notified).toBe(true)
+    expect(projectSignals(observation({ noticeKey: '7' }), NOTICE_HOLD_MS, injected.memory).signals.notified).toBe(false)
+  })
+
+  it('stirs a resting session on a period, and leaves it alone mid-turn', () => {
+    const early = projectSignals(observation(), FLOURISH_PERIOD_MS - 1, emptyMemory(0))
+    expect(early.signals.restless).toBe(false)
+    expect(early.signals.restlessStep).toBe(0)
+    const due = projectSignals(observation(), FLOURISH_PERIOD_MS, early.memory)
+    expect(due.signals.restless).toBe(true)
+    expect(due.signals.restlessStep).toBe(1)
+    // The window closes inside the period, which is what lets the next one offer
+    // the next pose: a level signal would be latched by the first flourish forever.
+    const closed = projectSignals(observation(), FLOURISH_PERIOD_MS + FLOURISH_WINDOW_MS, due.memory)
+    expect(closed.signals.restless).toBe(false)
+    // A second period offers it again, and work cancels it outright.
+    expect(projectSignals(observation(), FLOURISH_PERIOD_MS * 2, closed.memory).signals.restless).toBe(true)
+    const busy = projectSignals(observation({ running: true }), FLOURISH_PERIOD_MS * 3, closed.memory)
+    expect(busy.signals.restless).toBe(false)
+  })
+
+  it('stops stirring once the session has powered down', () => {
+    // `restless` and `sleep` are the two quiet ends of the ladder, and the powered-down
+    // one is the end of the other: a mark that kept stirring would never sleep. The
+    // instant is deliberately one that a flourish window falls on, so this pins that
+    // the power-down wins over the window rather than that the phase happened to miss.
+    const inWindow = FLOURISH_PERIOD_MS * 5
+    expect(inWindow % FLOURISH_PERIOD_MS).toBe(0)
+    const quiet = projectSignals(observation(), inWindow, emptyMemory(0))
+    expect(quiet.signals.longIdle).toBe(true)
+    expect(quiet.signals.restless).toBe(false)
+    expect(quiet.signals.restlessStep).toBe(0)
+  })
+
+  it('reads the resting phase from the clock, not from a seat’s own quiet history', () => {
+    // Seats do not mount together, so each one's quiet time is its own; the phase must
+    // not be, or two seats of one character would stir at different moments and ask
+    // for different poses out of the same catalogue. Two histories that both qualify
+    // as rested, one of them a period longer than the other, at the same instant.
+    const rested = projectSignals(observation(), FLOURISH_PERIOD_MS * 3, emptyMemory(0))
+    const alsoRested = projectSignals(observation(), FLOURISH_PERIOD_MS * 3, emptyMemory(FLOURISH_PERIOD_MS))
+    expect(rested.signals.restless).toBe(true)
+    expect(alsoRested.signals.restless).toBe(true)
+    expect(rested.signals.restlessStep).toBe(3)
+    expect(alsoRested.signals.restlessStep).toBe(3)
+
+    // And the step is 0 outside a window, whatever the period count: a pose is only
+    // ever read out of a real window, never out of a held signal.
+    const closed = projectSignals(observation(), FLOURISH_PERIOD_MS * 3 + FLOURISH_WINDOW_MS, rested.memory)
+    expect(closed.signals.restless).toBe(false)
+    expect(closed.signals.restlessStep).toBe(0)
   })
 
   it('reads live jobs as work and a failed job as a failure', () => {

@@ -27,7 +27,9 @@ export const FreeCodeGoGuardSettingsSchema = z.object({
   // material, and a denial message tells it how to proceed instead.
   envReadGuardEnabled: z.boolean().default(true),
   // Stops the token-burning failure mode where a stuck engine repeats one
-  // failing call until the user cancels the session.
+  // failing call until the user cancels the session. It applies to the native
+  // engines' own tools, which is the population no other loop check covers:
+  // Harness-dispatched calls are the Harness's own advisory guard's business.
   doomLoopGuardEnabled: z.boolean().default(true),
   // Probe-based LSP stack: on by default, mounts only when language-server
   // binaries resolve on PATH so boot never depends on tooling being present.
@@ -271,6 +273,8 @@ function credentialPathSegments(
  * Directory matching is per segment, not substring: `.ssh-backup/id_rsa` is a
  * different directory from `.ssh`, and a guard that matched substrings would
  * block every project named after one of these.
+ * @param rawPath - the path name the model wrote.
+ * @returns true when the name alone names a credential.
  */
 export function isCredentialPath(rawPath: string): boolean {
   const path = rawPath.trim()
@@ -292,25 +296,6 @@ export function isCredentialPath(rawPath: string): boolean {
   return false
 }
 
-/**
- * Symlink- and short-name-aware credential denial for path-taking tools.
- *
- * The lexical guard is fast and total, but it answers about the *name* the
- * model wrote. A symlink is the one construction that separates the name from
- * the file: `docs/notes.md -> .ssh/id_rsa` passes every lexical rule and still
- * returns the key. Resolving the path first closes that, and on Windows it also
- * catches an 8.3 short name that names a credential file.
- *
- * Fail-open is deliberate and matches the guard's own contract: a path that
- * cannot be resolved (permission denied, a dangling link, a race) leaves the
- * lexical decision standing rather than turning an I/O error into a denial the
- * model cannot act on. Only `read`/`write`/`edit` are resolved — `bash` runs
- * arbitrary programs, so there is no path to resolve before the command runs.
- *
- * @param toolName - the tool about to run.
- * @param args - its parsed arguments.
- * @returns the denial message, or `undefined` when the real path is safe.
- */
 /**
  * Every path one call names, in the order the call states them.
  *
@@ -339,6 +324,25 @@ function credentialPathsOf(args: unknown): readonly string[] {
   return pathArgumentsOf(decoded).map(entry => entry.value).filter(value => value.trim() !== '')
 }
 
+/**
+ * Symlink- and short-name-aware credential denial for path-taking tools.
+ *
+ * The lexical guard is fast and total, but it answers about the *name* the
+ * model wrote. A symlink is the one construction that separates the name from
+ * the file: `docs/notes.md -> .ssh/id_rsa` passes every lexical rule and still
+ * returns the key. Resolving the path first closes that, and on Windows it also
+ * catches an 8.3 short name that names a credential file.
+ *
+ * Fail-open is deliberate and matches the guard's own contract: a path that
+ * cannot be resolved (permission denied, a dangling link, a race) leaves the
+ * lexical decision standing rather than turning an I/O error into a denial the
+ * model cannot act on. Only `read`/`write`/`edit` are resolved — `bash` runs
+ * arbitrary programs, so there is no path to resolve before the command runs.
+ *
+ * @param toolName - the tool about to run.
+ * @param args - its parsed arguments.
+ * @returns the denial message, or `undefined` when the real path is safe.
+ */
 export async function credentialRealpathDenial(toolName: string, args: unknown): Promise<string | undefined> {
   if (!CREDENTIAL_PATH_TOOLS.has(toolName)) return undefined
   const paths = credentialPathsOf(args)
@@ -417,6 +421,9 @@ function decodeArgs(args: unknown): ToolArgsView | undefined {
  * scanning is intentionally conservative (reader-token + secret-path pairs and
  * whole-environment dumps); anything dynamic (`node -e`, curl to arbitrary
  * hosts) remains the approval/sandbox layer's job.
+ * @param toolName - name of the tool call being answered.
+ * @param args - the arguments the call was made with, of unknown shape.
+ * @returns the denial message, or `undefined` when the call is allowed.
  */
 export function credentialReadDenial(toolName: string, args: unknown): string | undefined {
   if (CREDENTIAL_PATH_TOOLS.has(toolName)) {
@@ -580,7 +587,10 @@ function scanShellCommand(command: string, depth: number): string | undefined {
   return undefined
 }
 
-/** Scan one shell command for whole-env dumps and secret-file access. */
+/** Scan one shell command for whole-env dumps and secret-file access.
+ * @param command - command line the worker is started with.
+ * @returns the denial message, or `undefined` when the command is allowed.
+ */
 export function bashCredentialDenial(command: string): string | undefined {
   return scanShellCommand(command, 0)
 }
@@ -680,6 +690,7 @@ export function normalizeCallArguments(value: unknown, key?: string, seen: WeakS
   return value
 }
 
+/** Tunables for the identical/near-identical call detector. */
 export interface DoomLoopOptions {
   /** Identical calls within the window before a denial (default 3). */
   readonly threshold?: number
@@ -768,6 +779,14 @@ interface DoomLoopChain {
  * Denies the Nth identical `(agent, tool, arguments)` call inside a sliding
  * window and holds the denial for a cooldown, so a stuck engine stops burning
  * tokens on a doomed retry loop while staying usable for different work.
+ *
+ * **Which calls this is for.** Only the ones the Host never dispatches: a native
+ * engine's own tools (Codex's shell, Claude's file tools) run inside that engine's
+ * process, so `tools/pre-execute` — and with it the Harness's advisory
+ * `dsh-repeat-tool-reminder` — never sees them, and this guard is the only loop
+ * protection that exists for them. Everything the Host dispatches, including the
+ * plugin's own MCP bridge, is the Harness's to judge; `native-tool-guard.ts`
+ * enforces exactly that split.
  *
  * A cumulative cost accumulator per fingerprint escalates the denial message
  * once repeated identical calls have wasted enough context/latency, and a
@@ -867,6 +886,10 @@ export class DoomLoopGuard {
     return total
   }
 
+  /** The denial for one call, or `undefined` when it is not a loop.
+   * @param exec - the tool call about to run.
+   * @returns the denial message, or `undefined` when the call is allowed.
+   */
   deny(exec: Readonly<ToolExecution>): string | undefined {
     if (this.exemptTools.has(exec.name)) return undefined
     const chains = this.chainsFor(exec)
@@ -1000,23 +1023,32 @@ export interface PlanModeGuardView {
 }
 
 /**
- * Combined guard for the plugin: settings-gated credential, command-policy,
- * Plan Mode, and doom-loop checks.
+ * Combined guard for the plugin: settings-gated credential, command-policy and
+ * Plan Mode checks.
  *
  * Order matters and is deliberate: credential protection and the command policy
- * are *monotonic* denials, so they are asked before the doom-loop heuristic — a
- * call refused for a policy reason must never be reported as a loop, and Plan
- * Mode must be able to refuse a call that would otherwise pass every other
- * check.
+ * are *monotonic* denials, and Plan Mode must be able to refuse a call that would
+ * otherwise pass every other check.
+ *
+ * **What is deliberately not here: loop hygiene.** This guard runs on
+ * `tools/pre-execute` for every call the Host dispatches, which is the same
+ * population the Harness's own advisory guard sees — `dsh-repeat-tool-reminder`
+ * counts the identical repeats and reminds the model at 3, 5 and 8. Both answers
+ * on one call is the split-authority shape this plugin is meant not to add: the
+ * Harness would ask the model to change approach while this plugin refused the
+ * call outright, on a different counter with a different window and no way for
+ * either to know about the other. The Harness owns this path, so the denial was
+ * removed from it — see {@link DoomLoopGuard} for the population it is left
+ * covering, which the advisory guard cannot see at all.
+ * @param deps - the settings reader and guards this pipeline is built from.
+ * @returns the guard function the Host calls with each tool execution.
  */
 export function freeCodeGoToolGuard(deps: {
   readonly settings: () => {
     readonly envReadGuardEnabled?: boolean
-    readonly doomLoopGuardEnabled?: boolean
     readonly commandPolicyEnabled?: boolean
     readonly planModeEnabled?: boolean
   } | undefined
-  readonly doomLoop: DoomLoopGuard
   /** Compiled command policy; the built-in rules when omitted. */
   readonly policy?: CompiledCommandPolicy
   /**
@@ -1059,7 +1091,6 @@ export function freeCodeGoToolGuard(deps: {
         if (refusal !== undefined) return refusal.message
       }
     }
-    if (settings?.doomLoopGuardEnabled !== false) return deps.doomLoop.deny(exec)
     return undefined
   }
 }
@@ -1082,6 +1113,9 @@ export function freeCodeGoToolGuard(deps: {
  * command names — the same file names in either shell — and a policy rule that
  * does not match PowerShell text simply does not fire, never the reverse: a
  * broader vocabulary can only add a refusal.
+ * @param toolName - name of the tool call being answered.
+ * @param args - the arguments the call was made with, of unknown shape.
+ * @returns the command to inspect, or `undefined` when the tool runs no shell command.
  */
 export function bashCommandOf(toolName: string, args: unknown): string | undefined {
   if (toolName !== 'bash' && toolName !== 'shell' && toolName !== 'exec_command' && toolName !== 'pwsh') return undefined

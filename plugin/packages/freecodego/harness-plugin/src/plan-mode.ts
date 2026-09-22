@@ -30,9 +30,8 @@
  * **The classification is exhaustive and fails closed.** The criterion for
  * `mutating` is the one the guidance states: it writes repo-tracked files, or it
  * runs another Agent that will. `engineering_checkpoint_restore` rewrites tracked
- * files and deletes the ones created since the snapshot; `engineering_team_merge`
- * is the only team operation that changes the shared tree; and
- * `engineering_team_member_start` launches a writer. A plugin tool this module has
+ * files and deletes the ones created since the snapshot; `engineering_hunk_revert`
+ * puts one hunk back; and `engineering_worktree_enter` cuts a branch. A plugin tool this module has
  * never classified is **refused**, not assumed harmless: the previous default
  * (anything not on a hand-written denylist is allowed) meant every newly added
  * mutating tool silently became callable in Plan Mode, which is the one direction
@@ -56,7 +55,9 @@ import { join } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { evaluateCommandPolicy, type CompiledCommandPolicy } from './command-policy.ts'
 import { freeCodeGoDataHome } from './data-home.ts'
+import { pluginToolsWithPlanMode, pluginToolsWithoutPrefix } from './tool-manifest.ts'
 
+/** Whether a conversation only gathers truth or may change the workspace. */
 export type PlanMode = 'execute' | 'plan'
 
 /**
@@ -66,19 +67,17 @@ export type PlanMode = 'execute' | 'plan'
  * a name that does not exist is inert, while a missing name is a hole.
  *
  * `write_file` was that hole, and it was left by a comment rather than by
- * oversight. Two sibling modules state in prose that this list refuses it —
- * `verify-on-stop.ts` in its own set's header, and `team/roles.ts` while
- * explaining why its writer list may differ — and the reason both give for the
+ * oversight. A sibling module states in prose that this list refuses it —
+ * `verify-on-stop.ts`, in its own set's header — and the reason it gives for the
  * omission is that naming it here would fold an MCP server's
  * `mcp__filesystem__write_file` into a planning session. That reason describes a
  * mechanism this fence does not have: the test below is
  * `PLAN_MODE_MUTATING_TOOLS.includes(tool)`, an exact comparison, so a bare
  * `write_file` entry can never match a prefixed name. The omission therefore
  * bought nothing and cost the one thing the header calls a hole — a name the
- * rest of this codebase treats as a writer (`WORKSPACE_MUTATING_TOOLS` and
- * `team/roles.ts`'s `WRITE_TOOL_NAMES` both carry it, and `hunk-glue.spec.ts`
- * uses it as *the* representative write tool) being callable while the workspace
- * is supposed to be frozen.
+ * rest of this codebase treats as a writer (`WORKSPACE_MUTATING_TOOLS` carries
+ * it, and `hunk-glue.spec.ts` uses it as *the* representative write tool) being
+ * callable while the workspace is supposed to be frozen.
  *
  * `edit_file` is the sibling spelling in the same alias family and is
  * deliberately **not** added: no sibling list treats it as a writer, so naming it
@@ -142,207 +141,82 @@ export const PLAN_MODE_MUTATING_TOOLS: readonly string[] = [
   // Fan-out runners, mounted on the `spawn` provider.
   'workflow',
   'ralph',
-  // The team tools that start a member's turn.
+  // The Harness's team tools that start a member's turn.
   'spawn_teammate',
   'send_message',
 ]
 
-/** Prefixes that identify a tool this plugin registered. */
+/**
+ * Prefixes that identify a tool this plugin registered.
+ *
+ * These prefixes, plus this plugin's own unprefixed names, are also the whole
+ * reach of the unclassified-tool rule below. An upstream capability — the five
+ * `session_*` query tools, a browser provider's tool names, a desktop driver's —
+ * is therefore neither refused nor permitted *by this mode*: the branch does not
+ * reach it. That is the same shape as the third-party MCP writer the spec records
+ * as a known gap, and it is deliberate. A browser and a desktop are not the
+ * workspace this mode freezes; a session-history read is the mode's own business
+ * to allow, and a list of names here could only be a guess, because a browser
+ * provider registers the tool names of the MCP server it drives and this
+ * repository cannot read that server's list. All three rows this bundle mounts
+ * (`bundle-latest/cordis.patch.yml`) ship `disabled`, so a deployment turns one on
+ * before this becomes its question. `tests/plan-mode.spec.ts` pins the boundary,
+ * and reads the query tool names from the package that registers them.
+ */
 export const PLAN_MODE_PLUGIN_TOOL_PREFIXES: readonly string[] = ['engineering_', 'advisor_', 'agnes_', 'freecodego_', 'headroom_']
 
 /**
- * Plugin tools Plan Mode refuses: they change what the workspace will contain,
- * or they run commands that can.
+ * Plugin tools Plan Mode refuses, read off the manifest's `planMode` column.
  *
- * The second clause is stated because a refused tool is not always a writing
- * tool. `engineering_team_verify` writes nothing itself and is here anyway — it
- * spawns the project's own build/type/lint/test scripts and up to five probe
- * programs the model authored, which is the same authority the shell has.
- *
- * `engineering_checkpoint_restore` is the one that matters most: its own
- * description is "tracked files return to their recorded content and files
- * created after the checkpoint are deleted", which is exactly the category the
- * guidance forbids — it was missing from the denylist, so a Plan Mode turn could
- * roll the workspace back.
+ * The names and the reasons for them are rows in `tool-manifest.ts`, because
+ * this list's own history is a record of entries that arrived late. It was
+ * missing `engineering_checkpoint_restore` (which rolls the whole workspace back
+ * to a snapshot), `engineering_hunk_revert`, `engineering_team_verify`, and the
+ * two worktree names — and each one was
+ * refused only because *unclassified* tools are refused, which is a decision no
+ * reader of this file could see. A tool with no row is now a failing test rather
+ * than a name that fell through every branch.
  */
-export const PLAN_MODE_MUTATING_PLUGIN_TOOLS: readonly string[] = [
-  'engineering_checkpoint_restore',
-  'engineering_team_merge',
-  'engineering_team_member_start',
-  'engineering_worktree_enter',
-  'engineering_worktree_exit',
-  // Undoes a recorded region of a repo-tracked file. It was listed nowhere until
-  // the coverage probe below existed, which meant the fence refused it only
-  // because *unclassified* tools are refused — a decision nothing stated, and one
-  // that the next person to relax that default would silently reverse.
-  'engineering_hunk_revert',
-  // Edits a file and runs a command that checks the edit.
-  //
-  // Named here despite being this plugin's own tool, because it is the one tool
-  // the plugin registers **without** a plugin prefix — and the fence's other
-  // branch reaches a tool by prefix. A name with no prefix is therefore invisible
-  // to `PLAN_MODE_PLUGIN_TOOL_PREFIXES` and callable while planning, which is a
-  // hole no amount of care with the two lists would have closed. The probe in
-  // `plan-mode.spec.ts` discovers constant-named definitions for the same reason:
-  // the next such tool must fail the suite rather than the fence.
-  'edit_and_run',
-  // Starting a persona child is how a fenced conversation would otherwise get its
-  // writing done: the child is a different session, so the fence has to refuse
-  // the delegation itself rather than only the write the child would make. The
-  // roster is readable, because knowing who you could dispatch is part of
-  // planning.
-  'engineering_subagent_start',
-  // Verification: the tool that runs what the model declared rather than reading
-  // what is there. Its stages spawn the project's declared scripts and its probes
-  // spawn argv the verifier wrote, so it reaches the machine the same way `bash`
-  // does — and this mode's rule for `bash` is that nothing the command policy has
-  // not cleared runs. That rule cannot be applied to this tool's argv from here,
-  // because its command arrives as a tool argument rather than as a command line,
-  // so the tool refuses a denied probe itself (`probeCommandDenial`) and the mode
-  // refuses the whole call. Both halves are required: the mode's refusal is what
-  // keeps a plan-phase turn from driving a build, and the probe check is what
-  // keeps the argv it does accept from being an unpoliced shell.
-  'engineering_team_verify',
-]
+export const PLAN_MODE_MUTATING_PLUGIN_TOOLS: readonly string[] = pluginToolsWithPlanMode('refuse')
 
 /**
- * Plugin tools registered **without** a plugin prefix.
+ * Plugin tools registered **without** a plugin prefix, derived from the manifest.
  *
  * The fence's other branch reaches a tool by prefix, so a name with no prefix is
- * invisible to it — and invisible means unreached, not refused. `edit_and_run`
- * was the recorded instance of that, and it was found by hand. Three more were
- * found by sweeping the source for registration literals: `inspect`,
- * `spill_recall` and `read_document`, all readers, and all allowed while planning
- * only because nothing looked at them.
- *
- * The outcome was right for those three and the mechanism was not, which is the
- * dangerous combination: a reader allowed by falling through is indistinguishable,
- * at the code level, from a *writer* allowed by falling through. This list is what
- * makes them the plugin's own, so the allow list below genuinely governs them — and
- * so an unprefixed tool that nobody classifies is refused loudly instead of running
- * silently.
- *
- * `plan-mode-coverage.spec.ts` sweeps the source for registration literals and
- * requires every one of them to be either prefixed or declared here, so the next
- * unprefixed tool fails the suite rather than the fence.
+ * invisible to it — and invisible means unreached, not refused. That was worth
+ * spelling out when the four readers this list names were callable while planning
+ * only because nothing looked at them. It is worth *deriving* now, because which
+ * names carry a prefix is a fact about the registration rather than a decision
+ * about the mode, and a derivation cannot fall behind a tool added tomorrow.
+ * `tests/tool-manifest.spec.ts` is what keeps the manifest itself complete: every
+ * registration literal in this package has a row there, prefixed or not.
  */
-export const PLAN_MODE_UNPREFIXED_PLUGIN_TOOLS: readonly string[] = [
-  'edit_and_run',
-  'inspect',
-  'spill_recall',
-  'read_document',
-]
+export const PLAN_MODE_UNPREFIXED_PLUGIN_TOOLS: readonly string[] = pluginToolsWithoutPrefix(PLAN_MODE_PLUGIN_TOOL_PREFIXES)
 
 /**
- * Plugin tools that stay usable in Plan Mode: they gather truth, coordinate the
- * team, or write output that is not repo-tracked (memory, the board, generated
- * media, build artifacts).
+ * Plugin tools that stay usable in Plan Mode, read off the manifest.
  *
- * Kept as an explicit list rather than "everything not denied", because that
- * default is what let a newly added mutating tool become callable silently. The
- * spec asserts this list plus the two denylists cover every tool the plugin
- * registers, discovered by reading the source.
+ * The `planMode` column of `tool-manifest.ts` is the list; the manifest's own
+ * header is where each decision is argued, row by row, including the rows that
+ * keep a real authority — `engineering_council_review` and
+ * `engineering_team_start` start child Agents, read-only ones — because a reason
+ * written once beside the name is a reason a reader can disagree with.
+ *
+ * Kept as a positive list rather than "everything not denied", because that
+ * default is what let a newly added mutating tool become callable silently.
+ * `tests/tool-manifest.spec.ts` is what gives the list its force: it reads the
+ * registration literals out of this package's source and requires each one to be
+ * a row, so an unclassified tool is a failing test rather than a name that drifts
+ * past all three lists.
+ *
+ * `tool_search` is deliberately absent. It was named here while this was a
+ * hand-written list, and the entry was inert for the same reason it was harmless:
+ * the fence only reaches that branch for a name it recognises as this plugin's
+ * own, and `tool_search` is a Harness tool this package never registers. Naming
+ * a tool this plugin does not own inside its own manifest would be the same
+ * category error the single table exists to prevent.
  */
-export const PLAN_MODE_ALLOWED_PLUGIN_TOOLS: readonly string[] = [
-  // The unprefixed readers. They were callable while planning before this list
-  // existed, by falling past every branch rather than by being classified: the
-  // prefix test never reached them, so the "unclassified is refused" default never
-  // applied. Naming them states the decision, and moves each one from "nothing
-  // looked at it" to "someone read its description and allowed it".
-  'inspect',
-  'spill_recall',
-  'read_document',
-  // Advisor and its read-only evidence tools.
-  'advisor_status',
-  'advisor_review',
-  'advisor_notes',
-  'freecodego_advisor_read',
-  'freecodego_advisor_glob',
-  'freecodego_advisor_grep',
-  // Automation: reading the recovery rules decides nothing, and the calendar
-  // planner is pure arithmetic — it neither stores a reminder nor creates one, so
-  // planning *when* a rule falls is exactly what drafting a plan may do. The
-  // reminder itself is the Harness's `schedule_create`, which is not a plugin
-  // tool and so is judged by the mutation rule like any other.
-  'freecodego_schedule_plan',
-  'freecodego_recovery_status',
-  // Engineering: diagnostics, memory, structure, checkpoints (snapshot, not rollback).
-  'engineering_status',
-  'engineering_doctor',
-  'engineering_memory_search',
-  'engineering_memory_get',
-  'engineering_memory_timeline',
-  'engineering_memory_save',
-  // Exporting memory writes documents outside the repo (the data home), which is
-  // the same category as saving a memory: it records what the project knows, it
-  // does not change what the project will contain.
-  'engineering_memory_export',
-  'engineering_handoff_create',
-  'engineering_repo_map',
-  'engineering_checkpoint_capture',
-  'engineering_checkpoint_diff',
-  'engineering_checkpoint_pin',
-  'engineering_checkpoint_list',
-  'engineering_graph_status',
-  'engineering_graph_search',
-  'engineering_graph_explain',
-  'engineering_graph_path',
-  'engineering_graph_affected',
-  'engineering_graph_overview',
-  'engineering_graph_canvas',
-  'engineering_graph_mcp',
-  'engineering_codegraph_status',
-  'engineering_codegraph_explore',
-  'engineering_codegraph_search',
-  'engineering_codegraph_explain',
-  'engineering_codegraph_path',
-  'engineering_codegraph_affected',
-  // Plan Mode itself, and the readouts that inform a plan.
-  'engineering_plan_mode',
-  'engineering_surface_report',
-  'engineering_context_budget',
-  'engineering_context_prompt',
-  // The unified inspect report and the hunk journal are the two most direct ways
-  // to learn what the workspace actually contains, so refusing them in the mode
-  // whose whole instruction is "gather truth, do not edit" was backwards. Both
-  // were missing here while the mode already refused unclassified tools, which is
-  // what the coverage probe in `plan-mode.spec.ts` now prevents.
-  'engineering_inspect',
-  'engineering_hunks',
-  // Worktree readouts. Looking at an isolated copy someone else holds is exactly
-  // what planning does; creating or discarding one is on the deny list above,
-  // because `enter` cuts a git branch and `exit` with remove deletes a tree.
-  'engineering_worktree_status',
-  'engineering_worktree_list',
-  'engineering_persona_list',
-  // Councils: they review, and a child Agent is started read-only.
-  'engineering_council_review',
-  'engineering_team_start',
-  'engineering_team_status',
-  'engineering_team_report',
-  'engineering_team_cancel',
-  'engineering_team_request_approval',
-  'engineering_team_mark_implemented',
-  // Team coordination: board state and conversation edits, not the workspace.
-  'engineering_team_board',
-  'engineering_team_plan',
-  'engineering_team_claim',
-  'engineering_team_task_update',
-  'engineering_team_member_stop',
-  'engineering_team_recover',
-  'engineering_context_compact',
-  'engineering_context_snip',
-  // Media generation and transcription write generated output, not tracked source.
-  'agnes_generate_image',
-  'agnes_generate_video',
-  'freecodego_generate_image',
-  'freecodego_generate_video',
-  'freecodego_generate_audio',
-  'freecodego_transcribe_audio',
-  // Discovery and decompression the model is expected to use while planning.
-  'tool_search',
-  'headroom_retrieve',
-]
+export const PLAN_MODE_ALLOWED_PLUGIN_TOOLS: readonly string[] = pluginToolsWithPlanMode('allow')
 
 /** The mode rules the model reads while Plan Mode is on. */
 export const PLAN_MODE_GUIDANCE = [
@@ -378,7 +252,10 @@ export const PLAN_MODE_ENFORCEMENT_ADDENDUM = [
   'To change the mode, use `exit_plan_mode` or `/plan` for the user-facing path, or `engineering_plan_mode` to drive it programmatically.',
 ].join('\n')
 
-/** The rules to inject, given whether a composition also mounted upstream plan mode. */
+/** The rules to inject, given whether a composition also mounted upstream plan mode.
+ * @param upstreamComposed - whether an upstream plan mode is composed alongside this plugin.
+ * @returns the guidance text to inject.
+ */
 export function planModeGuidanceText(upstreamComposed: boolean): string {
   return upstreamComposed ? PLAN_MODE_ENFORCEMENT_ADDENDUM : PLAN_MODE_GUIDANCE
 }
@@ -402,6 +279,13 @@ export function planModeGuidanceText(upstreamComposed: boolean): string {
  * the plugin must keep working against a Harness that predates the service, and
  * against one that ships it under a different package boundary. The two methods
  * are the whole contract this module uses.
+ *
+ * `pending` is read past on purpose. Upstream keeps it as the selection awaiting
+ * the next accepted pre-step — a phase that exists only while an interaction is in
+ * flight, and one this plugin cannot advance, because accepting pre-steps is not
+ * something it does. A local copy would outlive the interaction and then report a
+ * pending state for a conversation nothing is going to move. So `active` decides,
+ * and `pending` stays upstream's business.
  */
 export interface UpstreamPlanMode {
   /** Logged state plus any selection awaiting the next accepted pre-step. */
@@ -417,6 +301,8 @@ export interface UpstreamPlanMode {
  * can also throw while a realm is being torn down, so the lookup is guarded:
  * failing to find the authority falls back to the durable store rather than
  * taking a tool call down.
+ * @param ctx - the cordis context to resolve the service from.
+ * @returns the upstream service, or `undefined` when it is not composed.
  */
 export function findUpstreamPlanMode(ctx: unknown): UpstreamPlanMode | undefined {
   const get = (ctx as { readonly get?: unknown } | undefined)?.get
@@ -434,7 +320,9 @@ interface PlanModeDocument {
   readonly updatedAt: number
 }
 
-/** Root for plan-mode state, mirroring the engineering-memory layout. */
+/** Root for plan-mode state, mirroring the engineering-memory layout.
+ * @returns the plan-mode state directory.
+ */
 export function planModeRootDirectory(): string {
   const home = freeCodeGoDataHome()
   return join(home, 'freecodego', 'engineering', 'plan-mode')
@@ -471,9 +359,7 @@ async function ensureWritableDirectory(directory: string): Promise<void> {
   // The state directory itself is what the write follows, so that is what is
   // checked. Inspecting the parent (as this used to) passes whenever the parent
   // is real and the *root* is the symlink, which is the case the guard exists
-  // for. Every sibling store checks the target the same way: engineering-memory,
-  // engineering-jobs, engineering-checkpoints, engineering-codegraph, and
-  // team/state.
+  // for. Every sibling store checks the target the same way: engineering-memory,  // engineering-jobs, engineering-checkpoints, and engineering-codegraph.
   await mkdir(directory, { recursive: true, mode: 0o700 })
   if (existsSync(directory) && lstatSync(directory).isSymbolicLink()) throw new Error('plan mode state directory is a symlink; refusing to write')
 }
@@ -496,6 +382,10 @@ export class PlanModeStore {
     return join(this.rootDirectory, `${sessionFileName(sessionId)}.json`)
   }
 
+  /** Read one session's mode, from cache or from its durable record, defaulting to execute.
+   * @param sessionId - the Harness session to read.
+   * @returns the session's recorded mode.
+   */
   async read(sessionId: string): Promise<PlanMode> {
     const cached = this.cache.get(sessionId)
     if (cached !== undefined) return cached
@@ -510,7 +400,10 @@ export class PlanModeStore {
     }
   }
 
-  /** Read without touching the filesystem; used by synchronous guards. */
+  /** Read without touching the filesystem; used by synchronous guards. 
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the cached mode, or `undefined` when the session was never read.
+   */
   peek(sessionId: string): PlanMode | undefined {
     return this.cache.get(sessionId)
   }
@@ -530,6 +423,11 @@ export class PlanModeStore {
     this.cache.delete(sessionId)
   }
 
+  /** Persist one session's mode, serialized against that session's earlier writes.
+   * @param sessionId - the Harness session to write for.
+   * @param mode - the mode to store.
+   * @returns the durable document that was written.
+   */
   async write(sessionId: string, mode: PlanMode): Promise<PlanModeDocument> {
     const document: PlanModeDocument = { version: 1, sessionId: safeSessionId(sessionId), mode, updatedAt: Date.now() }
     this.cache.set(sessionId, mode)
@@ -566,6 +464,8 @@ export interface PlanModeRefusal {
  *
  * `bash` is judged by the declarative policy rather than by a keyword list, so
  * Plan Mode cannot become a second, weaker copy of the guard's rules.
+ * @param input - the mode, tool name, arguments, and compiled command policy.
+ * @returns the refusal, or `undefined` when Plan Mode permits the call.
  */
 export function planModeRefusal(input: {
   readonly mode: PlanMode
@@ -625,6 +525,8 @@ function commandOf(args: unknown): string | undefined {
  * Team members and subagents share a root conversation; Plan Mode belongs to the
  * conversation the user is in, not to each worker, so the root id is what the
  * mode is keyed on.
+ * @param agent - the agent whose root conversation is keyed on.
+ * @returns the session key for the mode lookup.
  */
 export function planModeSessionKey(agent: { readonly id?: unknown; readonly session?: { readonly header?: { readonly parentSession?: unknown } } } | undefined): string {
   const parent = agent?.session?.header?.parentSession

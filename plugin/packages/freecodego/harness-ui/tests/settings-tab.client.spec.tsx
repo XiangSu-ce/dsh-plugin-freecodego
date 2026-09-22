@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-ui-renderer/src/client/bind.ts'
-import { AutomationSettingsPanel, backendDefaultGroupName, CARD_CHANNEL_METHODS, categoryLabel, createRequestEpochGate, describePaymentError, DeviceSessionManager, isCardChannel, isFreePricingRow, orderSettlementCurrency, SandboxModePanel, selectedChannelDescription, splitPricingRows, EngineeringEvalPanel, EngineeringMemoryPanel, engineeringTeamState, engineeringVerificationLine, FreeCodeGoSettingsBoundary, FreeCodeGoSettingsTab, modelCategoryOf, modelGroupLabel, modelGroupRows, paymentLimitText, pricingGroupName, pricingGroupRate, pricingRowKey, pricingRows, PluginConflictNotice, severityTone, AdvisorSettingsSection, SkillSettingsSection } from '../src/client/settings-tab.tsx'
+import { AutomationSettingsPanel, backendDefaultGroupName, CARD_CHANNEL_METHODS, categoryLabel, checkinSummary, createRequestEpochGate, describePaymentError, DeviceSessionManager, isCardChannel, isFreePricingRow, orderSettlementCurrency, PaymentReceiptManager, orderReceiptAvailable, orderReceiptStamp, stripeReceiptOffered, SandboxModePanel, selectedChannelDescription, splitPricingRows, EngineeringEvalPanel, EngineeringMemoryPanel, engineeringTeamState, engineeringVerificationLine, FreeCodeGoSettingsBoundary, FreeCodeGoSettingsTab, modelCategoryOf, modelGroupLabel, modelGroupRows, paymentLimitText, pricingGroupName, pricingGroupRate, pricingRowKey, pricingRows, PluginConflictNotice, severityTone, AdvisorSettingsSection, SkillSettingsSection } from '../src/client/settings-tab.tsx'
 import { formatMoney, roundUpCurrency } from '../src/client/money-format.ts'
 import type { GatewayModelPrice } from '../src/client/settings-tab.tsx'
 import type { FreeCodeGoDeviceSessions } from '@deepseek-ai/dsh-freecodego-harness-plugin'
@@ -277,6 +277,7 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       ok: true as const,
       value: {
         pluginConflictProtectionEnabled: true,
+        pluginConflictActiveRecords: ['repair-1'],
         pluginConflictRecords: [{
           id: 'repair-1',
           detectedAt: Date.now(),
@@ -294,6 +295,32 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     expect(screen.getByText('@example/first-plugin')).toBeTruthy()
     expect(screen.getByText('@example/later-plugin')).toBeTruthy()
     expect(screen.getByText('tool：duplicate-tool')).toBeTruthy()
+  })
+
+  it('does not announce a stored repair the running tree no longer matches', async () => {
+    // The store keeps every repair it ever wrote. Announcing one whose stopped
+    // entry is running again reports a plugin the Harness is using right now as
+    // the one it disabled, which is the reading the Host's live list corrects.
+    const status = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: {
+        pluginConflictProtectionEnabled: true,
+        pluginConflictActiveRecords: [],
+        pluginConflictRecords: [{
+          id: 'history-only',
+          detectedAt: Date.now(),
+          resource: 'tool' as const,
+          resourceName: 'spawn_teammate',
+          disabledEntryId: 'tool-agent-team',
+          disabledModuleName: '@deepseek-ai/dsh-experimental-tool-agent-team',
+          keptEntryId: 'freecodego-tool-agent-team',
+          keptModuleName: 'freecodego/tool-agent-team',
+        }],
+      },
+    })
+    render(<PluginConflictNotice status={status} />)
+    await act(async () => { await Promise.resolve() })
+    expect(screen.queryByRole('dialog', { name: '插件冲突已自动修复' })).toBeNull()
   })
 
   it('does not show a repair returned by a superseded conflict-status remote', async () => {
@@ -345,6 +372,69 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('separates the repairs still in effect from the history beside them', async () => {
+    // One stored record can be live while the next stopped a plugin the tree is
+    // now running. Filing both as 已修复 is what made an enabled official plugin
+    // read as the one this Harness had disabled.
+    const pluginConflictStatus = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: {
+        pluginConflictProtectionEnabled: true,
+        pluginConflictActiveRecords: ['repair-live'],
+        pluginConflictRecords: [
+          {
+            id: 'repair-live',
+            detectedAt: Date.now(),
+            resource: 'tool' as const,
+            resourceName: 'spawn_teammate',
+            disabledEntryId: 'freecodego-tool-agent-team',
+            disabledModuleName: 'freecodego/tool-agent-team',
+            keptEntryId: 'tool-agent-team',
+            keptModuleName: '@deepseek-ai/dsh-experimental-tool-agent-team',
+            yieldedToOfficial: true,
+          },
+          {
+            id: 'repair-history',
+            detectedAt: Date.now(),
+            resource: 'tool' as const,
+            resourceName: 'spawn_teammate',
+            disabledEntryId: 'tool-agent-team',
+            disabledModuleName: '@deepseek-ai/dsh-experimental-tool-agent-team',
+            keptEntryId: 'freecodego-tool-agent-team',
+            keptModuleName: 'freecodego/tool-agent-team',
+          },
+        ],
+      },
+    })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'freecodego', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      pluginConflictStatus={pluginConflictStatus}
+      pluginConflictSetEnabled={vi.fn()}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
+    fireEvent.click(screen.getByText('设置'))
+    const toggle = await screen.findByLabelText('自动修复插件冲突') as HTMLInputElement
+    const panel = toggle.closest('section') as HTMLElement
+    await waitFor(() => { expect(panel.textContent).toContain('已让位给官方 @deepseek-ai/dsh-experimental-tool-agent-team') })
+    expect(panel.textContent).toContain('生效中')
+    expect(panel.textContent).toContain('已失效')
+    expect(panel.textContent).toContain('1 条记录在当前运行树中仍然生效。')
   })
 
   it('keeps automatic plugin conflict repair enabled by default and saves the switch', async () => {
@@ -634,12 +724,81 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     // One card, laid out as a two-column form: address and password share a row,
     // so the width is used instead of stretching a single column.
     const form = email.parentElement as HTMLElement
-    expect(form).toBe(screen.getByPlaceholderText('password').parentElement)
+    // The password input sits in a field wrapper so its reveal control can live
+    // inside the field; the wrapper is what occupies the second column.
+    const passwordField = screen.getByPlaceholderText('password').parentElement as HTMLElement
+    expect(passwordField.parentElement).toBe(form)
     expect(form.contains(screen.getByRole('button', { name: 'login' }))).toBe(true)
     expect(screen.getByRole('button', { name: 'Google' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'GitHub' })).toBeTruthy()
     // The card owns the row: the layout grid holds the card and nothing else.
     expect(form.parentElement?.parentElement?.children.length).toBe(1)
+  })
+
+  it('prefills the password the Host remembers and reveals it on demand', async () => {
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      accountRememberedPassword={vi.fn().mockResolvedValue({ ok: true as const, value: { password: 'hunter2' } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      backendCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { catalogRevision: 'test', models: [] } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    const field = await screen.findByPlaceholderText('password') as HTMLInputElement
+    await waitFor(() => { expect(field.value).toBe('hunter2') })
+    // A read fills the field; it does not reveal it.
+    expect(field.type).toBe('password')
+    // The box mirrors what the Host holds, because the next sign-in is what keeps
+    // the entry alive — leaving it unticked would erase what was just prefilled.
+    expect((screen.getByLabelText('记住密码（下次自动填写）') as HTMLInputElement).checked).toBe(true)
+    const reveal = screen.getByRole('button', { name: '显示密码' })
+    expect(reveal.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(reveal)
+    expect((screen.getByPlaceholderText('password') as HTMLInputElement).type).toBe('text')
+    expect(screen.getByRole('button', { name: '隐藏密码' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('never paints a sign-in form before the account read settles', async () => {
+    // The Host answers `accountStatus` only after it has tried to restore the
+    // vault session, so this promise is the seconds the user used to spend
+    // looking at a login card for an account that was already signed in.
+    const pending = { settle: (_value: unknown): void => undefined }
+    const accountStatus = vi.fn(() => new Promise<unknown>((resolve) => { pending.settle = resolve }))
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={accountStatus as never}
+      login={vi.fn()}
+      logout={vi.fn()}
+      backendCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { catalogRevision: 'test', models: [] } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    expect((await screen.findAllByText('正在读取账户状态')).length).toBeGreaterThan(0)
+    expect(screen.queryByPlaceholderText('password')).toBeNull()
+    await act(async () => {
+      pending.settle({ ok: true, value: { status: 'authenticated', user: { username: '001', email: 'user@example.com', balance: 12 } } })
+    })
+    expect(await screen.findByText('user@example.com')).toBeTruthy()
   })
 
   it('renders the VyceAI provider card first with the check-in pitch and the signup link', async () => {
@@ -1297,7 +1456,7 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
       login={vi.fn()}
       logout={vi.fn()}
-      pluginUpdateStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, packageName: '@example/freecodego', currentVersion: '1.0.0', installation: 'release' as const, releaseRepository: 'XiangSu-ce/dsh-freecodego', phase: 'idle' as const, restartRequired: false } })}
+      pluginUpdateStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, packageName: '@example/freecodego', currentVersion: '1.0.0', installation: 'release' as const, releaseRepository: 'XiangSu-ce/dsh-plugin-freecodego', phase: 'idle' as const, restartRequired: false } })}
       pluginUpdateSetEnabled={pluginUpdateSetEnabled}
       communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
       communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
@@ -1326,7 +1485,7 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
       login={vi.fn()}
       logout={vi.fn()}
-      pluginUpdateStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, packageName: '@example/freecodego', currentVersion: '1.0.0', installation: 'release' as const, releaseRepository: 'XiangSu-ce/dsh-freecodego', phase: 'idle' as const, restartRequired: false } })}
+      pluginUpdateStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, packageName: '@example/freecodego', currentVersion: '1.0.0', installation: 'release' as const, releaseRepository: 'XiangSu-ce/dsh-plugin-freecodego', phase: 'idle' as const, restartRequired: false } })}
       pluginUpdateSetEnabled={vi.fn()}
       communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
       communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
@@ -1342,7 +1501,7 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     expect(card).not.toBeNull()
     // The release source is stated, not chosen: there is one, and the card has
     // no control that could imply otherwise.
-    expect(card?.textContent).toContain('XiangSu-ce/dsh-freecodego')
+    expect(card?.textContent).toContain('XiangSu-ce/dsh-plugin-freecodego')
     expect(card?.querySelector('select')).toBeNull()
   })
 
@@ -1356,7 +1515,7 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
       login={vi.fn()}
       logout={vi.fn()}
-      pluginUpdateStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, packageName: '@example/freecodego', currentVersion: '1.0.0', installation: 'release' as const, releaseRepository: 'XiangSu-ce/dsh-freecodego', phase: 'up-to-date' as const, restartRequired: false } })}
+      pluginUpdateStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, packageName: '@example/freecodego', currentVersion: '1.0.0', installation: 'release' as const, releaseRepository: 'XiangSu-ce/dsh-plugin-freecodego', phase: 'up-to-date' as const, restartRequired: false } })}
       pluginUpdateSetEnabled={vi.fn()}
       communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
       communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
@@ -1508,6 +1667,114 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     expect(setDefaultModel).not.toHaveBeenCalledWith('__freecodego_media_default__:image:image-protocol')
   })
 
+  /**
+   * The regression these cases pin: a media default the settings document
+   * already holds must survive reopening the panel. The automatic adoption ran
+   * whenever the stored id was missing from the client's *available* view — a
+   * view that excludes Logfare until its credentials are configured and is
+   * empty until the Host catalog lands — so it silently replaced the user's
+   * choice with the first row it could see, and the select then showed that
+   * stranger on every later open.
+   */
+  const mediaDefaultWrites = (setDefaultModel: ReturnType<typeof vi.fn>): readonly string[] =>
+    setDefaultModel.mock.calls
+      .map(([value]) => value)
+      .filter((value): value is string => typeof value === 'string' && value.startsWith('__freecodego_media_default__:'))
+
+  // The category select comes first in the routing cell; the picker that moves
+  // a model between categories is the second combobox.
+  const modelSelectValue = (): string => (screen.getAllByRole('combobox')[0] as HTMLSelectElement).value
+
+  const mediaCatalogModels = [
+    { id: 'agnes/agnes-image-2.5-flash', displayName: 'agnes-image-2.5-flash', provider: 'agnes', protocol: 'image_generation', availability: 'available', compatibleEngines: ['deepseek'], choices: [] },
+    { id: 'agnes/agnes-image-2.1-flash', displayName: 'agnes-image-2.1-flash', provider: 'agnes', protocol: 'image_generation', availability: 'available', compatibleEngines: ['deepseek'], choices: [] },
+    { id: 'agnes/agnes-image-2.0-flash', displayName: 'agnes-image-2.0-flash', provider: 'agnes', protocol: 'image_generation', availability: 'available', compatibleEngines: ['deepseek'], choices: [] },
+    { id: 'agnes/agnes-video-2.5', displayName: 'agnes-video-2.5', provider: 'agnes', protocol: 'video_generation', availability: 'available', compatibleEngines: ['deepseek'], choices: [] },
+  ]
+
+  const renderMediaDefaultsPanel = (input: { readonly readMediaDefaults: () => Promise<{ readonly image: string; readonly video: string; readonly audio: string }>; readonly setDefaultModel: ReturnType<typeof vi.fn>; readonly models?: readonly Record<string, unknown>[] }): void => {
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [], mediaDefaults: { image: '', video: '', audio: '' } } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'authenticated' as const, user: { username: 'fixture', email: 'fixture@example.test', balance: 0 } } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      setDefaultModel={input.setDefaultModel as never}
+      readMediaDefaults={input.readMediaDefaults}
+      backendCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { catalogRevision: 'media-defaults', models: input.models ?? mediaCatalogModels } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+  }
+
+  it('shows the media defaults the settings document holds instead of adopting others', async () => {
+    const setDefaultModel = vi.fn().mockResolvedValue({ ok: true as const, value: { model: 'agnes/agnes-image-2.0-flash' } })
+    const readMediaDefaults = vi.fn().mockResolvedValue({ image: 'agnes/agnes-image-2.5-flash', video: 'agnes/agnes-video-2.5', audio: 'whisper-large-v3-turbo' })
+    renderMediaDefaultsPanel({ readMediaDefaults, setDefaultModel })
+
+    fireEvent.click(await screen.findByRole('button', { name: '生图模型' }))
+    await waitFor(() => { expect(modelSelectValue()).toBe('agnes/agnes-image-2.5-flash') })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    // 2.0-flash is what the automatic pick would have adopted; every category in
+    // the document already names a usable model, so nothing may be rewritten.
+    expect(mediaDefaultWrites(setDefaultModel)).toEqual([])
+  })
+
+  it('keeps and displays a stored default the catalog lists but cannot use yet', async () => {
+    const setDefaultModel = vi.fn().mockResolvedValue({ ok: true as const, value: { model: 'agnes/agnes-image-2.5-flash' } })
+    const readMediaDefaults = vi.fn().mockResolvedValue({ image: 'logfare/gpt-image-2', video: '', audio: '' })
+    // Logfare is not configured in this install, so the panel marks its rows
+    // unusable; the row is still listed, which is not a retirement.
+    renderMediaDefaultsPanel({
+      readMediaDefaults,
+      setDefaultModel,
+      models: [...mediaCatalogModels, { id: 'logfare/gpt-image-2', displayName: 'gpt-image-2', provider: 'logfare', protocol: 'image_generation', availability: 'available', compatibleEngines: ['deepseek'], choices: [] }],
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: '生图模型' }))
+    await waitFor(() => { expect(modelSelectValue()).toBe('logfare/gpt-image-2') })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mediaDefaultWrites(setDefaultModel).filter(value => value.includes(':image:'))).toEqual([])
+  })
+
+  it('keeps a stored media default that was picked from a backend group', async () => {
+    // A grouped row persists as `id@group:N` while the catalog lists the bare
+    // id, so the stored value only looks "retired" to a comparison that keeps
+    // the pin — and replacing it swapped the user's group choice for another.
+    const setDefaultModel = vi.fn().mockResolvedValue({ ok: true as const, value: { model: 'agnes/agnes-image-2.5-flash' } })
+    const readMediaDefaults = vi.fn().mockResolvedValue({ image: 'agnes/agnes-image-2.5-flash@group:2', video: '', audio: '' })
+    renderMediaDefaultsPanel({
+      readMediaDefaults,
+      setDefaultModel,
+      models: [...mediaCatalogModels, { id: 'agnes/agnes-image-2.5-flash', displayName: 'agnes-image-2.5-flash', provider: 'agnes', protocol: 'image_generation', availability: 'available', compatibleEngines: ['deepseek'], choices: [{ routeKey: 'group:2:agnes', groupId: 2, availability: 'available', compatibleEngines: ['deepseek'] }] }],
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: '生图模型' }))
+    await waitFor(() => { expect(modelSelectValue()).toBe('agnes/agnes-image-2.5-flash@group:2') })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mediaDefaultWrites(setDefaultModel).filter(value => value.includes(':image:'))).toEqual([])
+  })
+
+  it('adopts no media default while the settings document is unread', async () => {
+    const setDefaultModel = vi.fn().mockResolvedValue({ ok: true as const, value: { model: 'agnes/agnes-image-2.5-flash' } })
+    const readMediaDefaults = vi.fn().mockRejectedValue(new Error('SETTINGS_READ_FAILED'))
+    renderMediaDefaultsPanel({ readMediaDefaults, setDefaultModel })
+
+    await waitFor(() => { expect(readMediaDefaults).toHaveBeenCalled() })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    // "Could not read" is not "nothing is stored": a write here is what would
+    // overwrite a default the document still holds.
+    expect(mediaDefaultWrites(setDefaultModel)).toEqual([])
+  })
+
   it('derives the real QQ avatar endpoint when the backend has no stored avatar', async () => {
     render(<FreeCodeGoSettingsTab
       {...hostStandardProps}
@@ -1596,9 +1863,10 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     fireEvent.change(screen.getByPlaceholderText('密码'), { target: { value: 'secret' } })
     // The tab is a role=tab, so this resolves to the form's own submit button.
     fireEvent.click(screen.getByRole('button', { name: '登录' }))
-    // The unchecked keep-signed-in box travels with the login call: it is the
-    // whole wire contract that makes the Host hold the session in memory only.
-    await waitFor(() => { expect(login).toHaveBeenCalledWith('me@example.com', 'secret', false) })
+    // Both unchecked boxes travel with the login call: the first is the whole
+    // wire contract that makes the Host hold the session in memory only, and the
+    // second is what erases a password an earlier sign-in asked it to keep.
+    await waitFor(() => { expect(login).toHaveBeenCalledWith('me@example.com', 'secret', false, false) })
 
     fireEvent.click(screen.getByRole('tab', { name: '注册' }))
     fireEvent.change(screen.getByPlaceholderText('验证码'), { target: { value: '654321' } })
@@ -1718,7 +1986,7 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     // there: an admin-only console URL is neither linked nor claimed, and the
     // dialog names the missing piece instead of rendering a dead surface.
     expect(screen.queryByRole('link', { name: '打开支付页' })).toBeNull()
-    expect(await screen.findByText(/没有返回可用于支付的信息/)).toBeTruthy()
+    expect(await screen.findByText(/这笔订单暂时没有可用的支付方式/)).toBeTruthy()
   })
 })
 
@@ -2057,6 +2325,17 @@ describe('model picker grouping', () => {
     expect(developer![1][0]!.key).not.toBe(free![1][0]!.key)
   })
 
+  it('renders one row for a group the backend listed twice', () => {
+    // `/models/options` listed the same group route twice, so the picker showed
+    // `gpt 5.6 terra ×0.1` twice. Two rows with one key are one row — the user
+    // cannot tell a repeat from a choice, and the closed select read as a bug.
+    const twice = { ...gateway('gpt-5.6-terra', 4, 0.5) }
+    twice.choices = [twice.choices[0]!, twice.choices[0]!]
+    const rows = modelGroupRows([twice as never], groups)
+    expect(rows.map(([label]) => label)).toEqual(['后端分组乙'])
+    expect(rows[0]![1]).toHaveLength(1)
+  })
+
   it('takes the row rate from the group rather than the per-choice multiplier', () => {
     // The backend folds the account's override into the group rate, so a row
     // reading the raw choice rate would show the list price instead.
@@ -2107,7 +2386,8 @@ describe('headroom panel controls', () => {
     tabularCompressions: 0, configCompressions: 0, losslessCompressions: 0, dedupCompressions: 0,
     codeSkeletonCompressions: 0,
     protectedCount: 0, ccrEntries: 1, ccrBytes: 400, retrievals: 0, retrieveMisses: 0,
-    provenance: 'test', portVersion: 1, upstreamRevision: 'test', ...over,
+    ccrWriteRefusals: 0,
+    provenance: 'test-provenance', ...over,
   })
   // The update remote must resolve a RemoteResult: the panel chains `.then`
   // on it, so a bare `vi.fn()` would throw an unhandled rejection and poison
@@ -2155,6 +2435,69 @@ describe('headroom panel controls', () => {
     const update = await renderPanel({ foldReads: false })
     fireEvent.click(screen.getByLabelText('文件读取无损折叠'))
     await waitFor(() => { expect(update).toHaveBeenCalledWith({ foldReads: true }) })
+  })
+
+  it('shows the fold-policy switch as off once the Host reports maximum compression', async () => {
+    // Same contract as the read-fold switch above: the policy is in force on the
+    // Host side, so the panel has to read it back rather than assume the default.
+    await renderPanel({ foldPolicy: 'max' })
+    expect((screen.getByLabelText('无损折叠优先') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('shows the fold-policy switch as on for the reversible default', async () => {
+    await renderPanel({ foldPolicy: 'reversible' })
+    expect((screen.getByLabelText('无损折叠优先') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('writes the fold-policy switch through the update remote', async () => {
+    const update = await renderPanel({ foldPolicy: 'reversible' })
+    fireEvent.click(screen.getByLabelText('无损折叠优先'))
+    await waitFor(() => { expect(update).toHaveBeenCalledWith({ foldPolicy: 'max' }) })
+  })
+
+  it('renders the fold-competition ledger the Host reports', async () => {
+    // The three counters say what the policy did: deferred = superseded + settled.
+    // They are labelled for every render the rule holds — a whole-payload fold, a
+    // mixed-content splice, and the cross-turn pointer over a repeat — because they
+    // count all of them, and a label that said "fold" only would make a splice or a
+    // pointer the panel is showing look like it never happened.
+    await renderPanel({ foldDeferred: 3, foldSuperseded: 1, foldSettled: 2 })
+    expect(screen.getByText('折叠/拼接/指针进入竞争').textContent).toContain('3')
+    expect(screen.getByText('折叠/拼接/指针被取代').textContent).toContain('1')
+    expect(screen.getByText('折叠/拼接/指针兜底交付').textContent).toContain('2')
+  })
+
+  it('renders the write refusals beside the retrieve misses', async () => {
+    // A store at its ceiling is where compression starts to degrade, and it is the one
+    // degradation the panel could not show: the whole-payload JSON and HTML branches
+    // *decline their own rendering* and let the chain keep its chance rather than
+    // ending it, so a payload shaped by a full store is otherwise indistinguishable
+    // from a payload the chain simply had nothing for. Reported next to the misses
+    // because it is the same question asked one step earlier — the entry the model
+    // never got to ask for.
+    await renderPanel({ retrieveMisses: 2, ccrWriteRefusals: 4 })
+    expect(screen.getByText('取回失败').textContent).toContain('2')
+    expect(screen.getByText('仓储拒写').textContent).toContain('4')
+  })
+
+  it('names the upstream ref the Host reports rather than a hand-written one', async () => {
+    // The panel used to state the port's origin in prose only — project, license,
+    // copyright — with nothing that moves when the port does, so a build tracking an
+    // older upstream ref read exactly like a current one. The sentence the Host
+    // reports is what the reader gets, and a different value has to reach the page or
+    // this is a literal wearing a field's clothes.
+    await renderPanel({ provenance: 'headroomlabs-ai/headroom (Apache-2.0) main @ 2030-01-01; port v9' })
+    expect(screen.getByText(/main @ 2030-01-01; port v9/u)).toBeTruthy()
+  })
+
+  it('reads the write counter out even when it is zero', async () => {
+    // Zero is a reading, and the panel states it: a counter the Host reported as 0
+    // says the store had room for every original, which is the difference between
+    // "nothing needed compressing" and "compression was turned away". The fixture
+    // carries the field for that reason — a panel given an omitted field would show
+    // the same idle chip and mean something else by it.
+    await renderPanel({ ccrWriteRefusals: 0 })
+    expect(screen.getByText('仓储拒写').textContent).toContain('0')
   })
 
   it('renders the dedup switch from the reported value rather than assuming on', async () => {
@@ -2232,75 +2575,6 @@ describe('headroom panel controls', () => {
   it('says plainly when no compressor has fired yet', async () => {
     await renderPanel({ compressions: 0, logCompressions: 0, jsonCompressions: 0, originalBytes: 0, compressedBytes: 0, ccrEntries: 0, ccrBytes: 0 })
     expect(screen.getByText('压缩器明细（尚未压缩过任何输出）')).toBeTruthy()
-  })
-})
-
-describe('team panel', () => {
-  const status = (over: Record<string, unknown> = {}) => ({
-    enabled: true,
-    teams: 1,
-    members: 2,
-    contextControl: true,
-    roles: [
-      { id: 'explorer', title: 'Explorer', purpose: 'Map the code before anyone edits.', notResponsibleFor: 'It does not implement.', capabilities: ['read'], sandbox: 'read-only', maxTurns: 6 },
-      { id: 'implementer', title: 'Implementer', purpose: 'Complete one claimed task in its own worktree.', notResponsibleFor: 'It does not declare itself verified.', capabilities: ['read', 'write', 'execute'], sandbox: 'workspace-write', maxTurns: 30 },
-    ],
-    ...over,
-  })
-  const renderPanel = async (over: Record<string, unknown> = {}): Promise<void> => {
-    render(<FreeCodeGoSettingsTab
-      {...hostStandardProps}
-      close={vi.fn()}
-      useSessions={vi.fn() as never}
-      useWorkspaces={vi.fn() as never}
-      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
-      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
-      login={vi.fn()}
-      logout={vi.fn()}
-      teamStatus={vi.fn().mockResolvedValue({ ok: true as const, value: status(over) })}
-      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
-      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
-      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
-      communityInstall={vi.fn()}
-      language="zh"
-      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
-      t={(key: string) => key as never}
-    />)
-    fireEvent.click(await screen.findByText('设置'))
-    await screen.findByText('多成员协作团队')
-  }
-
-  it('renders the live team counts the Host reports', async () => {
-    await renderPanel()
-    expect(screen.getByText('已开启团队')).toBeTruthy()
-    expect(screen.getByText('活跃成员')).toBeTruthy()
-  })
-
-  it('lists every role with what it is not responsible for', async () => {
-    // The duty boundary is the reason the table exists: an implementer that can
-    // verify itself is the failure a reader has to be able to check.
-    await renderPanel()
-    const summary = screen.getByText('角色库（2 个，可用 .freecodego/team-roles.json 覆盖）')
-    expect(summary).toBeTruthy()
-    const details = summary.closest('details')
-    expect(details?.textContent).toContain('Explorer')
-    expect(details?.textContent).toContain('不负责：')
-    expect(details?.textContent).toContain('workspace-write')
-  })
-
-  it('says a read-only role stays read-only, and that a probe gate exists', async () => {
-    await renderPanel()
-    const details = screen.getByText('团队是怎么保证不出错的？（四条硬规则）').closest('details')
-    expect(details?.textContent).toContain('只读角色拿不到写和 Shell 工具')
-    expect(details?.textContent).toContain('abort')
-  })
-
-  it('reports the panel as off when the Host disabled teams', async () => {
-    await renderPanel({ enabled: false })
-    // Scoped to this section: several other panels carry an off badge of their
-    // own, so a global text query would pass for the wrong reason.
-    const section = screen.getByText(/团队不是/u).closest('section')
-    expect(section?.textContent).toContain('已关闭')
   })
 })
 
@@ -2620,6 +2894,341 @@ describe('DeviceSessionManager', () => {
   })
 })
 
+describe('PaymentReceiptManager', () => {
+  /** One order row as the backend's list sends it: snake_case, with its flags. */
+  const order = (overrides: Record<string, unknown>): Record<string, unknown> => ({
+    id: 41, status: 'PAID', amount: 5, pay_amount: 35.72, currency: 'CNY', payment_type: 'alipay',
+    created_at: '2026-09-20T10:00:00Z', receipt_available: true, stripe_receipt_available: false,
+    ...overrides,
+  })
+
+  /**
+   * What a download hands the browser.
+   *
+   * jsdom implements neither object URLs nor navigation, so both ends are
+   * captured here: the blob is where the bytes are, and the anchor is where the
+   * filename is. Asserting on the bytes is the point — a PDF that travelled
+   * through JSON is exactly the case a "did it throw" test would miss.
+   */
+  const captureDownloads = (): { readonly blobs: Blob[]; readonly names: string[]; readonly restore: () => void } => {
+    const blobs: Blob[] = []
+    const names: string[] = []
+    const create = Reflect.get(URL, 'createObjectURL') as ((blob: Blob) => string) | undefined
+    const revoke = Reflect.get(URL, 'revokeObjectURL') as ((url: string) => void) | undefined
+    Reflect.set(URL, 'createObjectURL', (blob: Blob) => { blobs.push(blob); return 'blob:captured' })
+    Reflect.set(URL, 'revokeObjectURL', () => undefined)
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { names.push(this.download) })
+    return {
+      blobs,
+      names,
+      restore: () => {
+        Reflect.set(URL, 'createObjectURL', create)
+        Reflect.set(URL, 'revokeObjectURL', revoke)
+        click.mockRestore()
+      },
+    }
+  }
+
+  it('lists only the payments the backend will serve a receipt for', async () => {
+    render(<PaymentReceiptManager
+      orders={async () => ({ ok: true as const, value: { items: [
+        order({ id: 40, status: 'PENDING', receipt_available: false }),
+        order({ id: 41 }),
+        order({ id: 42, status: 'RECHARGING' }),
+      ] } })}
+      receiptDocument={vi.fn()}
+      language="zh"
+    />)
+
+    expect(await screen.findByText(/#41/)).toBeDefined()
+    // An unpaid order has no document to offer, so it is not a row with a ruled
+    // out button — it is absent, and so is its state.
+    expect(screen.queryByText(/#40/)).toBeNull()
+    // The state between paying and being credited is a paid order: the backend
+    // serves its receipt, so it is listed with the settled ones.
+    expect(screen.getByText(/#42/)).toBeDefined()
+    expect(screen.getAllByRole('button', { name: '下载收据' })).toHaveLength(2)
+  })
+
+  it('says an empty history is empty instead of failing', async () => {
+    render(<PaymentReceiptManager orders={async () => ({ ok: true as const, value: { items: [] } })} receiptDocument={vi.fn()} language="zh" />)
+    expect(await screen.findByText('这个账户还没有可下载收据的支付记录。')).toBeDefined()
+  })
+
+  it('reports an unreadable row as a failed read, not as an empty history', async () => {
+    // A row the parser cannot date or price is the *whole* read failing. Showing
+    // the empty state would tell a user with payments that they have none.
+    render(<PaymentReceiptManager orders={async () => ({ ok: true as const, value: { items: [{ id: 41, status: 'PAID', amount: 5 }] } })} receiptDocument={vi.fn()} language="zh" />)
+    expect(await screen.findByText(/currency is required/)).toBeDefined()
+    expect(screen.queryByText('这个账户还没有可下载收据的支付记录。')).toBeNull()
+  })
+
+  it('downloads the backend receipt for one row and names the saved file', async () => {
+    const captured = captureDownloads()
+    try {
+      const receiptDocument = vi.fn().mockResolvedValue({ ok: true as const, value: { fileName: 'freecodego-receipt-FCG-R-41.html', contentType: 'text/html; charset=utf-8', content: '<html>receipt</html>' } })
+      render(<PaymentReceiptManager orders={async () => ({ ok: true as const, value: { items: [order({})] } })} receiptDocument={receiptDocument} language="zh" />)
+      fireEvent.click(await screen.findByRole('button', { name: '下载收据' }))
+
+      await waitFor(() => { expect(captured.names).toEqual(['freecodego-receipt-FCG-R-41.html']) })
+      expect(receiptDocument).toHaveBeenCalledWith('41')
+      expect(captured.blobs[0]?.type).toBe('text/html; charset=utf-8')
+      expect(await captured.blobs[0]?.text()).toBe('<html>receipt</html>')
+    } finally { captured.restore() }
+  })
+
+  it('offers Stripe\'s own receipt only where the backend says Stripe holds one', async () => {
+    const captured = captureDownloads()
+    try {
+      // "%PDF-1.4" — the bytes a PDF saved as UTF-8 text would have lost.
+      const pdf = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34])
+      const persisted: string[] = []
+      for (const byte of pdf) persisted.push(String.fromCharCode(byte))
+      const stripeReceiptDocument = vi.fn().mockResolvedValue({ ok: true as const, value: { fileName: 'stripe-receipt-pi_3UF.pdf', contentType: 'application/pdf', content: btoa(persisted.join('')), encoding: 'base64' as const } })
+      render(<PaymentReceiptManager
+        orders={async () => ({ ok: true as const, value: { items: [
+          order({ id: 41, stripe_receipt_available: true }),
+          order({ id: 42, status: 'COMPLETED', payment_type: 'alipay' }),
+        ] } })}
+        receiptDocument={vi.fn()}
+        stripeReceiptDocument={stripeReceiptDocument as never}
+        language="zh"
+      />)
+
+      // One card payment in the list, so one payment document — and the Alipay
+      // order beside it keeps only the receipt every order has. The button names
+      // the document, not the processor behind it: the acquirer is ours, not the
+      // payer's, and naming it in the panel is what this label stopped doing.
+      const stripeButtons = await screen.findAllByRole('button', { name: '下载付款凭证' })
+      expect(stripeButtons).toHaveLength(1)
+      fireEvent.click(stripeButtons[0]!)
+
+      await waitFor(() => { expect(captured.names).toEqual(['stripe-receipt-pi_3UF.pdf']) })
+      expect(stripeReceiptDocument).toHaveBeenCalledWith('41')
+      expect(captured.blobs[0]?.type).toBe('application/pdf')
+      expect(new Uint8Array(await captured.blobs[0]!.arrayBuffer())).toEqual(pdf)
+    } finally { captured.restore() }
+  })
+
+  /** Render the panel for one Stripe order and press its Stripe download. */
+  const pressStripeDownload = async (content: string): Promise<void> => {
+    render(<PaymentReceiptManager
+      orders={async () => ({ ok: true as const, value: { items: [order({ stripe_receipt_available: true })] } })}
+      receiptDocument={vi.fn()}
+      stripeReceiptDocument={vi.fn().mockResolvedValue({ ok: true as const, value: { fileName: 'stripe.pdf', contentType: 'application/pdf', content, encoding: 'base64' as const } }) as never}
+      language="zh"
+    />)
+    fireEvent.click(await screen.findByRole('button', { name: '下载付款凭证' }))
+  }
+
+  it('refuses a receipt whose payload is not base64 at all', async () => {
+    const captured = captureDownloads()
+    try {
+      // An error body handed over as if it were the document: the characters
+      // cannot come out of any base64 decoder, so the decode itself is the guard.
+      await pressStripeDownload('<html>receipt is not available</html>')
+
+      // The failure is reported and nothing is handed to the browser: a file that
+      // saves but cannot be opened reads as a successful download.
+      expect(await screen.findByText(/收据文件无法解读/)).toBeDefined()
+      expect(captured.names).toEqual([])
+    } finally { captured.restore() }
+  })
+
+  it('refuses a receipt that decodes to something other than what it names', async () => {
+    const captured = captureDownloads()
+    try {
+      // The case a decoder accepts on its own, which is why the check is a
+      // re-encode rather than the decode: `JVBERi0xLjQKAAA` and
+      // `JVBERi0xLjQKAAB` both decode, to the *same* eleven bytes — the trailing
+      // bits of a non-canonical encoding are simply dropped — so a document
+      // altered on the way here would be saved as a different document.
+      await pressStripeDownload('JVBERi0xLjQKAAB')
+
+      expect(await screen.findByText(/收据文件无法解读/)).toBeDefined()
+      expect(captured.names).toEqual([])
+    } finally { captured.restore() }
+  })
+
+  it('reads a missing receipt flag from the order state', () => {
+    expect(orderReceiptAvailable({ state: 'paid' })).toBe(true)
+    expect(orderReceiptAvailable({ state: 'RECHARGING' })).toBe(true)
+    expect(orderReceiptAvailable({ state: 'completed' })).toBe(true)
+    expect(orderReceiptAvailable({ state: 'pending' })).toBe(false)
+    expect(orderReceiptAvailable(undefined)).toBe(false)
+    // The flag is the backend's answer and outranks the state list in both
+    // directions. The state below cannot arrive — this product sells no refunds, so
+    // the refund family is never requested — but it is the shape of the case the
+    // rule covers: the backend's vocabulary is wider than the four states the panel
+    // asks for, so the list can only ever be a fallback.
+    expect(orderReceiptAvailable({ state: 'refunding', receiptAvailable: true })).toBe(true)
+    expect(orderReceiptAvailable({ state: 'completed', receiptAvailable: false })).toBe(false)
+  })
+
+  it('draws the card’s Stripe download only after a read that carries the backend’s flag', async () => {
+    // The card and the receipt list must offer the same documents, so the card is
+    // checked on both sides of the boundary that makes this interesting: the
+    // create-order response carries no receipt flags (the backend cannot know about
+    // a document for an order nobody has paid), while `paymentOrder` answers about
+    // an order that exists. A card that guessed from `paymentType`, or that treated
+    // an absent flag as a yes, would draw the button on the wrong side of this.
+    const labels: Record<string, string> = { checkout: '购买', openCheckout: '打开支付页', processing: '处理中…', refreshOrder: '刷新订单' }
+    const paymentCheckout = vi.fn().mockResolvedValue({ ok: true as const, value: {
+      orderId: '81', amount: 5, currency: 'CNY', state: 'pending', outTradeNo: 'out-81',
+    } })
+    const paymentOrder = vi.fn().mockResolvedValue({ ok: true as const, value: {
+      orderId: '81', amount: 5, currency: 'CNY', state: 'paid', outTradeNo: 'out-81',
+      receiptAvailable: true, stripeReceiptAvailable: true,
+    } })
+    const stripeReceiptDocument = vi.fn().mockResolvedValue({ ok: true as const, value: {
+      fileName: 'stripe-receipt.pdf', contentType: 'application/pdf',
+      content: Buffer.from('%PDF-1.4 stripe receipt').toString('base64'), encoding: 'base64' as const,
+    } })
+    vi.spyOn(globalThis, 'open').mockReturnValue(null)
+    const captured = captureDownloads()
+    try {
+      render(<FreeCodeGoSettingsTab
+        {...hostStandardProps}
+        close={vi.fn()}
+        useSessions={vi.fn() as never}
+        useWorkspaces={vi.fn() as never}
+        catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+        accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'authenticated' as const, user: { username: 'me', email: 'me@example.com', balance: 10 } } })}
+        login={vi.fn()}
+        logout={vi.fn()}
+        paymentPlans={vi.fn().mockResolvedValue({ ok: true as const, value: [{ id: 1, name: 'US$5 Developer Credit', price: 5, currency: 'USD' }] })}
+        paymentChannels={vi.fn().mockResolvedValue({ ok: true as const, value: [{ paymentType: 'alipay', currency: 'CNY', balanceRechargeMultiplier: 0.14 }] })}
+        paymentCheckout={paymentCheckout as never}
+        paymentOrder={paymentOrder as never}
+        paymentStripeReceiptDocument={stripeReceiptDocument as never}
+        communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+        communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+        communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+        communityInstall={vi.fn()}
+        language="zh"
+        useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+        t={(key: string) => (labels[key] ?? key) as never}
+      />)
+      fireEvent.click(await screen.findByRole('button', { name: /^购买/ }))
+      await screen.findByRole('button', { name: '刷新订单' })
+      expect(screen.queryByRole('button', { name: '下载付款凭证' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: '刷新订单' }))
+      await waitFor(() => { expect(paymentOrder).toHaveBeenCalledWith('81') })
+      fireEvent.click(await screen.findByRole('button', { name: '下载付款凭证' }))
+      await waitFor(() => { expect(stripeReceiptDocument).toHaveBeenCalledWith('81') })
+      // The card saves what the Host returned, under the backend's own filename.
+      await waitFor(() => { expect(captured.names).toContain('stripe-receipt.pdf') })
+    } finally { captured.restore() }
+  })
+
+  it('says the order state in the reader’s language on the card too', async () => {
+    // The card is the one surface that renders an order outside the receipt list,
+    // and it printed the backend's raw token (`paid`) beside a dialog and a list that
+    // both said 已支付. One vocabulary, one table — the card is not special.
+    const labels: Record<string, string> = { checkout: '购买', openCheckout: '打开支付页', processing: '处理中…', refreshOrder: '刷新订单', order: '订单' }
+    const paymentCheckout = vi.fn().mockResolvedValue({ ok: true as const, value: {
+      orderId: '81', amount: 5, currency: 'CNY', state: 'pending', outTradeNo: 'out-81',
+    } })
+    const paymentOrder = vi.fn().mockResolvedValue({ ok: true as const, value: {
+      orderId: '81', amount: 5, currency: 'CNY', state: 'paid', outTradeNo: 'out-81',
+    } })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'authenticated' as const, user: { username: 'me', email: 'me@example.com', balance: 10 } } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      paymentPlans={vi.fn().mockResolvedValue({ ok: true as const, value: [{ id: 1, name: 'US$5 Developer Credit', price: 5, currency: 'USD' }] })}
+      paymentChannels={vi.fn().mockResolvedValue({ ok: true as const, value: [{ paymentType: 'alipay', currency: 'CNY', balanceRechargeMultiplier: 0.14 }] })}
+      paymentCheckout={paymentCheckout as never}
+      paymentOrder={paymentOrder as never}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => (labels[key] ?? key) as never}
+    />)
+    fireEvent.click(await screen.findByRole('button', { name: /^购买/ }))
+    await screen.findByRole('button', { name: '刷新订单' })
+    // The order the panel just created is pending, and the card says so in Chinese.
+    expect(screen.getByText(/订单: 81 · 待支付/u)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '刷新订单' }))
+    // After the read that reports it settled, the card follows the same table — and
+    // the wire's own spelling never reaches the reader.
+    expect(await screen.findByText(/订单: 81 · 已支付/u)).toBeTruthy()
+    expect(screen.queryByText(/· paid\b/u)).toBeNull()
+  })
+
+  it('dates a receipt row by the payment, not by the order that carried it', () => {
+    // The date under each row used to be the *order's* creation time, which is the
+    // wrong fact for a payment history: an order opened at 23:59 and paid at 00:01
+    // was filed under the previous day, and the reader of this list is checking the
+    // day against a bank statement. The order stamp stays as a fallback, because a
+    // row carrying only that one is still better dated than undated.
+    expect(orderReceiptStamp({ paidAt: '2026-09-20T00:00:00Z', createdAt: '2026-09-10T00:00:00Z' })).toBe('2026-09-20T00:00:00Z')
+    expect(orderReceiptStamp({ createdAt: '2026-09-10T00:00:00Z' })).toBe('2026-09-10T00:00:00Z')
+    expect(orderReceiptStamp({})).toBeUndefined()
+  })
+
+  it('renders each row with the payment’s own date and the state in the reader’s language', async () => {
+    render(<PaymentReceiptManager
+      orders={async () => ({ ok: true as const, value: { items: [
+        order({ id: 51, status: 'PAID', created_at: '2026-09-10T00:00:00Z', paid_at: '2026-09-20T00:00:00Z' }),
+        order({ id: 52, status: 'RECHARGING' }),
+      ] } })}
+      receiptDocument={vi.fn()}
+      language="zh"
+    />)
+    // The panel and the payment dialog render one vocabulary through one table; the
+    // list used to print the backend's token beside a dialog saying `已支付`.
+    expect(await screen.findByText(/已支付/)).toBeTruthy()
+    // `recharging` is the middle of the lifecycle this panel requests, so it must be
+    // said rather than printed as a token.
+    expect(screen.getByText(/额度到账中/)).toBeTruthy()
+    // Same formatter the row uses, so the assertion survives any host locale or zone.
+    const shortDate = (iso: string): string => new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' }).format(Date.parse(iso))
+    const paidRow = (await screen.findByText(/#51/)).textContent ?? ''
+    expect(paidRow).toContain(shortDate('2026-09-20T00:00:00Z'))
+    expect(paidRow).not.toContain(shortDate('2026-09-10T00:00:00Z'))
+  })
+
+  it('names the payment channel the way the picker does, not the way the wire does', async () => {
+    // `wxpay` is this plugin's channel id, not a name anyone chose: the picker calls
+    // it 微信支付, and a row that printed the token made the reader match two
+    // spellings of one thing.
+    render(<PaymentReceiptManager
+      orders={async () => ({ ok: true as const, value: { items: [order({ id: 53, payment_type: 'wxpay' })] } })}
+      receiptDocument={vi.fn()}
+      language="zh"
+    />)
+    const row = (await screen.findByText(/#53/)).textContent ?? ''
+    expect(row).toContain('微信支付')
+    expect(row).not.toContain('wxpay')
+  })
+
+  it('offers Stripe’s document only where the backend says Stripe holds one', () => {
+    // Same rule on both surfaces, so the receipt list and the open order's card
+    // cannot offer different sets. The flag is the backend's answer, and only it
+    // knows which payments Stripe took — inferring from `paymentType` would be a
+    // second authority on whether a file exists.
+    const fetch = vi.fn()
+    expect(stripeReceiptOffered({ stripeReceiptAvailable: true }, fetch)).toBe(true)
+    expect(stripeReceiptOffered({ stripeReceiptAvailable: false }, fetch)).toBe(false)
+    // An **absent** flag is not a yes: the create-order response carries no receipt
+    // flags, so the open order the panel just created must not draw the button.
+    expect(stripeReceiptOffered({}, fetch)).toBe(false)
+    expect(stripeReceiptOffered(undefined, fetch)).toBe(false)
+    // And a deployment that registered no Stripe read cannot offer the document,
+    // whatever the backend says about the order.
+    expect(stripeReceiptOffered({ stripeReceiptAvailable: true }, undefined)).toBe(false)
+  })
+})
+
 /**
  * What the payment panel says when a click does not reach a payment page.
  *
@@ -2632,10 +3241,17 @@ describe('DeviceSessionManager', () => {
  * backend's own detail string, which names internal routes, provider hosts and
  * parser failures. A customer cannot act on any of it, and it is the interface
  * we should not be publishing.
+ *
+ * The third is which language it comes back in. Every branch used to answer with
+ * a "中文 / English" pair, so a reader of either language got a sentence they had
+ * not asked for, and the panel's own language setting decided nothing. The caller
+ * already knows which language it is drawing in, so it says so and gets that one
+ * back — a rule the "answers in the language the panel asked for" case below
+ * holds the whole table to.
  */
 describe('payment failure wording', () => {
   it('answers a timeout with the pending list, not with a blind retry', () => {
-    const text = describePaymentError('The operation was aborted due to timeout')
+    const text = describePaymentError('The operation was aborted due to timeout', 'zh')
     expect(text).toContain('待支付订单')
     expect(text).toMatch(/超时/)
     // The generic 5xx/network line would have said the service is merely
@@ -2650,27 +3266,31 @@ describe('payment failure wording', () => {
     // No order was created, so pointing the user at the pending list would send
     // them looking for something that does not exist.
     const detail = 'FreeCodeGo request /api/v1/payment/orders failed with HTTP 503: payment gateway error: easypay create: Post "https://example/mapi.php": context deadline exceeded (Client.Timeout exceeded while awaiting headers)'
-    const text = describePaymentError(detail)
+    const text = describePaymentError(detail, 'zh')
     expect(text).toContain('支付通道暂时没有响应')
     expect(text).not.toContain('待支付订单')
     // ...and it is not blamed on a missing channel configuration either: the
     // channel exists, its upstream provider is the part that failed.
     expect(text).not.toContain('没有可用通道')
     // The mainland-only provider is why this happens, so the advice names the
-    // network fix and offers the card channel as the way through.
+    // network fix and offers the card channel as the way through — in the picker's
+    // own vocabulary, which names what the payer holds rather than the acquirer
+    // behind it, and never the upstream provider the failure actually came from.
     expect(text).toContain('关闭代理或 VPN')
-    expect(text).toContain('Stripe')
+    expect(text).toContain('银行卡')
+    expect(text).not.toContain('Stripe')
+    expect(text).not.toContain('易支付')
     // Nothing internal crosses into the message: no route, no provider host, no
     // parser error, no request id.
     for (const leak of ['/api/v1/payment/orders', 'easypay', 'mapi.php', 'context deadline exceeded', 'request_id']) expect(text).not.toContain(leak)
     // A real "nothing configured for this payment type" still says so, and still
     // carries the same network advice instead of an operator's diagnosis.
-    const missing = describePaymentError('NO_AVAILABLE_INSTANCE for payment type wxpay')
+    const missing = describePaymentError('NO_AVAILABLE_INSTANCE for payment type wxpay', 'zh')
     expect(missing).toContain('暂时无法下单')
     expect(missing).toContain('关闭代理或 VPN')
     expect(missing).not.toContain('NO_AVAILABLE_INSTANCE')
     // The bare phrase a plain `timeout` match would have caught.
-    expect(describePaymentError('gateway request timed out')).toContain('支付服务暂时不可用')
+    expect(describePaymentError('gateway request timed out', 'zh')).toContain('支付服务暂时不可用')
   })
 
   it('never echoes the backend detail into what the user reads', () => {
@@ -2683,10 +3303,26 @@ describe('payment failure wording', () => {
       'INVALID_AMOUNT: amount out of range for instance cn-alipay-2',
     ]
     for (const detail of details) {
-      const text = describePaymentError(detail)
-      expect(text).toContain(' / ')
+      const text = describePaymentError(detail, 'zh')
       expect(text).not.toContain(detail)
       expect(text).not.toMatch(/request_id|instance|out_trade_no/u)
+    }
+  })
+
+  it('answers in the language the panel asked for, and in only that one', () => {
+    // `''` and a detail nothing matches are here on purpose: the two defaults have
+    // to follow the same rule as every branch above them.
+    const details = ['', 'The operation was aborted due to timeout', 'HTTP 503 Service Unavailable', 'PAYMENT_GATEWAY_ERROR', 'NO_AVAILABLE_INSTANCE for payment type wxpay', 'something nothing matches']
+    for (const detail of details) {
+      const zhText = describePaymentError(detail, 'zh')
+      const enText = describePaymentError(detail, 'en')
+      // The Chinese answer carries Chinese, and none of it leaks into the English
+      // one — which is what "one language" has to mean, not just "not both".
+      expect(zhText).toMatch(/[一-龥]/u)
+      expect(enText).not.toMatch(/[一-龥]/u)
+      // And the shape that defect had: one sentence, two languages, a slash.
+      expect(zhText).not.toContain(' / ')
+      expect(enText).not.toContain(' / ')
     }
   })
 
@@ -2694,10 +3330,10 @@ describe('payment failure wording', () => {
     // No "gateway" in the detail: that word is claimed by the
     // no-available-instance branch, which is a different, channel-specific
     // failure and is answered differently.
-    expect(describePaymentError('HTTP 503 Service Unavailable')).toContain('支付服务暂时不可用')
-    expect(describePaymentError('HTTP 401 unauthorized')).toContain('登录状态已失效')
+    expect(describePaymentError('HTTP 503 Service Unavailable', 'zh')).toContain('支付服务暂时不可用')
+    expect(describePaymentError('HTTP 401 unauthorized', 'zh')).toContain('登录状态已失效')
     // An empty detail is not a timeout and must keep its own default.
-    expect(describePaymentError('   ')).toContain('订单请求失败')
+    expect(describePaymentError('   ', 'zh')).toContain('订单请求失败')
   })
 })
 
@@ -3065,7 +3701,13 @@ describe('skill library page', () => {
 
   it('distils the current session into Skill drafts on demand and says where they went', async () => {
     const engineeringSkillDraft = vi.fn().mockResolvedValue({ ok: true as const, value: {
-      drafts: [{ name: 'verify-migrations', sources: 4 }, { name: 'run-narrow-tests', sources: 3 }],
+      // Each draft carries the publish pre-flight's verdict on its own file: the question
+      // the check answers — could this be published as it stands — is worth asking while
+      // the draft is what the user is looking at. The two rows are the two answers.
+      drafts: [
+        { name: 'verify-migrations', sources: 4, preflight: { ok: true, tokens: 900, limitTokens: 3000, findings: [] } },
+        { name: 'run-narrow-tests', sources: 3, preflight: { ok: false, tokens: 400, limitTokens: 3000, findings: [{ severity: 'error' as const, code: 'description' as const, message: 'the description does not say when to use it' }] } },
+      ],
       directory: '/work/tree/.freecodego/skill-drafts',
     } })
     render(<SkillSettingsSection
@@ -3088,6 +3730,10 @@ describe('skill library page', () => {
     await waitFor(() => { expect(engineeringSkillDraft).toHaveBeenCalledWith('session-7') })
     expect(await screen.findByText('verify-migrations')).toBeTruthy()
     expect(screen.getByText('来自 4 条会话证据')).toBeTruthy()
+    // The pre-flight's verdict is on the row, named rather than counted: a file the user
+    // is about to move into a Skill root is not something "1 problem" can act on.
+    expect(screen.getByText('发布前检查通过（约 900 标记，上限 3000）')).toBeTruthy()
+    expect(screen.getByText(/必须修：the description does not say when to use it/u)).toBeTruthy()
     // The write target has to be on screen: the drafts are files the user reviews,
     // not something the plugin mounts on their behalf.
     expect(screen.getByText('草稿目录：/work/tree/.freecodego/skill-drafts')).toBeTruthy()
@@ -3564,3 +4210,274 @@ describe('checkout quoting', () => {
   })
 })
 
+
+describe('Trae provider card', () => {
+  // The sign-in is a browser round trip the Host owns, so this card's states are
+  // the Host's states: `login-pending` is what the panel renders an attempt from,
+  // and the pasted callback is the fallback for a loopback redirect that never
+  // reaches the Host (a remote desktop, a firewall on the port).
+  const signedOut = { status: 'signed-out' as const, accounts: [] }
+  const account = { id: 'trae-1', label: 'trae-user@example.com', userId: 'u1', status: 'authenticated' as const }
+
+  const renderProviders = async (overrides: {
+    readonly traeStatus: (...args: never[]) => unknown
+    readonly traeStartBrowserLogin?: (...args: never[]) => unknown
+    readonly traePollBrowserLogin?: (...args: never[]) => unknown
+    readonly traeSubmitCallback?: (...args: never[]) => unknown
+    readonly traeSetActiveAccount?: (...args: never[]) => unknown
+    readonly traeModels?: (...args: never[]) => unknown
+  }): Promise<ReturnType<typeof render>> => {
+    const view = render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'authenticated' as const, user: { username: '001', email: 'user@example.com', balance: 12 } } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0)) as never}
+      t={(key: string) => key as never}
+      traeStatus={overrides.traeStatus as never}
+      traeStartBrowserLogin={overrides.traeStartBrowserLogin as never}
+      traePollBrowserLogin={overrides.traePollBrowserLogin as never}
+      traeSubmitCallback={overrides.traeSubmitCallback as never}
+      traeSetActiveAccount={overrides.traeSetActiveAccount as never}
+      traeModels={overrides.traeModels as never}
+    />)
+    fireEvent.click(await screen.findByRole('button', { name: '账号与提供商' }))
+    return view
+  }
+
+  it('asks the Host about a pending authorization at once, and keeps asking across re-renders', async () => {
+    // Two properties, one root cause. The ask has to happen immediately, because
+    // the Host completes the exchange the moment the redirect lands and waiting an
+    // interval before looking is dead time on every sign-in. And the polling has to
+    // survive the panel's own re-renders: the injected props are rebuilt on each
+    // one, so an effect keyed on that callback tears its timer down before the first
+    // tick — which is why a finished authorization used to sit unclaimed until the
+    // user pasted the callback by hand.
+    const pending = {
+      ok: true as const,
+      value: { status: 'login-pending' as const, accounts: [], loginUrl: 'https://www.trae.cn/authorization?state=s1', loginExpiresAt: Date.now() + 600_000, realm: 'cn' as const },
+    }
+    const traeStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { ...pending.value, status: 'login-pending' as const, accounts: [account], accountId: account.id } })
+    const traePollBrowserLogin = vi.fn().mockResolvedValue(pending)
+    const view = await renderProviders({ traeStatus, traePollBrowserLogin })
+    // Asked once before any interval could have elapsed.
+    await waitFor(() => { expect(traePollBrowserLogin).toHaveBeenCalled() })
+
+    // The app re-renders this section constantly (its own status reads, the session
+    // list, the model catalog), each time with freshly built callbacks.
+    for (let index = 0; index < 6; index += 1) {
+      view.rerender(<FreeCodeGoSettingsTab
+        {...hostStandardProps}
+        close={vi.fn()}
+        useSessions={vi.fn() as never}
+        useWorkspaces={vi.fn() as never}
+        catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+        accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'authenticated' as const, user: { username: '001', email: 'user@example.com', balance: 12 } } })}
+        login={vi.fn()}
+        logout={vi.fn()}
+        communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+        communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+        communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+        communityInstall={vi.fn()}
+        language="zh"
+        useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0)) as never}
+        t={(key: string) => key as never}
+        traeStatus={traeStatus as never}
+        traeStartBrowserLogin={undefined as never}
+        traePollBrowserLogin={((...args: never[]) => traePollBrowserLogin(...args)) as never}
+        traeSubmitCallback={undefined as never}
+        traeSetActiveAccount={undefined as never}
+        traeModels={undefined as never}
+      />)
+      await new Promise(resolve => { setTimeout(resolve, 120) })
+    }
+    // Still polling after the storm: the interval survived them.
+    await waitFor(() => { expect(traePollBrowserLogin.mock.calls.length).toBeGreaterThanOrEqual(2) }, { timeout: 3_000 })
+  })
+
+  it('offers the pasted callback when the browser does not come back, and adds the account it exchanges', async () => {
+    const traeStatus = vi.fn()
+      .mockResolvedValue({ ok: true as const, value: signedOut })
+      .mockResolvedValue({ ok: true as const, value: signedOut })
+    const traeStartBrowserLogin = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { status: 'login-pending' as const, accounts: [], loginUrl: 'https://www.trae.ai/login?state=s1', loginExpiresAt: Date.now() + 600_000, note: 'BROWSER_OPEN_FAILED' as const },
+    })
+    // The Host answers a submitted callback with the account state, so the panel's
+    // own refresh then sees a signed-in Host.
+    const traeSubmitCallback = vi.fn().mockImplementation(async () => {
+      traeStatus.mockResolvedValue({ ok: true as const, value: { status: 'authenticated' as const, accountId: 'trae-1', label: account.label, accounts: [account] } })
+      return { ok: true as const, value: { status: 'authenticated' as const, accountId: 'trae-1', label: account.label, accounts: [account] } }
+    })
+    await renderProviders({ traeStatus, traeStartBrowserLogin, traeSubmitCallback })
+
+    expect(await screen.findByText('Trae 账号与模型')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '登录国内版账号' }))
+    // The realm the user picked is part of the ask: the Host can only open the
+    // authorization page this button named.
+    await waitFor(() => { expect(traeStartBrowserLogin).toHaveBeenCalledWith('cn') })
+
+    // The browser did not open: the page owes the user the URL, not an apology.
+    expect(await screen.findByText(/未能自动打开浏览器/)).toBeTruthy()
+    const link = screen.getByRole('link', { name: '打开授权页面' })
+    expect(link.getAttribute('href')).toBe('https://www.trae.ai/login?state=s1')
+
+    const submit = screen.getByRole('button', { name: '提交回调链接' }) as HTMLButtonElement
+    // Empty input has nothing to exchange, so it is not a gesture yet.
+    expect(submit.disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Trae 回调链接'), { target: { value: 'http://127.0.0.1:41999/callback?code=abc' } })
+    fireEvent.click(screen.getByRole('button', { name: '提交回调链接' }))
+    await waitFor(() => { expect(traeSubmitCallback).toHaveBeenCalledWith('http://127.0.0.1:41999/callback?code=abc') })
+
+    // The pool appears once the Host reports the account, under the same card.
+    expect(await screen.findByText('账号管理（1）')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '账号管理（1）' }))
+    expect(screen.getByText(account.label)).toBeTruthy()
+  })
+
+  it('moves the in-use marker only through the Host, and tags the card with the Host model directory', async () => {
+    // The account in use is the expired one, which is the arrangement that shows
+    // both halves at once: the marker stays on the account the Host named, and
+    // the only switch on offer is the healthy account beside it.
+    const expired = { ...account, status: 'reauth-required' as const }
+    const healthy = { id: 'trae-2', label: 'trae-backup@example.com', status: 'authenticated' as const }
+    const traeStatus = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { status: 'authenticated' as const, accountId: 'trae-1', label: account.label, accounts: [expired, healthy] },
+    })
+    const traeSetActiveAccount = vi.fn().mockImplementation(async () => {
+      const value = { status: 'authenticated' as const, accountId: 'trae-2', label: healthy.label, accounts: [expired, healthy] }
+      traeStatus.mockResolvedValue({ ok: true as const, value })
+      return { ok: true as const, value }
+    })
+    const traeModels = vi.fn().mockResolvedValue({ ok: true as const, value: [{ id: 'solo-1', name: 'Trae SOLO' }] })
+    await renderProviders({ traeStatus, traeSetActiveAccount, traeModels })
+
+    fireEvent.click(await screen.findByRole('button', { name: '账号管理（2）' }))
+    expect(await screen.findByText('Trae SOLO')).toBeTruthy()
+    expect(screen.getByText('需重新登录')).toBeTruthy()
+    expect(screen.getByText('会话已过期，请重新登录')).toBeTruthy()
+    expect(screen.getAllByText('当前使用')).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '设为当前' }))
+    await waitFor(() => { expect(traeSetActiveAccount).toHaveBeenCalledWith('trae-2') })
+    // The marker follows the Host's answer, not the click: the panel does not
+    // decide which account is in use.
+    await waitFor(() => { expect(screen.queryByRole('button', { name: '设为当前' })).toBeNull() })
+    expect(screen.getAllByText('当前使用')).toHaveLength(1)
+  })
+})
+
+describe('provider daily check-in', () => {
+  // One button per provider, one run per button: the report is per account because
+  // the pool is exactly the case where one account's campaign is closed while
+  // another's is open.
+  const traeAccount = { id: 'trae-1', label: 'trae-user@example.com', status: 'authenticated' as const }
+  const qoderAccount = { id: 'q1', name: 'qoder-user', region: 'cn' as const }
+
+  const renderProviders = async (overrides: {
+    readonly qoderStatus?: (...args: never[]) => unknown
+    readonly traeStatus?: (...args: never[]) => unknown
+    readonly qoderCheckin?: (...args: never[]) => unknown
+    readonly traeCheckin?: (...args: never[]) => unknown
+  }): Promise<void> => {
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'authenticated' as const, user: { username: '001', email: 'user@example.com', balance: 12 } } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0)) as never}
+      t={(key: string) => key as never}
+      qoderStatus={overrides.qoderStatus as never}
+      traeStatus={overrides.traeStatus as never}
+      qoderCheckin={overrides.qoderCheckin as never}
+      traeCheckin={overrides.traeCheckin as never}
+    />)
+    fireEvent.click(await screen.findByRole('button', { name: '账号与提供商' }))
+  }
+
+  it('claims the Qoder campaigns and reports the credits it collected', async () => {
+    const qoderCheckin = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { checkedAt: 1, credits: 150, accounts: [{ accountId: 'q1', label: 'qoder-user', outcome: 'claimed' as const, credits: 150, message: '签到成功 +150 Credits，共 2 项' }] },
+    })
+    await renderProviders({
+      qoderStatus: vi.fn().mockResolvedValue({ ok: true as const, value: { configured: true, activeAccountId: 'q1', accounts: [qoderAccount], freeModels: [] } }),
+      qoderCheckin,
+    })
+
+    const button = await screen.findByRole('button', { name: '签到领积分' })
+    fireEvent.click(button)
+    await waitFor(() => { expect(qoderCheckin).toHaveBeenCalledTimes(1) })
+    expect(await screen.findByText('本次共 +150 积分 · qoder-user：+150 积分')).toBeTruthy()
+  })
+
+  it('names the Trae account that failed instead of reporting only a total', async () => {
+    // A run whose total is right can still have failed on the account the user
+    // cares about, so the line lists every account and its own outcome.
+    const traeCheckin = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: {
+        checkedAt: 1,
+        credits: 300,
+        accounts: [
+          { accountId: 'trae-1', label: 'trae-user@example.com', outcome: 'claimed' as const, credits: 300, message: '签到成功 +300 积分' },
+          { accountId: 'trae-2', label: 'trae-backup@example.com', outcome: 'failed' as const, credits: 0, message: '签到失败：9074 风控（已轮换 5 个设备号仍未成功）' },
+        ],
+      },
+    })
+    await renderProviders({
+      traeStatus: vi.fn().mockResolvedValue({
+        ok: true as const,
+        value: { status: 'authenticated' as const, accountId: 'trae-1', label: traeAccount.label, accounts: [traeAccount, { id: 'trae-2', label: 'trae-backup@example.com', status: 'authenticated' as const }] },
+      }),
+      traeCheckin,
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: '签到领积分' }))
+    const line = await screen.findByText(/trae-backup@example\.com：签到失败/u)
+    expect(line.textContent).toContain('本次共 +300 积分')
+    expect(line.textContent).toContain('trae-user@example.com：+300 积分')
+  })
+
+  it('says a run over an empty pool had nothing to do, and reads each outcome in the panel language', () => {
+    expect(checkinSummary({ checkedAt: 1, credits: 0, accounts: [] }, 'zh')).toBe('没有已登录的账号，无法签到。')
+    expect(checkinSummary({ checkedAt: 1, credits: 0, accounts: [] }, 'en')).toBe('No signed-in accounts to check in.')
+    // A claim that also hit a refusal shows both: the amount alone would read as a
+    // clean run, and the campaign that failed is the one the user would look at.
+    expect(checkinSummary({
+      checkedAt: 1,
+      credits: 100,
+      accounts: [{ accountId: 'a', label: 'A', outcome: 'claimed', credits: 100, refused: '1 项未领取：c2: quota exhausted' }],
+    }, 'zh')).toBe('本次共 +100 积分 · A：+100 积分（1 项未领取：c2: quota exhausted）')
+    const report = {
+      checkedAt: 1,
+      credits: 0,
+      accounts: [
+        { accountId: 'a', label: 'A', outcome: 'already' as const, credits: 0 },
+        { accountId: 'b', label: 'B', outcome: 'unavailable' as const, credits: 0 },
+        { accountId: 'c', label: 'C', outcome: 'failed' as const, credits: 0, message: 'boom' },
+      ],
+    }
+    expect(checkinSummary(report, 'zh')).toBe('A：今日已签到 · B：签到活动未开启 · C：签到失败（boom）')
+    expect(checkinSummary(report, 'en')).toBe('A: already checked in today · B: campaign not running · C: failed (boom)')
+  })
+})

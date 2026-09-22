@@ -90,6 +90,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { HookRecord } from './runtime.ts'
 import type { FreeCodeGoHookRuntime } from './runtime.ts'
 import { HOOK_EVENTS, type HookEvent } from './surface.ts'
+import { isRecord } from '../untrusted-json.ts'
 
 /** The slice of the host this module installs listeners on. */
 export interface HookSeamHost {
@@ -277,11 +278,6 @@ function hookContextMessage(text: string): ReturnType<typeof createUserMessage> 
   })
 }
 
-/** Whether a value is an object a decision may be spread from. */
-function isDecision(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 /**
  * The contexts a decision already carries.
  *
@@ -310,7 +306,7 @@ function existingHookContexts(decision: Record<string, unknown>): readonly unkno
  */
 function withHookContexts(decision: unknown, contexts: readonly string[]): unknown {
   if (contexts.length === 0) return decision
-  if (!isDecision(decision)) return decision
+  if (!isRecord(decision)) return decision
   return {
     ...decision,
     additionalContexts: [...existingHookContexts(decision), ...contexts.map(hookContextMessage)],

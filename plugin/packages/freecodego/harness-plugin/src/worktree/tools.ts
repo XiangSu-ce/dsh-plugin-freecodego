@@ -6,9 +6,10 @@
  * A previous revision of this plugin had session-level worktree enter/exit and
  * lost it. What a session does with one is: run in a copy of the repository so
  * its writes cannot interleave with anyone else's, and hand the copy back (or
- * keep it for review) when it is done. `team/worktree.ts` already does this for
- * team members; this is the same idea keyed on a session rather than a member,
- * sharing that module's registry rather than starting a second one.
+ * keep it for review) when it is done. `worktree/registry.ts` holds the durable
+ * record both this module and the creator write into; this surface is the one keyed
+ * on a session rather than on an id, sharing that registry rather than starting a
+ * second one.
  *
  * The one thing this cannot do, stated plainly
  * --------------------------------------------
@@ -36,21 +37,21 @@ import { existsSync, lstatSync, readdirSync, rmSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
-import { WORKTREE_RELATIVE_DIRECTORY, type TeamWorktree } from '../team/worktree.ts'
+import { WORKTREE_RELATIVE_DIRECTORY, type WorktreeEntry } from './registry.ts'
 import { redactCredentialShapes } from '../secret-scan.ts'
-import type { ToolDefinitionShape } from '../tool-definition.ts'
+import { JSON_TOOL_OUTPUT, type ToolDefinitionShape } from '../tool-definition.ts'
 import type { WorktreeCreation, WorktreeStrategyRequest } from './creator.ts'
 
-/** Marks a registry entry as owned by a session rather than by a team member. */
+/** Marks a registry entry as owned by a session rather than by a legacy member-keyed entry. */
 const SESSION_MEMBER_PREFIX = 'session:'
 
 /**
  * A directory name for one session.
  *
  * The sanitized id keeps the name readable, and the short digest of the *raw* id
- * is what keeps two ids that sanitize to the same string apart — the failure the
- * team allocator's comment already names, where two ids collide into one
- * directory and silently share one worktree.
+ * is what keeps two ids that sanitize to the same string apart — the failure an
+ * allocator that derived a directory from a name would make, where two ids collide
+ * into one directory and silently share one worktree.
  * @param sessionId - the session the name is for.
  * @returns a name safe to use as a path segment.
  */
@@ -93,22 +94,31 @@ export function sessionWorktreePlan(input: { readonly workspaceRoot: string; rea
   }
 }
 
-/** Who a registry entry belongs to. */
+/**
+ * Who a registry entry belongs to.
+ *
+ * One registry holds both kinds: a session-owned entry, and an entry written by the
+ * retired team runtime whose id carries no prefix. The owner is encoded in the
+ * member id rather than in a second field, so a reader cannot see the two as two
+ * shapes of the same thing.
+ * @param memberId - the owning id recorded on the entry.
+ * @returns The session that holds it, or that the entry is member-keyed.
+ */
 export function worktreeOwner(memberId: string): { readonly kind: 'session'; readonly sessionId: string } | { readonly kind: 'member' } {
   return memberId.startsWith(SESSION_MEMBER_PREFIX)
     ? { kind: 'session', sessionId: memberId.slice(SESSION_MEMBER_PREFIX.length) }
     : { kind: 'member' }
 }
 
-/** The registry operations this module needs, as `TeamWorktrees` provides them. */
-export interface WorktreeRegistry {
-  list(): Promise<readonly TeamWorktree[]>
-  register(entry: TeamWorktree): Promise<void>
+/** The registry operations this module needs, as `registry.ts` provides them. */
+export interface WorktreeRegistryPort {
+  list(): Promise<readonly WorktreeEntry[]>
+  register(entry: WorktreeEntry): Promise<void>
 }
 
 /** Everything the session worktrees need from the outside world, injected. */
 export interface SessionWorktreePorts {
-  readonly registry: WorktreeRegistry
+  readonly registry: WorktreeRegistryPort
   /** Create the working copy; `creator.ts` is the only intended implementation. */
   readonly create: (input: {
     readonly repoRoot: string
@@ -131,7 +141,7 @@ export interface SessionWorktreePorts {
 
 /** What `enter` produced, including what it could not do. */
 export interface WorktreeEnterOutcome {
-  readonly worktree: TeamWorktree
+  readonly worktree: WorktreeEntry
   /** True when an existing worktree for this session was returned rather than a new one. */
   readonly reused: boolean
   readonly strategy: 'git' | 'fast'
@@ -146,13 +156,13 @@ export interface WorktreeEnterOutcome {
 /** What `exit` did. */
 export interface WorktreeExitOutcome {
   readonly removed: boolean
-  readonly worktree?: TeamWorktree
+  readonly worktree?: WorktreeEntry
   readonly detail: string
 }
 
 /** One row of `list`, with the owner resolved. */
 export interface WorktreeRow {
-  readonly worktree: TeamWorktree
+  readonly worktree: WorktreeEntry
   readonly owner: 'session' | 'member'
   readonly sessionId?: string
   readonly exists: boolean
@@ -171,7 +181,7 @@ const DEFAULT_EXISTS = (path: string): boolean => existsSync(path)
  * @param entry - the registered worktree.
  * @returns which implementation produced its directory.
  */
-function recordedStrategy(entry: TeamWorktree): 'git' | 'fast' {
+function recordedStrategy(entry: WorktreeEntry): 'git' | 'fast' {
   return entry.strategy ?? (entry.branch === '' ? 'fast' : 'git')
 }
 
@@ -215,6 +225,15 @@ function directoryBytes(root: string): number {
   return total
 }
 
+/**
+ * The operations one *session* performs on its own working copy.
+ *
+ * The two share one registry, and this side is the session's: hold a copy for the
+ * conversation, hand back the one an exited session left behind, and report what a
+ * session's barriers are. The filesystem and clock arrive through `ports`, which is
+ * what lets the whole surface be driven from a fixture rather than from a real
+ * repository.
+ */
 export class SessionWorktrees {
   constructor(private readonly ports: SessionWorktreePorts) {}
 
@@ -226,8 +245,12 @@ export class SessionWorktrees {
     return this.ports.now?.() ?? Date.now()
   }
 
-  /** The active entry a session holds, if any. */
-  async held(sessionId: string): Promise<TeamWorktree | undefined> {
+  /**
+   * The active entry a session holds, if any.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns The entry it currently holds, or `undefined` when it holds none.
+   */
+  async held(sessionId: string): Promise<WorktreeEntry | undefined> {
     const entries = await this.ports.registry.list()
     return entries.find(entry => entry.memberId === `${SESSION_MEMBER_PREFIX}${sessionId}` && entry.state === 'active')
   }
@@ -242,7 +265,7 @@ export class SessionWorktrees {
    * @param sessionId - the session to look up.
    * @returns the entry, or `undefined` when nothing was left.
    */
-  private async keptBySession(sessionId: string): Promise<TeamWorktree | undefined> {
+  private async keptBySession(sessionId: string): Promise<WorktreeEntry | undefined> {
     const memberId = `${SESSION_MEMBER_PREFIX}${sessionId}`
     const kept = (await this.ports.registry.list()).filter(entry => entry.memberId === memberId && entry.state === 'abandoned')
     return kept.sort((left, right) => right.createdAt - left.createdAt)[0]
@@ -284,7 +307,7 @@ export class SessionWorktrees {
     // occupied directory, which merges the source tree over the session's edits
     // (or throws where a worktree's `.git` file sits, and that throw reaches the
     // cleanup below, which deletes the directory). Walking back into it is the
-    // decision `team/worktree.ts` already makes for a member — "existence is the
+    // decision the creator already makes — "existence is the
     // whole test" — read one state wider.
     if (existing === undefined) {
       const kept = await this.keptBySession(input.sessionId)
@@ -292,7 +315,7 @@ export class SessionWorktrees {
         // Re-registered rather than returned as it stands: `held`, `status` and a
         // later `exit` all read the registry, so the entry has to say the session
         // holds this copy again or the next call will not find it.
-        const reactivated: TeamWorktree = { ...kept, state: 'active' }
+        const reactivated: WorktreeEntry = { ...kept, state: 'active' }
         await this.ports.registry.register(reactivated)
         return {
           worktree: reactivated,
@@ -332,7 +355,7 @@ export class SessionWorktrees {
     const base = created.strategy === 'git'
       ? (await this.ports.head?.(repoRoot)) ?? input.ref ?? ''
       : ''
-    const worktree: TeamWorktree = {
+    const worktree: WorktreeEntry = {
       id: plan.id,
       memberId: plan.memberId,
       sessionId: plan.sessionId,
@@ -407,7 +430,7 @@ export class SessionWorktrees {
         }
       }
     }
-    const released: TeamWorktree = { ...worktree, state: 'abandoned' }
+    const released: WorktreeEntry = { ...worktree, state: 'abandoned' }
     await this.ports.registry.register(released)
     return {
       removed: input.remove === true,
@@ -438,7 +461,7 @@ export class SessionWorktrees {
    * Every worktree in the registry, whoever owns it.
    *
    * Deliberately not filtered to this workspace: the registry is per workspace
-   * already (`TeamJsonStore` refuses a document whose `cwd` differs), so a filter
+   * already (`JsonDocumentStore` refuses a document whose `cwd` differs), so a filter
    * here would only hide a mismatch worth seeing.
    * @returns one row per entry, newest first.
    */
@@ -449,7 +472,7 @@ export class SessionWorktrees {
       .sort((left, right) => right.worktree.createdAt - left.worktree.createdAt)
   }
 
-  private row(entry: TeamWorktree): WorktreeRow {
+  private row(entry: WorktreeEntry): WorktreeRow {
     const owner = worktreeOwner(entry.memberId)
     const exists = this.exists(entry.path)
     return {
@@ -482,7 +505,15 @@ export function isolationNote(path: string, reused: boolean): string {
     + 'default_isolation is "worktree") has the redirect for real.'
 }
 
-/** The registry entry for a session, formatted for a tool result. */
+/**
+ * The registry entry for a session, formatted for a tool result.
+ *
+ * Absent facts are omitted rather than sent as `null`, except `branch`, where the
+ * empty string means "this copy has no branch" — a real state a reader has to be
+ * able to tell from "no branch was recorded".
+ * @param row - the measured registry row to report.
+ * @returns A JSON-safe summary of the entry, in the shape a tool result carries.
+ */
 export function summarizeWorktree(row: WorktreeRow): Record<string, unknown> {
   return {
     id: row.worktree.id,
@@ -498,7 +529,12 @@ export function summarizeWorktree(row: WorktreeRow): Record<string, unknown> {
   }
 }
 
-/** The workspace-relative path of a worktree, when it is inside the workspace. */
+/**
+ * The workspace-relative path of a worktree, when it is inside the workspace.
+ * @param workspaceRoot - the workspace root this operation is scoped to.
+ * @param path - path the operation acts on.
+ * @returns The forward-slashed path relative to that root, or `.` for the root itself.
+ */
 export function relativeWorktreePath(workspaceRoot: string, path: string): string {
   const rel = relative(workspaceRoot, path)
   return rel === '' ? '.' : rel.split('\\').join('/')
@@ -525,11 +561,6 @@ export interface WorktreeToolDeps {
   /** Resolve a repository root from a workspace; defaults to the workspace itself. */
   readonly repoRootOf?: (cwd: string) => Promise<string | undefined>
 }
-
-const JSON_OUTPUT = {
-  schema: { type: 'object', additionalProperties: true },
-  render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
-} as const
 
 /**
  * The four worktree tools.
@@ -560,7 +591,7 @@ export function worktreeToolDefinitions(deps: WorktreeToolDeps): readonly ToolDe
           ref: { type: 'string', description: 'Commit or branch to start from. Git strategy only. Defaults to HEAD.' },
         },
       },
-      output: JSON_OUTPUT,
+      output: JSON_TOOL_OUTPUT,
       execute: async (args: { readonly strategy?: string; readonly repo_root?: string; readonly ref?: string }, exec: unknown) => {
         const context = contextOf(exec)
         if ('error' in context) return context
@@ -591,7 +622,7 @@ export function worktreeToolDefinitions(deps: WorktreeToolDeps): readonly ToolDe
           remove: { type: 'boolean', description: 'Delete the working copy. Defaults to false, which keeps it for review.' },
         },
       },
-      output: JSON_OUTPUT,
+      output: JSON_TOOL_OUTPUT,
       execute: async (args: { readonly remove?: boolean }, exec: unknown) => {
         const context = contextOf(exec)
         if ('error' in context) return context
@@ -612,7 +643,7 @@ export function worktreeToolDefinitions(deps: WorktreeToolDeps): readonly ToolDe
       name: 'engineering_worktree_status',
       description: 'Report the working copy this conversation holds: its path, how it was made, whether the directory is still there, and how many bytes it occupies. Use it before and after exiting to see what an isolated copy costs.',
       parameters: { type: 'object', additionalProperties: false, properties: {} },
-      output: JSON_OUTPUT,
+      output: JSON_TOOL_OUTPUT,
       execute: async (_args: unknown, exec: unknown) => {
         const context = contextOf(exec)
         if ('error' in context) return context
@@ -625,9 +656,9 @@ export function worktreeToolDefinitions(deps: WorktreeToolDeps): readonly ToolDe
     },
     {
       name: 'engineering_worktree_list',
-      description: 'List every worktree registered in this workspace: the team\'s and each conversation\'s, with owner, branch, state and size. Use it to find a copy left behind by an earlier session, or to see total disk held by isolation.',
+      description: 'List every working copy this workspace has registered, with owner, branch, state and size. Use it to find a copy left behind by an earlier session, or to see total disk held by isolation.',
       parameters: { type: 'object', additionalProperties: false, properties: {} },
-      output: JSON_OUTPUT,
+      output: JSON_TOOL_OUTPUT,
       execute: async (_args: unknown, exec: unknown) => {
         const context = contextOf(exec)
         if ('error' in context) return context

@@ -538,7 +538,7 @@ describe('denyRefusal', () => {
 
 describe('a native engine’s own tools get the same judgment', () => {
   const deps = {
-    settings: () => ({ envReadGuardEnabled: false, commandPolicyEnabled: false, planModeEnabled: false, doomLoopGuardEnabled: false }),
+    settings: () => ({ envReadGuardEnabled: false, commandPolicyEnabled: false, planModeEnabled: false }),
     deny: ['**/.env'],
   }
 

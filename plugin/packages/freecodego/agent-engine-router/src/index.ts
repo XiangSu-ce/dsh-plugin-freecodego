@@ -34,6 +34,35 @@ declare module '@deepseek-ai/dsh-session/types' {
   }
 }
 
+/** One durable session event, as this module reads it back from storage. */
+type PersistedSessionEvent = { readonly type: string; readonly data: unknown }
+
+/**
+ * The events out of one session-handle `read()` answer.
+ *
+ * The storage seam answers `SessionHandleReadResult` — `{ eventState, events }` —
+ * and not the bare event slice, which is why the upstream readers destructure
+ * (`const { events } = await handle.read()`, `feedback/message-feedback`). This
+ * module declared the slice instead, so `inspected.events` was the wrapper record
+ * and the resume path ended in `TypeError: inspected.events.find is not a
+ * function` — surfaced to the user as `gateway/internal: resume failed for
+ * session "…"`, which made the model impossible to switch on any session that
+ * already carried a durable engine binding.
+ *
+ * The union keeps a backend that answers the slice directly readable, and an
+ * unrecognized record degrades to "no durable binding" — the same answer as a
+ * session with no binding at all — rather than to a TypeError.
+ * @param result - the `read` answer: the seam's read result record, or a bare slice.
+ * @returns the events, or an empty slice when the record carries none.
+ */
+export function sessionEvents(result: unknown): readonly PersistedSessionEvent[] {
+  // `unknown` rather than a declared union: `Array.isArray` does not narrow a
+  // `readonly T[]` member out of a union, so the record branch would not compile.
+  if (Array.isArray(result)) return result as readonly PersistedSessionEvent[]
+  const events = result !== null && typeof result === 'object' ? (result as { readonly events?: unknown }).events : undefined
+  return Array.isArray(events) ? events as readonly PersistedSessionEvent[] : []
+}
+
 /** Platform paths needed to launch the sealed Codex worker. */
 export interface CodexRuntimeConfig extends CodexRootRuntimeOptions {}
 
@@ -55,6 +84,9 @@ type FreeCodeGoHarnessInventory = {
   resolveModelRoute?: (model: string) => { readonly provider: string; readonly model: string } | undefined
 }
 
+/**
+ * Agent options the router has stamped with the engine and route it chose.
+ */
 export type RoutedAgentOptions = AgentOptions & FreeCodeGoAgentOptions & { readonly engine?: string; readonly provider?: string; readonly model?: string }
 
 /**
@@ -371,7 +403,10 @@ export class FreeCodeGoAgentEngineRouter extends Service implements AgentFactory
     }
   }
 
-  /** Dispose an idle root Agent so its durable session can be permanently removed. */
+  /** Dispose an idle root Agent so its durable session can be permanently removed. 
+   * @param sessionId - the session whose idle root Agent should be released.
+   * @returns true when the Agent was disposed, false while it is missing or still running.
+   */
   async disposeAgent(sessionId: SessionId): Promise<boolean> {
     const handle = this.liveHandles.get(sessionId)
     if (handle === undefined || handle.agent.status === 'running') return false
@@ -381,7 +416,9 @@ export class FreeCodeGoAgentEngineRouter extends Service implements AgentFactory
 
   private async reserveResume(options: ResumeAgentOptions): Promise<AgentEngineLease> {
     const persistence = this.ctx.get('sessionPersistence') as {
-      open?: (id: string, access: 'read' | 'write') => Promise<{ read(offset?: number, length?: number): Promise<readonly { type: string; data: unknown }[]>; close(): Promise<void> }>
+      // `read` is declared as the storage seam declares it — see
+      // {@link sessionEvents} for why the wrapper record is what comes back.
+      open?: (id: string, access: 'read' | 'write') => Promise<{ read(offset?: number, length?: number): Promise<unknown>; close(): Promise<void> }>
     } | undefined
     if (persistence !== undefined) {
       // The durable log is read through the declared handle (`open` → `read` →
@@ -392,7 +429,7 @@ export class FreeCodeGoAgentEngineRouter extends Service implements AgentFactory
       const inspected = typeof persistence.open === 'function'
         ? await (async () => {
           const handle = await persistence.open!(options.resumeSessionId, 'read')
-          try { return { events: await handle.read() } }
+          try { return { events: sessionEvents(await handle.read()) } }
           finally { await handle.close() }
         })()
         : undefined

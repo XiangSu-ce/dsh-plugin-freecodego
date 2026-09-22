@@ -17,14 +17,16 @@ import { toolDefinition as rawTool, type ToolDefinitionShape } from './tool-defi
 import { PendingWriteDrain } from './abort-drain.ts'
 import { dangerousCommandFindings } from './dangerous-command-patterns.ts'
 import { containsSecret } from './secret-scan.ts'
+import { isRecord } from './untrusted-json.ts'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 import { apply as applySkillFilesystem } from '@deepseek-ai/dsh-skill-filesystem'
 import { ENGINEERING_MEMORY_KINDS } from './types.ts'
-import type { FreeCodeGoEngineeringCanvasGraph, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoEngineeringCodeGraphRuntimePackage, FreeCodeGoEngineeringCodeGraphRuntimeStatus, FreeCodeGoEngineeringDoctorReport, FreeCodeGoEngineeringFinding, FreeCodeGoEngineeringLoopPhase, FreeCodeGoEngineeringLoopStatus, FreeCodeGoEngineeringMemoryBackup, FreeCodeGoEngineeringMemoryDetail, FreeCodeGoEngineeringMemoryIndex, FreeCodeGoEngineeringMemoryRetentionResult, FreeCodeGoEngineeringModuleStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringVerificationResult, FreeCodeGoSkillMapBudget, FreeCodeGoSkillMapBudgetStrategy, FreeCodeGoSkillPackStatus } from './types.ts'
+import type { FreeCodeGoEngineeringCanvasGraph, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoEngineeringCodeGraphProjectStatus, FreeCodeGoEngineeringCodeGraphRuntimePackage, FreeCodeGoEngineeringCodeGraphRuntimeStatus, FreeCodeGoEngineeringDoctorReport, FreeCodeGoEngineeringFinding, FreeCodeGoEngineeringGraphProjectStatus, FreeCodeGoEngineeringGraphRuntimePackage, FreeCodeGoEngineeringGraphRuntimeStatus, FreeCodeGoEngineeringLoopPhase, FreeCodeGoEngineeringLoopStatus, FreeCodeGoEngineeringMemoryBackup, FreeCodeGoEngineeringMemoryDetail, FreeCodeGoEngineeringMemoryIndex, FreeCodeGoEngineeringMemoryPage, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringMemoryRetentionResult, FreeCodeGoEngineeringMemoryTimeline, FreeCodeGoEngineeringModuleStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringVerificationResult, FreeCodeGoSkillMapBudget, FreeCodeGoSkillMapBudgetStrategy, FreeCodeGoSkillPackStatus } from './types.ts'
 import type { EngineeringVerificationProbe, EngineeringVerificationStage } from './engineering-quality.ts'
 import { EngineeringMemoryStore } from './engineering-memory.ts'
 import { skillDraftDirectory, writeSkillDrafts } from './engineering-skill-draft.ts'
+import { checkSkillForPublish } from './skills/publish.ts'
 import type { EngineeringMemoryReviewDecision, EngineeringMemoryTrust } from './engineering-memory.ts'
 import { GraphifyRuntimeManager } from './engineering-graphify.ts'
 import { GraphifyMcpSidecar, graphifyMcpArgumentsHelp, type GraphifyMcpToolName } from './engineering-graphify-sidecar.ts'
@@ -45,6 +47,9 @@ import type { MemoryDocumentRecord } from './memory/memory-document.ts'
 import { selectMemories, type MemoryRecallCandidate, type MemoryRecallDrop, type MemoryRecallStrategy, type MemorySelector } from './memory/memory-recall.ts'
 import { VERIFICATION_TOOL_NAME } from './verify-on-stop.ts'
 
+/**
+ * Schema of the engineering settings document, as the Host validates it.
+ */
 export const FreeCodeGoEngineeringSettingsSchema = z.object({
   engineeringEnabled: z.boolean().default(false),
   /**
@@ -79,15 +84,8 @@ export const FreeCodeGoEngineeringSettingsSchema = z.object({
    * it, and a user who turned a pack on has no way to see what arrived.
    */
   engineeringSkillMapEnabled: z.boolean().default(true),
-  /** Enables bounded project-declared verification after an approved team plan. */
+  /** Enables bounded project-declared verification after an approved council plan. */
   engineeringQualityEnabled: z.boolean().default(true),
-  /**
-   * Enables the multi-member team runtime: the claimable task board, the durable
-   * member registry, git-worktree isolation for writers, and manual context
-   * control. Off means every `engineering_team_*` tool refuses rather than
-   * running a team with no isolation.
-   */
-  engineeringTeamEnabled: z.boolean().default(true),
   engineeringMemoryEnabled: z.boolean().default(true),
   engineeringCouncilEnabled: z.boolean().default(true),
   engineeringCouncilDeepseekEnabled: z.boolean().default(true),
@@ -321,22 +319,35 @@ function projectIdSegment(projectId: string): string {
   return safe === '' ? 'project' : safe
 }
 
-/** Resolve built-in assets relative to either src/ or the packed lib/ tree. */
+/** Resolve built-in assets relative to either src/ or the packed lib/ tree. 
+ * @returns the directory the built-in engineering assets are read from.
+ */
 export function engineeringSkillDirectory(): string { return SKILL_DIRECTORY }
 
-/** The default-on starter set's asset root. */
+/** The default-on starter set's asset root. 
+ * @returns the starter set's asset root.
+ */
 export function starterSkillDirectory(): string { return STARTER_SKILL_DIRECTORY }
 
 /** The vendored superpowers pack's asset root; exported for the same release
- *  tests that audit {@link engineeringSkillDirectory}. */
+ *  tests that audit {@link engineeringSkillDirectory}. 
+ * @returns the vendored superpowers pack's asset root.
+ */
 export function superpowersSkillDirectory(): string { return SUPERPOWERS_SKILL_DIRECTORY }
 
-/** Inspect bundled assets without constructing a Cordis Host; used by release tests. */
+/** Inspect bundled assets without constructing a Cordis Host; used by release tests. 
+ * @returns one finding per bundled asset, for the doctor report.
+ */
 export async function inspectBuiltinEngineeringSkills(): Promise<FreeCodeGoEngineeringDoctorReport['skills']> {
   return inspectSkills()
 }
 
-/** Scan externally sourced MCP/Skill text before it enters a managed directory or settings document. */
+/** Scan externally sourced MCP/Skill text before it enters a managed directory or settings document. 
+ * @returns the engineering Finding rows, in backend order.
+ * @param content - the content to send.
+ * @param id - the asset's id, as findings name it.
+ * @param requireFrontmatter - whether a missing frontmatter block is itself a finding.
+ */
 export function inspectExternalEngineeringAsset(
   id: string,
   content: string,
@@ -359,7 +370,11 @@ export function inspectExternalEngineeringAsset(
   return findings
 }
 
-/** Reject unsafe external assets before their configuration or files are persisted. */
+/** Reject unsafe external assets before their configuration or files are persisted. 
+ * @param content - the content to send.
+ * @param id - the asset's id, as findings name it.
+ * @param requireFrontmatter - whether a missing frontmatter block is itself a finding.
+ */
 export function assertExternalEngineeringAssetSafe(id: string, content: string, requireFrontmatter = false): void {
   const blocked = inspectExternalEngineeringAsset(id, content, requireFrontmatter)
     .filter(finding => finding.severity === 'high' || finding.severity === 'critical')
@@ -451,11 +466,17 @@ export class FreeCodeGoEngineeringRegistry {
     })
   }
 
-  start(): void {
+    /**
+   * Install the registry's session listeners and memory seams.
+   */
+start(): void {
     void this.enqueue(async () => this.reconcile()).catch(() => undefined)
   }
 
-  async dispose(): Promise<void> {
+    /**
+   * Release the registry's listeners and any pending work.
+   */
+async dispose(): Promise<void> {
     this.closed = true
     // Drain before the stores close: a write still running against a closed
     // SQLite handle or a removed directory fails for a reason that has nothing
@@ -475,12 +496,18 @@ export class FreeCodeGoEngineeringRegistry {
     })
   }
 
-  configuration(): FreeCodeGoEngineeringSettings {
+    /**
+   * Read the settings document the registry currently runs with.
+   * @returns the engineering settings in force.
+   */
+configuration(): FreeCodeGoEngineeringSettings {
     const current = this.settings?.get()
     return normalizeSettings(isRecord(current) ? current : undefined)
   }
 
-  /** Engineering Skills keep the shared Skill tool available even when user roots are off. */
+  /** Engineering Skills keep the shared Skill tool available even when user roots are off. 
+   * @returns true when engineering Skills are switched on.
+   */
   skillEnabled(): boolean {
     const settings = this.configuration()
     // The mounted flag must agree with status(): a failed fiber mount leaves
@@ -502,16 +529,30 @@ export class FreeCodeGoEngineeringRegistry {
     ]
   }
 
-  councilEnabled(): boolean {
+    /**
+   * Whether the engineering council is switched on.
+   * @returns true when the council is switched on.
+   */
+councilEnabled(): boolean {
     const settings = this.configuration()
     return settings.engineeringEnabled && settings.engineeringCouncilEnabled
   }
 
-  async setEnabled(enabled: boolean): Promise<FreeCodeGoEngineeringStatus> {
+    /**
+   * Switch the engineering surfaces on or off.
+   * @param enabled - whether this capability is switched on.
+   * @returns the status after the change.
+   */
+async setEnabled(enabled: boolean): Promise<FreeCodeGoEngineeringStatus> {
     return this.update({ engineeringEnabled: enabled })
   }
 
-  async update(input: Partial<FreeCodeGoEngineeringSettings>): Promise<FreeCodeGoEngineeringStatus> {
+    /**
+   * Persist a bounded engineering settings patch.
+   * @param input - the settings patch to merge.
+   * @returns the status after the change.
+   */
+async update(input: Partial<FreeCodeGoEngineeringSettings>): Promise<FreeCodeGoEngineeringStatus> {
     if (this.settings === undefined) throw new Error('FreeCodeGo settings are not configured')
     const current = this.configuration()
     const next = normalizeSettings({ ...current, ...input })
@@ -529,7 +570,11 @@ export class FreeCodeGoEngineeringRegistry {
     return this.status()
   }
 
-  async status(): Promise<FreeCodeGoEngineeringStatus> {
+    /**
+   * Read the engineering state the settings surface renders.
+   * @returns the engineering status.
+   */
+async status(): Promise<FreeCodeGoEngineeringStatus> {
     const configuration = this.configuration()
     const available = configuration.engineeringEnabled
     const roots = this.mountedSkillRoots()
@@ -567,7 +612,6 @@ export class FreeCodeGoEngineeringRegistry {
         : deferredModule('checkpoints', available, this.checkpointsError ?? '工作区检查点尚未初始化；它随「实施后验证」或「代码结构图」一起开启。'),
       this.memoryAvailable ? { id: 'memory' as const, state: 'available' as const, detail: '项目长期记忆已就绪；AI 会自动记录并在 DeepSeek、Codex、Claude 之间共享。' } : deferredModule('memory', available && configuration.engineeringMemoryEnabled, this.memoryError ?? '项目长期记忆尚未初始化。'),
       moduleState('council', available && configuration.engineeringCouncilEnabled, '可并行启动 DeepSeek、Codex 和 Claude 只读工程子 Agent，按配置回合数比较方案并记录共识与分歧。'),
-      moduleState('team', available && configuration.engineeringTeamEnabled, '多成员协作运行时：可认领任务板、成员邮箱与健康检查、写者独立 worktree 与合并仲裁，以及手动上下文压缩。'),
       available && configuration.engineeringCodeGraphEnabled && graphEngine !== undefined
         ? { id: 'codegraph', ...graphEngine }
         : deferredModule('codegraph', available && configuration.engineeringCodeGraphEnabled, configuration.engineeringGraphEngine === 'graphify' ? graphify.reason ?? '需要安装完整 Graphify Runtime。' : configuration.engineeringGraphEngine === 'codegraph' ? codeGraph.reason ?? '需要安装完整 CodeGraph Runtime。' : '需要安装 Graphify 或 CodeGraph Runtime。'),
@@ -586,7 +630,25 @@ export class FreeCodeGoEngineeringRegistry {
     }
   }
 
-  async doctor(): Promise<FreeCodeGoEngineeringDoctorReport> {
+    /**
+   * Inspect the engineering install and report what needs attention.
+   *
+   * Not a second copy of the Harness's own runtime diagnostics. That capability
+   * is `@deepseek-ai/dsh-invariants`, a registry each *package* registers its
+   * durable-event checks into (`core/tools/src/invariant.ts`,
+   * `fs/fs/src/invariant.ts`), enforced while the composition runs and attributed
+   * to the package that owns the relationship — it asks whether a live runtime
+   * keeps its own contracts. This audits *shipped assets*: the bundled Skills'
+   * integrity, secrets, dangerous installer commands and prompt-bypass
+   * instructions, plus how far the effective sandbox deny list actually reaches.
+   * The two questions cannot answer for each other, so neither replaces the
+   * other; and the invariants registry is mounted by no composition in this
+   * tree, which is a wiring gap on that side rather than a duplication on this
+   * one. `engineering_inspect` is a third axis again — what *this plugin* loaded
+   * — and `engineering_surface_report` a fourth: how many bytes it injects.
+   * @returns the doctor report.
+   */
+async doctor(): Promise<FreeCodeGoEngineeringDoctorReport> {
     const skills = await inspectBuiltinEngineeringSkills()
     const findings = skills.flatMap(skill => skill.findings)
     const deny = this.denyPatterns?.() ?? []
@@ -626,11 +688,23 @@ export class FreeCodeGoEngineeringRegistry {
     this.denyPatterns = provider
   }
 
-  memoryList(cwd: string, input: { readonly trusts?: readonly EngineeringMemoryTrust[]; readonly limit?: number; readonly cursor?: string }) {
+    /**
+   * List compact local memories for one workspace.
+   * @param cwd - working directory the command runs in.
+   * @param input - the trust filter, page size, and cursor.
+   * @returns the page of memory index rows.
+   */
+memoryList(cwd: string, input: { readonly trusts?: readonly EngineeringMemoryTrust[]; readonly limit?: number; readonly cursor?: string }): FreeCodeGoEngineeringMemoryPage {
     return this.requireMemory().list({ cwd, ...input })
   }
 
-  memorySearch(cwd: string, input: { readonly query?: string; readonly limit?: number }) {
+    /**
+   * Search reviewed local memory for one workspace.
+   * @param cwd - working directory the command runs in.
+   * @param input - the query text and the page size.
+   * @returns the matching index rows.
+   */
+memorySearch(cwd: string, input: { readonly query?: string; readonly limit?: number }): readonly FreeCodeGoEngineeringMemoryIndex[] {
     return this.requireMemory().search({ cwd, ...input })
   }
 
@@ -647,6 +721,9 @@ export class FreeCodeGoEngineeringRegistry {
    * order, and a `selectorFailure` says why it did not. Both are reported rather
    * than inferred, because "these are the five best memories" is a claim the
    * caller is about to act on.
+   * @param cwd - working directory the command runs in.
+   * @param input - the query, the page size, and the signal the caller waits on.
+   * @returns the ranked results, with the strategy that produced them.
    */
   async memorySearchRanked(
     cwd: string,
@@ -709,16 +786,29 @@ export class FreeCodeGoEngineeringRegistry {
    * Injected rather than constructed here because the selector needs two things
    * this runtime does not own: the mounted LLM service and the user's configured
    * route. The composition has both; a test has neither and passes a double.
+   * @param factory - the selector to install, or `undefined` to clear it.
    */
   setMemorySelector(factory: MemorySelectorFactory | undefined): void {
     this.selectorFactory = factory
   }
 
-  memoryTimeline(cwd: string, input: { readonly id: string; readonly before?: number; readonly after?: number; readonly trusts?: readonly EngineeringMemoryTrust[] }) {
+    /**
+   * Read a bounded time neighborhood around one memory record.
+   * @param cwd - working directory the command runs in.
+   * @param input - the record id and the time window around it.
+   * @returns the timeline for that record.
+   */
+memoryTimeline(cwd: string, input: { readonly id: string; readonly before?: number; readonly after?: number; readonly trusts?: readonly EngineeringMemoryTrust[] }): FreeCodeGoEngineeringMemoryTimeline {
     return this.requireMemory().timeline({ cwd, ...input })
   }
 
-  memoryGetForReview(cwd: string, ids: readonly string[]) {
+    /**
+   * Read the memory details the user is about to review.
+   * @param cwd - working directory the command runs in.
+   * @param ids - ids of the records to read.
+   * @returns the requested memory details.
+   */
+memoryGetForReview(cwd: string, ids: readonly string[]): readonly FreeCodeGoEngineeringMemoryDetail[] {
     return this.requireMemory().getForReview({ cwd, ids })
   }
 
@@ -730,6 +820,8 @@ export class FreeCodeGoEngineeringRegistry {
    * decisions would present a guess as the project's record. The directory is
    * keyed by the store's project id so two workspaces sharing a data home cannot
    * overwrite each other's documents.
+   * @returns the memory Export Result.
+   * @param cwd - working directory the command runs in.
    */
   async memoryExportDocuments(cwd: string): Promise<MemoryExportResult> {
     const exported = this.requireMemory().exportReviewed({ cwd })
@@ -754,6 +846,8 @@ export class FreeCodeGoEngineeringRegistry {
    * only on the detail shape, and the drafts must be able to carry every field
    * a reviewer recorded. Drafts are written, never installed: registering the
    * directory as a Skill root stays a deliberate user action.
+   * @returns the engineering Skill Draft Result.
+   * @param cwd - working directory the command runs in.
    */
   async skillDraftGenerate(cwd: string): Promise<FreeCodeGoEngineeringSkillDraftResult> {
     const memory = this.requireMemory()
@@ -771,40 +865,90 @@ export class FreeCodeGoEngineeringRegistry {
       return { drafts: [], reason: 'no cluster of 3 or more related reviewed memories was found; add related records and review them first' }
     }
     return {
-      drafts: drafts.map(draft => ({ name: draft.name, sources: draft.sources.length })),
+      drafts: drafts.map(draft => ({
+        name: draft.name,
+        sources: draft.sources.length,
+        // Checked as if it were about to be published, because that is the decision
+        // the file is in front of the user for. Drafts are written and never
+        // installed, so this is the last moment before the draft becomes the user's
+        // problem that the plugin can answer "would this survive a publish" itself.
+        preflight: checkSkillForPublish({ markdown: draft.content, directoryName: draft.name }),
+      })),
       ...(directory === undefined ? {} : { directory }),
     }
   }
 
-  memoryReview(cwd: string, id: string, trust: EngineeringMemoryReviewDecision) {
+    /**
+   * Record the user's review decision for one memory.
+   * @param cwd - working directory the command runs in.
+   * @param id - id of the record being reviewed.
+   * @param trust - the review decision to store.
+   * @returns the reviewed record.
+   */
+memoryReview(cwd: string, id: string, trust: EngineeringMemoryReviewDecision): FreeCodeGoEngineeringMemoryDetail {
     return this.requireMemory().review({ cwd, id, trust })
   }
 
-  memoryDelete(cwd: string, id: string) {
+    /**
+   * Delete one local memory permanently.
+   * @param cwd - working directory the command runs in.
+   * @param id - id of the record to delete.
+   * @returns true once the record is gone.
+   */
+memoryDelete(cwd: string, id: string): { readonly deleted: true } {
     return this.requireMemory().delete({ cwd, id })
   }
 
-  memoryPurgeProject(cwd: string, includeReviewed: boolean | undefined) {
+    /**
+   * Clear this project's memories, including reviewed ones only on request.
+   * @param cwd - working directory the command runs in.
+   * @param includeReviewed - whether reviewed knowledge is included.
+   * @returns how many records were deleted.
+   */
+memoryPurgeProject(cwd: string, includeReviewed: boolean | undefined): { readonly deleted: number } {
     return this.requireMemory().purgeProject({ cwd, ...(includeReviewed === undefined ? {} : { includeReviewed }) })
   }
 
-  memoryExportReviewed(cwd: string) {
+    /**
+   * Export this project's reviewed knowledge.
+   * @param cwd - working directory the command runs in.
+   * @returns the reviewable records, with drafts and rejected entries omitted.
+   */
+memoryExportReviewed(cwd: string): ReturnType<EngineeringMemoryStore['exportReviewed']> {
     return this.requireMemory().exportReviewed({ cwd })
   }
 
-  memoryBackup(): Promise<FreeCodeGoEngineeringMemoryBackup> {
+    /**
+   * Write a backup of the local memory store.
+   * @returns the backup that was written.
+   */
+memoryBackup(): Promise<FreeCodeGoEngineeringMemoryBackup> {
     return this.requireMemory().backup()
   }
 
-  memoryRetentionSweep(retentionDays: number): FreeCodeGoEngineeringMemoryRetentionResult {
+    /**
+   * Trim stale generated and rejected memory.
+   * @param retentionDays - age in days beyond which stale records are trimmed.
+   * @returns what the sweep removed.
+   */
+memoryRetentionSweep(retentionDays: number): FreeCodeGoEngineeringMemoryRetentionResult {
     return this.requireMemory().retentionSweep(retentionDays)
   }
 
-  memoryRecall(cwd: string) {
+    /**
+   * Recall project knowledge for a session that is starting.
+   * @param cwd - working directory the command runs in.
+   * @returns the recalled records, empty when nothing is relevant.
+   */
+memoryRecall(cwd: string): FreeCodeGoEngineeringMemoryRecall {
     return this.requireMemory().recall({ cwd, tokenBudget: this.configuration().engineeringMemoryContextTokenBudget })
   }
 
-  /** Save a bounded council decision as a draft for later user review. */
+  /** Save a bounded council decision as a draft for later user review. 
+   * @returns the engineering Memory Detail.
+   * @param cwd - working directory the command runs in.
+   * @param input - the draft's title, body, kind, and tags.
+   */
   memorySaveDraft(
     cwd: string,
     input: {
@@ -818,7 +962,11 @@ export class FreeCodeGoEngineeringRegistry {
     return this.requireMemory().saveDraft({ cwd, ...input })
   }
 
-  /** Persist an Advisor finding as a pending memory draft (best-effort). */
+  /** Persist an Advisor finding as a pending memory draft (best-effort). 
+   * @param cwd - working directory the command runs in.
+   * @param advice - the Advisor finding to store.
+   * @returns the draft it created, or `undefined` when it could not be stored.
+   */
   saveDraftFromAdvisor(cwd: string, advice: { readonly severity: 'nit' | 'concern' | 'blocker'; readonly note: string }): FreeCodeGoEngineeringMemoryDetail | undefined {
     if (advice.note.trim() === '') return undefined
     try {
@@ -837,7 +985,16 @@ export class FreeCodeGoEngineeringRegistry {
     }
   }
 
-  async verify(
+    /**
+   * Run declared verification for one workspace.
+   * @param cwd - working directory the command runs in.
+   * @param stages - the stages to run; defaults to every declared stage.
+   * @param signal - aborts the run when the caller cancels.
+   * @param owner - the agent whose route child probes keep.
+   * @param probes - the probe set to run; defaults to the built-in one.
+   * @returns the verification result.
+   */
+async verify(
     cwd: string,
     stages: readonly EngineeringVerificationStage[] | undefined,
     signal?: AbortSignal,
@@ -919,6 +1076,7 @@ export class FreeCodeGoEngineeringRegistry {
    * setting rather than resuming unattended work nobody re-authorized.
    *
    * @returns whether the goal is armed after the call.
+   * @param agent - the agent this call applies to.
    */
   armApprovedPlanGoal(agent: Agent): boolean {
     const settings = this.configuration()
@@ -945,6 +1103,8 @@ export class FreeCodeGoEngineeringRegistry {
    * but disarmed" honestly, and it cannot learn either by creating or arming a
    * goal to find out. Reading is therefore a first-class operation, not a
    * side effect of the controls.
+   * @param agent - the agent this call applies to.
+   * @returns the engineering Loop Status.
    */
   goalLoopStatus(agent: Agent): FreeCodeGoEngineeringLoopStatus {
     return this.goalLoopView(agent)
@@ -969,6 +1129,8 @@ export class FreeCodeGoEngineeringRegistry {
    * so raising 目标最大回合数 and then pressing continue used to be answered with
    * "raise the round cap before continuing" — an instruction the user had just
    * followed.
+   * @param agent - the agent this call applies to.
+   * @returns the engineering Loop Status.
    */
   goalLoopArm(agent: Agent): FreeCodeGoEngineeringLoopStatus {
     const settings = this.configuration()
@@ -997,6 +1159,8 @@ export class FreeCodeGoEngineeringRegistry {
    * An `active` goal is paused, which is the durable stop; every other phase is
    * already stopped and only needs its leftover continuation authority dropped,
    * so the control is idempotent instead of an error on the second press.
+   * @param agent - the agent this call applies to.
+   * @returns the engineering Loop Status.
    */
   goalLoopStop(agent: Agent): FreeCodeGoEngineeringLoopStatus {
     const goals = this.goalService()
@@ -1127,6 +1291,8 @@ export class FreeCodeGoEngineeringRegistry {
    *
    * @returns the verification result, or undefined when the loop is disabled or
    *   no workspace is known for the session.
+   * @param agent - the agent this call applies to.
+   * @param phase - the terminal phase the goal just reached.
    */
   async verifyCompletedGoal(agent: Agent, phase: string | undefined): Promise<FreeCodeGoEngineeringVerificationResult | undefined> {
     const settings = this.configuration()
@@ -1142,38 +1308,67 @@ export class FreeCodeGoEngineeringRegistry {
     }
   }
 
-  graphRuntimeStatus() { return this.graphify.status() }
+    /**
+   * Read the Graphify runtime install state.
+   * @returns the graph runtime status.
+   */
+graphRuntimeStatus(): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> { return this.graphify.status() }
 
   /**
    * Zero-dependency structural map of the workspace (aider-style PageRank
    * over the file↔identifier reference graph). Always available — it is the
    * instant complement to the installed-runtime Graphify graph.
+   * @returns the repo Map Result.
+   * @param cwd - working directory the command runs in.
+   * @param maxTokens - the token budget the map has to fit.
+   * @param focusFiles - files the ranking should favor.
    */
   repoMap(cwd: string, maxTokens: number | undefined, focusFiles: readonly string[] | undefined): RepoMapResult {
     return buildRepoMap({ cwd, ...(maxTokens === undefined ? {} : { maxTokens }), ...(focusFiles === undefined || focusFiles.length === 0 ? {} : { focusFiles }) })
   }
 
-  graphRuntimePackages() { return this.graphify.packages() }
+    /**
+   * List the Graphify runtime packages that can be installed.
+   * @returns one row per known package, flagged for compatibility.
+   */
+graphRuntimePackages(): Promise<readonly FreeCodeGoEngineeringGraphRuntimePackage[]> { return this.graphify.packages() }
 
-  /** Capture a workspace checkpoint (Cline-style shadow snapshot, git-free). */
+  /** Capture a workspace checkpoint (Cline-style shadow snapshot, git-free). 
+   * @returns the checkpoint.
+   * @param cwd - working directory the command runs in.
+   * @param label - the label to record with the entry.
+   * @param pinned - whether the checkpoint survives the retention cap.
+   */
   async checkpointCapture(cwd: string, label: string, pinned = false): Promise<Checkpoint> {
     if (!this.checkpointsAvailable) throw new Error('engineering checkpoints are not available')
     return this.checkpoints.capture({ cwd, label, ...(pinned ? { pinned: true } : {}) })
   }
 
-  /** List this workspace's checkpoints, newest first. */
+  /** List this workspace's checkpoints, newest first. 
+   * @returns the checkpoint rows, in backend order.
+   * @param cwd - working directory the command runs in.
+   */
   checkpointList(cwd: string): readonly Checkpoint[] {
     if (!this.checkpointsAvailable) throw new Error('engineering checkpoints are not available')
     return this.checkpoints.list({ cwd })
   }
 
-  /** Preview what restoring one checkpoint would change, without touching files. */
+  /** Preview what restoring one checkpoint would change, without touching files. 
+   * @returns the engineering Checkpoint Diff.
+   * @param cwd - working directory the command runs in.
+   * @param id - id of the checkpoint to preview.
+   */
   checkpointDiff(cwd: string, id: string): FreeCodeGoEngineeringCheckpointDiff {
     if (!this.checkpointsAvailable) throw new Error('engineering checkpoints are not available')
     return this.checkpoints.diff({ cwd, id })
   }
 
-  /** Pin or unpin one checkpoint; pinned ones survive the retention cap. */
+  /** Pin or unpin one checkpoint; pinned ones survive the retention cap. 
+   * @param cwd - working directory the command runs in.
+   * @param id - id of the checkpoint to pin or unpin.
+   * @param pinned - the pin state to store.
+   * @returns the pin state now stored.
+   */
   checkpointSetPinned(cwd: string, id: string, pinned: boolean): { readonly pinned: boolean } {
     if (!this.checkpointsAvailable) throw new Error('engineering checkpoints are not available')
     return this.checkpoints.setPinned({ cwd, id, pinned })
@@ -1184,6 +1379,8 @@ export class FreeCodeGoEngineeringRegistry {
    * blobs make unchanged files ~free, so Cline-style capture-before-every-
    * write is affordable here. Best-effort: a failed capture must never block
    * the model's actual tool call.
+   * @param toolName - name of the tool call being answered.
+   * @param cwd - the workspace the snapshot belongs to, when the call carries one.
    */
   async checkpointAutoCapture(cwd: string | undefined, toolName: string): Promise<void> {
     if (!this.checkpointsAvailable || cwd === undefined || cwd.trim() === '') return
@@ -1200,13 +1397,21 @@ export class FreeCodeGoEngineeringRegistry {
     try { await this.checkpoints.capture({ cwd, label: `auto: before ${toolName}` }) } catch { /* advisory only */ }
   }
 
-  /** Restore the workspace files to a checkpoint and report what changed. */
+  /** Restore the workspace files to a checkpoint and report what changed. 
+   * @returns the checkpoint Restore Result.
+   * @param cwd - working directory the command runs in.
+   * @param id - id of the checkpoint to restore.
+   */
   async checkpointRestore(cwd: string, id: string): Promise<CheckpointRestoreResult> {
     if (!this.checkpointsAvailable) throw new Error('engineering checkpoints are not available')
     return this.checkpoints.restore({ cwd, id })
   }
 
-  /** Delete one checkpoint manifest. */
+  /** Delete one checkpoint manifest. 
+   * @param cwd - working directory the command runs in.
+   * @param id - id of the checkpoint to delete.
+   * @returns true once the manifest is gone.
+   */
   checkpointRemove(cwd: string, id: string): { readonly deleted: true } {
     if (!this.checkpointsAvailable) throw new Error('engineering checkpoints are not available')
     return this.checkpoints.remove({ cwd, id })
@@ -1233,6 +1438,10 @@ export class FreeCodeGoEngineeringRegistry {
    * because it is the only observable form of the decisions above: a caller ignoring
    * it learns nothing, and a test that has no count can only assert "no hunks", which
    * every refusal also answers.
+   * @param callId - id of the tool call this answer belongs to.
+   * @param toolName - name of the tool call being answered.
+   * @param args - the arguments the call was made with, of unknown shape.
+   * @param cwd - the workspace the call runs in, when the call carries one.
    */
   async hunkPrepare(callId: string, toolName: string, args: unknown, cwd: string | undefined): Promise<number> {
     // The containment is the contract, not a courtesy: this runs on the
@@ -1268,6 +1477,9 @@ export class FreeCodeGoEngineeringRegistry {
    * Runs on the post-execute seam for a *failed* call as well: a mutation that
    * reported an error but still wrote is exactly the change nobody can find later
    * by reading the transcript, so it is the one worth attributing most.
+   * @param callId - id of the tool call this answer belongs to.
+   * @returns the hunk rows, in backend order.
+   * @param cwd - the workspace the call ran in, when the call carries one.
    */
   async hunkRecord(callId: string, cwd: string | undefined): Promise<readonly Hunk[]> {
     const pending = this.hunkPreImages.get(callId)
@@ -1287,7 +1499,10 @@ export class FreeCodeGoEngineeringRegistry {
     return recorded
   }
 
-  /** The hunks recorded in this workspace, for a review surface. */
+  /** The hunks recorded in this workspace, for a review surface. 
+   * @returns the hunk rows, in backend order.
+   * @param cwd - working directory the command runs in.
+   */
   hunkJournal(cwd: string): readonly Hunk[] {
     return this.hunkTrackerFor(cwd).hunks()
   }
@@ -1299,6 +1514,9 @@ export class FreeCodeGoEngineeringRegistry {
    * path that left the workspace or names a credential file, because the journal's
    * file names come from tool arguments and are the one thing here a caller could
    * have chosen.
+   * @returns the hunk Revert Result.
+   * @param cwd - working directory the command runs in.
+   * @param hunkId - id of the recorded hunk to revert.
    */
   async hunkRevert(cwd: string, hunkId: string): Promise<HunkRevertResult> {
     const hunk = this.hunkTrackerFor(cwd).hunks().find(entry => entry.id === hunkId)
@@ -1321,6 +1539,10 @@ export class FreeCodeGoEngineeringRegistry {
    * file — ` a.ts` is not `a.ts`, and on a POSIX host `dir\a.ts` is not `dir/a.ts`.
    * A hunk found under one name and spliced into the other rewrites a file the call
    * never touched and leaves the one it did touch alone.
+   * @param callId - id of the tool call this answer belongs to.
+   * @returns the hunk Call Revert Result.
+   * @param cwd - working directory the command runs in.
+   * @param file - the file whose recorded hunks are reverted.
    */
   async hunkRevertCall(cwd: string, callId: string, file: string): Promise<HunkCallRevertResult> {
     const normalized = normalizeHunkFile(file)
@@ -1397,43 +1619,86 @@ export class FreeCodeGoEngineeringRegistry {
     }
   }
 
-  async graphRuntimeInstall(input: { readonly packageId: 'managed-uv-python' | 'existing-python'; readonly pythonPath?: string }) {
+    /**
+   * Install the Graphify runtime into the plugin-private Python environment.
+   * @param input - the Python package to install, and the interpreter when an existing one is reused.
+   * @returns the graph runtime status.
+   */
+async graphRuntimeInstall(input: { readonly packageId: 'managed-uv-python' | 'existing-python'; readonly pythonPath?: string }): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
     this.requireCodeGraphEnabled()
     const status = await this.graphify.install(input)
     await this.enqueue(async () => this.reconcile())
     return status
   }
 
-  async graphRuntimeRemove() {
+    /**
+   * Remove the plugin-private Graphify runtime.
+   * @returns the graph runtime status after removal.
+   */
+async graphRuntimeRemove(): Promise<FreeCodeGoEngineeringGraphRuntimeStatus> {
     this.requireCodeGraphEnabled()
     const status = await this.graphify.remove()
     await this.enqueue(async () => this.reconcile())
     return status
   }
 
-  graphProjectStatus(cwd: string) { return this.graphify.projectStatus(cwd) }
+    /**
+   * Read this workspace's Graphify project state.
+   * @param cwd - working directory the command runs in.
+   * @returns the graph project status.
+   */
+graphProjectStatus(cwd: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> { return this.graphify.projectStatus(cwd) }
 
-  graphBuild(cwd: string, force: boolean) {
+    /**
+   * Build this workspace's Graphify graph.
+   * @param cwd - working directory the command runs in.
+   * @param force - whether the existing graph is rebuilt by force.
+   * @returns the graph project status.
+   */
+graphBuild(cwd: string, force: boolean): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     this.requireCodeGraphEnabled()
     return this.graphify.build(cwd, force)
   }
 
-  graphUpdate(cwd: string) {
+    /**
+   * Refresh this workspace's Graphify graph from what changed since the last build.
+   * @param cwd - working directory the command runs in.
+   * @returns the graph project status.
+   */
+graphUpdate(cwd: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     this.requireCodeGraphEnabled()
     return this.graphify.update(cwd)
   }
 
-  graphCancel(cwd: string) {
+    /**
+   * Abort the plugin-owned Graphify process tree for this workspace.
+   * @param cwd - working directory the command runs in.
+   * @returns true once the build process tree was aborted.
+   */
+graphCancel(cwd: string): { readonly cancelled: boolean } {
     this.requireCodeGraphEnabled()
     return this.graphify.cancel(cwd)
   }
 
-  graphCanvas(cwd: string, maxNodes: number | undefined): Promise<FreeCodeGoEngineeringCanvasGraph> {
+    /**
+   * Project the graph for Canvas plugins, bounded by a node budget.
+   * @param cwd - working directory the command runs in.
+   * @param maxNodes - the node budget for this projection.
+   * @returns the canvas graph projection.
+   */
+graphCanvas(cwd: string, maxNodes: number | undefined): Promise<FreeCodeGoEngineeringCanvasGraph> {
     this.requireCodeGraphEnabled()
     return this.graphify.canvas(cwd, maxNodes)
   }
 
-  graphMcpCall(cwd: string, name: GraphifyMcpToolName, args: Record<string, unknown>) {
+    /**
+   * Call one read-only Graphify MCP tool for this workspace.
+   * @param cwd - working directory the command runs in.
+   * @param name - the Graphify tool to call.
+   * @param args - the arguments the call was made with.
+   * @returns the tool's answer.
+   */
+graphMcpCall(cwd: string, name: GraphifyMcpToolName, args: Record<string, unknown>): Promise<{ readonly output: string; readonly projectId: string }> {
     this.requireCodeGraphEnabled()
     return this.graphifySidecar.call(cwd, name, args)
   }
@@ -1453,12 +1718,17 @@ export class FreeCodeGoEngineeringRegistry {
    * @param input - the fixed command shape, as {@link GraphifyRuntimeManager.query} takes it.
    * @returns the CLI output and the project it was read for.
    */
-  graphQuery(cwd: string, input: { readonly command: 'query' | 'explain' | 'path' | 'affected' | 'god-nodes'; readonly values?: readonly string[]; readonly depth?: number; readonly budget?: number }) {
+  graphQuery(cwd: string, input: { readonly command: 'query' | 'explain' | 'path' | 'affected' | 'god-nodes'; readonly values?: readonly string[]; readonly depth?: number; readonly budget?: number }): Promise<{ readonly output: string; readonly project: FreeCodeGoEngineeringGraphProjectStatus }> {
     this.requireCodeGraphEnabled()
     return this.graphify.query(cwd, input)
   }
 
-  graphClearProject(cwd: string) {
+    /**
+   * Drop this workspace's Graphify graph and its caches.
+   * @param cwd - working directory the command runs in.
+   * @returns the graph project status.
+   */
+graphClearProject(cwd: string): Promise<FreeCodeGoEngineeringGraphProjectStatus> {
     this.requireCodeGraphEnabled()
     return this.graphify.clearProject(cwd)
   }
@@ -1467,50 +1737,94 @@ export class FreeCodeGoEngineeringRegistry {
    * CodeGraph engine remotes. These are a parallel, independent surface from the
    * Graphify ones above: both engines can be installed at once, each keeps its
    * own runtime and index, and neither one's state gates the other.
+   * @returns the engineering Code Graph Runtime Status.
    */
 
   codeGraphRuntimeStatus(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> { return this.codeGraph.status() }
 
-  codeGraphRuntimePackages(): Promise<readonly FreeCodeGoEngineeringCodeGraphRuntimePackage[]> { return this.codeGraph.packages() }
+    /**
+   * List the CodeGraph runtime packages that can be installed.
+   * @returns one row per known package, flagged for compatibility.
+   */
+codeGraphRuntimePackages(): Promise<readonly FreeCodeGoEngineeringCodeGraphRuntimePackage[]> { return this.codeGraph.packages() }
 
-  async codeGraphRuntimeInstall(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
+    /**
+   * Install the plugin-private CodeGraph runtime.
+   * @returns the codegraph runtime status.
+   */
+async codeGraphRuntimeInstall(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
     this.requireCodeGraphEnabled()
     const status = await this.codeGraph.install()
     await this.enqueue(async () => this.reconcile())
     return status
   }
 
-  async codeGraphRuntimeRemove(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
+    /**
+   * Remove the plugin-private CodeGraph runtime.
+   * @returns the codegraph runtime status after removal.
+   */
+async codeGraphRuntimeRemove(): Promise<FreeCodeGoEngineeringCodeGraphRuntimeStatus> {
     this.requireCodeGraphEnabled()
     const status = await this.codeGraph.remove()
     await this.enqueue(async () => this.reconcile())
     return status
   }
 
-  codeGraphProjectStatus(cwd: string) { return this.codeGraph.projectStatus(cwd) }
+    /**
+   * Read this workspace's CodeGraph index state.
+   * @param cwd - working directory the command runs in.
+   * @returns the codegraph project status.
+   */
+codeGraphProjectStatus(cwd: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> { return this.codeGraph.projectStatus(cwd) }
 
-  /** `force` asks for the full rebuild; otherwise an existing index is refreshed incrementally. */
-  codeGraphBuild(cwd: string, force: boolean) {
+  /** `force` asks for the full rebuild; otherwise an existing index is refreshed incrementally.
+   * @param cwd - working directory the command runs in.
+   * @param force - whether the existing index is rebuilt by force.
+   * @returns the project's CodeGraph status after the build.
+   */
+  codeGraphBuild(cwd: string, force: boolean): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     this.requireCodeGraphEnabled()
     return this.codeGraph.build(cwd, force ? { force: true } : {})
   }
 
-  codeGraphSync(cwd: string) {
+    /**
+   * Re-index only the files that changed since the last CodeGraph build.
+   * @param cwd - working directory the command runs in.
+   * @returns the codegraph project status.
+   */
+codeGraphSync(cwd: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     this.requireCodeGraphEnabled()
     return this.codeGraph.sync(cwd)
   }
 
-  codeGraphCancel(cwd: string) {
+    /**
+   * Abort the plugin-owned CodeGraph indexing process tree.
+   * @param cwd - working directory the command runs in.
+   * @returns true once the process tree was aborted.
+   */
+codeGraphCancel(cwd: string): { readonly cancelled: boolean } {
     this.requireCodeGraphEnabled()
     return this.codeGraph.cancel(cwd)
   }
 
-  codeGraphClearProject(cwd: string) {
+    /**
+   * Drop this workspace's CodeGraph index and its caches.
+   * @param cwd - working directory the command runs in.
+   * @returns the codegraph project status.
+   */
+codeGraphClearProject(cwd: string): Promise<FreeCodeGoEngineeringCodeGraphProjectStatus> {
     this.requireCodeGraphEnabled()
     return this.codeGraph.clearProject(cwd)
   }
 
-  codeGraphMcpCall(cwd: string, command: CodeGraphQueryCommand, input: { readonly values?: readonly string[]; readonly depth?: number; readonly budget?: number }) {
+    /**
+   * Call one read-only CodeGraph query tool for this workspace.
+   * @param cwd - working directory the command runs in.
+   * @param command - the CodeGraph query to run.
+   * @param input - the query values, with its depth and budget bounds.
+   * @returns the tool's answer.
+   */
+codeGraphMcpCall(cwd: string, command: CodeGraphQueryCommand, input: { readonly values?: readonly string[]; readonly depth?: number; readonly budget?: number }): Promise<{ readonly output: string; readonly project: FreeCodeGoEngineeringCodeGraphProjectStatus }> {
     this.requireCodeGraphEnabled()
     return this.codeGraph.query(cwd, { command, ...input })
   }
@@ -1662,22 +1976,31 @@ export class FreeCodeGoEngineeringRegistry {
     else if (engine === 'codegraph') await this.codeGraph.sync(cwd)
   }
 
-  /** Test seam: run the session-start recall directly against an agent double. */
+  /** Test seam: run the session-start recall directly against an agent double. 
+   * @param agent - the agent double the recall runs against.
+   */
   async recallForTest(agent: EngineeringAgent): Promise<void> {
     await this.recallAtSessionStart(agent)
   }
 
-  /** Test seam: capture one turn's evidence directly against an agent double. */
+  /** Test seam: capture one turn's evidence directly against an agent double. 
+   * @param agent - the agent double the capture runs against.
+   * @param turn - the turn number being captured.
+   */
   async captureTurnForTest(agent: EngineeringAgent, turn: number): Promise<void> {
     await this.captureTurn(agent, turn)
   }
 
-  /** Test seam: run the session-start Skill map injection against an agent double. */
+  /** Test seam: run the session-start Skill map injection against an agent double.
+   * @param agent - the agent double to inject the Skill map for.
+   */
   async skillMapForTest(agent: EngineeringAgent): Promise<void> {
     await this.injectSkillMap(agent)
   }
 
-  /** Test seam: run the session/disposed cleanup for one session id. */
+  /** Test seam: run the session/disposed cleanup for one session id. 
+   * @param sessionId - the Harness session this operation acts on.
+   */
   sessionDisposedForTest(sessionId: string): void {
     this.observedSequences.delete(sessionId)
     this.recalledSessions.delete(sessionId)
@@ -2245,6 +2568,10 @@ export class FreeCodeGoEngineeringRegistry {
  * names and query languages differ.
  *
  * Exported for the tool-registration and capability paths, which must agree.
+ * @param preference - the configured engine preference.
+ * @param graphifyInstalled - whether the Graphify engine is installed.
+ * @param codeGraphInstalled - whether the CodeGraph engine is installed.
+ * @returns the engine to use, or `undefined` when the preference cannot be met.
  */
 export function selectGraphEngine(preference: 'auto' | 'graphify' | 'codegraph', graphifyInstalled: boolean, codeGraphInstalled: boolean): 'graphify' | 'codegraph' | undefined {
   if (preference === 'graphify') return graphifyInstalled ? 'graphify' : undefined
@@ -2268,7 +2595,6 @@ function normalizeSettings(value: Partial<FreeCodeGoEngineeringSettings> | undef
     // Discovery aid for a default-off library, so it defaults on.
     engineeringSkillMapEnabled: value?.engineeringSkillMapEnabled !== false,
     engineeringQualityEnabled: value?.engineeringQualityEnabled !== false,
-    engineeringTeamEnabled: value?.engineeringTeamEnabled !== false,
     engineeringMemoryEnabled: value?.engineeringMemoryEnabled !== false,
     engineeringCouncilEnabled: value?.engineeringCouncilEnabled !== false,
     engineeringCouncilDeepseekEnabled: value?.engineeringCouncilDeepseekEnabled !== false,
@@ -2296,10 +2622,6 @@ function normalizeSettings(value: Partial<FreeCodeGoEngineeringSettings> | undef
 
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
 /** Whether an inject from the given plugin is still queued in the live inbox.
  *  `agent/session-start` can fire again (multi-resume, recovery republish)
  *  while the earlier copy still sits unclaimed, so the only way to keep the
@@ -2320,6 +2642,15 @@ function boundedInteger(value: unknown, fallback: number, min: number, max: numb
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max ? value : fallback
 }
 
+/** Compile one turn's events into a candidate engineering-memory observation.
+ *
+ * Returns `undefined` when the turn carried nothing durable, so a caller writes
+ * no memory rather than an empty one.
+ * @param sessionId - the session the turn belongs to.
+ * @param turn - the turn number being compiled.
+ * @param events - the session events to read.
+ * @returns the observation, or `undefined` when there is nothing to record.
+ */
 export function compileTurnObservation(
   sessionId: string,
   turn: number,
@@ -2511,6 +2842,7 @@ const SKILL_MAP_DESCRIPTION_MAX_CHARS = 90
  *  session-start context with it. The char budget is the real bound; the entry
  *  cap only stops a pathological pack from being enumerated at all. */
 const SKILL_MAP_MAX_ENTRIES = 48
+/** Hard character budget for the injected Skill map block. */
 export const SKILL_MAP_MAX_CHARS = 6_000
 /** Characters reserved for the "N more" line when the budget runs out. */
 const SKILL_MAP_OVERFLOW_NOTE_RESERVE = 96

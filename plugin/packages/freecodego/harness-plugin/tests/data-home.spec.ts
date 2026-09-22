@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { freeCodeGoDataHome, harnessHomeDirectory } from '../src/data-home.ts'
 import { planModeRootDirectory } from '../src/plan-mode.ts'
-import { teamRootDirectory } from '../src/team/state.ts'
 
 const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 
@@ -49,8 +48,8 @@ describe('freeCodeGoDataHome', () => {
 
   it('expands a tilde override the way the harness expands its own home', () => {
     process.env.DSH_HOME = join('C:', 'harness-home')
-    // Without the expansion the plugin writes its memory, checkpoints and teams
-    // into a literal `~` directory under the process cwd, so the same machine
+    // Without the expansion the plugin writes its memory, checkpoints and plan
+    // state into a literal `~` directory under the process cwd, so the same machine
     // finds different data depending on where the harness was launched.
     process.env.FREECODEGO_HOME = '~/freecodego-data'
     expect(freeCodeGoDataHome()).toBe(join(homedir(), 'freecodego-data'))
@@ -70,7 +69,6 @@ describe('freeCodeGoDataHome', () => {
     process.env.FREECODEGO_HOME = override
 
     expect(planModeRootDirectory()).toBe(join(override, 'freecodego', 'engineering', 'plan-mode'))
-    expect(teamRootDirectory()).toBe(join(override, 'freecodego', 'engineering', 'teams'))
   })
 })
 

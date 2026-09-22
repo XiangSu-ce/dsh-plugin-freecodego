@@ -44,7 +44,50 @@ const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /** Source with line endings normalised, so a signature may span lines. */
 function source(relative: string): string {
-  return readFileSync(join(PACKAGES, relative), 'utf8').replace(/\r\n/gu, '\n')
+  return stripComments(readFileSync(join(PACKAGES, relative), 'utf8').replace(/\r\n/gu, '\n'))
+}
+
+/**
+ * Source with its comments blanked out, newlines kept.
+ *
+ * The count guard below is the only thing separating a parser that still matches
+ * from a spec that passes while checking nothing, and that guard counts regex
+ * matches: a `backendCall('x')` *quoted in prose* held the count up while the
+ * call it described was gone. Blanking comments (rather than deleting lines, so
+ * failures still print the line the reader can open) makes the count mean the
+ * calls the client actually dispatches.
+ */
+function stripComments(text: string): string {
+  const out: string[] = []
+  let quote = ''
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index] ?? ''
+    const next = text[index + 1]
+    if (quote !== '') {
+      out.push(char)
+      // A quote cannot end inside a string on the character its own escape
+      // introduces, so the escaped pair is copied in one step.
+      if (char === '\\') { out.push(next ?? ''); index += 1; continue }
+      if (char === quote) quote = ''
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') { quote = char; out.push(char); continue }
+    if (char === '/' && next === '/') {
+      const end = text.indexOf('\n', index)
+      index = (end === -1 ? text.length : end) - 1
+      out.push('\n')
+      continue
+    }
+    if (char === '/' && next === '*') {
+      const end = text.indexOf('*/', index + 2)
+      const stop = end === -1 ? text.length - 1 : end + 1
+      for (const kept of text.slice(index, stop + 1)) out.push(kept === '\n' ? '\n' : ' ')
+      index = stop
+      continue
+    }
+    out.push(char)
+  }
+  return out.join('')
 }
 
 const HOST = source('harness-plugin/src/index.ts')
@@ -212,9 +255,68 @@ describe('the remote call contract', () => {
   it('reads the same inventory the source has', () => {
     // Vacuity guard: a parser that stops matching must fail here rather than let
     // every rule below pass while comparing nothing.
-    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(194)
-    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(182)
-    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(175)
+    // 204 → 205: `accountRememberedPassword`, the read the sign-in form uses to
+    // prefill a password the user asked this machine to keep. Its client side is
+    // a cast-style call, the shape this spec deliberately does not count, so
+    // REMOTES moves while SITES does not.
+    // 205 → 214: the nine Trae remotes (status, start, poll, submit callback,
+    // cancel, the model directory, logout, and the two pool operations).
+    // 214 → 216: `qoderCheckin` and `traeCheckin`, one dispatch site each. Both
+    // carry the run report rather than the account status, so neither moves the
+    // status remotes' argument counts.
+    // 216 → 215: `teamStatus` went with this plugin's own team runtime; the
+    // Harness's agent team owns that surface now, so there is nothing left here to
+    // report on.
+    // 215 → 216: `skillPresetRemove`, the removal of a Skill the Marketplace
+    // installed. Its client side is one dispatch site, so both counts below move
+    // by one together — which is the check that says the pair was extended rather
+    // than one of them drifting.
+    // 216 → 217: `skillPlacements`. Its second side is one dispatch site, and it also
+    // moved `skillPresetInstall` from one parameter to two (one required, one optional),
+    // which the arity check reads from the decorated signature rather than from a count.
+    // 217 → 218: `skillPlacementPrefer`, the write for the remembered destination. Its one
+    // parameter is optional because no argument *is* the clear, which the arity check
+    // reads from the signature: the client's two calls (axes, and no axes) both sit inside
+    // the declared range.
+    // 218 → 219: `paymentStripeReceiptDocument`, Stripe's own PDF receipt for a paid
+    // Stripe order. Its second side is one dispatch site in `client/index.ts`, like the
+    // receipt beside it, so the two counts below move with REMOTES — the pair check is
+    // what says this was an extension of both sides rather than one of them drifting.
+    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(219)
+    // Re-verified when this moved 182 → 176: the five conditional dispatches
+    // (`agnesRefresh`, `agnesCreateApiKey`, `agnesLogout`, `codexRuntimeInstall`,
+    // `claudeRuntimeInstall`) that branched into a zero-argument call collapsed
+    // into the one explicit-`undefined` call each, and the sixth (`clineRefresh`)
+    // reads the same now that prose quoting it is no longer counted as a site.
+    // Both are the fix for `expected 1 argument(s), got 0` on those buttons.
+    //
+    // 176 → 186: seven Qoder account remotes and three review remotes, each with
+    // exactly one dispatch site. Both pairs of counts moved together, which is the
+    // check that says the two sides were extended rather than one of them drifting.
+    // 186 → 195: the same nine Trae remotes on the client side. The dispatch is
+    // counted whether or not it passes an argument — `traePollBrowserLogin` sends
+    // none because the card polls the status the Host already holds — so both
+    // counts moved by nine, which is the check that says the two sides were
+    // extended together rather than one of them drifting.
+    // 195 → 197: `qoderCheckin` and `traeCheckin` on the client side too, one
+    // dispatch each — again both counts moved together, which is the check that
+    // says the pair was extended rather than one side drifting.
+    // 197 → 196: `teamStatus` on the client side, removed with this plugin's own
+    // team runtime; the dispatch and its name went together, so both counts moved
+    // by one.
+    // 196 → 197: `skillPresetRemove` on the client side too, one dispatch.
+    // 197 → 198: `skillPlacements`, the matrix the Skills page renders as the install
+    // destination. One dispatch on the client side as well, so both counts moved by one
+    // — the check that says the pair was extended together.
+    // 198 → 199: `skillPlacementPrefer`, the write for the remembered destination.
+    // 199 → 200: the Stripe receipt dispatch that arrived with the payment work in this
+    // checkout; it is counted here because it is a real dispatch, whoever added it.
+    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(200)
+    // 196 → 197: `skillPlacements` is a name no earlier dispatch carried, so this count
+    // moves with the two above rather than staying put — the check that a new *name*
+    // arrived instead of another call to one already counted.
+    // 198 → 199: `paymentStripeReceiptDocument` is a name no earlier dispatch carried.
+    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(199)
   })
 
   it('reads a known signature correctly, which is what the arity check rests on', () => {
@@ -243,7 +345,10 @@ describe('the remote call contract', () => {
     // deliberate edit, not something to discover in the browser.
     const called = new Set(SITES.map(site => site.name))
     const unused = [...REMOTES.keys()].filter(name => !called.has(name))
-    expect(unused.length, `unreached remotes changed: ${unused.join(', ')}`).toBe(19)
+    // 19 → 20 by `accountRememberedPassword`: it is reached through the
+    // cast-style call in `client/index.ts` (like `accountLogin`), which is not a
+    // dispatch site, so it lands here rather than in SITES.
+    expect(unused.length, `unreached remotes changed: ${unused.join(', ')}`).toBe(20)
   })
 
   it('reports an undeclared name and a wrong argument count, which is the defect this gate exists for', () => {

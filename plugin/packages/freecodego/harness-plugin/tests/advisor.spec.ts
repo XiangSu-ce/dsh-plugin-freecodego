@@ -261,8 +261,14 @@ describe('FreeCodeGoAdvisorRuntime', () => {
     ]
     const requests: any[] = []
     let calls = 0
+    // The Harness's read-only tools, as a deployment mounts them. The plugin
+    // offers these schemas and dispatches through the same registry; it ships no
+    // tools of its own any more.
+    const harnessTools = ['read', 'glob', 'grep', 'bash'].map(name => ({ name, description: `${name} tool`, parameters: { type: 'object', properties: {} } }))
+    const execute = vi.fn(async () => ({ isError: false, content: [{ type: 'text' as const, text: 'ok' }] }))
     const ctx = {
       on: vi.fn(),
+      get: vi.fn((key: string) => key === 'tools' ? { schemas: () => harnessTools, execute } : undefined),
       llm: {
         async *stream(options: unknown) {
           requests.push(options)
@@ -291,9 +297,9 @@ describe('FreeCodeGoAdvisorRuntime', () => {
 
     await expect(runtime.reviewNow(agent as never)).resolves.toMatchObject({ severity: 'concern', turn: 2 })
     expect(requests).toHaveLength(2)
-    expect(requests[0].tools.map((tool: { name: string }) => tool.name)).toEqual([
-      'freecodego_advisor_read', 'freecodego_advisor_glob', 'freecodego_advisor_grep',
-    ])
+    // No registry on this context, so the reviewer is offered no tools at all
+    // rather than the plugin's own copies of `read`/`glob`/`grep`.
+    expect(requests[0].tools.map((tool: { name: string }) => tool.name)).toEqual(['read', 'glob', 'grep'])
     expect(requests[0].system).toContain('Never use shell commands')
     expect(JSON.stringify(requests[0].messages)).toContain('Inspect the current route only.')
     expect(JSON.stringify(requests[0].messages)).not.toContain('secret-not-for-review')
@@ -427,113 +433,79 @@ describe('FreeCodeGoAdvisorRuntime', () => {
 describe('AdvisorEvidenceCache', () => {
   const call = (name: string, args: string): never => ({ type: 'tool-call', id: `c-${name}`, name, arguments: args }) as never
 
-  it('reports an unreadable path as a tool error instead of rejecting the review', async () => {
-    const cache = new AdvisorEvidenceCache()
-    const missing = call('freecodego_advisor_read', JSON.stringify({ path: 'does-not-exist.ts' }))
-    const result = await cache.execute(process.cwd(), missing, new AbortController().signal)
-    expect(result.ok).toBe(false)
-    expect(result.text).toContain('Read-only review tool failed')
-    // A failure is never cached: a peer retrying a transient error is correct.
-    expect(cache.size).toBe(0)
-  })
+  /** A cache over a runner that counts executions and answers distinct text each time. */
+  const countingCache = (): { readonly cache: AdvisorEvidenceCache; readonly runs: () => number } => {
+    let runs = 0
+    const cache = new AdvisorEvidenceCache(async () => { runs += 1; return { ok: true, text: `evidence ${String(runs)}` } })
+    return { cache, runs: () => runs }
+  }
 
   it('treats the same request from a different perspective as the same evidence', async () => {
-    const cache = new AdvisorEvidenceCache()
-    const target = call('freecodego_advisor_read', JSON.stringify({ path: 'package.json' }))
+    const { cache, runs } = countingCache()
+    const target = call('read', JSON.stringify({ path: 'package.json' }))
     const a = await cache.execute(process.cwd(), target, new AbortController().signal)
     const b = await cache.execute(process.cwd(), target, new AbortController().signal)
-    expect(b.text).toBe(a.text)
+    expect(b).toBe(a)
     expect(cache.size).toBe(1)
-  })
-
-  it('keeps two workspaces apart, because a relative path is relative to one of them', async () => {
-    // The key used to be the request alone, which is only complete once the root it
-    // resolves against is in it: `read("package.json")` is a different question in a
-    // different checkout, and the answer is rendered relative to that root as well.
-    const cache = new AdvisorEvidenceCache()
-    const left = await mkdtemp(join(tmpdir(), 'freecodego-advisor-left-'))
-    const right = await mkdtemp(join(tmpdir(), 'freecodego-advisor-right-'))
-    try {
-      await writeFile(join(left, 'package.json'), '{"name":"left"}\n', 'utf8')
-      await writeFile(join(right, 'package.json'), '{"name":"right"}\n', 'utf8')
-      const target = call('freecodego_advisor_read', JSON.stringify({ path: 'package.json' }))
-      const signal = new AbortController().signal
-      const fromLeft = await cache.execute(left, target, signal)
-      const fromRight = await cache.execute(right, target, signal)
-      expect(fromLeft.text).toContain('"left"')
-      expect(fromRight.text).toContain('"right"')
-      // Two questions, two entries — not one answer served to both.
-      expect(cache.size).toBe(2)
-      // And a repeat inside one workspace is still one execution, which is what the
-      // cache exists for.
-      expect(await cache.execute(left, target, signal)).toBe(fromLeft)
-    } finally {
-      await rm(left, { recursive: true, force: true })
-      await rm(right, { recursive: true, force: true })
-    }
+    expect(runs()).toBe(1)
   })
 
   it('collapses two perspectives that ask the same question at the same moment', async () => {
     // The perspectives are launched together, so their first identical read is
     // concurrent. Identity of the returned record is what proves one execution:
     // two runs would produce two distinct objects with equal text.
-    const cache = new AdvisorEvidenceCache()
-    const target = call('freecodego_advisor_read', JSON.stringify({ path: 'package.json' }))
+    const { cache, runs } = countingCache()
+    const target = call('read', JSON.stringify({ path: 'package.json' }))
     const signal = new AbortController().signal
     const [a, b] = await Promise.all([cache.execute(process.cwd(), target, signal), cache.execute(process.cwd(), target, signal)])
     expect(a).toBe(b)
     expect(cache.size).toBe(1)
+    expect(runs()).toBe(1)
     // A settled entry is still served by key, and the in-flight slot is released.
-    const again = await cache.execute(process.cwd(), target, signal)
-    expect(again).toBe(a)
+    expect(await cache.execute(process.cwd(), target, signal)).toBe(a)
   })
 
-  it('refuses a credential file a workspace path would otherwise reach', async () => {
-    // The review tools run inside this plugin, not through the guarded tool
-    // registry, so the credential shield has to be here or not at all. Without
-    // it `.env` is the one file the whole guard suite blocks by name — `read`,
-    // the native engine's file tools, and `read_document` all refuse it — and
-    // the Advisor would hand its contents back in a review transcript.
-    const cache = new AdvisorEvidenceCache()
-    const root = await mkdtemp(join(tmpdir(), 'freecodego-advisor-credentials-'))
-    try {
-      await writeFile(join(root, '.env'), 'SERVICE_TOKEN=sk-live-abcdefghijklmnopqrstuvwxyz\n', 'utf8')
-      await writeFile(join(root, 'app.ts'), 'export const answer = 42\n', 'utf8')
-      const signal = new AbortController().signal
-
-      const read = await cache.execute(root, call('freecodego_advisor_read', JSON.stringify({ path: '.env' })), signal)
-      expect(read.ok).toBe(false)
-      expect(read.text).not.toContain('sk-live-abcdefghijklmnopqrstuvwxyz')
-      expect(read.text).toContain('credential')
-
-      // A grep is the same leak one layer out: it returns the matching lines.
-      const grep = await cache.execute(root, call('freecodego_advisor_grep', JSON.stringify({ query: 'SERVICE_TOKEN' })), signal)
-      expect(grep.text).not.toContain('sk-live-abcdefghijklmnopqrstuvwxyz')
-
-      // The shield is about content, not about pretending the file is absent:
-      // ordinary files stay readable, and naming the file in a listing is not a
-      // credential read anywhere else in this plugin either.
-      const ordinary = await cache.execute(root, call('freecodego_advisor_read', JSON.stringify({ path: 'app.ts' })), signal)
-      expect(ordinary.ok).toBe(true)
-      expect(ordinary.text).toContain('answer = 42')
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+  it('keeps two workspaces apart, because a relative path is relative to one of them', async () => {
+    // The key includes the root a call resolves against, because `read("package.json")`
+    // is a different question in a different checkout. The Harness's tools resolve
+    // that root themselves (from the calling agent's session), so the runner does not
+    // receive it — which is exactly why the key has to carry it: the cache is the only
+    // party that could otherwise merge the two.
+    const { cache, runs } = countingCache()
+    const target = call('read', JSON.stringify({ path: 'package.json' }))
+    const signal = new AbortController().signal
+    const fromLeft = await cache.execute('/work/left', target, signal)
+    const fromRight = await cache.execute('/work/right', target, signal)
+    expect(fromLeft).not.toBe(fromRight)
+    expect(cache.size).toBe(2)
+    expect(runs()).toBe(2)
+    // And a repeat inside one workspace is still one execution.
+    expect(await cache.execute('/work/left', target, signal)).toBe(fromLeft)
+    expect(runs()).toBe(2)
   })
 
   it('keys on the arguments, so a different query is a different entry', async () => {
-    const cache = new AdvisorEvidenceCache()
+    const { cache, runs } = countingCache()
     const signal = new AbortController().signal
-    await cache.execute(process.cwd(), call('freecodego_advisor_glob', JSON.stringify({ pattern: 'package.json' })), signal)
-    await cache.execute(process.cwd(), call('freecodego_advisor_glob', JSON.stringify({ pattern: 'tsconfig.json' })), signal)
+    const glob = (pattern: string): never => call('glob', JSON.stringify({ pattern }))
+    await cache.execute(process.cwd(), glob('package.json'), signal)
+    await cache.execute(process.cwd(), glob('tsconfig.json'), signal)
     expect(cache.size).toBe(2)
+    expect(runs()).toBe(2)
   })
 
-  it('short-circuits when no workspace is associated', async () => {
-    const cache = new AdvisorEvidenceCache()
-    const result = await cache.execute(undefined, call('freecodego_advisor_read', JSON.stringify({ path: 'a.ts' })), new AbortController().signal)
-    expect(result.ok).toBe(false)
-    expect(result.text).toContain('No workspace')
+  it('serves a failed execution to nobody', async () => {
+    // Failures stay out of the cache: another perspective retrying a transient
+    // error is exactly the behaviour we want, and a cached failure would read as
+    // corroborating evidence.
+    let runs = 0
+    const cache = new AdvisorEvidenceCache(async () => { runs += 1; return { ok: false, text: 'Read-only review tool failed: transient' } })
+    const target = call('read', JSON.stringify({ path: 'notes.md' }))
+    const signal = new AbortController().signal
+    await cache.execute(process.cwd(), target, signal)
+    await cache.execute(process.cwd(), target, signal)
+    expect(cache.size).toBe(0)
+    expect(runs).toBe(2)
   })
 })
 
