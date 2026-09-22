@@ -51,7 +51,7 @@ jobs:
         with:
           dest: ${{ runner.temp }}/setup-pnpm
           package_json_file: plugin/package.json
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.PRIMARY_NODE_VERSION }}
       - run: pnpm run sync:harness
@@ -125,7 +125,7 @@ jobs:
       # `NODE_AUTH_TOKEN`, which nothing sets here — npm then fails on every
       # command with "Failed to replace env in config". The default registry is
       # npmjs.org, which is where these packages publish.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.PRIMARY_NODE_VERSION }}
       # Trusted publishing needs npm 11.5.1 or later, and the CLI shipped with a
