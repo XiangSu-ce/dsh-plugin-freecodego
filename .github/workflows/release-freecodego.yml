@@ -127,7 +127,7 @@ jobs:
       # workspace is materialized here the same way that job materializes it.
       - run: pnpm run sync:harness
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: freecodego-release-assets
           path: plugin/dist/freecodego
