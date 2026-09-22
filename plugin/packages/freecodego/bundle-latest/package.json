@@ -1,6 +1,6 @@
 {
   "name": "freecodego",
-  "version": "0.1.6-alpha.2.1",
+  "version": "0.1.6-alpha.2.2",
   "publishConfig": {
     "access": "public"
   },

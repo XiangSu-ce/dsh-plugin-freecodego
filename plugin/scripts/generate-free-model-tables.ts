@@ -75,7 +75,8 @@ interface KeylessSnapshot {
 }
 /** The whole recorded reading file. */
 interface Snapshot {
-  savedAt?: string
+  /** The local date the rows were read — the same value the table states. */
+  observedAt?: string
   opencodeRows?: readonly unknown[]
   kiloRows?: readonly unknown[]
   logfareRows?: readonly unknown[]
@@ -94,6 +95,27 @@ interface Section {
 function localDate(at: Date = new Date()): string {
   const pad = (value: number): string => String(value).padStart(2, '0')
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
+}
+
+/**
+ * The date a recording may claim for its rows.
+ *
+ * The date is stored next to the rows, taken from the same value the table was
+ * rendered with, and it is the only source an offline run may use. It cannot be
+ * derived from a frame timestamp: an instant in UTC is not a date where the
+ * reader lives, so slicing one dates a reading made just after local midnight to
+ * the previous day — a reading the directories answered on the 23rd would be
+ * republished as the 22nd, and the next live `--check` would then call all
+ * twelve tables stale for a reason that is not a roster change.
+ *
+ * A recording without this field is one whose date cannot be known, so it says
+ * so rather than guessing.
+ * @param snapshot - the recorded reading.
+ * @returns the recorded date, or undefined when the recording carries none.
+ */
+export function recordedObservedAt(snapshot: Snapshot): string | undefined {
+  const recorded = snapshot.observedAt
+  return recorded === undefined || recorded === '' ? undefined : recorded
 }
 
 /**
@@ -494,9 +516,10 @@ async function collect(offline: boolean, snapshot: Snapshot): Promise<{ section:
   const optInRows = logfareModels.filter(model => logfareUsesTrainingData(model)).length
   // The date the live directories answered. A recording carries its own date,
   // so an offline run states when the data was actually read.
-  const observedAt = offline && snapshot.savedAt !== undefined
-    ? snapshot.savedAt.slice(0, 10)
-    : localDate()
+  const observedAt = offline ? recordedObservedAt(snapshot) : localDate()
+  if (observedAt === undefined) {
+    throw new Error('the recorded snapshot carries no reading date — run this once without --offline to record one')
+  }
   const cells: ProviderCell[] = [
     openCodeCell(opencodeRows),
     kiloCell(kiloRows),
@@ -508,6 +531,7 @@ async function collect(offline: boolean, snapshot: Snapshot): Promise<{ section:
     ...fixedRouteCells(),
   ]
   const next: Snapshot = {
+    observedAt,
     opencodeRows,
     kiloRows,
     logfareRows,
@@ -581,7 +605,7 @@ async function main(): Promise<void> {
   for (const item of pending) await writeFile(item.target.file, item.source, 'utf8')
   // The recording is only worth rewriting when a live read produced it: an
   // offline run would otherwise date old directory rows as today's.
-  if (!offline) await writeFile(SNAPSHOT_PATH, `${JSON.stringify({ ...next, savedAt: new Date().toISOString() }, undefined, 2)}\n`, 'utf8')
+  if (!offline) await writeFile(SNAPSHOT_PATH, `${JSON.stringify(next, undefined, 2)}\n`, 'utf8')
   report(section)
   process.stdout.write(`wrote ${pending.length} of ${targets.length} targets${offline ? ' (from the recorded snapshot)' : ''}\n`)
   if (drifted.length > 0) process.exitCode = 1

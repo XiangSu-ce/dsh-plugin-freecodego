@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   FREE_MODEL_TABLE_BEGIN, FREE_MODEL_TABLE_END,
-  renderFreeModelRegion, replaceFreeModelRegion,
+  recordedObservedAt, renderFreeModelRegion, replaceFreeModelRegion,
 } from './generate-free-model-tables.ts'
 
 const SECTION = {
@@ -60,6 +60,30 @@ describe('renderFreeModelRegion', () => {
 
     expect(region).toContain('\r\n')
     expect(region.replaceAll('\r\n', '')).not.toContain('\n')
+  })
+})
+
+describe('recordedObservedAt', () => {
+  // The reading this table was built from happened at 00:52 local on the 23rd,
+  // which is still the 22nd in UTC. A recording that stored the frame instant
+  // and sliced it published the 22nd — and the next live run, which dates the
+  // table from the reader's own clock, called all twelve tables stale.
+  const justAfterMidnight = { observedAt: '2026-09-23' }
+
+  it('states the date the recording carries, verbatim', () => {
+    expect(recordedObservedAt(justAfterMidnight)).toBe('2026-09-23')
+  })
+
+  it('never dates a reading to the day its instant fell on in UTC', () => {
+    expect(recordedObservedAt(justAfterMidnight)).not.toBe('2026-09-22')
+  })
+
+  it('refuses to date a recording that carries no reading date', () => {
+    expect(recordedObservedAt({})).toBeUndefined()
+  })
+
+  it('treats an empty date as missing rather than publishing a blank one', () => {
+    expect(recordedObservedAt({ observedAt: '' })).toBeUndefined()
   })
 })
 

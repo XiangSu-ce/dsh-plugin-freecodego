@@ -210,6 +210,15 @@
 # detectable, and a check no clone can run is not a check.
 !/scripts/generate-free-model-tables.ts
 !/scripts/generate-free-model-tables.spec.ts
+# `postinstall` names this file, and `package.json` is published whole — so a
+# clone that lacks it cannot install at all, which is how the public
+# repository's first release run died (`sync:harness` begins with an install,
+# and pnpm reported `Cannot find module '…/scripts/install-lefthook.mjs'`).
+# The file itself is published, not its subject: `lefthook.yml` and the pairing
+# driver the hooks invoke stay private, so the installer skips a checkout that
+# carries no hooks config (the behavior its spec pins).
+!/scripts/install-lefthook.mjs
+!/scripts/install-lefthook.spec.ts
 # The private sync overlay itself. `sync:harness` replaces whole upstream
 # package directories, tests included, so the specs covering the private seams
 # live here as `.tpl` and are copied back on every sync. They were previously
