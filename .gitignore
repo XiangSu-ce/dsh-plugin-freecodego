@@ -15,6 +15,12 @@
 !/README.md
 !/README.zh.md
 !/LICENSE
+# The changelog the release takes its notes from: `.github/workflows/release-freecodego.yml`
+# reads this file by path and refuses to publish a version whose section is
+# missing. This is the third time this file's own prediction held — a root-level
+# file the blanket `/*` above drops silently — and the first time the dropped
+# file would have broken a release instead of just going unnoticed.
+!/CHANGELOG.md
 !/plugin/
 !/plugin/**
 

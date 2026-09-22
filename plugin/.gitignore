@@ -230,6 +230,28 @@
 !/scripts/harness-overlay/**
 !/scripts/verify-dsh-package-licenses.ts
 !/scripts/verify-dsh-package-licenses.spec.ts
+# The helpers `sync:harness` reads while it patched the upstream tree, and the
+# sync runs in CI on every release: the published repository carries the fork's
+# own packages only, so each release reconstructs the upstream workspace from the
+# pinned Harness commit. These four were missing here, and release
+# `0.1.6-alpha.2.2` died on the first of them —
+#   ENOENT …/plugin/scripts/package-dependency-policy.ts
+#   at patchHarnessV013Compatibility (scripts/sync-harness.mjs)
+# — with every later step skipped and the publish job skipped behind them. The
+# list is the whole set of helpers the sync reads directly outside `packages/`,
+# taken from the script itself (`grep -o "join(root, '[^']*')"`), because adding
+# them one failure at a time costs a release attempt each.
+#
+# Two of the four currently match upstream byte for byte, and they are named
+# anyway: the sync's own `scripts/` pass is add-only, so a name this tree already
+# has is left alone — which is what makes the fork's version win on the day one of
+# them diverges, instead of upstream's copy silently replacing it. The other two
+# diverge today (`package-dependency-policy.ts` carries the Client-face exclusion
+# anchor the fork's patch asserts on).
+!/scripts/package-dependency-policy.ts
+!/scripts/session-fixture-layout.ts
+!/scripts/session-fixture-layout.spec.ts
+!/scripts/verify-package-dependencies.spec.ts
 !/scripts/release/
 /scripts/release/*
 !/scripts/release/families.ts
@@ -251,6 +273,13 @@
 !/scripts/release/verify-published.ts
 !/scripts/release/process.ts
 !/scripts/release/tarball.ts
+# The release notes. The workflow reads them from the published changelog
+# through this module, so a checkout without it could not publish a release at
+# all — and the same call is the check that a version has notes before the build
+# starts. Its spec ships with it: the heading boundary it pins is what keeps
+# `0.1.6-alpha.2` from being answered with `0.1.6-alpha.2.1`'s section.
+!/scripts/release/notes.ts
+!/scripts/release/notes.spec.ts
 # Helper modules the published scripts above import. The release workflow in
 # `../.github/workflows/release-freecodego.yml` runs `release:verify`,
 # `release:pack`, `release:verify-packed-install`, `release:publish`, and

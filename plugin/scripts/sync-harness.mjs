@@ -24,6 +24,11 @@
  * cache directory that exists without content is refused rather than re-cloned, so
  * there is no deletion anywhere in this file before a copy has succeeded.
  *
+ * `scripts/` is the one directory that cannot be mirrored that way, because it
+ * holds upstream files and fork-owned ones side by side: a wholesale copy would
+ * sweep the fork's own scripts, and skipping it leaves the upstream helpers the
+ * synced workspace imports absent in a fresh clone (see `addMissingScriptFiles`).
+ *
  * Environment seams, all optional:
  *   HARNESS_SYNC_ROOT       workspace root to sync into (default: this script's parent)
  *   HARNESS_SYNC_SOURCE     upstream tree to copy from, bypassing cache discovery
@@ -31,6 +36,9 @@
  *   HARNESS_SYNC_PATCH_ONLY `1` re-applies only the forks at the bottom of this
  *                           file to the tree as it stands, copying nothing and
  *                           needing no upstream source
+ *   HARNESS_SYNC_COPY_ONLY  `1` performs the copies described above and stops
+ *                           before the forks, so a fixture source can exercise the
+ *                           copy contract on its own
  */
 
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
@@ -53,6 +61,8 @@ const cache = join(root, '.upstream-cache', commit)
 // Directories this script owns wholesale: each one ends up an exact mirror of the
 // source copy, which is the promise COMPATIBILITY.md records for them.
 const copiedDirectories = ['apps', 'native', 'python', 'docs', 'website', 'snapshots', 'vendor']
+
+
 
 // Re-apply the forks alone, without a source checkout.
 //
@@ -216,6 +226,56 @@ async function mirrorDirectory(from, to) {
   return source?.isDirectory() === true ? sweepMissing(from, to) : 0
 }
 
+/**
+ * Add the upstream files under `scripts/` that this tree does not have.
+ *
+ * This is the third way one of upstream's trees can be materialized, and it exists
+ * because `scripts/` is the only one the fork shares with upstream *file by file*
+ * rather than owning outright:
+ *
+ *   - mirrored (`apps/`, `packages/`, ...): upstream owns every name, so the copy
+ *     is followed by a sweep;
+ *   - created (`scripts/harness-overlay`): the fork owns every name;
+ *   - added (here): both own names, and most of upstream's are needed untouched.
+ *
+ * What makes the synced workspace need them is that it typechecks and builds as a
+ * whole: upstream's own specs and build configs import helpers that live under
+ * `scripts/` (`gen-tool-catalog`, `project-doc-site`, `libreoffice-engine`, the
+ * coverage partitions `vitest.config.ts` names). A published clone starts with
+ * none of them -- `scripts/*` is gitignored except for the fork's own entries --
+ * so the release run reached `build:official` and died there on unresolved imports
+ * of files this working copy has had since it was first imported.
+ *
+ * Add-only, and that is what makes the missing protection list unnecessary: a name
+ * that already exists is left exactly as it is, which is what the fork wants for
+ * the 23 files here that differ from upstream (the four this script patches among
+ * them) and for the files upstream never had. Nothing is overwritten, so there is
+ * nothing to protect, and nothing is swept, so nothing of the fork's can be lost.
+ *
+ * @param from - the source `scripts/` directory.
+ * @param to - the destination `scripts/` directory, created if absent.
+ * @returns how many files were added.
+ */
+async function addMissingScriptFiles(from, to) {
+  if (!existsSync(from)) return 0
+  await mkdir(to, { recursive: true })
+  let added = 0
+  for (const entry of await readdir(from, { withFileTypes: true })) {
+    const source = join(from, entry.name)
+    const target = join(to, entry.name)
+    if (entry.isDirectory()) {
+      // A directory name both sides have is descended into rather than replaced:
+      // `scripts/release/` holds upstream's steps and the fork's own together.
+      added += await addMissingScriptFiles(source, target)
+      continue
+    }
+    if (existsSync(target)) continue
+    await cp(source, target, { dereference: true })
+    added += 1
+  }
+  return added
+}
+
 const summary = { mirrored: 0, swept: 0, skipped: [] }
 
 for (const directory of copiedDirectories) {
@@ -237,6 +297,14 @@ for (const entry of await readdir(sourcePackages, { withFileTypes: true })) {
   if (entry.name === 'freecodego') continue
   if (!dryRun) summary.swept += await mirrorDirectory(join(sourcePackages, entry.name), join(targetPackages, entry.name))
   summary.mirrored += 1
+}
+
+// Upstream's own files under `scripts/`, added where the destination has none.
+if (!dryRun) summary.mirrored += await addMissingScriptFiles(join(sourceRoot, 'scripts'), join(root, 'scripts'))
+
+if (process.env.HARNESS_SYNC_COPY_ONLY === '1') {
+  console.log(`sync-harness: copied ${String(summary.mirrored)} entries from ${sourceRoot} (copy-only; the forks were not applied)`)
+  process.exit(0)
 }
 
 if (dryRun) {

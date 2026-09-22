@@ -157,6 +157,17 @@
     "scripts/client-bundle-css.spec.ts",
     "packages/typert/generator/tests/fixtures/**",
     "scripts/client-bundle-purity.spec.ts",
+    // The documentation generator reads the FreeCodeGo plugin's own catalog
+    // parsers, so that the published tables and the model picker cannot drift
+    // apart. FreeCodeGo packages are not part of this aggregate — each is checked
+    // by its own `tsconfig.json`/`tsconfig.test.json` through `build:freecodego` —
+    // and an import that reaches into their sources from here inlines those
+    // sources into this program, which TypeScript then refuses as "not listed
+    // within the file list of project tsconfig.host.json" for every file it
+    // followed. The generator is excluded for the same reason the client-face
+    // specs above are: it belongs to the family it imports from, not to this one.
+    "scripts/generate-free-model-tables.ts",
+    "scripts/generate-free-model-tables.spec.ts",
     "packages/freecodego/**/tests/**"
   ],
   "references": [

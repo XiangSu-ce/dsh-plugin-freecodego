@@ -56,6 +56,17 @@ jobs:
           node-version: ${{ env.PRIMARY_NODE_VERSION }}
       - run: pnpm run sync:harness
       - run: pnpm install --frozen-lockfile
+      # The version's notes come from the published changelog, and a version with
+      # no section there is a release nobody can read. Checked before the build so
+      # a missing section costs seconds instead of a full pack.
+      - name: Check this version has release notes
+        run: |
+          version="${GITHUB_REF_NAME#freecodego-v}"
+          if [ "$version" = "$GITHUB_REF_NAME" ]; then
+            echo "::error::this workflow publishes from a freecodego-v* tag, got ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          pnpm run release:notes --version "$version" --check
       - name: Verify FreeCodeGo release
         env:
           RELEASE_PUBLISH: 'true'
@@ -64,6 +75,16 @@ jobs:
       # and publication is allowed only from the family's tag: bind both to this
       # run's ref, so the recorded client proves which release built it and a
       # dispatch from a branch fails here instead of at the publication gate.
+      #
+      # The version compared is the bundle's, not the workspace root's. Two
+      # version lines meet in this repository: `./package.json` carries the `dsh`
+      # family's version, which is the Harness line these packages mount on, while
+      # the freecodego family versions `packages/freecodego/bundle-latest` and
+      # names its tags after *that* version. Reading the root manifest here
+      # compares two unrelated numbers, and every FreeCodeGo release would fail
+      # on a mismatch that says nothing about the tag. `release:verify` above
+      # checks the same tag against the same manifest, so this step agrees with
+      # the publication gate rather than second-guessing it.
       - name: Bind the client build to this release tag
         run: |
           tag="${GITHUB_REF_NAME}"
@@ -72,9 +93,9 @@ jobs:
             echo "::error::dispatch this workflow from a freecodego-v* tag, got ${tag}"
             exit 1
           fi
-          declared="$(node -p "require('./package.json').version")"
+          declared="$(node -p "require('./packages/freecodego/bundle-latest/package.json').version")"
           if [ "$version" != "$declared" ]; then
-            echo "::error::tag ${tag} names ${version}, but the workspace declares ${declared}"
+            echo "::error::tag ${tag} names ${version}, but the bundle declares ${declared}"
             exit 1
           fi
           echo "DSH_CLIENT_COMMIT_HASH=${GITHUB_SHA}" >> "$GITHUB_ENV"
@@ -175,6 +196,15 @@ jobs:
             echo "assetName=${tarballs[0]}"
             echo "version=${version}"
           } >> "$GITHUB_OUTPUT"
+      # The notes are read from the changelog in the tree the tag names, so the
+      # release describes the version it publishes rather than whichever version
+      # was newest when someone last edited a string. Written to a file rather
+      # than piped into the next step, so the notes cannot pick up anything the
+      # command printed around them.
+      - name: Read this version's release notes
+        run: |
+          version="${GITHUB_REF_NAME#freecodego-v}"
+          pnpm run release:notes --version "$version" --out "${RUNNER_TEMP}/release-notes.md"
       # The registry half, published before the release half on purpose. The
       # registry step skips a version whose bytes are already there, so a run
       # interrupted after this point is repaired by re-running it; the release
@@ -203,7 +233,7 @@ jobs:
           esac
           gh release create "$RELEASE_TAG" "$ASSET" \
             --title "$RELEASE_TAG" \
-            --notes "FreeCodeGo bundle for DeepSeek Harness, published to the registry as freecodego@${VERSION} as well. One release per Harness line; the asset is named after the Harness version it mounts on." \
+            --notes-file "${RUNNER_TEMP}/release-notes.md" \
             "${extra[@]}"
       # Publication is verified the way a check reads it, not the way this job
       # wrote it: the release is re-read from the API and put through the same

@@ -29,8 +29,9 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..')
@@ -107,5 +108,87 @@ describe('FreeCodeGo sync overlay', () => {
     // This is the measured defect: these three existed only in the author's
     // working copy, because `scripts/*` is ignored except for named exceptions.
     expect(ignored).toStrictEqual([])
+  })
+})
+
+/**
+ * The `scripts/` tree is the one the fork shares with upstream file by file, so it
+ * is materialized by a third rule: upstream files the destination lacks are added,
+ * and nothing is ever overwritten or swept.
+ *
+ * Why the rule is needed at all: the synced workspace typechecks and builds as a
+ * whole, so upstream's own specs and build configs import helpers under `scripts/`
+ * (`gen-tool-catalog`, `project-doc-site`, `libreoffice-engine`, the coverage
+ * partitions `vitest.config.ts` names). A published clone starts without them --
+ * `scripts/*` is gitignored except for the fork's own entries -- so the release run
+ * reached `build:official` and died on unresolved imports of files this working copy
+ * has carried since it was first imported.
+ *
+ * Why it is exercised rather than described: the copy rules are the contract, and
+ * the property that matters is what the destination looks like afterwards. A
+ * fixture source exercises the three outcomes that distinguish this rule from a
+ * mirror -- an absent upstream file is added, an existing one keeps its bytes, and
+ * a fork-only one survives -- in the shape `HARNESS_SYNC_COPY_ONLY` exists for.
+ */
+describe('FreeCodeGo sync script sources', () => {
+  function fixture(): { readonly source: string; readonly root: string; readonly scripts: string } {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-sync-scripts-'))
+    const source = join(base, 'source')
+    const root = join(base, 'root')
+    const scripts = join(root, 'scripts')
+    mkdirSync(join(source, 'apps'), { recursive: true })
+    mkdirSync(join(source, 'packages/demo'), { recursive: true })
+    mkdirSync(join(source, 'scripts/release'), { recursive: true })
+    mkdirSync(scripts, { recursive: true })
+    writeFileSync(join(source, 'apps/kept.txt'), 'upstream application\n')
+    writeFileSync(join(source, 'packages/demo/package.json'), '{}\n')
+    writeFileSync(join(source, 'scripts/absent-upstream.ts'), 'export const added = true\n')
+    writeFileSync(join(source, 'scripts/release/absent-upstream.ts'), 'export const nested = true\n')
+    writeFileSync(join(source, 'scripts/shared.ts'), 'export const upstream = true\n')
+    writeFileSync(join(root, 'harness.lock.json'), JSON.stringify({ repository: 'https://example.invalid/harness.git', candidate: { commit: 'a'.repeat(40) } }))
+    writeFileSync(join(root, 'harness.config.json'), JSON.stringify({ repository: 'https://example.invalid/harness.git' }))
+    // The fork's own copy of a name both sides have, plus a file only the fork has.
+    writeFileSync(join(scripts, 'shared.ts'), 'export const forked = true\n')
+    writeFileSync(join(scripts, 'fork-only.ts'), 'export const fork = true\n')
+    return { source, root, scripts }
+  }
+
+  it('adds upstream scripts, keeps existing bytes, and sweeps nothing', () => {
+    const { source, root, scripts } = fixture()
+    try {
+      execFileSync(process.execPath, [SYNC_SCRIPT], {
+        env: { ...process.env, HARNESS_SYNC_SOURCE: source, HARNESS_SYNC_ROOT: root, HARNESS_SYNC_COPY_ONLY: '1' },
+        stdio: 'pipe',
+      })
+      expect(readFileSync(join(scripts, 'absent-upstream.ts'), 'utf8')).toContain('added = true')
+      expect(readFileSync(join(scripts, 'release/absent-upstream.ts'), 'utf8')).toContain('nested = true')
+      expect(readFileSync(join(scripts, 'shared.ts'), 'utf8')).toContain('forked = true')
+      expect(readFileSync(join(scripts, 'fork-only.ts'), 'utf8')).toContain('fork = true')
+      // The directories that are mirrored rather than added still mirror.
+      expect(readFileSync(join(root, 'apps/kept.txt'), 'utf8')).toBe('upstream application\n')
+    } finally {
+      rmSync(dirname(source), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    }
+  })
+
+  it('refuses a source that is not a Harness checkout before adding anything', () => {
+    const { source, root, scripts } = fixture()
+    try {
+      rmSync(join(source, 'packages'), { recursive: true, force: true })
+      let failed = false
+      try {
+        execFileSync(process.execPath, [SYNC_SCRIPT], {
+          env: { ...process.env, HARNESS_SYNC_SOURCE: source, HARNESS_SYNC_ROOT: root, HARNESS_SYNC_COPY_ONLY: '1' },
+          stdio: 'pipe',
+        })
+      } catch {
+        failed = true
+      }
+      expect(failed).toBe(true)
+      // Nothing was added on the way to the refusal.
+      expect(statSync(join(scripts, 'absent-upstream.ts'), { throwIfNoEntry: false })).toBeUndefined()
+    } finally {
+      rmSync(dirname(source), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    }
   })
 })
