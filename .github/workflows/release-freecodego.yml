@@ -55,7 +55,7 @@ jobs:
     name: Pack and verify FreeCodeGo bundle
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -158,7 +158,7 @@ jobs:
       # dispatch, and the fallback covers the push.
       NPM_CONFIG_LOGLEVEL: ${{ github.event.inputs.npm_loglevel || 'notice' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@v4
