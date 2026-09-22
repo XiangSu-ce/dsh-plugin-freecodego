@@ -6,7 +6,15 @@
 # carrying different bytes, or disagreeing about the Harness line they mount on.
 name: Release publish (FreeCodeGo)
 
+# Two ways in, and the tag is the one that matters: pushing the family's tag runs
+# the release by itself, so publishing a version needs no second action after the
+# push. `workflow_dispatch` stays for a re-run that has to start without a new
+# tag (the registry half skips a version already published, so a run interrupted
+# after that point is repaired by dispatching it again on the same tag).
 on:
+  push:
+    tags:
+      - 'freecodego-v*'
   workflow_dispatch:
 
 permissions:
@@ -19,9 +27,13 @@ env:
 # GitHub loads a workflow from `<repository root>/.github/workflows` only, and
 # in this repository the workspace is `plugin/` — so the file lives at the root
 # while every `run:` step executes in that directory. The one thing
-# `defaults.run` cannot reach is an action input: `path:` on the two artifact
-# steps is resolved against the workspace root, so those name `plugin/`
-# explicitly.
+# `defaults.run` cannot reach is an action input, so every action input that
+# names a path says `plugin/` itself: `path:` on the two artifact steps, and
+# `package_json_file:` on the two pnpm setups. That last one is not cosmetic —
+# `pnpm/action-setup` reads the pnpm version from `package.json` at the
+# repository root, which this repository does not have (its workspace is
+# `plugin/`), and a run that cannot find it fails on `No pnpm version is
+# specified` before the first checkout step.
 defaults:
   run:
     working-directory: plugin
@@ -38,6 +50,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           dest: ${{ runner.temp }}/setup-pnpm
+          package_json_file: plugin/package.json
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.PRIMARY_NODE_VERSION }}
@@ -107,6 +120,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           dest: ${{ runner.temp }}/setup-pnpm
+          package_json_file: plugin/package.json
       # No `registry-url`: it writes an `.npmrc` line interpolating
       # `NODE_AUTH_TOKEN`, which nothing sets here — npm then fails on every
       # command with "Failed to replace env in config". The default registry is
