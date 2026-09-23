@@ -52,8 +52,7 @@ function listState(mainView: string | undefined): SessionListState {
       retainedBy: { mainView: 1 },
     }])),
     phase: 'ready',
-    subagentsByParent: {},
-    jobsBySession: {},
+    projectionsBySession: {},
   } as unknown as SessionListState
 }
 
@@ -167,7 +166,7 @@ describe('companion activity: the phases only the event log carries', () => {
     feed.window('s1').append(entry('user/message', 5, { source: { kind: 'user' } }))
     expect(activity.getSnapshot().noticeKey).toBeUndefined()
 
-    feed.window('s1').append(entry('user/message', 9, { source: { kind: 'plugin', plugin: 'cron' } }))
+    feed.window('s1').append(entry('user/message', 9, { source: { kind: 'cron' } }))
     expect(activity.getSnapshot().noticeKey).toBe('9')
     activity.dispose()
   })

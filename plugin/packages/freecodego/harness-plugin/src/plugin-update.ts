@@ -27,8 +27,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { harnessHomeDirectory } from './data-home.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
-import z from '@deepseek-ai/schemastery'
-import type { FreeCodeGoPluginUpdateSettings, FreeCodeGoPluginUpdateStatus } from './types.ts'
+import type { FreeCodeGoPluginUpdateStatus } from './types.ts'
 
 /** The published bundle is the only supported automatic-update target. */
 export const FREECODEGO_UPDATE_PACKAGE = 'freecodego'
@@ -58,27 +57,14 @@ const NPM_PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i
 /**
  * A release tag that names a bundle version, with the family prefix optional.
  *
- * `freecodego-v0.1.6-alpha.2` is what `release:freecodego` tags and what the
- * publishing workflow creates its release from; `v0.1.6-alpha.2` is accepted
+ * `freecodego-v0.1.7-alpha.2` is what `release:freecodego` tags and what the
+ * publishing workflow creates its release from; `v0.1.7-alpha.2` is accepted
  * because a release created under the bare form is still a release for the same
  * Harness line, and refusing it would hide an installable update. Any other
  * prefix — another family's tag — is not this bundle.
  */
 const RELEASE_TAG_RE = /^(?:freecodego-)?v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u
 
-/**
- * Settings persisted in the FreeCodeGo settings namespace.
- *
- * There is deliberately no channel field, for the same reason there is no
- * second channel to select: a release is only ever offered for the Harness this
- * profile is running, so a "channel" could only reach bundles built against a
- * different Harness — which is the failure the gate exists to prevent. A stored
- * `pluginUpdateChannel` from an earlier build is preserved in the file by the
- * schema (unknown keys are kept, not rejected) and simply has no reader.
- */
-export const FreeCodeGoPluginUpdateSettingsSchema = z.object({
-  pluginUpdateChecksEnabled: z.boolean().default(true),
-}) as z<FreeCodeGoPluginUpdateSettings>
 
 interface GitHubReleaseAsset {
   readonly name?: unknown

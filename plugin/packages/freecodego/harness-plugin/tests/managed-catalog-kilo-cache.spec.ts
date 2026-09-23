@@ -264,5 +264,13 @@ describe('kilo selection routing', () => {
     expect(failure).toBeInstanceOf(LlmError)
     expect((failure as LlmError).code).toBe('RATE_LIMIT')
     expect((failure as LlmError).message).toContain(KILO_RATE_LIMIT_HINT)
+    // The metered thing is the exit address, and the two levers a user has over
+    // it are the ones the hint has to name — a hint that only says "retry later"
+    // leaves the reader with nothing to do that differs from the attempt that
+    // just failed. Asserted on the copy itself, in both languages, because this
+    // text is the whole remedy.
+    for (const lever of ['节点 IP', '真实 IP', 'node IP', 'real IP']) {
+      expect(KILO_RATE_LIMIT_HINT).toContain(lever)
+    }
   })
 })

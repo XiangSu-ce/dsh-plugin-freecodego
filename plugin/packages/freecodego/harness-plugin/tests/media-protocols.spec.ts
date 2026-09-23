@@ -2,6 +2,8 @@ import { createHmac } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { MediaRouteLimitation, REFERENCE_IMAGE_LIMIT, dataUrlImage, defaultMediaAuthScheme, defaultMediaBaseURL, defaultMediaCredentialRef, generatedVideoResult, guessImageMediaType, imagesViaGenerationBody, mediaVideoProtocol, mediaVideoRequest, referenceImageUrls, signKlingJwt, videoStatusEndpoint } from '../src/media-utils.ts'
 import { generateImageWithFallback, isNativeDashscopeRoute, mediaTransport } from '../src/media-generation.ts'
+import { MODELS_SETTINGS_ENTRY } from '../src/peer-settings.ts'
+import { settingsDescriptor } from './support/host-services.ts'
 
 /** A one-pixel PNG signature, which is all the image writer needs to sniff. */
 const PNG_BASE64 = 'iVBORw0KGgo='
@@ -481,8 +483,13 @@ describe('provider defaults', () => {
 })
 
 describe('isNativeDashscopeRoute', () => {
+  // The provider profile comes from the Harness Models *entry*, not from a namespace this
+  // plugin registered: a peer read is `describe()` filtered by entry id (see
+  // `peer-settings.ts`), so the double answers that call and names the entry it is answering for.
   const host = (profile: Record<string, unknown>): unknown => ({
-    ctx: { get: (name: string) => name === 'settings' ? { get: () => ({ providers: { qwen: profile } }) } : undefined },
+    ctx: { get: (name: string) => name === 'settings'
+      ? { describe: () => [settingsDescriptor(MODELS_SETTINGS_ENTRY, { providers: { qwen: profile } })] }
+      : undefined },
     credentials: { resolve: async () => ({ value: 'test-key' }) },
   })
 
@@ -515,7 +522,9 @@ describe('Kling authentication', () => {
   })
 
   const klingHost = (): unknown => ({
-    ctx: { get: (name: string) => name === 'settings' ? { get: () => ({ providers: { kling: {} } }) } : undefined },
+    ctx: { get: (name: string) => name === 'settings'
+      ? { describe: () => [settingsDescriptor(MODELS_SETTINGS_ENTRY, { providers: { kling: {} } })] }
+      : undefined },
     credentials: { resolve: async () => undefined },
     mediaRoute: (selection: string) => ({ selection, provider: 'kling', model: 'kling-v2-1' }),
     directConnection: async () => undefined,

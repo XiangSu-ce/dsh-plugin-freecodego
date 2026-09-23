@@ -8,6 +8,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
+import { MODELS_SETTINGS_ENTRY, peerSettings } from './peer-settings.ts'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
@@ -239,54 +240,110 @@ export function renderGeneratedImages(value: unknown): ContentBlock[] {
 
 function audioMimeType(file: string): string { const extension = path.extname(file).toLowerCase(); return extension === '.webm' ? 'audio/webm' : extension === '.ogg' || extension === '.opus' ? 'audio/ogg' : extension === '.wav' ? 'audio/wav' : extension === '.m4a' || extension === '.mp4' ? 'audio/mp4' : extension === '.flac' ? 'audio/flac' : 'audio/mpeg' }
 
-/** Generic media tools resolve the user's live default at execution time. 
- * @param host - the Host surface this remote call reaches its services through.
+/**
+ * One group of registered media tools: the names it mounted, and its release.
+ *
+ * The names are read back off the definitions that were registered rather than
+ * declared beside them, so "what is mounted right now" cannot name a tool some
+ * registration does not use.
  */
-export function registerMediaTools(host: MediaGenerationHost): void {
+export interface MediaToolRegistration {
+  /** Names of the tools this registration mounted, in mount order. */
+  readonly names: readonly string[]
+  /** Releases every registration this group made. */
+  readonly dispose: () => void
+}
+
+/**
+ * The two names the image/video switch governs.
+ *
+ * One literal each, read by both the registration that mounts the tool and the status
+ * the settings surface renders: the switch must not be able to claim a tool whose
+ * registration spells it another way. `gated` in that status is about the capability —
+ * which tools the switch owns — while the mounted names are reported separately, so a
+ * profile that cannot mount the legacy aliases is not described as owning fewer tools.
+ */
+export const MEDIA_GENERATION_TOOL_NAMES = { image: 'freecodego_generate_image', video: 'freecodego_generate_video' } as const
+
+/** What a Host with no tool registry yields: nothing mounted, nothing to release. */
+const NO_MEDIA_TOOLS: MediaToolRegistration = { names: [], dispose: () => undefined }
+
+/** The output both media tool groups answer with when they have no renderer of their own. */
+const GENERIC_MEDIA_OUTPUT: ToolDefinitionShape['output'] = {
+  schema: { type: 'object' as const, additionalProperties: true },
+  render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
+}
+
+/**
+ * Register the image and video generation tools, and return their registration.
+ *
+ * A disposer rather than an `ctx.effect` because these two are the ones a settings
+ * switch mounts and unmounts (`mediaGenerationEnabled`): a registration whose only
+ * release was teardown would make that switch a one-way door. The caller owns the
+ * lifetime, which is the contract `engineering.ts` already uses for the tools its own
+ * switches select.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the mounted names and the disposer that releases them.
+ */
+export function registerGenerationTools(host: MediaGenerationHost): MediaToolRegistration {
   const tools = host.ctx.get('tools') as { register: (tool: ToolDefinitionShape) => () => void } | undefined
-  if (tools === undefined) return
-  const genericOutput = {
-    schema: { type: 'object' as const, additionalProperties: true },
-    render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
-  }
-  const disposeImage = tools.register(rawAgnesTool({
-    name: 'freecodego_generate_image',
+  if (tools === undefined) return NO_MEDIA_TOOLS
+  const imageTool = rawAgnesTool({
+    name: MEDIA_GENERATION_TOOL_NAMES.image,
     description: 'Generate an image with the user-selected default media model. Do not pass a model id. Pass images to edit or fuse existing pictures on the providers that accept sources. If that provider is unavailable, the Host safely tries another configured image model.',
     parameters: { type: 'object', properties: { prompt: { type: 'string', minLength: 1, maxLength: 20_000 }, size: { type: 'string' }, quality: { type: 'string' }, n: { type: 'integer', minimum: 1, maximum: 4 }, images: { type: 'array', items: { type: 'string' }, maxItems: 8, description: 'Optional source images to edit or fuse, as http(s) or data:image/... URLs. Providers that cannot take sources are skipped.' } }, required: ['prompt'], additionalProperties: false },
     output: {
-      schema: genericOutput.schema,
+      schema: GENERIC_MEDIA_OUTPUT.schema,
       render: (_args: unknown, value: unknown) => renderGeneratedImages(value),
     },
     execute: async (args: ImageGenerationArgs, exec: { readonly agent?: Agent; readonly signal: AbortSignal }) => {
       return host.generateImageWithFallback(args, exec.signal)
     },
     presentCall: (args: { prompt: string }) => ({ card: 'generic', title: `Generate image: ${args.prompt}` }),
-  }))
-  const disposeVideo = tools.register(rawAgnesTool({
-    name: 'freecodego_generate_video',
+  })
+  const videoTool = rawAgnesTool({
+    name: MEDIA_GENERATION_TOOL_NAMES.video,
     description: 'Generate a video with the user-selected default media model. Do not pass a model id. If that provider is unavailable before task creation, the Host safely tries another configured video model.',
     parameters: { type: 'object', properties: { prompt: { type: 'string', minLength: 1, maxLength: 20_000 }, seconds: { type: 'integer', minimum: 1, maximum: 60, description: 'Video duration in seconds. The upper bound is the widest any configured route accepts; a route whose known durations cannot render this value is skipped, and the error names the durations it does accept, rather than returning a different length.' }, aspectRatio: { type: 'string' }, image: { type: 'string', description: 'Optional first-frame image URL or data URL.' }, lastImage: { type: 'string', description: 'Optional last-frame image URL or data URL, for providers that interpolate between two frames.' }, images: { type: 'array', items: { type: 'string' }, maxItems: 8, description: 'Optional subject/style reference images, as http(s) or data:image/... URLs. These are a different role from the first frame: providers that cannot take references are skipped.' }, video: { type: 'string', description: 'Optional source video URL to edit or extend instead of generating. Providers without such a route are skipped.' } }, required: ['prompt'], additionalProperties: false },
-    output: genericOutput,
+    output: GENERIC_MEDIA_OUTPUT,
     execute: async (args: MediaVideoArgs, exec: { readonly signal: AbortSignal }) => {
       return host.generateVideoWithFallback(args, exec.signal)
     },
     presentCall: (args: { prompt: string }) => ({ card: 'generic', title: `Generate video: ${args.prompt}` }),
-  }))
-  const disposeAudio = tools.register(rawAgnesTool({
+  })
+  const disposeImage = tools.register(imageTool)
+  const disposeVideo = tools.register(videoTool)
+  return { names: [imageTool.name, videoTool.name], dispose: () => { disposeImage(); disposeVideo() } }
+}
+
+/**
+ * Register the audio generation and transcription tools, and return their registration.
+ *
+ * Unconditional, and separate from {@link registerGenerationTools} on purpose: the
+ * settings switch is about producing a picture or a clip, while these two either write
+ * a file into the active workspace or read one out of it. Nothing unmounts them before
+ * teardown, so the caller keeps them under one `ctx.effect`.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the mounted names and the disposer that releases them.
+ */
+export function registerAudioTools(host: MediaGenerationHost): MediaToolRegistration {
+  const tools = host.ctx.get('tools') as { register: (tool: ToolDefinitionShape) => () => void } | undefined
+  if (tools === undefined) return NO_MEDIA_TOOLS
+  const audioTool = rawAgnesTool({
     name: 'freecodego_generate_audio',
     description: 'Generate speech/audio with the user-selected default media model. Do not pass a model id. The Host can fall back to another configured audio model when the selected provider is unavailable.',
     parameters: { type: 'object', properties: { input: { type: 'string', minLength: 1, maxLength: 50_000 }, voice: { type: 'string' }, format: { type: 'string', enum: [...AUDIO_FORMATS] }, speed: { type: 'number', minimum: 0.25, maximum: 4 } }, required: ['input'], additionalProperties: false },
-    output: genericOutput,
+    output: GENERIC_MEDIA_OUTPUT,
     execute: async (args: { input: string; voice?: string; format?: string; speed?: number }, exec: { readonly agent?: Agent; readonly signal: AbortSignal }) => {
       return host.generateAudioWithFallback(args, exec.agent?.session.header.cwd, exec.signal)
     },
     presentCall: () => ({ card: 'generic', title: 'Generate audio with FreeCodeGo' }),
-  }))
-  const disposeTranscribe = tools.register(rawAgnesTool({
+  })
+  const transcribeTool = rawAgnesTool({
     name: 'freecodego_transcribe_audio',
     description: 'Transcribe an audio file with the fixed free Groq whisper-large-v3-turbo model. The file must be inside the active workspace.',
     parameters: { type: 'object', properties: { path: { type: 'string' }, language: { type: 'string', maxLength: 32, description: 'Optional language hint for the transcriber, as the provider spells it; omitted means the provider auto-detects.' } }, required: ['path'], additionalProperties: false },
-    output: genericOutput,
+    output: GENERIC_MEDIA_OUTPUT,
     execute: async (args: { path: string; language?: string }, exec: { readonly agent?: Agent }) => {
       const cwd = exec.agent?.session.header.cwd
       if (cwd === undefined) throw new Error('Audio transcription requires an active workspace')
@@ -335,8 +392,10 @@ export function registerMediaTools(host: MediaGenerationHost): void {
       return host.groqWhisperTranscribe(data.toString('base64'), mimeType, args.language)
     },
     presentCall: (args: { path: string }) => ({ card: 'generic', title: `Transcribe audio: ${args.path}` }),
-  }))
-  host.ctx.effect(() => () => { disposeImage(); disposeVideo(); disposeAudio(); disposeTranscribe() }, 'freecodego: default media tools')
+  })
+  const disposeAudio = tools.register(audioTool)
+  const disposeTranscribe = tools.register(transcribeTool)
+  return { names: [audioTool.name, transcribeTool.name], dispose: () => { disposeAudio(); disposeTranscribe() } }
 }
 
 /**
@@ -897,8 +956,7 @@ export function mediaRoute(host: MediaGenerationHost, selection: string): MediaR
  * @returns The resolved base URL, credential reference and protocol.
  */
 export async function configuredMediaConnection(host: MediaGenerationHost, route: MediaRoute): Promise<ConfiguredMediaConnection> {
-  const settings = host.ctx.get('settings') as { get(namespace: 'llm-pi-ai'): unknown } | undefined
-  const profiles = record(record(settings?.get('llm-pi-ai')).providers)
+  const profiles = record(record(peerSettings(host.ctx, MODELS_SETTINGS_ENTRY)).providers)
   const profile = record(profiles[route.provider])
   const baseURL = text(profile.baseURL) ?? defaultMediaBaseURL(route.provider)
   if (baseURL === undefined) throw new Error(`Media provider "${route.provider}" needs a Base URL in the Harness Models settings`)

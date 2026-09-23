@@ -13,11 +13,46 @@
  * one collides with whatever else is running and because the URL is minted fresh
  * for every attempt anyway — nothing needs to be remembered between them.
  *
+ * What answers, and what does not
+ * -------------------------------
+ * This listener authenticates nothing: it serves one path, and any request for
+ * that path is handed on as the redirect. Loopback is not owner-only (the same
+ * fact `claude-protocol-bridge.ts` states as the reason its own listener compares
+ * a secret), so a process on this machine — or a page that guesses the port and
+ * requests this path — can deliver a callback URL of its own choosing, and the
+ * exchange will adopt the account it names. Closing that needs a value only this
+ * attempt and the sign-in page share, and the redirect's query is the page's own
+ * (`isRedirect`, `scope`, `userInfo`, `refreshToken` — see `trae-login-flow.spec.ts`),
+ * so there is nothing in it to check today. What is enforced here is the part
+ * that is ours to enforce: the request has to name this attempt's path exactly,
+ * and the listener stops after the attempt it belongs to.
+ *
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/trae/callback-server
  */
 
 import { createServer, type Server } from 'node:http'
 import { TRAE_CALLBACK_PATH } from './endpoints.ts'
+
+/**
+ * Whether a request's target is this attempt's callback path.
+ *
+ * The path component, compared whole. A prefix test would accept
+ * `/authorize-anything`, and the URL it hands the exchange is the requester's own
+ * — so the answer to "is this the redirect I am waiting for" has to be about the
+ * one path, not about a string it starts with.
+ * @param target - the request target, as `node:http` reports it.
+ * @returns true when the request is for the callback path.
+ */
+function isCallbackTarget(target: string | undefined): boolean {
+  if (target === undefined) return false
+  try {
+    // Absolute-form targets are legal in HTTP, so the base is only there for the
+    // origin-form one a browser sends.
+    return new URL(target, 'http://127.0.0.1').pathname === TRAE_CALLBACK_PATH
+  } catch {
+    return false
+  }
+}
 
 /** A running listener for one sign-in attempt. */
 export interface TraeCallbackListener {
@@ -57,7 +92,7 @@ export async function startTraeCallbackListener(
 ): Promise<TraeCallbackListener> {
   const server: Server = createServer((request, response) => {
     const url = request.url === undefined ? '/' : request.url
-    if (!url.startsWith(TRAE_CALLBACK_PATH)) {
+    if (!isCallbackTarget(url)) {
       response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
       response.end('not found')
       return

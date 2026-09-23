@@ -7,7 +7,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import path from 'node:path'
-import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
+import { credentialRef, type CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -37,7 +37,7 @@ import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoManagedRuntime, FreeCodeGoReceiptDocument } from '@deepseek-ai/dsh-freecodego-api'
-import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorStatus, FreeCodeGoAdvisorUpdate, FreeCodeGoAdvisorModel, FreeCodeGoAdvisorNote, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate } from './types.ts'
+import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorStatus, FreeCodeGoAdvisorUpdate, FreeCodeGoAdvisorModel, FreeCodeGoAdvisorNote, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { createUserMessage, type LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import { CodexRuntimeManager, ClaudeRuntimeManager } from '@deepseek-ai/dsh-freecodego-native-runtime-host'
@@ -49,41 +49,40 @@ import type { WorkBuddyPoolService } from './workbuddy-pool.ts'
 import type { QoderClient } from './qoder-intl.ts'
 import type { TraeClient } from './trae-intl.ts'
 import { ClaudeProtocolBridge } from './claude-protocol-bridge.ts'
-import { FreeCodeGoCapabilityRegistry, FreeCodeGoCapabilitySettingsSchema } from './capabilities.ts'
-import { FreeCodeGoPluginConflictSettingsSchema, installFreeCodeGoPluginConflictGuard } from './plugin-conflicts.ts'
-import { FreeCodeGoPluginUpdateService, FreeCodeGoPluginUpdateSettingsSchema } from './plugin-update.ts'
+import { FreeCodeGoCapabilityRegistry, SERVER_NAME } from './capabilities.ts'
+import { installFreeCodeGoPluginConflictGuard } from './plugin-conflicts.ts'
+import { FreeCodeGoPluginUpdateService } from './plugin-update.ts'
 import { FreeCodeGoAdvisorRuntime } from './advisor.ts'
 import { FreeCodeGoAgentProgressRuntime } from './agent-progress.ts'
 import { FreeCodeGoEngineCouncil } from './engine-council.ts'
 import { FreeCodeGoSubagentModelRouting } from './subagent-model-routing.ts'
-import { FreeCodeGoEngineeringRegistry, FreeCodeGoEngineeringSettingsSchema } from './engineering.ts'
+import { FreeCodeGoEngineeringRegistry } from './engineering.ts'
 import {
   FreeCodeGoAutomationRuntime,
-  FreeCodeGoAutomationSettingsSchema,
   automationSettingsPatch,
   type AutomationEventHost,
   type FreeCodeGoAutomationSettings,
   type FreeCodeGoAutomationSettingsUpdate,
 } from './automation.ts'
-import { freeCodeGoSessionEventTypes, registerFreeCodeGoSessionEventTypes } from './session-events.ts'
+import { freeCodeGoSessionEventTypes } from './session-events.ts'
 import type { CommunityCatalogPayload, GatewayUsageSnapshot, LocalTokenUsageQuery, LocalTokenUsageSnapshot, FreeCodeGoEngineeringCanvasGraph, FreeCodeGoEngineeringCouncilDecision, FreeCodeGoEngineeringCouncilImplementation, FreeCodeGoEngineeringCouncilJob, FreeCodeGoEngineeringCouncilReport, FreeCodeGoEngineeringCouncilRequest, FreeCodeGoEngineeringCodeGraphProjectStatus, FreeCodeGoEngineeringCodeGraphRuntimePackage, FreeCodeGoEngineeringCodeGraphRuntimeStatus, FreeCodeGoEngineeringGraphProjectStatus, FreeCodeGoEngineeringGraphRuntimePackage, FreeCodeGoEngineeringGraphRuntimeStatus, FreeCodeGoEngineeringMemoryBackup, FreeCodeGoEngineeringMemoryDetail, FreeCodeGoEngineeringMemoryIndex, FreeCodeGoEngineeringMemoryPage, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringMemoryRetentionResult, FreeCodeGoEngineeringMemoryReviewDecision, FreeCodeGoEngineeringMemoryTimeline, FreeCodeGoEngineeringMemoryTrust, FreeCodeGoEngineeringVerificationResult, FreeCodeGoEngineeringVerificationStage, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate } from './types.ts'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
 import { runtimePackageView, setEngineAvailability } from './account-utils.ts'
 import type { MediaRoute, MediaVideoArgs } from './media-utils.ts'
-import { generateAudioWithFallback, generateImageWithFallback, generateVideoWithFallback, gatewayMediaJson, mediaRoute, registerMediaTools, type ImageGenerationArgs, type MediaGenerationHost, type MediaRequestOptions } from './media-generation.ts'
-import { registerAdvisorTools, registerAgnesTools, type AgentToolsDeps } from './agent-tools.ts'
+import { generateAudioWithFallback, generateImageWithFallback, generateVideoWithFallback, gatewayMediaJson, mediaRoute, registerAudioTools, registerGenerationTools, MEDIA_GENERATION_TOOL_NAMES, type ImageGenerationArgs, type MediaGenerationHost, type MediaRequestOptions, type MediaToolRegistration } from './media-generation.ts'
+import { registerAdvisorTools, registerAgnesMediaTools, AGNES_MEDIA_TOOL_NAMES, type AgentToolsDeps } from './agent-tools.ts'
 import { capabilityMarketplace, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, mcpPresetInstall, skillPlacements, skillPresetInstall, skillPresetRemove, type CommunityRemotesHost, type CommunityRemotesState } from './community-remotes.ts'
 import type { PlacementContext } from './skills/placement.ts'
 import { freeCodeGoDataHome, harnessHomeDirectory } from './data-home.ts'
 import { ensureDesktopDshShim, requireClaudeEngineManifestPath } from './runtime-assets.ts'
-import { ensureFreeCodeGoAgentPreset } from './agent-preset-install.ts'
+import { installFreeCodeGoAgentPresets } from './agent-preset-install.ts'
 import { PendingWriteDrain } from './abort-drain.ts'
 import { FreeCodeGoHeadroomRuntime, type HeadroomStats } from './headroom/runtime.ts'
 import { FreeCodeGoDeferredTools, type DeferredToolStatus } from './deferred-tools.ts'
-import { DoomLoopGuard, FreeCodeGoGuardSettingsSchema, credentialRealpathDenial, freeCodeGoToolGuard, isCredentialPath } from './tool-guards.ts'
+import { DoomLoopGuard, credentialRealpathDenial, freeCodeGoToolGuard, isCredentialPath } from './tool-guards.ts'
 import { workflowScriptRefusal } from './workflow-static-check.ts'
-import { FolderTrustStore, FreeCodeGoTrustSettingsSchema, defaultTrustRecordPath, folderTrustEnabled, repositoryRoot, resolveFolderTrust, seedTrustRecordOnce } from './trust.ts'
+import { FolderTrustStore, defaultTrustRecordPath, folderTrustEnabled, repositoryRoot, resolveFolderTrust, seedTrustRecordOnce } from './trust.ts'
 import { startSuspendWatch, type SuspendEvidence } from './system-power.ts'
 import { nativeCallsFromPermission, nativeToolDenial } from './native-tool-guard.ts'
 import { AssistantLoopGuard } from './assistant-loop-guard.ts'
@@ -120,13 +119,13 @@ import {
   councilPeersFor, latestApprovedPlan, latestSessionEngine,
 } from './engineering-remote-utils.ts'
 import { advisorNotesFromSession, hostSessionEvents, type HostSessionEvents } from './managed-catalog-utils.ts'
-import { FreeCodeGoManagedCatalogs, type FreeCodeGoEngineSettingsScope } from './managed-catalogs.ts'
+import { FreeCodeGoManagedCatalogs } from './managed-catalogs.ts'
 import { FreeCodeGoVerifyOnStop } from './verify-on-stop.ts'
 import { loadProjectConfig, PROJECT_CONFIG_RELATIVE_PATH, PROJECT_CONFIG_WHITELIST, type ProjectConfigReport } from './project-config.ts'
 import { projectTierFrom, type ProjectTier } from './project-tier.ts'
 import { readWorkspaceChangeScope, readWorkspaceRevision } from './engineering-quality.ts'
 import { denyRealpathRefusal, denyRefusal, describeDenyEnforcement, normalizeDenyPatterns } from './sandbox/profiles.ts'
-import { FreeCodeGoPolicy } from './policy.ts'
+import { FreeCodeGoPolicy, type FreeCodeGoSettingsWriter } from './policy.ts'
 import { collectInspectReport, inspectReportToJson, renderInspectReport, type InspectCollector, type InspectReport } from './inspect/collect.ts'
 import { buildInspectCollectors } from './inspect/host.ts'
 import { createReviewInstall, type ReviewInstall } from './review/install.ts'
@@ -170,14 +169,16 @@ import {
   setDefaultEngine, setDefaultModel, catalog, modelAvailability, sessionEngineStatus, sessionDelete, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeInstall,
   claudeRuntimeRemove, capabilitiesSnapshot, capabilitiesSetEnabled, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, mcpSave, mcpRemove, skillRootSave,
   skillRootRemove, skillInvocationSet, skillDetail, nativeRuntimeOpeners, configureGateway, directConnection, managedRuntime, managedCatalog, routeForModel, configuredProviderRoute, defaultAgentOptions,
-  nativeAgentOptionsAlpha, claudeBridgeHandle, FREECODEGO_CLOUD_ORIGIN, type EngineRemotesHost,
+  nativeAgentOptionsAlpha, claudeBridgeHandle, webSearchBind, FREECODEGO_CLOUD_ORIGIN, type EngineRemotesHost,
 } from './engine-remotes.ts'
+import { WEB_SEARCH_SETTINGS_NAMESPACE, repairWebSearchBinding, webSearchBindingStatus, type WebSearchBindingReads, type WebSearchBindingReport } from './web-search-binding.ts'
+import { asString, maybeRecord } from './untrusted-json.ts'
 import { runEngineeringEval } from './engineering-eval.ts'
 import { COMPILED_BUILT_IN_COMMAND_POLICY, describePolicyDiagnostics, type CompiledCommandPolicy } from './command-policy.ts'
 import { ContextFragmentLog, renderFragments, type ContextSection, type SectionInput } from './context-fragments.ts'
 import { PLAN_MODE_GUIDANCE, PlanModeStore, findUpstreamPlanMode, planModeGuidanceText, planModeSessionKey, type PlanMode, type UpstreamPlanMode } from './plan-mode.ts'
 import { collectPluginSurfaces, describeSurfaceLockDiff, diffSurfaceLock, measureSurfaces, type SurfaceLockDocument } from './surface-lock.ts'
-import type { Config } from './plugin-config.ts'
+import type { Config, FreeCodeGoConfigInput } from './plugin-config.ts'
 import { SANDBOX_MODES, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringLoopStatus, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle,  FreeCodeGoInspectReport,
@@ -310,8 +311,8 @@ interface SandboxPolicyLike {
   resolve(request: { readonly session?: Session }): { readonly workspaceRoot: string }
 }
 
-export type { CommunityCatalogPlugin, FreeCodeGoBackendSnapshot, FreeCodeGoManagedCatalog, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentConfig, FreeCodeGoRegistrationRequest, JsonValue, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoPluginUpdateSettings, FreeCodeGoPluginUpdateStatus, AgnesStatus } from './types.ts'
-export type { Config } from './plugin-config.ts'
+export type { CommunityCatalogPlugin, FreeCodeGoBackendSnapshot, FreeCodeGoManagedCatalog, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentConfig, FreeCodeGoRegistrationRequest, JsonValue, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoPluginUpdateSettings, FreeCodeGoPluginUpdateStatus, AgnesStatus, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
+export type { Config, FreeCodeGoConfigInput } from './plugin-config.ts'
 export { installFreeCodeGoPluginConflictGuard } from './plugin-conflicts.ts'
 export { registerFreeCodeGoSessionEventTypes } from './session-events.ts'
 
@@ -340,17 +341,18 @@ function reportCommandPolicyDiagnostics(ctx: Context, policy: CompiledCommandPol
   ctx.logger?.warn?.(`freecodego: the built-in command policy compiled with ${policy.diagnostics.length} diagnostic(s); rules that failed their own examples were dropped and are no longer enforced — ${describePolicyDiagnostics(policy.diagnostics)}`)
 }
 
-/**
- * Pre-loader bootstrap for records written by FreeCodeGo engines. Session
- * persistence validates stored event types before configured plugins mount, so
- * this must run before the ordinary Host entry constructs its service.
- * @param ctx - context carrying the services this call reads.
- * @returns the conflict guard's disposer, so the Host entry can release it.
+/*
+ * This module used to export `bootstrapFreeCodeGoHarness`, a pre-Loader seam that
+ * registered the session event vocabulary and installed the conflict guard for
+ * the `dsh.bootstrap` manifest field. Both halves now come from composition rows:
+ * the `freecodego/session-events` entry constructs its service before session
+ * persistence validates stored event types, and this plugin's own entry installs
+ * the guard when it activates (see `onStart`). The manifest field itself was never
+ * part of the Harness contract — `DshManifest` declares `bundle`, `profile` and
+ * `client`, and nothing anywhere resolved `bootstrap` — so it was a declared seam
+ * with no loader behind it. Removed rather than left as a symbol whose name
+ * promised a window that cannot exist once this plugin *is* a Loader entry.
  */
-export function bootstrapFreeCodeGoHarness(ctx: Context): ReturnType<typeof installFreeCodeGoPluginConflictGuard> {
-  registerFreeCodeGoSessionEventTypes()
-  return installFreeCodeGoPluginConflictGuard(ctx)
-}
 export { AGNES_AUTH_REF, AGNES_API_KEY_REF, AgnesClient, AgnesAdapter } from './agnes.ts'
 export type { AgnesAccountStatus, AgnesImageRequest, AgnesImageResult, AgnesVideoRequest, AgnesVideoResult } from './agnes.ts'
 export { CLINE_AUTH_REF, ClineClient, ClineAdapter, ClineUpstreamError } from './cline.ts'
@@ -461,39 +463,432 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   // Declare it here so construction cannot race the base bundle activation.
   static inject = ['credentials', 'settings', 'llm', 'tools', 'agents', 'sessions', 'sessionPersistence']
   /**
-   * Runtime schema for {@link Config}, declared inline so the generated config
-   * catalog can walk it: it is the only statically resolvable form a
-   * plugin-class schema may take. Schemastery has no first-class `.optional()`;
-   * the public `Config` type already types these fields as optional, so the
-   * schema carries the same contract at runtime (absent input passes through)
-   * without fighting the inferred builder types.
+   * Runtime schema for {@link Config}.
+   *
+   * One flat `z.object({...})` literal, and that shape is load-bearing: the generated
+   * config catalog walks this expression *statically* — it resolves a local `const` or
+   * a workspace-package import and refuses anything else — and the readers gate in
+   * `scripts/freecodego-config-readers.spec.ts` parses the same literal to check that
+   * every field it declares is read somewhere. The document therefore cannot be
+   * assembled from the group schemas' own modules, even though those modules own the
+   * *types*: an `intersect` of relative imports is invisible to both walks, and a
+   * schema nothing walks is a schema nothing checks.
+   *
+   * Which fields are which
+   * ----------------------
+   * The first block is deployment input: ordinary fields, no `volatile()`, and a change
+   * to one of them is a composition change that remounts the plugin. Every field below
+   * it is a setting — `volatile()` is what the loader reads as "commit this into the
+   * running references instead of remounting", and it is also what puts the field in
+   * the settings form. {@link FreeCodeGoPolicy} is the only reader of any of them; the
+   * section comments name the module that owns each group's type.
    */
-  static Config: z<Config> = z.object({
+  static Config: z<FreeCodeGoConfigInput, Config> = z.object({
     gateway: z.object({
       baseUrl: z.string().default(FREECODEGO_CLOUD_ORIGIN),
     }),
-    defaultModel: z.string(),
-    defaultEngine: z.union([z.const('deepseek'), z.const('codex'), z.const('claude')]).default('deepseek'),
     codexRuntimeDirectory: z.string().default(''),
     codexRuntimeSourceDirectory: z.string().default(''),
     claudeRuntimeDirectory: z.string().default(''),
     autoSubagentModelSelection: z.boolean().default(true),
-    autoAdvisorEnabled: z.boolean().default(true),
     updatePackageName: z.string().default(''),
     updateReleaseRepository: z.string().default(''),
     updateReleaseTokenEnv: z.string().default(''),
-  })
+    // Settings — capabilities (`capabilities.ts`)
+    //
+    // Default on, because these two are additive: MCP servers and Skill roots are
+    // user-supplied inventories, so a deployment that has configured neither
+    // mounts nothing and the switch only exists to *stop* mounting. An off default
+    // therefore bought no safety and cost every deployment the step of finding the
+    // switch before the capability it installed this plugin for would work.
+    mcpEnabled: z.boolean().default(true).volatile(),
+    skillEnabled: z.boolean().default(true).volatile(),
+    voiceInputEnabled: z.boolean().default(true).volatile(),
+    sessionDeleteEnabled: z.boolean().default(true).volatile(),
+    modelCategories: z.dict(z.union([z.const('text'), z.const('image'), z.const('video'), z.const('audio')])).default({}).volatile(),
+    // Settings — the web-search page's model choice (`web-search-binding.ts`)
+    //
+    // The pair is recorded here because the stock namespace has no field for it: it
+    // can name the endpoint the search provider calls, not which of this plugin's
+    // routes that endpoint stands for. Without the pair a restart could not rebuild
+    // a local-bridge binding, whose port, route id, and secret belong to one
+    // process — and the page would keep showing a choice that no longer answers.
+    // Empty means "this plugin wrote no binding", which is also the state a profile
+    // that never used the page is in.
+    webSearchBindingProvider: z.string().default('').volatile(),
+    webSearchBindingModel: z.string().default('').volatile(),
+    mcpServers: z.array(z.object({
+      id: z.string().min(1).max(80),
+      enabled: z.boolean().default(true),
+      transport: z.union([z.const('stdio'), z.const('streamable-http')]),
+      serverName: z.string().pattern(SERVER_NAME),
+      command: z.string().default(''),
+      args: z.array(z.string().max(4096)).default([]),
+      env: z.dict(z.string()).default({}),
+      cwd: z.string().default(''),
+      url: z.string().default(''),
+      headers: z.dict(z.string()).default({}),
+    })).default([]).volatile(),
+    skillRoots: z.array(z.object({
+      id: z.string().min(1).max(80),
+      enabled: z.boolean().default(true),
+      path: z.string().min(1).max(4096),
+    })).default([]).volatile(),
+    skillInvocationOverrides: z.dict(z.boolean()).default({}).volatile(),
+    // Declared without a default, the way `Config`'s optional fields are: schemastery
+    // has no optional-object spelling, and an absent key *is* the answer here — no
+    // preference, which means the community root. A default would have to invent a
+    // placement on every install that never chose one.
+    //
+    // `null` is the *clear*, and it is here because a settings write is a **merge**
+    // (`mergeLayers` in the settings service: plain objects merge recursively, other
+    // values replace, and `undefined` entries are stripped so that "a sparse patch cannot
+    // erase lower keys"). Omitting the field therefore cannot remove a stored preference —
+    // the live harness proved it — so clearing has to say so with a value.
+    preferredSkillPlacement: z.union([
+      z.object({
+        agent: z.union([z.const('harness'), z.const('agents')]),
+        scope: z.union([z.const('project'), z.const('user')]),
+      }),
+      z.const(null),
+    ]).volatile(),
+
+    // Settings — tool guards, LSP, policy surfaces (`tool-guards.ts`)
+    // Fail-closed by default: the model has no legitimate need for secret
+    // material, and a denial message tells it how to proceed instead.
+    envReadGuardEnabled: z.boolean().default(true).volatile(),
+    // Stops the token-burning failure mode where a stuck engine repeats one
+    // failing call until the user cancels the session. It applies to the native
+    // engines' own tools, which is the population no other loop check covers:
+    // Harness-dispatched calls are the Harness's own advisory guard's business.
+    doomLoopGuardEnabled: z.boolean().default(true).volatile(),
+    // Probe-based LSP stack: on by default, mounts only when language-server
+    // binaries resolve on PATH so boot never depends on tooling being present.
+    lspEnabled: z.boolean().default(true).volatile(),
+    // Declarative command policy: rules live in `command-policy.ts` as data with
+    // their own positive/negative examples, and only `forbidden` rules can deny
+    // here — this guard is monotonic, so `prompt` is left to the approval layer.
+    commandPolicyEnabled: z.boolean().default(true).volatile(),
+    // Plan Mode: while a session is in `plan`, file-mutating tools and any command
+    // the policy does not clear are refused. The mode is per conversation, not per
+    // tool call, so it is read from durable state rather than from arguments.
+    planModeEnabled: z.boolean().default(true).volatile(),
+    // Model-visible context budget: the model is told how full its window is, at
+    // band granularity, so it can choose a targeted read over a whole file. A
+    // model that never learns the number cannot avoid the cost the number causes.
+    contextBudgetEnabled: z.boolean().default(true).volatile(),
+    // Cache-cold clearing: when the prompt cache is provably expired, shrinking the
+    // prompt costs nothing, because the whole prefix is about to be re-sent anyway.
+    cacheColdClearEnabled: z.boolean().default(true).volatile(),
+    // Request-shape attribution: fingerprint the request before it is sent, so a
+    // cache miss can name the tool whose description moved instead of only saying
+    // "the prefix changed".
+    cacheBreakAttributionEnabled: z.boolean().default(true).volatile(),
+    // Assistant-output repetition guard: the doom-loop guard above catches a tool
+    // call repeated with identical arguments, which is a different failure from
+    // the model looping inside its own prose. That one is only ever stopped by the
+    // token budget today, so this watches `agent/assistant-stream` and answers with
+    // a reminder first and a cancelled turn second.
+    assistantLoopGuardEnabled: z.boolean().default(true).volatile(),
+    // Paged recall of a parked tool result. On by default: the artifact already
+    // exists on disk, so this only changes how it is read back, and reading it with
+    // no statement of what is left is the failure it removes.
+    spillRecallEnabled: z.boolean().default(true).volatile(),
+    // Compaction-summary fidelity: a summary replaces the history it was written
+    // from, in the same commit, so the only moment its quotations can be checked
+    // against the record is before it lands. An unfaithful summary is logged, never
+    // enforced — it is already appended by the time it can be read.
+    compactionFidelityEnabled: z.boolean().default(true).volatile(),
+    // Prompt-composition reporting: the model can ask where its own context goes
+    // rather than only how full it is. `context-budget.ts` answers "how much is
+    // left"; without this the answer to "too much of *what*" is a guess, which is
+    // what leaves the tool block and an over-long transcript indistinguishable.
+    promptCompositionEnabled: z.boolean().default(true).volatile(),
+
+    // Settings — folder trust (`trust.ts`)
+    /**
+     * Master switch for the whole gate.
+     *
+     * Off means every project-scoped surface is treated as trusted — the
+     * pre-gate behaviour, kept reachable so a deployment that already controls
+     * which repositories it opens is not forced to grant each one. It is
+     * deliberately not the default: the safe state must not be the opt-in one.
+     */
+    folderTrustEnabled: z.boolean().default(true).volatile(),
+
+    // Settings — conflict protection (`plugin-conflicts.ts`)
+    //
+    // Default on: the guard's answer is the official-first one this plugin exists
+    // to enforce, and it stands down entirely (no interception at all) when the
+    // switch is off. `bundle-latest/cordis.patch.yml`'s `freecodego-harness-plugin`
+    // row is the entry this field is written to and the entry whose activation
+    // installs the guard. The guard reads it through this plugin's policy, which
+    // resolves the Config — so the default above is already the answer before anyone
+    // writes it, and a mount that supplies no settings port intercepts nothing.
+    pluginConflictProtectionEnabled: z.boolean().default(true).volatile(),
+    pluginConflictRecords: z.array(z.object({
+      id: z.string().min(1).max(256),
+      detectedAt: z.number(),
+      resource: z.union([
+        z.const('tool'), z.const('command'), z.const('settings'), z.const('route'), z.const('provider'), z.const('slot'),
+      ]),
+      resourceName: z.string().min(1).max(256),
+      disabledEntryId: z.string().min(1).max(512),
+      disabledModuleName: z.string().min(1).max(512),
+      keptEntryId: z.string().min(1).max(512),
+      keptModuleName: z.string().min(1).max(512),
+      // Declared so the flag survives the settings document round trip: an
+      // undeclared key is dropped when the document is parsed, and the panel would
+      // then describe a stand-down as a repair that the Harness lost. Schemastery
+      // leaves a field without `.required()` optional, so an old record parses too.
+      yieldedToOfficial: z.boolean(),
+    })).default([]).volatile(),
+
+    // Settings — plugin update checks (`plugin-update.ts`)
+    pluginUpdateChecksEnabled: z.boolean().default(true).volatile(),
+
+    // Settings — engineering registry (`engineering.ts`)
+    //
+    // Default on: the pack is what makes a session understand the project it is
+    // running in, and everything under this switch stays additive — the audited
+    // Skills mount read-only, project memory is local SQLite state, and the
+    // Host tools are registered only once the pack is mounted. A capability that
+    // has to be found before it does anything is why the pack looked absent; the
+    // switch remains the way to stand the whole thing down.
+    engineeringEnabled: z.boolean().default(true).volatile(),
+    /**
+     * The rest of the bundled engineering library is opt-in: 23 audited Skills
+     * (the remainder of the authored set plus the vendored `mattpocock/skills`
+     * entries that are not in the default-on starter root) stay unmounted until
+     * the user turns this on.
+     */
+    engineeringSkillsEnabled: z.boolean().default(false).volatile(),
+    /**
+     * The starter set is on by default: ten Skills whose value does not depend on
+     * adopting a whole methodology. Four are disciplines the model applies on its
+     * own (evidence before completion claims, navigation before broad reading,
+     * planning multi-file work, root-cause debugging); the rest are `/name`
+     * entries a user reaches for on demand and that cost nothing until typed
+     * (a prompt-technique reference, the grilling interview and its primitive, a
+     * re-pitch escape hatch, a handoff document, and a questionnaire for
+     * decisions the agent cannot settle). They live in their own asset root so
+     * "all engineering Skills" stays the union of the roots — no skill file is
+     * duplicated, and no audit can disagree with a mount.
+     */
+    engineeringStarterSkillsEnabled: z.boolean().default(true).volatile(),
+    /**
+     * The vendored superpowers workflow pack is a separate opt-in: it is the
+     * auto-triggering, plan-then-dispatch methodology, so it must be a deliberate
+     * choice rather than a side effect of enabling the engineering disciplines.
+     */
+    engineeringSuperpowersSkillsEnabled: z.boolean().default(false).volatile(),
+    /**
+     * Injects a bounded capability map of the mounted Skills at session start.
+     * A default-off Skill library is invisible otherwise: the model never lists
+     * it, and a user who turned a pack on has no way to see what arrived.
+     */
+    engineeringSkillMapEnabled: z.boolean().default(true).volatile(),
+    /** Enables bounded project-declared verification after an approved council plan. */
+    engineeringQualityEnabled: z.boolean().default(true).volatile(),
+    engineeringMemoryEnabled: z.boolean().default(true).volatile(),
+    engineeringCouncilEnabled: z.boolean().default(true).volatile(),
+    engineeringCouncilDeepseekEnabled: z.boolean().default(true).volatile(),
+    engineeringCouncilCodexEnabled: z.boolean().default(true).volatile(),
+    engineeringCouncilClaudeEnabled: z.boolean().default(true).volatile(),
+    engineeringMemoryContextTokenBudget: z.number().step(1).min(0).max(4_000).default(1_200).volatile(),
+    /**
+     * Default off, deliberately: the lexical rerank is free, deterministic, and
+     * already ranks by term coverage. Flipping this on spends one small model
+     * request per memory search to catch the memories that share no wording with
+     * the query — worth it for a user who searches by concept, wasted for one who
+     * greps for identifiers.
+     */
+    engineeringMemorySelectorEnabled: z.boolean().default(false).volatile(),
+    /**
+     * Default off, deliberately: this lets a model approve a pending action without
+     * asking the user. Off means every approval keeps prompting. On means an action
+     * whose arguments the reviewer can actually read may be cleared automatically —
+     * anything it refuses, cannot read, or declines to judge still goes to the user.
+     */
+    engineeringActionReviewEnabled: z.boolean().default(false).volatile(),
+    engineeringCodeGraphEnabled: z.boolean().default(true).volatile(),
+    engineeringCodeGraphAutoUpdate: z.boolean().default(true).volatile(),
+    engineeringGraphEngine: z.union([z.const('auto'), z.const('graphify'), z.const('codegraph')]).default('auto').volatile(),
+    engineeringCouncilMaxRounds: z.number().step(1).min(1).max(3).default(2).volatile(),
+    engineeringCouncilTimeoutMs: z.number().step(1).min(10_000).max(300_000).default(120_000).volatile(),
+    engineeringCouncilQuorum: z.number().step(1).min(1).max(3).default(2).volatile(),
+    engineeringCouncilAutoRun: z.boolean().default(false).volatile(),
+    /**
+     * The three phases of the autonomous engineering loop. Each is a separate
+     * switch because they carry different risk: creating a goal only commits the
+     * user to finishing, while enabling the driver lets work continue with no
+     * human turn in between.
+     *
+     * - `engineeringLoopCapturePlan` — when the user approves a council decision,
+     *   persist the approved plan as a durable Harness goal.
+     * - `engineeringLoopVerifyOnComplete` — when the active goal's driver reports
+     *   it finished, run the declared verification stages and record the result.
+     * - `engineeringLoopAutoContinue` — let the Harness goal-round driver start
+     *   the next round without a user turn. Off by default: a goal that continues
+     *   unattended is the one behaviour a user must opt into explicitly.
+     */
+    engineeringLoopCapturePlan: z.boolean().default(true).volatile(),
+    engineeringLoopVerifyOnComplete: z.boolean().default(true).volatile(),
+    engineeringLoopAutoContinue: z.boolean().default(false).volatile(),
+    /** Round cap for a captured plan goal; bounds unattended continuation. */
+    engineeringLoopMaxGoalRounds: z.number().step(1).min(1).max(256).default(24).volatile(),
+    engineeringCouncilMaxTokens: z.number().step(100).min(1_200).max(20_000).default(3_600).volatile(),
+    engineeringCouncilMaxConcurrent: z.number().step(1).min(1).max(8).default(2).volatile(),
+    engineeringCouncilDecisionTtlMs: z.number().step(60_000).min(60_000).max(7 * 24 * 60 * 60_000).default(30 * 60_000).volatile(),
+
+    // Settings — automation (`automation.ts`)
+    /** Master switch for declarative failure recovery. */
+    hookChainsEnabled: z.boolean().default(true).volatile(),
+    hookChainsMaxDepth: z.number().step(1).min(0).max(10).default(2).volatile(),
+    hookChainsCooldownMs: z.number().step(1_000).min(0).max(24 * 60 * 60 * 1_000).default(30_000).volatile(),
+    /** Master switch for the calendar planner. */
+    scheduledTasksEnabled: z.boolean().default(true).volatile(),
+
+    // Settings — model and media defaults (the scope's first block)
+    defaultModel: z.string().default('').volatile(),
+    defaultEngine: z.union([z.const('deepseek'), z.const('codex'), z.const('claude')]).default('deepseek').volatile(),
+    mediaDefaults: z.object({ image: z.string().default(''), video: z.string().default(''), audio: z.string().default('') }).default({ image: '', video: '', audio: '' }).volatile(),
+    /**
+     * Master switch for the image and video generation tools.
+     *
+     * On by default: the tools spend nothing until a route is called, and they are the
+     * only way the capability is reachable — a feature that has to be found before it
+     * does anything is why the media surface looked absent. It governs the generic
+     * `freecodego_generate_image` / `_video` pair and the legacy `agnes_*` aliases with
+     * them; `freecodego_generate_audio` and `freecodego_transcribe_audio` are
+     * deliberately outside it, because one writes into the active workspace and the
+     * other reads out of it.
+     */
+    mediaGenerationEnabled: z.boolean().default(true).volatile(),
+
+    // Settings — sandbox deny patterns
+    /**
+     * Sandbox profile deny globs, enforced in the plugin policy layer.
+     *
+     * Empty by default: a deny list is containment the user asked for, and
+     * inventing one would refuse paths nobody named.
+     */
+    sandboxDenyPatterns: z.array(z.string()).default([]).volatile(),
+
+    // Settings — post-compaction rehydration
+    // Post-compaction rehydration of todo list and durable memory.
+    rehydrationEnabled: z.boolean().default(true).volatile(),
+    /**
+     * Conversation-arc rehydration (goals + decisions folded from the
+     * session's own goal events, promoted memories, and announced
+     * choices). Off by default: it changes what the post-compaction
+     * message contains, and a user must opt into new prompt surface —
+     * the mechanical fold is bounded, but its wording is still model-
+     * visible behavior.
+     */
+    rehydrationArcEnabled: z.boolean().default(false).volatile(),
+
+    // Settings — Advisor, review, headroom, deferred tools
+    advisorEnabled: z.boolean().default(true).volatile(),
+    advisorMode: z.union([z.const('async'), z.const('catchup'), z.const('blocker-only')]).default('async').volatile(),
+    // Advisor uses a registered text provider route, not the retired
+    // gateway alias. Existing freecodego/hy3 profiles are normalized by
+    // the Advisor runtime for backward compatibility. The default is
+    // OpenCode's virtual `auto` route: the upstream free roster rotates
+    // (hy3-free left the directory; big-pickle appeared), so the best
+    // free model is resolved live per request instead of pinned.
+    advisorProvider: z.string().default('opencode').volatile(),
+    advisorModel: z.string().default('auto').volatile(),
+    advisorAllowAgentControl: z.boolean().default(true).volatile(),
+    advisorInterruptCooldownTurns: z.number().step(1).min(0).max(20).default(3).volatile(),
+    // Durable Advisor findings also land in project memory as pending
+    // drafts so reviews survive the session (reviewed in memory settings).
+    advisorMemoryDraftsEnabled: z.boolean().default(true).volatile(),
+    // Stop-time review is opt-in. `off` costs nothing; `record` runs the
+    // pass and writes a durable summary; `gate` turns that same pass into
+    // a delivery channel that injects findings at or above the threshold.
+    // The default is `off` because a review spends model calls and, in
+    // `gate`, changes the shape of every conversation — neither is a thing
+    // to enable on a user's behalf. The manual tools work regardless.
+    reviewMode: z.union([z.const('off'), z.const('record'), z.const('gate')]).default('off').volatile(),
+    reviewThreshold: z.union([z.const('critical'), z.const('high'), z.const('medium'), z.const('low')]).default('high').volatile(),
+    reviewCooldownTurns: z.number().step(1).min(0).max(20).default(3).volatile(),
+    // Deeper per-file review: every reviewed file is read by its own
+    // read-only child agent, which can search for callers and open the
+    // implementation a test covers instead of judging the diff alone. Off
+    // by default because it opens one child agent per file, which is a
+    // decision with a cost rather than a better default.
+    reviewDeep: z.boolean().default(false).volatile(),
+    // Adjudication of high-severity findings. Off by default because it costs
+    // a call per escalated finding and its shipped implementation is one
+    // route, not the multi-engine council the port is designed for.
+    reviewEscalation: z.boolean().default(false).volatile(),
+    // Headroom context compression: on by default; the threshold bounds
+    // which tool results are considered oversized. The remaining knobs
+    // mirror the runtime's reader defaults (min savings ratio, dedup,
+    // excluded tools, opt-in read folds).
+    headroomEnabled: z.boolean().default(true).volatile(),
+    headroomThresholdChars: z.number().step(1).min(256).max(1_000_000).default(1_200).volatile(),
+    headroomMinSavingsRatio: z.number().min(0.05).max(0.95).default(0.85).volatile(),
+    headroomDedupEnabled: z.boolean().default(true).volatile(),
+    /**
+     * Tools to protect *in addition* to the built-in list.
+     *
+     * Additional, not instead of: the built-in set
+     * (`DEFAULT_EXCLUDE_TOOLS`) is a safety guarantee — those outputs are
+     * what the model byte-patches against — and this field defaults to an
+     * empty array, so a reading where it replaced the built-ins would make
+     * the default install protect nothing.
+     */
+    headroomExcludeTools: z.array(z.string()).default([]).volatile(),
+    headroomFoldReads: z.boolean().default(false).volatile(),
+    /**
+     * Skeletonize large source-file reads: retained lines stay byte-exact
+     * while whole body runs collapse to a marker. On by default because
+     * `read` is the largest single source of re-sent context; the original
+     * is always retrievable through `headroom_retrieve`.
+     */
+    headroomCodeSkeletonEnabled: z.boolean().default(true).volatile(),
+    /**
+     * Reversible-render competition policy. `reversible` (default) delivers a
+     * render that clears `FOLD_DECISIVE_RATIO` on sight — a Stage 2 fold, or a
+     * mixed-content splice; `max` demotes every one of them to a candidate so
+     * the compressor written for the payload's shape is always asked first.
+     * The two settings are two products, not a fine-tuning — see
+     * `HeadroomRuntime.foldPolicy` for the measured difference on the shapes
+     * where they disagree.
+     */
+    headroomFoldPolicy: z.union([z.const('reversible'), z.const('max')]).default('reversible').volatile(),
+    /**
+     * Keep task-specific tool schemas out of the request until the model
+     * asks for them with `tool_search`. Measured saving is ~3.2k tokens per
+     * request on this plugin's own 37 tools alone.
+     */
+    deferredToolSchemasEnabled: z.boolean().default(true).volatile(),
+    /** Explicit deferral list; when empty the plugin-owned prefix rule applies. */
+    deferredToolNames: z.array(z.string()).default([]).volatile(),
+    // Output shaper (original HEADROOM_OUTPUT_SHAPER): off by default —
+    // both levers change model output behavior and are opt-in.
+    headroomOutputShaper: z.boolean().default(false).volatile(),
+    headroomVerbosityLevel: z.number().step(1).min(0).max(4).default(0).volatile(),
+
+    // Settings — memory consolidation rollout
+    /**
+     * Memory consolidation rollout (`memory/rollout.ts`).
+     *
+     * A stage rather than a switch because consolidating runs a model over
+     * the session's successful turns: `record_only` captures without
+     * consolidating, `shadow` consolidates without committing, and only
+     * `active` writes. Off by default, and off is where an unrecognised
+     * value lands too — see `resolveMemoryRollout`, which fails closed
+     * rather than falling back to the legacy search path.
+     */
+    memoryRollout: z.union([z.const('off'), z.const('record_only'), z.const('shadow'), z.const('active')]).default('off').volatile(),
+  }) as z<FreeCodeGoConfigInput, Config>
   private account: FreeCodeGoAccountCoordinator | undefined
   private api: FreeCodeGoApiClient | undefined
   private credentials: CredentialProvider | undefined
-  /**
-   * The registered settings namespace. Nothing outside this class reads it.
-   *
-   * Every behaviour read goes through {@link policy}, so exactly one place
-   * answers "what is configured".
-   */
-  private readonly engineSettings: FreeCodeGoEngineSettingsScope | undefined
-  /** The one accessor behaviour reads go through (see `policy.ts`). */
+    /** The one accessor behaviour reads go through (see `policy.ts`). */
   private readonly policy: FreeCodeGoPolicy
   private readonly capabilities: FreeCodeGoCapabilityRegistry
   private readonly engineering: FreeCodeGoEngineeringRegistry
@@ -744,13 +1139,20 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     super(ctx, 'freeCodeGoHarness')
     reportCommandPolicyDiagnostics(ctx, this.commandPolicy)
     ensureDesktopDshShim()
-    // The FreeCodeGo agent preset rides the harness user roster: preset
-    // discovery re-scans <DSH_HOME>/.agent-presets on every roster read, so
-    // our mode appears in the picker once this plugin loads — without
-    // modifying harness source or requiring a restart. Best-effort; a locked
-    // home directory must never block boot, but the write is still tracked so
-    // an unload waits for it rather than racing a home that is being removed.
-    void this.pendingWrites.run(() => ensureFreeCodeGoAgentPreset())
+    // The FreeCodeGo agent presets ride the harness roster: the picker's
+    // 极简/标准/PTC/创造 selector is the harness's, and a preset of ours appears
+    // there once this plugin declares it. Which seam that is depends on the
+    // harness — 0.1.7 replaced the `.agent-presets/` directory scan with the
+    // declared `ctx.agentPresets` registry — so `installFreeCodeGoAgentPresets`
+    // picks the one the deployment composes. Best-effort and tracked: a locked
+    // home directory must never block boot, but the work is drained on unload
+    // rather than racing a home that is being removed, and the registration is
+    // released with this plugin so an unmounted plugin leaves no roster row.
+    ctx.effect(() => {
+      const presets = installFreeCodeGoAgentPresets(ctx)
+      void this.pendingWrites.run(() => presets.done)
+      return presets.release
+    }, 'freecodego: agent presets')
     // Harness v0.1.3 rejects a persisted session whose event vocabulary is
     // unknown to the running process. Keep every plugin-owned durable event
     // registered while this plugin is mounted, including historical engine
@@ -817,145 +1219,34 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.agentEngines = ctx.get('agentEngines') as { setAvailability?: (id: 'codex' | 'claude', availability: 'available' | 'unavailable' | 'updating') => void } | undefined
     const claudeStatus = this.claudeRuntime.status()
     setEngineAvailability(this.agentEngines, 'claude', claudeStatus.installed ? 'available' : 'unavailable')
+    // The persistence step a user gesture lands in, built from the settings service and
+    // this plugin's own profile entry: every write is the *validating* one the settings
+    // form uses (volatile-path checked, revision aware, merged into the profile patch
+    // rather than replacing it), so a plugin-internal save and a toggle in the UI cannot
+    // disagree about what a legal write is. Absent when no settings service is mounted.
+    //
+    // The entry is looked up per write rather than captured: the Loader assigns it, and a
+    // reload replaces it, so a captured id would address the entry that was mounted when
+    // this plugin was constructed. A composition with no Loader (an SDK tree, a unit test)
+    // has no entry to address, and the write is dropped — the same shape as a composition
+    // with no settings service, and the caller is a user gesture whose failure the client
+    // reports from the RPC that carried it.
     const settings = ctx.get('settings')
-    if (settings !== undefined) {
-      this.engineSettings = settings.register('freecodego-harness', z.intersect([
-        z.object({
-          defaultModel: z.string().default(config.defaultModel ?? ''),
-          defaultEngine: z.string().default(config.defaultEngine ?? 'deepseek'),
-          mediaDefaults: z.object({ image: z.string().default(''), video: z.string().default(''), audio: z.string().default('') }).default({ image: '', video: '', audio: '' }),
-        }),
-        FreeCodeGoCapabilitySettingsSchema,
-        FreeCodeGoPluginConflictSettingsSchema,
-        FreeCodeGoPluginUpdateSettingsSchema,
-        FreeCodeGoEngineeringSettingsSchema,
-        FreeCodeGoAutomationSettingsSchema,
-        FreeCodeGoGuardSettingsSchema,
-        FreeCodeGoTrustSettingsSchema,
-        z.object({
-          /**
-           * Sandbox profile deny globs, enforced in the plugin policy layer.
-           *
-           * Empty by default: a deny list is containment the user asked for, and
-           * inventing one would refuse paths nobody named.
-           */
-          sandboxDenyPatterns: z.array(z.string()).default([]),
-        }),
-        z.object({
-          // Post-compaction rehydration of todo list and durable memory.
-          rehydrationEnabled: z.boolean().default(true),
-          /**
-           * Conversation-arc rehydration (goals + decisions folded from the
-           * session's own goal events, promoted memories, and announced
-           * choices). Off by default: it changes what the post-compaction
-           * message contains, and a user must opt into new prompt surface —
-           * the mechanical fold is bounded, but its wording is still model-
-           * visible behavior.
-           */
-          rehydrationArcEnabled: z.boolean().default(false),
-        }),
-        z.object({
-          advisorEnabled: z.boolean().default(config.autoAdvisorEnabled !== false),
-          advisorMode: z.union([z.const('async'), z.const('catchup'), z.const('blocker-only')]).default('async'),
-          // Advisor uses a registered text provider route, not the retired
-          // gateway alias. Existing freecodego/hy3 profiles are normalized by
-          // the Advisor runtime for backward compatibility. The default is
-          // OpenCode's virtual `auto` route: the upstream free roster rotates
-          // (hy3-free left the directory; big-pickle appeared), so the best
-          // free model is resolved live per request instead of pinned.
-          advisorProvider: z.string().default('opencode'),
-          advisorModel: z.string().default('auto'),
-          advisorAllowAgentControl: z.boolean().default(true),
-          advisorInterruptCooldownTurns: z.number().step(1).min(0).max(20).default(3),
-          // Durable Advisor findings also land in project memory as pending
-          // drafts so reviews survive the session (reviewed in memory settings).
-          advisorMemoryDraftsEnabled: z.boolean().default(true),
-          // Stop-time review is opt-in. `off` costs nothing; `record` runs the
-          // pass and writes a durable summary; `gate` turns that same pass into
-          // a delivery channel that injects findings at or above the threshold.
-          // The default is `off` because a review spends model calls and, in
-          // `gate`, changes the shape of every conversation — neither is a thing
-          // to enable on a user's behalf. The manual tools work regardless.
-          reviewMode: z.union([z.const('off'), z.const('record'), z.const('gate')]).default('off'),
-          reviewThreshold: z.union([z.const('critical'), z.const('high'), z.const('medium'), z.const('low')]).default('high'),
-          reviewCooldownTurns: z.number().step(1).min(0).max(20).default(3),
-          // Deeper per-file review: every reviewed file is read by its own
-          // read-only child agent, which can search for callers and open the
-          // implementation a test covers instead of judging the diff alone. Off
-          // by default because it opens one child agent per file, which is a
-          // decision with a cost rather than a better default.
-          reviewDeep: z.boolean().default(false),
-          // Adjudication of high-severity findings. Off by default because it costs
-          // a call per escalated finding and its shipped implementation is one
-          // route, not the multi-engine council the port is designed for.
-          reviewEscalation: z.boolean().default(false),
-          // Headroom context compression: on by default; the threshold bounds
-          // which tool results are considered oversized. The remaining knobs
-          // mirror the runtime's reader defaults (min savings ratio, dedup,
-          // excluded tools, opt-in read folds).
-          headroomEnabled: z.boolean().default(true),
-          headroomThresholdChars: z.number().step(1).min(256).max(1_000_000).default(1_200),
-          headroomMinSavingsRatio: z.number().min(0.05).max(0.95).default(0.85),
-          headroomDedupEnabled: z.boolean().default(true),
-          /**
-           * Tools to protect *in addition* to the built-in list.
-           *
-           * Additional, not instead of: the built-in set
-           * (`DEFAULT_EXCLUDE_TOOLS`) is a safety guarantee — those outputs are
-           * what the model byte-patches against — and this field defaults to an
-           * empty array, so a reading where it replaced the built-ins would make
-           * the default install protect nothing.
-           */
-          headroomExcludeTools: z.array(z.string()).default([]),
-          headroomFoldReads: z.boolean().default(false),
-          /**
-           * Skeletonize large source-file reads: retained lines stay byte-exact
-           * while whole body runs collapse to a marker. On by default because
-           * `read` is the largest single source of re-sent context; the original
-           * is always retrievable through `headroom_retrieve`.
-           */
-          headroomCodeSkeletonEnabled: z.boolean().default(true),
-          /**
-           * Reversible-render competition policy. `reversible` (default) delivers a
-           * render that clears `FOLD_DECISIVE_RATIO` on sight — a Stage 2 fold, or a
-           * mixed-content splice; `max` demotes every one of them to a candidate so
-           * the compressor written for the payload's shape is always asked first.
-           * The two settings are two products, not a fine-tuning — see
-           * `HeadroomRuntime.foldPolicy` for the measured difference on the shapes
-           * where they disagree.
-           */
-          headroomFoldPolicy: z.union([z.const('reversible'), z.const('max')]).default('reversible'),
-          /**
-           * Keep task-specific tool schemas out of the request until the model
-           * asks for them with `tool_search`. Measured saving is ~3.2k tokens per
-           * request on this plugin's own 37 tools alone.
-           */
-          deferredToolSchemasEnabled: z.boolean().default(true),
-          /** Explicit deferral list; when empty the plugin-owned prefix rule applies. */
-          deferredToolNames: z.array(z.string()).default([]),
-          // Output shaper (original HEADROOM_OUTPUT_SHAPER): off by default —
-          // both levers change model output behavior and are opt-in.
-          headroomOutputShaper: z.boolean().default(false),
-          headroomVerbosityLevel: z.number().step(1).min(0).max(4).default(0),
-        }),
-        z.object({
-          /**
-           * Memory consolidation rollout (`memory/rollout.ts`).
-           *
-           * A stage rather than a switch because consolidating runs a model over
-           * the session's successful turns: `record_only` captures without
-           * consolidating, `shadow` consolidates without committing, and only
-           * `active` writes. Off by default, and off is where an unrecognised
-           * value lands too — see `resolveMemoryRollout`, which fails closed
-           * rather than falling back to the legacy search path.
-           */
-          memoryRollout: z.union([z.const('off'), z.const('record_only'), z.const('shadow'), z.const('active')]).default('off'),
-        }),
-      ]), { applies: 'live' })
-    } else {
-      this.engineSettings = undefined
-    }
-    this.policy = new FreeCodeGoPolicy(this.engineSettings)
+    const settingsWriter: FreeCodeGoSettingsWriter | undefined = settings === undefined
+      ? undefined
+      : {
+        update: async (patch: object): Promise<void> => {
+          const entry = this.ctx.fiber.entry
+          if (entry === undefined) return
+          await settings.update(entry.options.id, patch)
+        },
+      }
+    // A page of our own: the settings form cannot describe 100+ fields the way this
+    // plugin's own tab does, so the generated one stays off for this entry.
+    this.ctx.inject(['settings'], child => {
+      child.effect(() => child.settings.configure({ auto: false }, this.ctx.fiber))
+    })
+    this.policy = new FreeCodeGoPolicy(this.config, settingsWriter)
     this.capabilities = new FreeCodeGoCapabilityRegistry(
       ctx,
       this.policy,
@@ -1477,7 +1768,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         const failed = result.stages.filter(stage => stage.state === 'fail' || stage.state === 'unavailable')
         if (failed.length === 0) return
         agent.inject(createUserMessage({
-          source: { kind: 'plugin', plugin: 'freecodego-engineering-loop' },
+          source: { kind: 'freecodego-engineering-loop' },
           content: [{
             type: 'text',
             text: `Engineering goal "${goalId}" ended in phase "${phase}", but verification did not pass: ${failed.map(stage => `${stage.id}=${stage.state}`).join(', ')}. Resolve these before treating the plan as done.`,
@@ -1497,7 +1788,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
             ? ''
             : ` after ${loop.roundsStarted}/${loop.maxGoalRounds} goal rounds`
           agent.inject(createUserMessage({
-            source: { kind: 'plugin', plugin: 'freecodego-engineering-loop' },
+            source: { kind: 'freecodego-engineering-loop' },
             content: [{
               type: 'text',
               text: `Engineering goal "${goalId}" stopped unattended${budget}: ${loop.blockedMessage ?? loop.blockedCode ?? 'the round driver blocked it'}. Nothing continues until that is resolved; use 工程增强 → 无人值守工程回路 → 继续 to resume it.`,
@@ -1656,9 +1947,22 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // a route that has not answered by the time the picker asks is answered by its
     // own cold budget instead of being waited on.
     void this.catalogs.prewarmProviderCatalogs()
+    // The web-search page can be holding a binding this process cannot answer: a
+    // bridge endpoint's port, route id, and secret are minted per process, so the
+    // saved URL died with the previous Host. Rebuilding it here — before any search
+    // can run, and without waiting for a browser — is what keeps a user's earlier
+    // choice working across a restart (`web-search-binding.ts`).
+    void this.repairWebSearchBinding()
     this.catalogs.refreshLogfareHealthInBackground()
-    this.registerAgnesTools()
-    this.registerMediaTools()
+    // Media generation is two groups and only one of them is switched: the image/video
+    // pair follows `mediaGenerationEnabled` — so it is mounted by
+    // `syncMediaGenerationTools`, which the switch's own Remote re-runs, rather than by
+    // an effect of its own — while the audio pair is unconditional. Registration order
+    // is kept as the image/video pair first because the tool list a request carries is
+    // this order, and reordering it would be a cache-prefix change nobody asked for.
+    this.syncMediaGenerationTools()
+    ctx.effect(() => this.registerAudioTools(), 'freecodego: media audio tools')
+    ctx.effect(() => () => { this.disposeMediaGenerationTools() }, 'freecodego: media generation tools')
     // The preset sync above and the directory refreshes around it are all
     // fire-and-forget by design, but the files they write belong to this
     // plugin's lifetime. Draining both on unload keeps a late write from landing
@@ -1735,7 +2039,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         const agent = agents.get(agentId)
         if (typeof agent?.inject !== 'function') return
         agent.inject(createUserMessage({
-          source: { kind: 'plugin', plugin: 'freecodego-verify-on-stop' },
+          source: { kind: 'freecodego-verify-on-stop' },
           content: [{ type: 'text', text: `<verify-on-stop>\n${text}\n</verify-on-stop>` }],
         }))
       },
@@ -1836,7 +2140,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         const agent = agents.get(agentId)
         if (typeof agent?.inject !== 'function') return false
         agent.inject(createUserMessage({
-          source: { kind: 'plugin', plugin: 'freecodego-review' },
+          source: { kind: 'freecodego-review' },
           content: [{ type: 'text', text: `<stop-time-review>\n${text}\n</stop-time-review>` }],
         }))
         return true
@@ -2485,6 +2789,36 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     if (settings === undefined) throw new Error('FreeCodeGo settings are not configured')
     await settings.update({ deferredToolSchemasEnabled: enabled })
     return this.deferredTools.status()
+  }
+
+  /**
+   * Read the image/video generation switch and the tool names it governs.
+   *
+   * Two name lists, because "what this switch owns" and "what is mounted right now"
+   * are different facts: the first comes from the registration modules' single
+   * declarations, the second from the registrations themselves. Reported together so a
+   * panel can say which tools a profile actually has without restating either list.
+   * @returns the media Generation Status.
+   */
+  @Remote('mediaGenerationStatus')
+  mediaGenerationStatus(): import('./types.ts').FreeCodeGoMediaToolStatus {
+    return {
+      enabled: this.policy.get()?.mediaGenerationEnabled !== false,
+      gated: [...Object.values(MEDIA_GENERATION_TOOL_NAMES), ...Object.values(AGNES_MEDIA_TOOL_NAMES)],
+      registered: this.mediaGenerationTools?.names ?? [],
+    }
+  }
+
+  /**
+   * Mount or unmount the image and video generation tools.
+   * @param enabled - whether the capability is switched on.
+   * @returns the media Generation Status.
+   */
+  @Remote('mediaGenerationSetEnabled')
+  async mediaGenerationSetEnabled(enabled: boolean): Promise<import('./types.ts').FreeCodeGoMediaToolStatus> {
+    await this.policy.update({ mediaGenerationEnabled: enabled })
+    this.syncMediaGenerationTools()
+    return this.mediaGenerationStatus()
   }
 
   /** Probe-and-mount status for the optional LSP stack (fail-soft). 
@@ -3889,7 +4223,7 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
         if (outcome?.message === undefined) return
         const parent = outcome.parent as { inject?(message: unknown): void } | undefined
         parent?.inject?.(createUserMessage({
-          source: { kind: 'plugin', plugin: 'freecodego-persona' },
+          source: { kind: 'freecodego-persona' },
           content: [{ type: 'text', text: `[freecodego] ${outcome.message}` }],
         }))
       },
@@ -4110,7 +4444,7 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
           throw new Error('the child agent was created but cannot be sent its brief; it was not given one')
         }
         child.followup(createUserMessage({
-          source: { kind: 'plugin', plugin: 'freecodego-persona' },
+          source: { kind: 'freecodego-persona' },
           content: [{ type: 'text', text: input.session.brief }],
         }))
       },
@@ -4654,7 +4988,7 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     if (!plan.changed) return
     if (typeof agent?.inject !== 'function') return
     agent.inject(createUserMessage({
-      source: { kind: 'plugin', plugin: 'freecodego-context-budget' },
+      source: { kind: 'freecodego-context-budget' },
       content: [{ type: 'text', text: `<context-budget>\n${plan.text}\n</context-budget>` }],
     }))
     this.contextBudget.commit(key, plan.band)
@@ -4684,7 +5018,7 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     if (fragments.length === 0) return
     if (typeof agent.inject !== 'function') return
     agent.inject(createUserMessage({
-      source: { kind: 'plugin', plugin: 'freecodego-plan-mode' },
+      source: { kind: 'freecodego-plan-mode' },
       content: [{ type: 'text', text: renderFragments(fragments) }],
     }))
     log.commit(fragments)
@@ -5050,6 +5384,23 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   @Remote('sessionDelete')
   async sessionDelete(sessionId: string): Promise<{ readonly deleted: true }> {
     return sessionDelete(this.engineRemotesHost, sessionId)
+  }
+
+  /** Resolve one of this plugin's models as the DeepSeek web-search provider. 
+   * @param input - the provider and the model the user picked.
+   * @returns the endpoint, model, and credential the search page must use.
+   */
+  @Remote('webSearchBind')
+  async webSearchBind(input: { readonly provider?: string; readonly model?: string }): Promise<FreeCodeGoWebSearchBinding> {
+    return webSearchBind(this.engineRemotesHost, input)
+  }
+
+  /** Report whether the saved web-search binding is this plugin's, and whether it still answers. 
+   * @returns the state the search page renders from.
+   */
+  @Remote('webSearchBindingStatus')
+  async webSearchBindingStatus(): Promise<FreeCodeGoWebSearchBindingStatus> {
+    return webSearchBindingStatus(this.webSearchBindingReads())
   }
 
   /** Return the current cross-engine MCP and Skill capability inventory. 
@@ -6522,11 +6873,6 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
     if (dispose !== undefined) this.ctx.effect(() => dispose, 'freecodego: edit_and_run composite tool')
   }
 
-  /** Model-facing media tools keep Agnes API keys and requests in the Host. */
-  private registerAgnesTools(): void {
-    registerAgnesTools(this.agentToolsDeps())
-  }
-
   private agentToolsDeps(): AgentToolsDeps {
     return {
       ...this.coreDeps,
@@ -6540,9 +6886,121 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
     }
   }
 
-  /** Generic media tools resolve the user's live default at execution time. */
-  private registerMediaTools(): void {
-    registerMediaTools(this.mediaHost)
+  /** The mounted image/video registrations, absent while the switch is off. */
+  private mediaGenerationTools: MediaToolRegistration | undefined
+
+  /**
+   * Register the audio generation and transcription tools, which no switch governs.
+   * @returns the disposer that releases both registrations.
+   */
+  private registerAudioTools(): () => void {
+    return registerAudioTools(this.mediaHost).dispose
+  }
+
+  /**
+   * Mount or unmount the image and video tools so that they match the setting.
+   *
+   * Remounted from the switch's own Remote rather than read at call time, because a
+   * tool the model can see *is* a registration: gating `execute` instead would leave the
+   * schema in every request, which is the cost the switch exists to remove.
+   */
+  private syncMediaGenerationTools(): void {
+    const enabled = this.policy.get()?.mediaGenerationEnabled !== false
+    if (enabled === (this.mediaGenerationTools !== undefined)) return
+    if (!enabled) { this.disposeMediaGenerationTools(); return }
+    const generation = registerGenerationTools(this.mediaHost)
+    // The legacy Agnes spellings are the same capability under older names, so they
+    // come and go with the generic pair. A profile with no Agnes client mounts none of
+    // them — which is why the status reports the mounted names apart from the gated ones.
+    const legacy = registerAgnesMediaTools(this.agentToolsDeps())
+    this.mediaGenerationTools = {
+      names: [...generation.names, ...legacy.names],
+      dispose: () => { generation.dispose(); legacy.dispose() },
+    }
+  }
+
+  /**
+   * Rebuild the web-search binding this plugin wrote, when this process cannot serve it.
+   *
+   * Read once at start and never in a request path: a binding that died with the
+   * previous process has to be whole again before the first search runs, and the
+   * search itself must not be the thing that discovers it. Every read and write the
+   * pass needs is injected, so `web-search-binding.ts` owns the rules and this method
+   * owns only where they are satisfied — including the two services whose absence
+   * leaves a binding unbuildable, which is reported rather than half-applied.
+   */
+  private async repairWebSearchBinding(): Promise<void> {
+    let reads: WebSearchBindingReads
+    let report: WebSearchBindingReport
+    try {
+      reads = this.webSearchBindingReads()
+      report = await repairWebSearchBinding({
+        ...reads,
+        bind: input => webSearchBind(this.engineRemotesHost, input),
+        writeCredential: async (ref, value) => {
+          const credentials = this.credentials
+          if (credentials === undefined) throw new Error('the credentials service is not mounted, so the web-search key cannot be written')
+          await credentials.set(credentialRef(ref), value)
+        },
+        writeSection: async (patch) => {
+          const settings = this.ctx.get('settings')
+          if (settings === undefined) throw new Error('the settings service is not mounted, so the web-search section cannot be rewritten')
+          await settings.update(WEB_SEARCH_SETTINGS_NAMESPACE, patch)
+        },
+      })
+    } catch (error) {
+      // The call is fire-and-forget, so anything that escapes it becomes an unhandled
+      // rejection that takes down the process rather than a start that continues with a
+      // stale binding. The page can still repair the binding itself on load (see the
+      // `webSearchBindingStatus` Remote), which is why this is a log line and not a
+      // failure of the boot path.
+      this.ctx.logger?.warn?.(`FreeCodeGo could not repair the web-search binding: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    if (report.outcome === 'rebuilt') {
+      this.ctx.logger?.info?.(`FreeCodeGo rebuilt the stale web-search binding for ${reads.remembered?.provider ?? ''}/${reads.remembered?.model ?? ''}`)
+    }
+    if (report.outcome === 'failed') {
+      // The page keeps showing the user's choice and offers the pick again, so this
+      // line is for whoever reads a Host log — not the user's only notice.
+      this.ctx.logger?.warn?.(`FreeCodeGo could not rebuild the web-search binding: ${report.detail ?? 'unknown failure'}`)
+    }
+  }
+
+  /**
+   * The reads both web-search passes share, taken from this Host's services.
+   *
+   * One accessor rather than two because the answers have to agree: the boot pass
+   * deciding a saved route is dead while the page reads it as alive would rewrite a
+   * section the user is looking at. The remembered pair is read through the policy —
+   * the one seam a settings read goes through — and a composition with no
+   * configuration at all resolves to `undefined` rather than throwing here.
+   */
+  private webSearchBindingReads(): WebSearchBindingReads {
+    const settings = this.ctx.get('settings')
+    const configured = this.policy.get()
+    // Through `asString` rather than the field's own type: a composition that supplies a
+    // partial settings document is a state this program does reach (a bare test context,
+    // a profile patch that named neither field), and a `.trim()` on the missing value
+    // would throw out of a boot pass instead of answering "no pair recorded".
+    const provider = asString(configured?.webSearchBindingProvider) ?? ''
+    const model = asString(configured?.webSearchBindingModel) ?? ''
+    return {
+      remembered: provider === '' || model === '' ? undefined : { provider, model },
+      readSection: async () => {
+        const descriptor = settings?.describe().find(row => row.ns === WEB_SEARCH_SETTINGS_NAMESPACE)
+        // A namespace the Host does not serve means the search page is not mounted at
+        // all, so there is no saved endpoint to repair — not a failure to report.
+        return descriptor === undefined ? undefined : maybeRecord(descriptor.value)
+      },
+      servesBridgeRoute: routeId => this.claudeBridge.hasRoute(routeId),
+    }
+  }
+
+  /** Release the image and video registrations, when any are mounted. */
+  private disposeMediaGenerationTools(): void {
+    this.mediaGenerationTools?.dispose()
+    this.mediaGenerationTools = undefined
   }
 
   private get mediaHost(): MediaGenerationHost {

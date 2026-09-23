@@ -5,7 +5,7 @@ import { StreamWriter } from './stream-writer.ts'
 import { withIdleDeadline } from './stream-deadline.ts'
 import { classifyProviderError } from './provider-error-classify.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
-import { createMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, FinishReason, GenerateOptions, Message, StreamChunk, TokenUsage, ToolSchema } from '@deepseek-ai/dsh-llm'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 
@@ -24,6 +24,30 @@ const ROUTE_TTL_MS = 24 * 60 * 60 * 1000
  * "gone" — see `stream-deadline.ts` for why the deadline is idle-based.
  */
 export const DEFAULT_STREAM_IDLE_MS = 120_000
+
+/**
+ * The route id a saved bridge endpoint names.
+ *
+ * The URL shape is the bridge's own (`/anthropic/<id>`), and a stored endpoint may
+ * or may not carry the `/v1` its callers join on, so this reads the id out of both
+ * spellings. Exported beside {@link ClaudeProtocolBridge.hasRoute} because the
+ * grammar lives here: a second parser elsewhere would be the copy that drifts the
+ * day a route path changes.
+ *
+ * The id is spelled as a UUID because that is what {@link ClaudeProtocolBridge.endpoint}
+ * mints and what `hasRoute` is keyed by, and the difference is load-bearing: an
+ * Anthropic-compatible provider's own URL (`https://api.deepseek.com/anthropic/v1`)
+ * ends in the same version token a bridge URL's suffix uses, so a grammar loose enough
+ * to accept any last segment reads that `/v1` as a route id. Callers use a match here
+ * to decide "this is my route, and I may rebuild it", and a false match there is a boot
+ * pass rewriting an endpoint that was never its own.
+ * @param baseURL - a stored endpoint.
+ * @returns the route id it names, or undefined when it is not a bridge URL.
+ */
+export function bridgeRouteIdOf(baseURL: string): string | undefined {
+  const match = /\/anthropic\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/v1)?\/?$/iu.exec(baseURL.trim())
+  return match?.[1]
+}
 
 function callId(value: string): never { return value as never }
 
@@ -121,6 +145,23 @@ export class ClaudeProtocolBridge {
     // model field let every later prompt select a new Harness provider/model.
     this.routes.set(id, { provider, model, dynamicOpenAiRoute: true, createdAt: Date.now() })
     return { baseURL: `${this.address}/openai/${id}/v1`, apiKey: this.secret }
+  }
+
+  /**
+   * Whether this process still serves a route id.
+   *
+   * A route belongs to the listener that minted it: `dispose()` clears the map and
+   * a new process mints new ids and a new port, so a saved endpoint whose id is
+   * absent here answers nothing. That is the question a binding written before a
+   * restart has to ask before it can be kept — see `web-search-binding.ts` — and
+   * it is asked of the bridge rather than of a copy of the map, because only the
+   * bridge knows when a route expired.
+   * @param id - route id parsed off a saved endpoint ({@link bridgeRouteIdOf}).
+   * @returns whether this bridge would answer for it.
+   */
+  hasRoute(id: string): boolean {
+    this.pruneRoutes()
+    return this.routes.has(id)
   }
 
   /** Drop routes older than the TTL so a long-lived bridge cannot leak them. */
@@ -421,17 +462,24 @@ function estimateAnthropicInputTokens(body: Record<string, unknown>): number {
 
 function toResponsesGenerateOptions(route: Route, body: Record<string, unknown>): GenerateOptions {
   const messages: Message[] = []
-  if (typeof body.instructions === 'string' && body.instructions.trim() !== '') messages.push(createMessage({ role: 'user', content: [{ type: 'text', text: body.instructions }], source: { kind: 'user' } }))
+  if (typeof body.instructions === 'string' && body.instructions.trim() !== '') messages.push(createUserMessage({ content: [{ type: 'text', text: body.instructions }], source: { kind: 'user' } }))
   if (Array.isArray(body.input)) {
     for (const value of body.input) {
       const item = value as Record<string, unknown>
       if (item.type === 'function_call') {
-        messages.push(createMessage({ role: 'assistant', content: [{ type: 'tool-call', id: callId(String(item.call_id ?? item.id ?? 'tool')), name: String(item.name ?? 'tool'), arguments: String(item.arguments ?? '') }], source: { kind: 'model', provider: 'bridge', model: 'bridge' } }))
+        messages.push(createAssistantMessage({ content: [{ type: 'tool-call', id: callId(String(item.call_id ?? item.id ?? 'tool')), name: String(item.name ?? 'tool'), arguments: String(item.arguments ?? '') }], source: { provider: 'bridge', model: 'bridge' } }))
         continue
       }
       if (item.type === 'function_call_output') {
         const call = String(item.call_id ?? 'tool')
-        messages.push(createMessage({ role: 'user', content: [{ type: 'tool-result', toolCallId: callId(call), content: [{ type: 'text', text: typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? '') }] }], source: { kind: 'tool', callId: callId(call) } }))
+        // A function-call output is a tool result, and a tool result is its own
+        // role message now: the call it answers is named by `toolCallId` on the
+        // message rather than by a `tool-result` block inside a user turn.
+        messages.push(createToolResultMessage({
+          callId: callId(call),
+          content: [{ type: 'text', text: typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? '') }],
+          isError: item.is_error === true,
+        }))
         continue
       }
       const role = item.role === 'assistant' ? 'assistant' : 'user'
@@ -441,7 +489,11 @@ function toResponsesGenerateOptions(route: Route, body: Record<string, unknown>)
         const text = record.text ?? record.output_text
         return typeof text === 'string' ? [{ type: 'text' as const, text }] : []
       })
-      if (blocks.length > 0) messages.push(createMessage({ role, content: blocks, source: role === 'assistant' ? { kind: 'model', provider: 'bridge', model: 'bridge' } : { kind: 'user' } }))
+      if (blocks.length > 0) {
+        messages.push(role === 'assistant'
+          ? createAssistantMessage({ content: blocks, source: { provider: 'bridge', model: 'bridge' } })
+          : createUserMessage({ content: blocks, source: { kind: 'user' } }))
+      }
     }
   }
   const tools = Array.isArray(body.tools) ? body.tools.flatMap((value) => {
@@ -465,18 +517,40 @@ function anthropicMessages(value: unknown): Message[] {
   const item = value as Record<string, unknown>
   const role = item.role === 'assistant' ? 'assistant' : 'user'
   const content = Array.isArray(item.content) ? item.content : [{ type: 'text', text: String(item.content ?? '') }]
-  const blocks: ContentBlock[] = content.flatMap((block) => {
+  const messages: Message[] = []
+  const blocks: ContentBlock[] = []
+  /** Commit the blocks gathered since the last result as one turn. */
+  const flushTurn = (): void => {
+    if (blocks.length === 0) return
+    messages.push(role === 'assistant'
+      ? createAssistantMessage({ content: blocks.splice(0), source: { provider: 'bridge', model: 'bridge' } })
+      : createUserMessage({ content: blocks.splice(0), source: { kind: 'user' } }))
+  }
+  for (const block of content) {
     const part = block as Record<string, unknown>
-    if (part.type === 'text') return [{ type: 'text', text: String(part.text ?? '') }]
-    if (part.type === 'tool_use') return [{ type: 'tool-call', id: callId(String(part.id ?? randomUUID())), name: String(part.name ?? 'tool'), arguments: JSON.stringify(part.input ?? {}) }]
-    if (part.type === 'tool_result') return [{ type: 'tool-result', toolCallId: callId(String(part.tool_use_id ?? 'tool')), content: [{ type: 'text', text: toolResultText(part.content) }] }]
-    if (part.type === 'image') return [{ type: 'text', text: BRIDGE_IMAGE_PLACEHOLDER }]
-    return [] as ContentBlock[]
-  }) as ContentBlock[]
+    // Anthropic carries tool results inside a user turn; the harness carries one
+    // result per tool-role message. A client that batches several results into
+    // one user turn (the common shape) therefore becomes several messages here,
+    // and any text sharing that turn stays a turn of its own.
+    if (part.type === 'tool_result') {
+      flushTurn()
+      messages.push(createToolResultMessage({
+        callId: callId(String(part.tool_use_id ?? 'tool')),
+        content: [{ type: 'text', text: toolResultText(part.content) }],
+        isError: part.is_error === true,
+      }))
+      continue
+    }
+    if (part.type === 'text') { blocks.push({ type: 'text', text: String(part.text ?? '') }); continue }
+    if (part.type === 'tool_use') { blocks.push({ type: 'tool-call', id: callId(String(part.id ?? randomUUID())), name: String(part.name ?? 'tool'), arguments: JSON.stringify(part.input ?? {}) }); continue }
+    if (part.type === 'image') { blocks.push({ type: 'text', text: BRIDGE_IMAGE_PLACEHOLDER }); continue }
+    // `thinking` and anything else (including a malformed part) maps to nothing.
+  }
+  flushTurn()
   // A history message whose blocks all mapped to nothing (thinking-only
-  // assistant turns) would serialize as an empty message some providers reject.
-  if (blocks.length === 0) return []
-  return [createMessage({ role, content: blocks, source: role === 'assistant' ? { kind: 'model', provider: 'bridge', model: 'bridge' } : { kind: 'user' } })]
+  // assistant turns) contributes no message at all, rather than an empty turn
+  // some providers reject.
+  return messages
 }
 
 /** Flatten Anthropic tool_result content (string or block array) to plain text. */

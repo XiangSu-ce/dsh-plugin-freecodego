@@ -32,7 +32,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
-import { provideHostService, provideHostServiceAs, registrationHandle, sessionAt, settingsValue, type AgentEnginesFace, type CommandsFace } from './support/host-services.ts'
+import { pluginConfig, provideHostService, provideHostServiceAs, registrationHandle, sessionAt, type AgentEnginesFace, type CommandsFace } from './support/host-services.ts'
 import { PROJECT_CONFIG_RELATIVE_PATH, PROJECT_CONFIG_WHITELIST } from '../src/project-config.ts'
 import { FOLDER_TRUST_ENV } from '../src/trust.ts'
 
@@ -77,14 +77,6 @@ async function reportHarness(): Promise<ReportHarness> {
     provideHostService(scope, 'agents', { list: () => [], get: () => undefined })
     provideHostServiceAs<AgentEnginesFace>(scope, 'agentEngines', { setAvailability: () => undefined })
     provideHostService(scope, 'sessions', { get: () => sessionAt(CWD), list: () => [] })
-    provideHostService(scope, 'settings', {
-      register: () => ({
-        get: () => settingsValue({ engineeringEnabled: true, engineeringMemoryEnabled: true, advisorProvider: 'opencode', advisorModel: 'auto' }),
-        watch: () => () => undefined,
-        update: async () => undefined,
-        replace: async () => undefined,
-      }),
-    })
     provideHostService(scope, 'llm', {
       registerAdapter: () => registrationHandle(),
       stream(_generation: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -95,7 +87,7 @@ async function reportHarness(): Promise<ReportHarness> {
     provideHostServiceAs<CommandsFace>(scope, 'commands', { register: () => () => undefined })
     provideHostService(scope, 'systemPrompt', { section: () => () => undefined })
   })
-  const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+  const plugin = new FreeCodeGoHarnessPlugin(ctx, pluginConfig({ engineeringEnabled: true, engineeringMemoryEnabled: true, advisorProvider: 'opencode', advisorModel: 'auto' }))
   return {
     plugin,
     workspace,

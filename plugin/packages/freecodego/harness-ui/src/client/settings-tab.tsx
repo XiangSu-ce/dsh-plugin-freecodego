@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type FormEvent, type ReactNode 
 import { decideMediaDefault } from './media-default-preference.ts'
 import { formatAmountInCurrency, formatMoney, roundUpCurrency } from './money-format.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, InjectFace, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
@@ -1004,6 +1004,8 @@ interface Injected {
   readonly headroomUpdate?: (patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean; readonly foldPolicy?: 'reversible' | 'max' }) => Promise<RemoteResult<HeadroomStats>>
   readonly deferredToolsStatus?: () => Promise<RemoteResult<DeferredToolStatus>>
   readonly deferredToolsSetEnabled?: (enabled: boolean) => Promise<RemoteResult<DeferredToolStatus>>
+  readonly mediaGenerationStatus?: () => Promise<RemoteResult<FreeCodeGoMediaToolStatus>>
+  readonly mediaGenerationSetEnabled?: (enabled: boolean) => Promise<RemoteResult<FreeCodeGoMediaToolStatus>>
   /**
    * The code review surface.
    *
@@ -3333,7 +3335,7 @@ interface OpenPaymentDialog {
   readonly payCurrency: string | undefined
 }
 
-export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, reviewStatus, reviewStart, reviewUpdate, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, advisorStatus, advisorUpdate, engineeringStatus, engineeringSetEnabled, language, t }: Props): ReactNode {
+export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, advisorStatus, advisorUpdate, engineeringStatus, engineeringSetEnabled, language, t }: Props): ReactNode {
   const [state, setState] = useState<State>(() => cachedSettings(language, catalog)?.state ?? { ...fallbackSettings(), syncStatus: 'refreshing' })
   // A fresh catalog render must not infer media defaults until the Host has
   // returned the durable values. Otherwise the first available model can race
@@ -5063,7 +5065,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
         </nav>
         {settingsPage === 'community' && capabilityMarketplace !== undefined && mcpPresetInstall !== undefined && skillPresetInstall !== undefined ? <CommunityPluginsPage communityCatalog={communityCatalog} communityCatalogIcons={communityCatalogIcons} communityEnvironment={communityEnvironment} communityInstalled={communityInstalled} communityInstall={communityInstall} communityUninstall={communityUninstall} capabilityMarketplace={capabilityMarketplace} mcpPresetInstall={mcpPresetInstall} skillPresetInstall={skillPresetInstall} skillPresetRemove={skillPresetRemove} skillPlacements={skillPlacements} skillPlacementPrefer={skillPlacementPrefer} language={language} /> : null}
         {settingsPage === 'settings' ? <ModelCategorySettingsPage models={nativeModels} categories={capabilitySnapshot?.modelCategories ?? {}} setCategory={modelCategorySet} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: message } : previous) }} /> : null}
-        {settingsPage === 'settings' ? <><PluginConflictProtection status={pluginConflictStatus} setEnabled={pluginConflictSetEnabled} /><HeadroomPanel status={headroomStatus} setEnabled={headroomSetEnabled} update={headroomUpdate} language={language} /><DeferredToolsPanel status={deferredToolsStatus} setEnabled={deferredToolsSetEnabled} language={language} /><ReviewPanel sessionId={currentSessionId?.()} status={reviewStatus} start={reviewStart} update={reviewUpdate} language={language} /><GuardSettingsPanel status={guardSettingsStatus} update={guardSettingsUpdate} language={language} /><SandboxModePanel sessionId={currentSessionId?.()} status={sandboxModeStatus} setMode={sandboxModeSet} language={language} /><TrustPanel status={trustFolderStatus} grant={trustFolderGrant} revoke={trustFolderRevoke} projectConfig={projectConfigReport} language={language} /><AutomationSettingsPanel status={automationSettingsStatus} update={automationSettingsUpdate} language={language} /><PluginUpdateSettings status={pluginUpdateSnapshot} check={pluginUpdateCheck} setEnabled={pluginUpdateSetEnabled} install={pluginUpdateInstall} rollback={pluginUpdateRollback} language={language} /><CapabilitySettingsPage snapshot={capabilitySnapshot} setEnabled={capabilitiesSetEnabled} setLocalCapability={setLocalCapability} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? message === undefined ? previous : { ...previous, actionError: message } : previous) }} /><section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>Advisor</div><strong className={css.sectionName}>Advisor 监督</strong></div><span className={`${css.badge} ${advisorSnapshot?.enabled ? css.badgeLive : ''}`}>{advisorSnapshot?.enabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>仅在这里控制 Advisor 总开关。模型、审查模式和介入策略请从左侧 Advisor 页面配置。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用 Advisor</strong><small>开启后，Host 会在主 Agent 回合完成后执行独立复核。</small></span><input className={css.switch} aria-label="启用 Advisor" type="checkbox" checked={advisorSnapshot?.enabled === true} onChange={(event) => { toggleAdvisor(event.target.checked) }} disabled={advisorUpdate === undefined || advisorToggleBusy} /></label>{advisorSnapshot?.sideChannelWarnings?.map(warning => <div className={css.accountRow} key={warning}><div className={css.accountIdentity}><strong className={css.accountName}>{language === 'zh' ? '侧信道预算' : 'Side-channel budget'}</strong><small>{warning}</small></div></div>)}</div></section></> : null}
+        {settingsPage === 'settings' ? <><PluginConflictProtection status={pluginConflictStatus} setEnabled={pluginConflictSetEnabled} /><HeadroomPanel status={headroomStatus} setEnabled={headroomSetEnabled} update={headroomUpdate} language={language} /><MediaGenerationPanel status={mediaGenerationStatus} setEnabled={mediaGenerationSetEnabled} language={language} /><DeferredToolsPanel status={deferredToolsStatus} setEnabled={deferredToolsSetEnabled} language={language} /><ReviewPanel sessionId={currentSessionId?.()} status={reviewStatus} start={reviewStart} update={reviewUpdate} language={language} /><GuardSettingsPanel status={guardSettingsStatus} update={guardSettingsUpdate} language={language} /><SandboxModePanel sessionId={currentSessionId?.()} status={sandboxModeStatus} setMode={sandboxModeSet} language={language} /><TrustPanel status={trustFolderStatus} grant={trustFolderGrant} revoke={trustFolderRevoke} projectConfig={projectConfigReport} language={language} /><AutomationSettingsPanel status={automationSettingsStatus} update={automationSettingsUpdate} language={language} /><PluginUpdateSettings status={pluginUpdateSnapshot} check={pluginUpdateCheck} setEnabled={pluginUpdateSetEnabled} install={pluginUpdateInstall} rollback={pluginUpdateRollback} language={language} /><CapabilitySettingsPage snapshot={capabilitySnapshot} setEnabled={capabilitiesSetEnabled} setLocalCapability={setLocalCapability} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? message === undefined ? previous : { ...previous, actionError: message } : previous) }} /><section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>Advisor</div><strong className={css.sectionName}>Advisor 监督</strong></div><span className={`${css.badge} ${advisorSnapshot?.enabled ? css.badgeLive : ''}`}>{advisorSnapshot?.enabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>仅在这里控制 Advisor 总开关。模型、审查模式和介入策略请从左侧 Advisor 页面配置。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用 Advisor</strong><small>开启后，Host 会在主 Agent 回合完成后执行独立复核。</small></span><input className={css.switch} aria-label="启用 Advisor" type="checkbox" checked={advisorSnapshot?.enabled === true} onChange={(event) => { toggleAdvisor(event.target.checked) }} disabled={advisorUpdate === undefined || advisorToggleBusy} /></label>{advisorSnapshot?.sideChannelWarnings?.map(warning => <div className={css.accountRow} key={warning}><div className={css.accountIdentity}><strong className={css.accountName}>{language === 'zh' ? '侧信道预算' : 'Side-channel budget'}</strong><small>{warning}</small></div></div>)}</div></section></> : null}
         {settingsPage === 'settings' ? <section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>ENGINEERING</div><strong className={css.sectionName}>工程增强包</strong></div><span className={`${css.badge} ${engineeringSnapshot?.engineeringEnabled ? css.badgeLive : ''}`}>{engineeringSnapshot?.engineeringEnabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>这里只控制总开关。开启后，工程 Skills、项目长期记忆和代码结构图会在左侧工程页面中管理。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用工程增强包</strong><small>开启后 AI 会持续理解当前项目，并在不同 Agent 之间共享上下文。</small></span><input className={css.switch} aria-label="启用工程增强包" type="checkbox" checked={engineeringSnapshot?.engineeringEnabled === true} onChange={(event) => { toggleEngineering(event.target.checked) }} disabled={engineeringSetEnabled === undefined || engineeringToggleBusy} /></label></div></section> : null}
         {settingsPage === 'overview' ? <section className={css.section}>
           <div className={css.sectionHeader}><div><div className={css.kicker}>{t('runtime')}</div><strong className={css.sectionName}>{t('modelRouting')}</strong></div><span className={`${css.badge} ${css.badgeLive}`}>{t('live')}</span></div>
@@ -5727,9 +5729,9 @@ function PluginConflictProtection(input: {
   const activeCount = records.filter(record => active.has(record.id)).length
   return <section className={css.section}>
     <div className={css.sectionHeader}><div><div className={css.kicker}>Plugin Safety</div><strong className={css.sectionName}>插件冲突防护</strong></div><span className={`${css.badge} ${snapshot?.pluginConflictProtectionEnabled ? css.badgeLive : ''}`}>{snapshot === undefined ? (loadError === undefined ? '读取中' : '状态未知') : snapshot.pluginConflictProtectionEnabled ? '已开启' : '已关闭'}</span></div>
-    <small className={css.sectionMeta}>默认关闭。安装或加载第三方 DSH 插件时，系统会在启动前检查重复 Tool、命令、设置 namespace、HTTP 路由、模型 Provider 和界面 Slot。冲突时以官方本体的插件优先：本插件自带的同名实现会让位；其余情况保留先启用的插件，并自动停用后加载的冲突条目。</small>
+    <small className={css.sectionMeta}>默认开启。安装或加载第三方 DSH 插件时，系统会在该插件启动前检查重复 Tool、命令、设置 namespace、HTTP 路由、模型 Provider 和界面 Slot。冲突时以官方本体的插件优先：本插件自带的同名实现会让位；其余情况保留先启用的插件，并自动停用后加载的冲突条目。</small>
     {loadError === undefined ? null : <div className={css.alert} role="alert">冲突防护状态读取失败：{loadError}</div>}
-    <label className={css.extensionRow}><span><strong>自动修复冲突</strong><small>默认关闭：重复注册由本体自己的注册校验报告，冲突的第三方插件可能因此启动失败。开启后本插件会在冲突插件启动前停用它。</small></span><input className={css.switch} aria-label="自动修复插件冲突" type="checkbox" checked={snapshot?.pluginConflictProtectionEnabled === true} onChange={(event) => { update(event.target.checked) }} disabled={input.setEnabled === undefined || snapshot === undefined} /></label>
+    <label className={css.extensionRow}><span><strong>自动修复冲突</strong><small>默认开启：重复注册由本体自己的注册校验报告，冲突的第三方插件可能因此启动失败。开启时本插件会在冲突插件启动前停用它；关闭后本插件不再拦截任何条目的启动。</small></span><input className={css.switch} aria-label="自动修复插件冲突" type="checkbox" checked={snapshot?.pluginConflictProtectionEnabled === true} onChange={(event) => { update(event.target.checked) }} disabled={input.setEnabled === undefined || snapshot === undefined} /></label>
     {records.length > 0 ? <div className={css.accountList}>{records.slice(-5).reverse().map(record => <div className={css.accountRow} key={record.id}><div className={css.accountIdentity}><strong className={css.accountName}>{record.yieldedToOfficial === true ? `已让位给官方 ${record.keptModuleName}` : `已自动停用 ${record.disabledModuleName}`}</strong><small className={css.accountEmail}>{record.resource}：{record.resourceName} 由 {record.keptModuleName} 提供</small></div><span className={css.badge}>{active.has(record.id) ? '生效中' : '已失效'}</span></div>)}</div> : <small className={css.sectionMeta}>尚未发现可识别的插件资源冲突。</small>}
     {records.length === 0 ? null : <small className={css.sectionMeta}>{activeCount === 0 ? '以上记录均为历史：当前运行树中已无生效的冲突。' : `${activeCount} 条记录在当前运行树中仍然生效。`}</small>}
   </section>
@@ -6141,6 +6143,113 @@ function ReviewPanel(input: {
  * request. Without a readout, a user cannot tell whether the switch did
  * anything, and the numbers are the whole argument for leaving it on.
  */
+/**
+ * The image and video generation switch.
+ *
+ * It documents the routes as well as the tools, because the question a user arrives
+ * with is "can this draw me a picture, and with what?" — and the answer is a property
+ * of the providers they configured, not of this plugin's source. The two name lists
+ * come from the Host: `gated` is what the switch owns and `registered` is what this
+ * profile actually mounted, so a profile with no Agnes account is not described as
+ * missing tools it never had.
+ */
+function MediaGenerationPanel(input: {
+  readonly status?: (() => Promise<RemoteResult<FreeCodeGoMediaToolStatus>>) | undefined
+  readonly setEnabled?: ((enabled: boolean) => Promise<RemoteResult<FreeCodeGoMediaToolStatus>>) | undefined
+  readonly language: 'zh' | 'en'
+}): ReactNode {
+  const isZh = input.language === 'zh'
+  const [snapshot, setSnapshot] = useState<FreeCodeGoMediaToolStatus | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | undefined>(undefined)
+  const refresh = (): void => {
+    if (input.status === undefined) return
+    void input.status().then((result) => {
+      if (result.ok) setSnapshot(result.value)
+    }).catch(() => undefined)
+  }
+  useEffect(() => {
+    refresh()
+  }, [input.status])
+  const toggle = (enabled: boolean): void => {
+    if (input.setEnabled === undefined) return
+    setBusy(true)
+    setError(undefined)
+    void input.setEnabled(enabled).then((result) => {
+      if (result.ok) setSnapshot(result.value)
+      // A refused write keeps the old value in force, so the switch must not be left
+      // flipped: report it and re-read the authoritative snapshot.
+      else { setError(result.error.message); refresh() }
+    }).catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)); refresh() }).finally(() => { setBusy(false) })
+  }
+  /**
+   * The wire protocol each provider family is spoken to with.
+   *
+   * Kept beside the switch rather than only in the README because the useful question
+   * is "does *my* provider have a route here?", and that is answered by matching the
+   * id the user typed into the Harness model page. The protocol is chosen from the
+   * provider, never from the model name: a model whose id contains "video" is still
+   * served the way its provider serves it.
+   */
+  const videoProtocols: readonly (readonly [string, string])[] = [
+    ['kling / kuaishou / 可灵', '/videos/text2video · image2video · multi-image2video → 同路径 + {id} · HS256 JWT · 5 或 10 秒'],
+    ['volcengine / ark / seedance / doubao', '/contents/generations/tasks → /contents/generations/tasks/{id}'],
+    ['dashscope / aliyun / qwen / wanx', '/api/v1/services/aigc/video-generation/video-synthesis（需 X-DashScope-Async: enable）→ /api/v1/tasks/{id}'],
+    ['minimax / hailuo', '/v2/video_generation → /v2/query/video_generation/{id}'],
+    ['vidu', '/ent/v2/text2video · img2video · start-end2video · reference2video → /ent/v2/tasks/{id}/creations · Authorization: Token'],
+    ['google / gemini（Veo）', '/models/{model}:predictLongRunning → operation name'],
+    ['xai / grok', '/videos/generations → /videos（给源视频时 /videos/edits · /videos/extensions）· 2–10 秒'],
+    ['openai', '/videos → /videos/{id}'],
+    ['网关与任何未识别 provider', '/videos/generations → /videos/generations/{id}'],
+  ]
+  const imageProtocols: readonly (readonly [string, string])[] = [
+    ['openai / grok / 网关 / 未识别 provider', '/images/generations；带参考图改走 /images/edits'],
+    ['volcengine / ark / seedance / doubao', '仍是 /images/generations，源图放 image: [...]（Seedream 融合形状）'],
+    ['google / gemini', '/models/{model}:generateContent，responseModalities: [TEXT, IMAGE]'],
+    ['google / gemini + 模型名含 imagen', '/models/{model}:predict，源图必须内联 base64'],
+    ['dashscope / qwen / aliyun', '/api/v1/services/aigc/multimodal-generation/generation，size 写作 2048*2048'],
+  ]
+  const protocolPanel = (title: string, rows: readonly (readonly [string, string])[]): ReactNode => (
+    <details className={css.details}>
+      <summary className={css.detailsSummary}>{title}</summary>
+      <div style={{ display: 'grid', gap: 6, padding: '8px 0' }}>
+        {rows.map(([provider, endpoint]) => <div key={provider}><strong>{provider}</strong><br /><code>{endpoint}</code></div>)}
+      </div>
+    </details>
+  )
+  return <section className={css.section}>
+    <div className={css.sectionHeader}><div><div className={css.kicker}>MEDIA</div><strong className={css.sectionName}>{isZh ? '生图与视频' : 'Image and video generation'}</strong></div><span className={`${css.badge} ${snapshot?.enabled ? css.badgeLive : ''}`}>{snapshot?.enabled ? (isZh ? '已开启' : 'On') : (isZh ? '已关闭' : 'Off')}</span></div>
+    <small className={css.sectionMeta}>{isZh
+      ? '默认开启。开启后，AI 可以按「默认模型」里的图片／视频选择为你直接生成图片和视频；默认模型在设置 → 模型分类的下拉框里选。关掉它，这组工具会从模型工具表里整体消失（不是调用时报错），前提是这几份 JSONSchema 每步都随请求重发，而多数回合用不上。生音频与转写不受这个开关影响：一个往工作区写文件，一个从工作区读文件。'
+      : 'On by default. With it on, the model can generate images and videos for you using the defaults chosen under Settings → Model categories. Turning it off removes the whole group from the model\'s tool list instead of failing the call: those JSONSchemas ride along with every request and most turns never use them. Audio generation and transcription are deliberately outside this switch — one writes a file into the workspace and the other reads one out of it.'}</small>
+    {error === undefined ? null : <div className={css.alert} role="alert">{isZh ? `开关未能保存：${error}` : `The switch was not saved: ${error}`}</div>}
+    <label className={css.extensionRow}><span><strong>{isZh ? '启用生图与生视频' : 'Enable image and video generation'}</strong><small>{isZh
+      ? '开关本身就是模型的可见性：关闭后这些工具不会被注册，因此不可能出现「看得见却调不动」；重新打开即刻恢复。'
+      : 'The switch *is* visibility: with it off these tools are not registered at all, so the model can never see one it cannot call. Turning it back on restores them immediately.'}</small></span><input className={css.switch} aria-label={isZh ? '启用生图与生视频' : 'Enable image and video generation'} type="checkbox" checked={snapshot?.enabled === true} onChange={(event) => { toggle(event.target.checked) }} disabled={input.setEnabled === undefined || busy} /></label>
+    {snapshot === undefined ? null : <div className={css.statGrid}>
+      <div className={css.statCell}><small className={css.statLabel}>{isZh ? '开关管辖' : 'Governed'}</small><strong className={css.statValue}>{snapshot.gated.length}</strong></div>
+      <div className={css.statCell}><small className={css.statLabel}>{isZh ? '当前已注册' : 'Registered now'}</small><strong className={css.statValue}>{snapshot.registered.length}</strong></div>
+      <div className={css.statCell}><small className={css.statLabel}>{isZh ? '生音频 / 转写（另计）' : 'Audio / transcribe (separate)'}</small><strong className={css.statValue}>{2}</strong></div>
+    </div>}
+    {snapshot === undefined ? null : <details className={css.details}>
+      <summary className={css.detailsSummary}>{isZh ? `管辖的工具（${snapshot.gated.length} 个）` : `Tools this switch governs (${snapshot.gated.length})`}</summary>
+      <div className={css.chipGrid}>
+        {snapshot.gated.map(name => <span className={css.statChip} key={name}>{name}<b>{snapshot.registered.includes(name) ? (isZh ? '已注册' : 'registered') : (isZh ? '未注册' : 'absent')}</b></span>)}
+      </div>
+    </details>}
+    <details className={css.sectionMeta}>
+      <summary style={{ cursor: 'pointer', margin: '8px 0' }}>{isZh ? '支持哪些协议和模型？' : 'Which protocols and models are supported?'}</summary>
+      <div style={{ display: 'grid', gap: 8, padding: '8px 0' }}>
+        {protocolPanel(isZh ? '生视频：按 provider 选的 9 条协议' : 'Video: nine protocols, chosen by provider', videoProtocols)}
+        {protocolPanel(isZh ? '生图：按 provider 选的 5 条协议' : 'Image: five protocols, chosen by provider', imageProtocols)}
+        <p><strong>{isZh ? '模型名单是活的，不是钉死的' : 'The model roster is live, not pinned'}</strong><br />{isZh
+          ? '候选路线每次请求实时汇总四路来源：Harness「模型」页里你配置的提供商、托管目录、Logfare 目录、Agnes 目录。分类按名字自动识别（veo / seedance / kling / sora / wan → 视频；gpt-image / dall-e / imagen / flux / sdxl / stable-diffusion → 生图），也可以用上面的「模型分类」手动指定或改回去。调用带逐路线熔断：同一路线连续两次失败就先让位给健康路线五分钟；只有「路线本身的问题」（限流、额度、端点缺失）才降级到下一条，密钥错或 prompt 被拒会直接报错，不会换一条路线重复付费。'
+          : 'Routes are collected live on every request from four sources: the providers you configured on the Harness Models page, the managed catalog, the Logfare directory, and the Agnes directory. Categories are inferred from the id (veo / seedance / kling / sora / wan → video; gpt-image / dall-e / imagen / flux / sdxl / stable-diffusion → image) and can be overridden by hand in Model categories above. Every call carries a per-route breaker: two consecutive failures put that route behind healthy ones for five minutes, and only a route\'s own problem (rate limit, quota, missing endpoint) falls through to the next one — a wrong key or a refused prompt fails outright rather than paying for another attempt.'}</p>
+      </div>
+    </details>
+  </section>
+}
+
 function DeferredToolsPanel(input: {
   readonly status?: (() => Promise<RemoteResult<DeferredToolStatus>>) | undefined
   readonly setEnabled?: ((enabled: boolean) => Promise<RemoteResult<DeferredToolStatus>>) | undefined

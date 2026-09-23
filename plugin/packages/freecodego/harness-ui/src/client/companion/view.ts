@@ -24,8 +24,9 @@
  * which slot it occupies, and whether it wants a label.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
+import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { JobsSnapshot } from '@deepseek-ai/dsh-api-job-controller/client'
 import type { UseSessionStatus, UseSessions, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { BotEngine, type BotFrame } from './engine/engine.ts'
@@ -123,10 +124,23 @@ function useReducedMotion(): boolean {
   return reduced
 }
 
+/**
+ * Selector hook over the client jobs snapshot.
+ *
+ * Jobs are no longer a field of the Session list state: they moved to the `jobs`
+ * client service, whose snapshot a consumer binds to its own slot entry through that
+ * entry's reserved `hooks` compartment — the standard kit carries no jobs hook. This
+ * is the type that binding produces, so a seat's props spell the same thing the
+ * registration supplies.
+ */
+export type UseJobs = SnapshotSelectorHook<JobsSnapshot>
+
 /** The global standard kit both seats read their facts through. */
 export interface CompanionFactHooks {
   /** Selector hook over the Session Controller list and current selection. */
   readonly useSessions: UseSessions
+  /** Selector hook over the client jobs snapshot of every watched Session. */
+  readonly useJobs: UseJobs
   /** Selector hook over the unified Session UI status snapshot. */
   readonly useSessionStatus: UseSessionStatus
 }
@@ -152,8 +166,10 @@ export function useCompanionObservation(
   // transcript row asks it the same way; see the note there. Each returns a
   // primitive, which is also why no equality function is needed.
   const running = hooks.useSessions(state => sessionRunning(state, sessionId))
-  const liveJobs = hooks.useSessions(state => liveJobCount(state, sessionId))
-  const failedJobKey = hooks.useSessions(state => newestFailedJobKey(state, sessionId))
+  // The two job questions are asked of the jobs snapshot, not the Session list
+  // state: a job roster is no longer part of that snapshot at all.
+  const liveJobs = hooks.useJobs(jobs => liveJobCount(jobs, sessionId))
+  const failedJobKey = hooks.useJobs(jobs => newestFailedJobKey(jobs, sessionId))
   // The status snapshot is the successor of the pending-interaction map: the
   // request itself moved under `SessionStatus.pendingInteraction`, which is the
   // highest-precedence domain request for that session. Presence of the field is
@@ -198,18 +214,20 @@ function useObserved<T, S>(source: HostObservable<T>, select: (snapshot: T) => S
  * asks (`mainViewSessionId`), so the two seats and this row follow one Session id
  * and one set of facts.
  * @param sessions - the Session list observable.
+ * @param jobs - the client jobs snapshot observable.
  * @param statuses - the unified Session UI status observable.
  * @returns what `projectSignals` consumes.
  */
 export function useObservedCompanionObservation(
   sessions: HostObservable<SessionListState>,
+  jobs: HostObservable<JobsSnapshot>,
   statuses: HostObservable<SessionStatusSnapshot>,
   activity: HostObservable<CompanionActivity>,
 ): CompanionObservation {
   const sessionId = useObserved(sessions, mainViewSessionId)
   const running = useObserved(sessions, state => sessionRunning(state, sessionId))
-  const liveJobs = useObserved(sessions, state => liveJobCount(state, sessionId))
-  const failedJobKey = useObserved(sessions, state => newestFailedJobKey(state, sessionId))
+  const liveJobs = useObserved(jobs, state => liveJobCount(state, sessionId))
+  const failedJobKey = useObserved(jobs, state => newestFailedJobKey(state, sessionId))
   const asked = useObserved(statuses, snapshots => awaitingInteraction(snapshots, sessionId))
   return {
     running,

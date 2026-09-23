@@ -8,9 +8,9 @@
  */
 
 import { LlmError } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, FinishReason, GenerateOptions, Message, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, FinishReason, GenerateOptions, RequestMessage, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
-import { callIdFor, closeStream, openBlock, DONE } from './wire-shared.ts'
+import { callIdFor, closeStream, openBlock, DONE, unsupported } from './wire-shared.ts'
 import type { OpenBlock } from './wire-shared.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 /** Anthropic requires `max_tokens`; this is the budget used when the caller has none. */
@@ -80,7 +80,7 @@ function anthropicToolUse(block: Extract<ContentBlock, { type: 'tool-call' }>): 
   return { type: 'tool_use', id: block.id, name: block.name, input }
 }
 
-async function anthropicContent(message: Message, images?: AnthropicInlineImageSerialization): Promise<AnthropicBlock[]> {
+async function anthropicContent(message: RequestMessage, images?: AnthropicInlineImageSerialization): Promise<AnthropicBlock[]> {
   const blocks: AnthropicBlock[] = []
   for (const block of message.content) {
     switch (block.type) {
@@ -104,9 +104,6 @@ async function anthropicContent(message: Message, images?: AnthropicInlineImageS
         // tool_use and text survive an assistant replay.
         if (message.role === 'assistant') blocks.push(anthropicToolUse(block))
         break
-      case 'tool-result':
-        blocks.push({ type: 'tool_result', tool_use_id: block.toolCallId, content: textOf(block.content) || '(no output)' })
-        break
       default:
         // `reasoning`, `file`, and merge-extended blocks have no Anthropic
         // representation here; dropping them keeps the request valid.
@@ -123,18 +120,36 @@ async function anthropicTurns(
   const systems: string[] = []
   if (options.system !== undefined && options.system !== '') systems.push(options.system)
   const messages: AnthropicTurn[] = []
+  // Results of one assistant `tool_calls` batch belong in ONE user turn: that is
+  // the shape Anthropic documents, and it is the shape the log used to carry,
+  // when every result rode inside a single user message as a `tool-result`
+  // block. A result is its own message now, so the batch is gathered here
+  // instead. `flushResults` is called before any other turn and at the end, so
+  // the frame lands immediately after the assistant turn that asked for it.
+  const results: AnthropicBlock[] = []
+  const flushResults = (): void => {
+    if (results.length === 0) return
+    messages.push({ role: 'user', content: results.splice(0) })
+  }
   for (const message of options.messages) {
     if (message.role === 'system') {
       const text = textOf(message.content)
       if (text !== '') systems.push(text)
       continue
     }
+    if (message.role === 'developer') unsupported('developer message')
+    if (message.role === 'tool') {
+      results.push({ type: 'tool_result', tool_use_id: message.toolCallId, content: textOf(message.content) || '(no output)' })
+      continue
+    }
     const content = await anthropicContent(message, images)
     // Anthropic rejects an empty content array, so a turn that projected to
     // nothing is dropped rather than sent as an invalid request.
     if (content.length === 0) continue
+    flushResults()
     messages.push({ role: message.role === 'assistant' ? 'assistant' : 'user', content })
   }
+  flushResults()
   return { system: systems.length === 0 ? undefined : systems.join('\n\n'), messages }
 }
 

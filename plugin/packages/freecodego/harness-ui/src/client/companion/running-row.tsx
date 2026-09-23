@@ -110,6 +110,7 @@ const SHEET = `
 export function installRunningRow(ctx: ClientContext, activity: CompanionActivitySource): () => void {
   const sources: StoreFaceSources = {
     sessions: ctx.sessions.list,
+    jobs: ctx.jobs.state,
     statuses: ctx.uiSession.sessionStatus,
     activity,
   }

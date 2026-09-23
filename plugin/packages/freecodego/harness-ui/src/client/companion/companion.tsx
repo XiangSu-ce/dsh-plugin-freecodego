@@ -16,7 +16,7 @@
  * own. The seat owns only its size and its slot.
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls the SlotMap merge for `sidebar.brand.mark` and the global
 // `useSessions` / `useSessionStatus` seats. Both are erased at build.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -31,8 +31,15 @@ import { en, NS, zh } from './companion-locale.ts'
 import { mainViewSessionId } from './signals.ts'
 import { useCompanionObservation, useCompanionView } from './view.ts'
 
-/** The rail mark's props: the brand seat's runtime props and the injected feed. */
-export type FreeCodeGoCompanionProps = PropsRuntime<'sidebar.brand.mark'> & CompanionSeatInjected
+/**
+ * The rail mark's props: the brand seat's runtime props and the injected face.
+ *
+ * `InjectFace` is what turns that face's `hooks` compartment into the bound
+ * `useJobs` hook the observation reads, so this type and the registration below
+ * have to spell the same face — the component never receives `hooks` itself.
+ */
+export type FreeCodeGoCompanionProps =
+  PropsRuntime<'sidebar.brand.mark'> & InjectFace<CompanionSeatInjected>
 
 /**
  * The rail mark. Reads the selected session through the global standard props, so
@@ -69,8 +76,8 @@ export function FreeCodeGoCompanion(props: FreeCodeGoCompanionProps) {
  * that seated only the mark would leave the label namespace unreachable, a build
  * that seated only the strip would lose the rail's own mark, and the injected
  * seats (`./running-row.tsx`, `./step-row.tsx`, `./dot-row.tsx`) draw the same pose
- * in place of the shell's own loading animations — the sweeps, and the pixel chase
- * of an in-flight mark.
+ * in place of the shell's own loading animations — the row sweeps that are left, and
+ * the spinner ring of an in-flight mark.
  *
  * `priority: -1` is the sanctioned way to shadow a single slot: the default rank
  * is 0 and the lowest live entry renders, so this wins over the fallback mark
@@ -92,7 +99,7 @@ export function installCompanion(ctx: ClientContext): void {
       name: 'sidebar.brand.mark',
       priority: -1,
       registrant: 'freecodego-companion',
-      inject: (): CompanionSeatInjected => ({ activity }),
+      inject: (): CompanionSeatInjected => ({ activity, hooks: { jobs: ctx.jobs.state } }),
     }, FreeCodeGoCompanion))
   installCompanionBar(ctx, activity)
   ctx.effect(() => installRunningRow(ctx, activity), 'freecodego-ui: Companion running row')

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/harness-plugin/README.md
-README.md: 10262ad8ae50ffdcd3fc0cc204c886fe04510e70
-README.zh.md: 8d0c4ce6be24b48aad04a881c66b9a6daeb66216
+README.md: 72f8b925cc8be7346b8c377c5fd3b3cc8cfc73d6
+README.zh.md: 0bdd30e70b80b1be47858b54b5efcb315dc17d0c

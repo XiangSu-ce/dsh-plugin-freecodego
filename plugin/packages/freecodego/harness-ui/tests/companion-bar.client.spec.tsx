@@ -139,17 +139,26 @@ function windowAtOrAfter(atMs: number): number {
  */
 interface SessionsState {
   byId: Record<string, { running: boolean }>
-  jobsBySession: Record<string, readonly { status: string }[]>
 }
 
 /** A session that is producing a turn, or one that has come to rest. */
 const running = (value: boolean): SessionsState => ({
   byId: { s1: { running: value } },
-  jobsBySession: {},
 })
 
 /** The component's own props type, so the stubs cannot drift from the seat. */
 type BarProps = Parameters<typeof CompanionBar>[0]
+
+/**
+ * The jobs snapshot the seat reads through the hook its entry binds.
+ *
+ * Derived from the seat's own hook, like the other fixtures in this suite, so a
+ * rename in the jobs contract surfaces here instead of leaving a stale stub.
+ */
+type JobsState = Parameters<Parameters<BarProps['useJobs']>[0]>[0]
+
+/** No roster and no observation: every case here is about turn facts. */
+const noJobs: JobsState = { rows: {}, observed: {} }
 
 /**
  * Stub the dock entry's runtime props.
@@ -174,6 +183,9 @@ function stubProps(sessions: SessionsState, blank = false, activity = activityFi
     useSessions: (selector: (state: SessionsState) => unknown) => selector(sessions),
     // Presence is all the row reads, so the empty status snapshot is the fixture.
     useSessionStatus: (selector: (map: ReadonlyMap<string, SessionStatus>) => unknown) => selector(new Map()),
+    // A job roster reaches the seat through its entry's `hooks` compartment rather
+    // than the standard kit; no case here drives one, so it stays empty.
+    useJobs: (selector: (roster: JobsState) => unknown) => selector(noJobs),
     // The live feed arrives by injection rather than through a store, which is why
     // the seat's props carry it: the two slot seats have no context to read one from.
     activity,

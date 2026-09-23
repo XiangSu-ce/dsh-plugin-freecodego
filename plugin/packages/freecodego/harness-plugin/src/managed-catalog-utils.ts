@@ -234,7 +234,8 @@ export interface VyceModel {
 }
 /** VyceAI has no free roster: its daily check-in credits pay for metered
  * routes. These are the ids the plugin knows before any directory answers, and
- * the two whose rows start switched on in the model list. */
+ * both are among the routes that start switched on in the model list — the
+ * third default, `claude-sonnet-4-6`, is only named once the directory answers. */
 export const VYCE_MODELS: readonly VyceModel[] = [
   { id: 'deepseek-v4.1', name: 'DeepSeek V4.1', inputPricePerMillion: 0.15, outputPricePerMillion: 0.6 },
   { id: 'qwen3.8-flash', name: 'Qwen 3.8 Flash' },

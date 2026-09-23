@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import { IconTrashOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconTrashOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { SESSION_DELETE_FAILED_EVENT } from './session-delete-menu-item.tsx'
 import css from './toolbar-actions.module.css'
 
 type Position = { readonly top: number; readonly left: number }
@@ -56,6 +57,18 @@ export function SessionDeleteOverlay({ useSessions, deleteSession, capabilities,
     refresh()
     globalThis.addEventListener('freecodego:capability-change', changed)
     return () => { active = false; globalThis.removeEventListener('freecodego:capability-change', changed) }
+  }, [])
+  // The row menu deletes the same way this overlay does, and it has already
+  // dismissed itself by the time the Host answers — its failure has to be drawn
+  // here, or a refused delete from the menu would say nothing at all. Both
+  // callers therefore end up in this one message.
+  useEffect(() => {
+    const failed = (event: Event): void => {
+      if (!(event instanceof CustomEvent)) return
+      setError(String(event.detail))
+    }
+    globalThis.addEventListener(SESSION_DELETE_FAILED_EVENT, failed)
+    return () => { globalThis.removeEventListener(SESSION_DELETE_FAILED_EVENT, failed) }
   }, [])
   const overlayRef = useRef<HTMLDivElement | null>(null)
 
@@ -151,7 +164,7 @@ export function SessionDeleteOverlay({ useSessions, deleteSession, capabilities,
         onPointerDown={(event) => { event.stopPropagation() }}
         onMouseDown={(event) => { event.stopPropagation() }}
         onClick={(event) => { event.stopPropagation(); remove(session.id) }}
-      ><IconTrashOutline16 size={16} /></button>
+      ><IconTrashOutlineRegular size={16} /></button>
     </div>
   ))}</>
 }

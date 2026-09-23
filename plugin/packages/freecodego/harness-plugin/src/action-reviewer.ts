@@ -168,7 +168,7 @@ export function createActionReviewer(input: {
         provider: input.route.provider,
         model: input.route.model,
         messages: [createUserMessage({
-          source: { kind: 'plugin', plugin: 'freecodego-action-review' },
+          source: { kind: 'freecodego-action-review' },
           content: [{ type: 'text', text: reviewPrompt(composed, action) }],
         })],
         system: SYSTEM,
@@ -295,15 +295,11 @@ function messageText(message: unknown): string {
     const block = item as MessageBlockLike
     if (block.type === 'text' || block.type === 'reasoning') return block.text ?? ''
     if (block.type === 'tool-call') return `${block.name ?? ''}(${block.arguments ?? ''})`
-    if (block.type === 'tool-result') {
-      // A non-text part is named rather than dropped: an image or file in a
-      // result is part of what the action produced, and silently shortening the
-      // evidence is how a reviewer misses the one result that mattered.
-      return (block.content ?? []).map((part) => {
-        const item = part as { readonly type?: string; readonly text?: string }
-        return item.type === 'text' ? item.text ?? '' : `[${item.type ?? 'unknown'}]`
-      }).join('\n')
-    }
+    // A non-text part is named rather than dropped: an image or file in a
+    // result is part of what the action produced, and silently shortening the
+    // evidence is how a reviewer misses the one result that mattered. Those
+    // parts used to sit one level down, inside a `tool-result` block; they are
+    // now the tool-role message's own content and land here instead.
     return block.type === undefined ? '' : `[${block.type}]`
   }).join('\n')
 }

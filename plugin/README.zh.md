@@ -51,10 +51,10 @@ FreeCodeGo 安装在 Harness Profile 中，不是单独运行的命令；它来�
 ```sh
 npm install --global @deepseek-ai/dsh pnpm
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.6-alpha.2/freecodego-0.1.6-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2/freecodego-0.1.7-alpha.2.tgz
 ```
 
-每条 Harness 线对应一个 release，tag 为 `freecodego-v<version>`，并且只附带一个以其所挂载的 Harness 版本命名的 tarball，因此资产名本身就说明了该 release 面向哪条 Harness：上面的 URL 安装的是面向 Harness `0.1.6-alpha.2` 的插件。请把 tag 与资产名中的版本替换为你实际运行的 Harness 版本 —— 设置页会把该版本显示为已装插件版本旁的 `Harness <version>`。固定版本就是固定这个 URL：release 不会被复用，坏掉的 release 通过编辑它来撤回。之后请使用设置页的更新检查，它会为当前运行的 Harness 解析同一个 release，并用同一条命令安装。
+每条 Harness 线对应一个 release，tag 为 `freecodego-v<version>`，并且只附带一个以其所挂载的 Harness 版本命名的 tarball，因此资产名本身就说明了该 release 面向哪条 Harness：上面的 URL 安装的是面向 Harness `0.1.7-alpha.2` 的插件。请把 tag 与资产名中的版本替换为你实际运行的 Harness 版本 —— 设置页会把该版本显示为已装插件版本旁的 `Harness <version>`。固定版本就是固定这个 URL：release 不会被复用，坏掉的 release 通过编辑它来撤回。之后请使用设置页的更新检查，它会为当前运行的 Harness 解析同一个 release，并用同一条命令安装。
 
 桌面端必须是已支持该 Harness 版本的构建。桌面端内置的 `dsh` 和 `pnpm` 会使用当前 `DSH_HOME`；选择与 Web 端相同的 Harness Home 和 Profile，即可读取同一份插件数据。
 

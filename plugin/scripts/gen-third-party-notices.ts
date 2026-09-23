@@ -2,9 +2,9 @@
  * Generate `THIRD_PARTY_NOTICES.md` from the workspace manifests: every
  * external dependency named by a workspace `package.json`, the vendored-package
  * manifest in `vendor/README.md`, the in-package provenance records found under
- * each package's `src/`, the Python `pyproject.toml` files, the Desktop Python
- * distribution lock, and the pnpm patch list. npm metadata comes from the
- * installed store, so the tree must be installed. `--check` verifies the committed
+ * each package's `src/`, the Python `pyproject.toml` files, the shared
+ * Python distribution lock, and the pnpm patch list. npm metadata comes from the installed
+ * store, so the tree must be installed. `--check` verifies the committed
  * artifact. Tier policy and ownership live in
  * `.agents/notes/implemented/process/2026-07-30-generated-third-party-notices.md`.
  */
@@ -14,7 +14,7 @@ import { dirname, resolve } from 'node:path'
 import * as yaml from 'js-yaml'
 import { parse as parseToml, type TomlTableWithoutBigInt, type TomlValueWithoutBigInt } from 'smol-toml'
 import parseSpdx from 'spdx-expression-parse'
-import desktopRuntimeLock from '../apps/desktop/scripts/primary-runtime-lock.json' with { type: 'json' }
+import primaryRuntimeLock from './primary-runtime/lock.json' with { type: 'json' }
 import { browserBundledExternals } from './browser-bundled-externals.ts'
 
 const root = resolve(import.meta.dirname, '..')
@@ -94,7 +94,7 @@ const OVERRIDES: Record<string, { license?: string; repo?: string }> = {
 /**
  * Python metadata is recorded from the distributions' license and project
  * fields; generation does not require installing their wheels. Both Python
- * manifests and the Desktop lock reject names absent from this map.
+ * manifests and the shared runtime lock reject names absent from this map.
  */
 const PYTHON_METADATA: Record<string, { license: string; repo: string; role?: string }> = {
   pydantic: { license: 'MIT', repo: 'https://github.com/pydantic/pydantic', role: 'runtime dependency of `deepseek-harness-sdk`' },
@@ -687,12 +687,12 @@ function collectPython(): { name: string; license: string; repo: string; role: s
 }
 
 /**
- * Disclose every Desktop wheel distribution using its locked version, rejecting duplicate normalized names.
- * @param packages - Distribution names and exact versions from the Desktop runtime lock.
+ * Disclose every bundled wheel distribution using its locked version, rejecting duplicate normalized names.
+ * @param packages - Distribution names and exact versions from the shared runtime lock.
  * @param metadata - License and source metadata for every locked distribution.
  * @returns Normalized, sorted distribution identities with versions and licenses.
  */
-export function collectDesktopPythonDependencies(
+export function collectBundledPythonDependencies(
   packages: Readonly<Record<string, string>>,
   metadata: PythonMetadata = PYTHON_METADATA,
 ): { name: string; version: string; license: string; repo: string }[] {
@@ -701,14 +701,14 @@ export function collectDesktopPythonDependencies(
     const name = normalizePythonDistributionName(distribution)
     const previous = normalized.get(name)
     if (previous !== undefined && previous !== version) {
-      throw new Error(`gen-third-party-notices: Desktop python distribution ${name} has conflicting locked versions.`)
+      throw new Error(`gen-third-party-notices: bundled Python distribution ${name} has conflicting locked versions.`)
     }
-    if (previous !== undefined) throw new Error(`gen-third-party-notices: Desktop python distribution ${name} has duplicate normalized names.`)
+    if (previous !== undefined) throw new Error(`gen-third-party-notices: bundled Python distribution ${name} has duplicate normalized names.`)
     normalized.set(name, version)
   }
   return [...normalized].sort(([a], [b]) => a.localeCompare(b)).map(([name, version]) => {
     const entry = metadata[name]
-    if (entry === undefined) throw new Error(`gen-third-party-notices: Desktop python distribution ${name} is missing from PYTHON_METADATA.`)
+    if (entry === undefined) throw new Error(`gen-third-party-notices: bundled Python distribution ${name} is missing from PYTHON_METADATA.`)
     return { name, version, license: entry.license, repo: entry.repo }
   })
 }
@@ -823,9 +823,9 @@ export async function render(): Promise<string> {
   const devDeps = npm.filter(dep => !dep.runtime)
   const kitRuntime = runtimeDeps.some(dep => dep.name === LIBREOFFICE_KIT_PACKAGE)
   const vendored = collectVendored()
-  const inPackageVendored = collectInPackageVendored()
   const python = collectPython()
-  const desktopPython = collectDesktopPythonDependencies(desktopRuntimeLock.pythonPackages)
+  const bundledPython = collectBundledPythonDependencies(primaryRuntimeLock.pythonPackages)
+  const inPackageVendored = collectInPackageVendored()
   const patched = collectPatched()
   const claudeDistribution = runtimeDeps.some(
     dep => dep.name === CLAUDE_AGENT_SDK_PACKAGE,
@@ -834,7 +834,7 @@ export async function render(): Promise<string> {
     : undefined
   const nonPermissiveDev = devDeps.filter(dep => !isPermissive(dep.license))
   assertRuntimeLicenses(runtimeDeps)
-  assertRuntimeLicenses(desktopPython)
+  assertRuntimeLicenses(bundledPython)
   const patchedLines = patched.map(({ spec, patch }) => `- \`${spec}\` — [\`${patch}\`](${patch})`)
 
   const inPackageVendoredSection = inPackageVendored.length === 0 ? '' : `
@@ -854,7 +854,7 @@ ${inPackageVendored.map(row => `| [\`${row.directory}\`](${row.directory}) | \`$
 
 DeepSeek Harness's FreeCodeGo extension is licensed under [AGPL-3.0](LICENSE). It depends on the third-party software listed below. Each project remains under its own license; nothing in this file changes those terms.
 
-This file lists **direct** dependencies declared by the workspace, the explicitly disclosed official Claude Code platform payload closure, and the Desktop bundled Python distributions. It is generated by \`scripts/gen-third-party-notices.ts\`: a pre-commit hook regenerates it whenever a staged file changes one of its inputs, and \`scripts/gen-third-party-notices.spec.ts\` asserts in the test lane that the committed bytes match. Deleting a manifest runs no hook, so that case is caught by the assertion instead. Run \`pnpm run verify-third-party-notices\` for the standalone check.
+This file lists **direct** dependencies declared by the workspace, the explicitly disclosed official Claude Code platform payload closure, and the Bundled Python distributions. It is generated by \`scripts/gen-third-party-notices.ts\`: a pre-commit hook regenerates it whenever a staged file changes one of its inputs, and \`scripts/gen-third-party-notices.spec.ts\` asserts in the test lane that the committed bytes match. Deleting a manifest runs no hook, so that case is caught by the assertion instead. Run \`pnpm run verify-third-party-notices\` for the standalone check.
 
 The complete npm transitive closure, including the Landlock launcher workspace, is recorded with exact pinned versions in [\`pnpm-lock.yaml\`](pnpm-lock.yaml) — inspect it with \`pnpm licenses list\`. The Python SDK closure is recorded separately in [\`python/sdk/uv.lock\`](python/sdk/uv.lock).
 
@@ -865,7 +865,7 @@ The Cordis framework and its foundation libraries are source-vendored into this 
 | Package | Upstream name | Source | License |
 | --- | --- | --- | --- |
 ${vendored.map(row => `| \`${row.npmName}\` | \`${row.upstreamName}\` | [${row.sourceDirectory}](${row.sourceDirectory}/) | MIT |`).join('\n')}
-${inPackageVendoredSection}
+
 ## Runtime npm dependencies
 
 External packages installed for runtime use or distributed inside the prebuilt browser artifacts. Browser inputs are resolved through the shipping tsdown and Vite configurations, independently of npm dependency sections. The tier covers every plugin a user can mount from \`cordis.yml\` — not only what the \`dsh\` CLI, Web UI, and Python SDK runtime load by default.
@@ -899,13 +899,14 @@ Direct dependencies of the \`pyproject.toml\` manifests, plus \`uv\` as the deve
 ${python.map(dep => `| [\`${dep.name}\`](${dep.repo}) | ${dep.license} | ${dep.role} |`).join('\n')}
 | [\`uv\`](https://github.com/astral-sh/uv) | MIT / Apache-2.0 | development workflow tool |
 
-## Desktop bundled Python distributions
+${inPackageVendoredSection}
+## Bundled Python distributions
 
-The [Desktop runtime lock](apps/desktop/scripts/primary-runtime-lock.json) records each distribution version and the wheel download hashes. The table includes every entry in \`pythonPackages\`, including transitive dependencies. Wheel extraction preserves distribution metadata and the license and notice files supplied by each archive. Project licenses below do not enumerate the separate licenses of native libraries bundled inside wheels.
+The [shared runtime lock](scripts/primary-runtime/lock.json) records each distribution version and the wheel download hashes. The table includes every entry in \`pythonPackages\`, including transitive dependencies. Wheel extraction preserves distribution metadata and the license and notice files supplied by each archive. Project licenses below do not enumerate the separate licenses of native libraries bundled inside wheels.
 
 | Distribution | Locked version | Project license |
 | --- | --- | --- |
-${desktopPython.map(dep => `| [\`${dep.name}\`](${dep.repo}) | ${dep.version} | ${dep.license} |`).join('\n')}
+${bundledPython.map(dep => `| [\`${dep.name}\`](${dep.repo}) | ${dep.version} | ${dep.license} |`).join('\n')}
 
 ## First-party native packages
 

@@ -15,16 +15,21 @@ describe('FreeCodeGo RC.1 composition', () => {
       readonly dependencies: Readonly<Record<string, string>>
       readonly peerDependencies: Readonly<Record<string, string>>
       readonly freecodego?: { readonly harnessBaseline?: string }
-      readonly dsh?: {
-        readonly bootstrap?: { readonly export?: string }
+      readonly dsh?: Readonly<Record<string, unknown>> & {
         readonly client?: { readonly inject?: readonly string[] }
       }
     }
     const patch = await readFile(resolve(bundleDirectory, 'cordis.patch.yml'), 'utf8')
 
     expect(manifest.name).toBe('freecodego')
-    expect(manifest.freecodego?.harnessBaseline).toBe('0.1.6-alpha.2')
-    expect(manifest.dsh?.bootstrap?.export).toBe('bootstrapFreeCodeGoHarness')
+    expect(manifest.freecodego?.harnessBaseline).toBe('0.1.7-alpha.2')
+    // `dsh.bootstrap` used to be declared here, naming `bootstrapFreeCodeGoHarness`. It was
+    // never part of the Harness contract — `DshManifest` declares `bundle`, `profile` and
+    // `client` — and no reader anywhere resolved it, so the pre-Loader window it advertised
+    // could not happen: both of that function's effects come from composition rows, and this
+    // plugin is itself a Loader entry. Pinned absent so a declared entry point with no loader
+    // behind it cannot come back unnoticed.
+    expect(manifest.dsh).not.toHaveProperty('bootstrap')
     expect(manifest.dsh?.client?.inject).toContain('@deepseek-ai/dsh-client-ui-conversation')
     expect(manifest.dependencies).toEqual({
       '@anthropic-ai/claude-agent-sdk': '0.3.246',
@@ -47,6 +52,36 @@ describe('FreeCodeGo RC.1 composition', () => {
     expect(patch).not.toContain('{{model}}')
     expect(patch).not.toContain("name: '@freecodego/dsh-client-ui-model-selection'")
     expect(patch).not.toMatch(/dsh-agent-engine|dsh-client-runtime|registerFactory|v012/)
+  })
+
+  it('mounts the plugin as its own Loader entry rather than from the bundle', async () => {
+    // The settings plane only reaches a plugin that *is* a Loader entry: the service
+    // addresses it by entry id, reads `entry.fiber.config`, and validates a write against
+    // that entry's `Config`. Mounted with `ctx.plugin()` from the bundle's `apply`, this
+    // plugin inherited the `freecodego` row instead — which has no schema — so every write
+    // was refused with `No configurable plugin entry "freecodego"` and every read answered
+    // the empty document. The row below is what makes the FreeCodeGo settings tab work, and
+    // it is also the id `harness-ui` and `plugin-conflicts.ts` name, so a regression here is
+    // silent in production and only visible as switches that will not stay on.
+    const manifest = JSON.parse(await readFile(resolve(bundleDirectory, 'package.json'), 'utf8')) as {
+      readonly exports?: Readonly<Record<string, string>>
+      readonly files?: readonly string[]
+    }
+    const patch = read(resolve(bundleDirectory, 'cordis.patch.yml'))
+    const entry = read(resolve(bundleDirectory, 'src/index.ts'))
+
+    const row = compositionRows(patch, 'freecodego/bundle-latest/cordis.patch.yml')
+      .find(candidate => candidate.id === 'freecodego-harness-plugin')
+    expect(row?.name).toBe('freecodego/harness-plugin')
+    expect(row?.body).toMatch(/^\s+config:/mu)
+    // The plugin has to be the *default* export of what the row names, so the row must not
+    // share the bundle's entry module: that one default-exports nothing and bundles `apply`.
+    expect(row?.name).not.toBe('freecodego')
+    expect(manifest.exports?.['./harness-plugin']).toBe('./dist/harness-plugin.js')
+    expect(manifest.files).toContain('dist/harness-plugin.js')
+    // And the programmatic mount must be gone, or the plugin would be constructed twice.
+    expect(entry).not.toContain('ctx.plugin(FreeCodeGoHarnessPlugin')
+    expect(entry).toContain('export { FreeCodeGoHarnessPlugin,')
   })
 
   it('supplies every provider the composed tree names, from a row it keeps mounted', () => {

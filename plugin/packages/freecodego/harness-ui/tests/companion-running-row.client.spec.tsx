@@ -106,18 +106,34 @@ interface Row {
 interface SessionsState {
   ids: string[]
   byId: Record<string, { id: string; running: boolean; retainedBy: { mainView?: number } }>
-  jobsBySession: Record<string, readonly { id: string; status: string }[]>
+  phase: 'ready'
+  projectionsBySession: Record<string, never>
 }
 
 /** Build a Session list snapshot out of the rows under test. */
 function sessionsState(rows: Record<string, Row>): SessionsState {
-  const state: SessionsState = { ids: [], byId: {}, jobsBySession: {} }
+  const state: SessionsState = { ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }
   for (const [id, row] of Object.entries(rows)) {
     state.ids.push(id)
     state.byId[id] = { id, running: row.running, retainedBy: { mainView: row.retained } }
-    state.jobsBySession[id] = row.jobs
   }
   return state
+}
+
+/**
+ * Build the client jobs snapshot out of the same rows.
+ *
+ * A roster is no longer a field of the Session list state: it belongs to the jobs
+ * client service, whose bare snapshot is what a seat's entry binds as `useJobs`.
+ */
+function jobsState(rows: Record<string, Row>): {
+  rows: Record<string, readonly { id: string; status: string }[]>
+  observed: Record<string, never>
+} {
+  return {
+    rows: Object.fromEntries(Object.entries(rows).map(([id, row]) => [id, row.jobs])),
+    observed: {},
+  }
 }
 
 /** The status rows the seat's second source carries. */
@@ -149,11 +165,16 @@ function source<T>(initial: T): {
 function sources(rows: Record<string, Row>, statuses: StatusesState = new Map()) {
   const sessions = source(sessionsState(rows))
   const sessionStatus = source(statuses)
+  // Held rather than inlined into the context: the strip's stub reads the same
+  // roster the seat's entry binds, so a case can compare the two seats' poses
+  // without reaching through the context for it.
+  const jobs = source(jobsState(rows))
   const context = {
     sessions: { list: sessions.source },
+    jobs: { state: jobs.source },
     uiSession: { sessionStatus: sessionStatus.source },
   } as unknown as ClientContext
-  return { sessions, sessionStatus, context }
+  return { sessions, sessionStatus, jobs, context }
 }
 
 /** The upstream column, with the official row in it and a nested status row. */
@@ -198,6 +219,9 @@ function renderStrip(facts: ReturnType<typeof sources>, activity: ActivityFixtur
         input: {},
         useSessions: (selector: (state: SessionsState) => unknown) => selector(snapshot),
         useSessionStatus: (selector: (map: StatusesState) => unknown) => selector(facts.sessionStatus.source.getSnapshot()),
+        // Jobs are not part of the standard kit: a seat's entry binds its own
+        // `ctx.jobs.state` as `useJobs`, which is what this stands in for.
+        useJobs: (selector: (roster: ReturnType<typeof jobsState>) => unknown) => selector(facts.jobs.source.getSnapshot()),
         activity,
         t: (key: CompanionKey) => zh[key],
       } as unknown as Parameters<typeof CompanionBar>[0]}
@@ -326,7 +350,13 @@ describe('companion running row: the fact the two surfaces cannot disagree about
     await pump()
     expect(injectedPose()).toBe('alert')
     facts.sessionStatus.set(new Map())
-    facts.sessions.set(sessionsState({ s1: { running: true, jobs: [{ id: 'j1', status: 'running' }], retained: 1 } }))
+    // A job comes back. Its roster is a fact of the jobs source now, not a field of
+    // the Session snapshot — so a case that turns one on has to write it where the
+    // shell writes it, or the seats read an empty roster and the pose never leaves
+    // `thinking` (which is exactly how this case read before the two stores split).
+    const withJob: Record<string, Row> = { s1: { running: true, jobs: [{ id: 'j1', status: 'running' }], retained: 1 } }
+    facts.sessions.set(sessionsState(withJob))
+    facts.jobs.set(jobsState(withJob))
     await pump()
     // `orbit` is less urgent than the alert it would replace, so the arbiters'
     // dwell floor holds the alert — the same floor the seats obey, because this
@@ -389,14 +419,31 @@ describe('companion running row: the fact the two surfaces cannot disagree about
 })
 
 describe('companion running row: the upstream row this was read from', () => {
-  it('still renders a direct child of the chat column that announces itself as one', () => {
-    // The seat's whole reach is this selector, and upstream owns both halves of
-    // it. Read from the synced source rather than from a copy of it, so an
-    // upstream change fails here rather than at runtime with the official
-    // animation quietly still running.
+  it('has no row left to take over, which is the seat standing down as designed', () => {
+    // The seat's whole reach is one selector, and upstream owns both halves of it.
+    // Read from the synced source rather than from a copy of it, so an upstream
+    // change lands here rather than at runtime.
     const root = resolve(nodeProcess.cwd(), 'packages/client/ui-chat/src/client/chat/ChatView.tsx')
     const source = readFileSync(root, 'utf8')
     expect(source).toContain('data-chat-flow=""')
-    expect(source).toContain('<div className={css.turnStatus} role="status" aria-live="polite">')
+    // Re-measured, and this is the whole reason the case changed shape: the visible
+    // turn-status row (`div.turnStatus`, a direct child of the column, one row of
+    // shimmering text with its own clock) is gone. The live announcement moved to the
+    // turn-process row and is a *visually hidden* `role="status"` span inside it.
+    expect(source).not.toContain('<div className={css.turnStatus} role="status" aria-live="polite">')
+    // That row is now wrapped by the node seat, so the announcement is a grandchild of
+    // the column rather than a child: `RUNNING_ROW_SELECTOR` cannot match it, and the
+    // seat falls back to the shipped behaviour exactly as its own header promises.
+    const seat = readFileSync(
+      resolve(nodeProcess.cwd(), 'packages/client/ui-chat/src/client/chat/ChatNodeSeat.tsx'),
+      'utf8',
+    )
+    expect(seat).toContain('data-chat-flow-kind={routedNode.kind}')
+    const process = readFileSync(
+      resolve(nodeProcess.cwd(), 'packages/client/ui-chat/src/client/chat/TurnProcessNodeView.tsx'),
+      'utf8',
+    )
+    expect(process).toContain('role="status" aria-live="polite"')
+    expect(process).toContain('visuallyHidden')
   })
 })

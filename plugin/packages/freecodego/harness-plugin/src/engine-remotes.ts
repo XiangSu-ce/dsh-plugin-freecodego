@@ -13,6 +13,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import path from 'node:path'
+import { MODELS_SETTINGS_ENTRY, peerSettings } from './peer-settings.ts'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoMobileAuthClient, HarnessFreeCodeGoCredentialVault, isLockedRoute } from '@deepseek-ai/dsh-freecodego-api'
 import type { LlmModelInfo } from '@deepseek-ai/dsh-llm'
@@ -49,8 +50,12 @@ import {
 } from './managed-catalog-utils.ts'
 import { FREE_UPSTREAM_MODELS, type FreeCodeGoManagedCatalogs } from './managed-catalogs.ts'
 import type { FreeCodeGoSettingsPort } from './policy.ts'
-import type { FreeCodeGoCapabilitySnapshot, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoCodexRuntimeStatus, FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoPluginConflictStatus, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot } from './types.ts'
+import type { FreeCodeGoCapabilitySnapshot, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoCodexRuntimeStatus, FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoPluginConflictStatus, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoWebSearchBinding } from './types.ts'
 import type { FreeCodeGoManagedRuntime } from '@deepseek-ai/dsh-freecodego-api'
+// The reference the binding writes is defined with the binding's repair pass, which
+// is the other thing that has to know it: a restart rewrites the key under the same
+// reference the page names.
+import { WEB_SEARCH_API_KEY_REF } from './web-search-binding.ts'
 
 /** Default hosted FreeCodeGo origin; deployments may override it with HTTPS. */
 export const FREECODEGO_CLOUD_ORIGIN = 'https://freecodego.com'
@@ -170,9 +175,12 @@ export async function setDefaultModel(host: EngineRemotesHost, model: string): P
  * @returns the default engine, provider, and model new identities start with.
  */
 export function defaultAgentOptions(host: EngineRemotesHost): { readonly engine: 'deepseek' | 'codex' | 'claude'; readonly provider: string; readonly model?: string } {
-  const configuredEngine = host.policy.get()?.defaultEngine ?? host.config.defaultEngine ?? 'deepseek'
+  // Both defaults now live in the settings document, so there is no second layer to fall
+  // back to: an install that chose no engine gets the schema's `deepseek`, and one that
+  // chose no model gets the empty string, which the branches below read as "unset".
+  const configuredEngine = host.policy.get()?.defaultEngine ?? 'deepseek'
   const engine = configuredEngine === 'codex' || configuredEngine === 'claude' ? configuredEngine : 'deepseek'
-  const model = host.policy.get()?.defaultModel ?? host.config.defaultModel
+  const model = host.policy.get()?.defaultModel
   const normalizedModel = model?.trim()
   // Media defaults are persisted through the `__freecodego_media_default__`
   // channel; a media Agnes id must never become the text default route.
@@ -458,6 +466,50 @@ export async function sessionDelete(host: EngineRemotesHost, sessionId: string):
   // publish the same client-list event that SessionController would emit.
   ;(host.ctx as unknown as { emit(name: string, sessionId: import('@deepseek-ai/dsh-session').SessionId): void }).emit('api-session/removed', id)
   return { deleted: true }
+}
+
+/**
+ * Resolve one of this plugin's models as the DeepSeek web-search provider.
+ *
+ * The resolution is the Claude engine's own (`claudeGatewayForRoute`), not a
+ * second one: a route that can serve a Claude turn can serve the auxiliary
+ * Messages call the search provider makes, and the two answers have to agree
+ * about which provider a model id belongs to and which key pays for it.
+ *
+ * The base URL is normalized for the search provider's join rule: it appends
+ * `/messages`, while the bridge's facade (whose Claude SDK caller appends
+ * `/v1/messages`) returns a base without `/v1`. Handing either shape over
+ * unchanged would produce a 404 on every search.
+ *
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param input - the provider and the model the user picked from our directory.
+ * @returns the endpoint, the model id, and the credential the search page must use.
+ */
+export async function webSearchBind(
+  host: EngineRemotesHost,
+  input: { readonly provider?: string; readonly model?: string },
+): Promise<FreeCodeGoWebSearchBinding> {
+  if (input === null || typeof input !== 'object') throw new Error('web search binding must be an object')
+  const provider = typeof input.provider === 'string' ? input.provider.trim().toLowerCase() : ''
+  const model = typeof input.model === 'string' ? input.model.trim() : ''
+  if (provider === '' || model === '') throw new Error('a provider and a model are required')
+  const route = await host.catalogs.claudeGatewayForRoute({ provider, modelId: model })
+  const base = route.baseURL.replace(/\/+$/u, '')
+  if (!/^https?:\/\//iu.test(base)) throw new Error(`Provider "${provider}" did not resolve an HTTP endpoint`)
+  return {
+    provider,
+    model: route.model ?? model,
+    baseURL: /\/v1$/u.test(base) ? base : `${base}/v1`,
+    // The reference travels as a plain string in the settings document, which is
+    // where the brand of a `CredentialRef` is erased; the key itself goes to the
+    // credentials domain under that same reference, which is what
+    // `web-search-binding.ts` owns.
+    apiKeyEnv: WEB_SEARCH_API_KEY_REF,
+    apiKey: route.apiKey,
+    // Loopback is the bridge: its listener, its route ids, and its secret all
+    // belong to this process.
+    durable: !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/iu.test(base),
+  }
 }
 
 /** Return the current cross-engine MCP and Skill capability inventory. 
@@ -1220,9 +1272,10 @@ export function configuredProviderRoute(ctx: Context, model: string): { readonly
     if (provider.toLowerCase() === 'freecodego') continue
     if (provider !== '' && model.toLowerCase().startsWith(`${provider.toLowerCase()}/`)) return { provider, model: model.slice(provider.length + 1) }
   }
-  const settings = ctx.get('settings') as { get?: (namespace: 'llm-pi-ai') => unknown } | undefined
-  if (typeof settings?.get !== 'function') return undefined
-  const providers = record(record(settings.get('llm-pi-ai')).providers)
+  // The Models entry's own settings, read as a peer: its `providers` map is where a
+  // user-owned route is defined, and `peer-settings.ts` states why the read goes through
+  // the settings service's live values rather than the profile document on disk.
+  const providers = record(record(peerSettings(ctx, MODELS_SETTINGS_ENTRY)).providers)
   for (const [provider, profile] of Object.entries(providers)) {
     const row = record(profile)
     const models = Array.isArray(row.models) ? row.models : []

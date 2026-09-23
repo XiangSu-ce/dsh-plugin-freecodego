@@ -13,7 +13,7 @@ kind: "package-reference"
 
 它挂载 `dsh-agent-engine`，发布 DeepSeek、Codex 与 Claude 描述符，并且只有当原生引擎已校验的清单、摘要、协议 ABI、worker 路径与状态目录同时提供时才予以接纳。它的路由器是唯一的 Harness `AgentFactory`，因此请求的原生引擎绝不会回退到 DeepSeek。
 
-`setDefaultEngine` 与 `setDefaultModel` 决定新会话以什么开始，通过 `ctx.settings` 持久化在 `freecodego-harness` 命名空间中，并让已有会话仍钉在其持久计划上。
+`setDefaultEngine` 与 `setDefaultModel` 决定新会话以什么开始，持久化在本插件自有组合条目（`freecodego-harness-plugin`）的设置文档中，并让已有会话仍钉在其持久计划上。
 
 本 README 只要点名一个决策，该决策就是契约。
 
@@ -70,9 +70,9 @@ kind: "package-reference"
 
 | 提供商 | 免费模型 | 目录 |
 |---|---|---|
-| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free` | 76 行中的 12 行；公开，无需登录 |
-| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`inclusionai/ling-3.0-flash-vl:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nex-agi/nex-n2.5-mini:free`、`nex-agi/nex-n2.5-pro:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free`、`z-ai/glm-5.2:free` | 385 行中的 21 行；公开，每个出口 IP 每小时 200 次 |
-| **Logfare** | 对话 `deepseek-v3.2`、`deepseek-v4-pro-0813`、`gemma-4-26b`、`gemma-4-31b-it`、`glm-5`、`glm-5.3`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`kimi-k2.6`、`kimi-k2.7-code`、`logfare/auto`、`moondream3.1`、`qwen-3.8-27b`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`；音频 `melotts`、`whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nova-3`、`phoenix-1.0` | 26 行；18 行需要训练数据授权，其余 8 行不需要 |
+| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 80 行中的 13 行；公开，无需登录 |
+| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`inclusionai/ling-3.0-flash-vl:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nex-agi/nex-n2.5-mini:free`、`nex-agi/nex-n2.5-pro:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free`、`z-ai/glm-5.2:free` | 394 行中的 21 行；公开，每个出口 IP 每小时 200 次 |
+| **Logfare** | 对话 `claude-opus-4.6`、`deepseek-v3.2`、`deepseek-v4-pro-0813`、`gemma-4-26b`、`glm-5`、`glm-5.3`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`kimi-k2.6`、`kimi-k2.7-code`、`kimi-k3`、`logfare/auto`、`moondream3.1`、`qwen-3.8-27b`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`；音频 `melotts`、`whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nova-3`、`phoenix-1.0` | 27 行；20 行需要训练数据授权，其余 7 行不需要 |
 | **Qoder** | `Qwen 3.8 Flash`（路由 `qmodel_38flash`） | 免费 flash 路由，另有每日签到活动 |
 | **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（82 行）中 | 调用需要 API key；核对于 2026-09-23 |
 | **SenseNova** | `deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k3`、`sensenova-6.8-flash-lite` —— 均为 1M 上下文 / 128K 输出 | 名单随 bundle 内置；需要 API key |
@@ -87,7 +87,7 @@ kind: "package-reference"
 
 TRAE、Cline、WorkBuddy 国际版、Agnes 不公布固定名单，因此它们的行在到达时计数，而不在此列名。
 
-Logfare 有 18 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
 
 <!-- generated:free-models:end -->
 
@@ -129,7 +129,7 @@ Engineering 团队让当前 root Agent 留在它选定的引擎上，同时为�
 
 议会任务公开明确的生命周期（`queued`、`running`、`awaiting_approval`、`implementing`、`verifying`，以及若干终态）。请求与状态迁移都作为会话事件持久化，因此被中断的活动任务会恢复为 `stale`，而不是被静默丢失。批准记录包含计划摘要、工作区指纹、策略摘要与过期时间；其中任何一项变化都按 fail-closed 处理，并要求重新评审。报告还包含结构化的 `info`／`warning`／`blocker` 结论，并可从设置面板导出。DeepSeek、Codex 与 Claude 的参与可以独立开关；在允许启用某个参与者之前，设置表面会报告 Codex／Claude 运行时是否已安装。批准之后，主 Agent 必须先调用 `engineering_team_mark_implemented`（或 `engineeringTeamImplementation` Remote）并附上有界摘要，`engineering_team_verify` 才会被接受。
 
-可选的 Engineering 增强总开关会挂载经审计的随包 engineering Skills、静态资产 Doctor 检查、有界的声明式脚本验证，以及由 Host 持有、被 DeepSeek、Claude 与 Codex 共享的工具。设置页只放那个总开关；细粒度控制位于动态的 Engineering 侧栏入口中。
+Engineering 增强总开关（默认开启，也是停用整套增强包的地方）会挂载经审计的随包 engineering Skills、静态资产 Doctor 检查、有界的声明式脚本验证，以及由 Host 持有、被 DeepSeek、Claude 与 Codex 共享的工具。设置页只放那个总开关；细粒度控制位于动态的 Engineering 侧栏入口中。
 
 Engineering Memory 是 `DSH_HOME/freecodego/engineering/memory` 下的本地 SQLite 状态。Agent 可以保存草稿，并使用只针对已评审内容的 `Search -> Timeline -> Get` 流程。只有面向用户的 Remote 可以批准、拒绝、导出、清除或删除记录。草稿绝不进入自动召回，记忆操作通过一个以工作区为后端的打开会话来限定作用域。
 
@@ -306,14 +306,14 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 <a id="plugin-conflict-protection"></a>
 ## 插件冲突保护
 
-`freecodego-harness` 设置命名空间默认启用插件冲突保护。`dsh` profile launcher 在 Loader 启动 profile 树之前安装该守卫，随后 FreeCodeGo 静态扫描每个后续条目的模块与本地 import，查找字面重复的 Tool 名称、命令名称、设置命名空间、HTTP 路由、模型 Provider id 与 UI Slot id。当它发现某个独占资源已被一个活动条目持有时，它保留较早的条目，在较晚的条目运行之前将其禁用，并为设置页保存一条修复记录。浏览器通知会点名两个条目与该重复资源。
+`freecodego-harness-plugin` 组合条目默认启用插件冲突保护：开关是该条目自己的设置，从 settings 服务读取。守卫在该条目激活时安装，并静态扫描每个条目的模块与其本地 import，查找字面重复的 Tool 名称、命令名称、设置命名空间、HTTP 路由、模型 Provider id 与 UI Slot id。时机是相对的：此后初始化的条目在启动前就被包装，而已在运行的条目会先被登记，因此较晚启动的条目仍然拿不到较早条目已持有的独占资源。不提供 settings 端口的程序化挂载（本组合中不存在这种挂载）什么都不会拦截：开启拦截的是开关，而没有传入设置文档的挂载从未要求过它。当它发现某个独占资源已被一个活动条目持有时，它保留较早的条目，在较晚的条目运行之前将其禁用，并为设置页保存一条修复记录。浏览器通知会点名两个条目与该重复资源。
 
 扫描器绝不执行第三方代码，并刻意忽略动态或计算出的注册。它防止的是可靠的重复注册，而不是仅仅提供相似面向用户功能的无关插件。
 
 <a id="release-updates"></a>
 ## 发布更新
 
-更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.1.6-alpha.2` 构建的 `freecodego-0.1.6-alpha.2.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
+更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.1.7-alpha.2` 构建的 `freecodego-0.1.7-alpha.2.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
 
 <a id="zcode-glm-53-flash-promotion"></a>
 ## Zcode GLM-5.3 Flash 推广
@@ -323,7 +323,7 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 <a id="mcp-and-skills"></a>
 ## MCP 与 Skills
 
-`freecodego-harness` 设置命名空间存储开关、第三方 MCP 服务器与额外的 Skill 根。两个开关默认关闭。被启用的 MCP 服务器由 Host 连接一次，并注册为 DeepSeek 引擎的 Harness 工具。Claude 通过其进程内 `freecodego-host` MCP 服务器收到已发现的 schema 并调用 Host 桥接，而 Codex 在其插件自有的 app-server 配置中收到同一套已启用服务器定义。
+`freecodego-harness-plugin` 条目的设置文档存储开关、第三方 MCP 服务器与额外的 Skill 根。两个开关默认开启：它们都是增量能力，只会挂载清单里确实存在的东西，默认关闭只是让能力等着有人去找那个开关。被启用的 MCP 服务器由 Host 连接一次，并注册为 DeepSeek 引擎的 Harness 工具。Claude 通过其进程内 `freecodego-host` MCP 服务器收到已发现的 schema 并调用 Host 桥接，而 Codex 在其插件自有的 app-server 配置中收到同一套已启用服务器定义。
 
 被启用的 Skill 根由 Harness 的文件系统 Skill provider 发现。一次 skills.sh 安装会原子地把由 Host 持有的社区目录注册为一个已启用的自定义根，因此导入的单层 `SKILL.md` bundle 会立即对 DeepSeek 以及下一个原生会话可见。Claude 通过 Host 桥接加载已启用的 Skills，Codex 通过 `skills/extraRoots/set` 收到它们。禁用一个能力会卸载它的受管 provider 并阻止未来的原生会话收到它；已有会话必须重启才能替换其原生 app-server 清单。
 
@@ -333,7 +333,7 @@ Skill 的安装是一条可核对的记录，而不是一次复制：来源按 `
 
 安装还可以选择落在哪里。投放矩阵是 `--agent` × `--scope`（`harness`/`agents` × `project`/`user`），按本 Host 所运行的那个文件夹解析，其中项目一层要求文件夹已授信：这道门在**路径算出来之前**先跑，因为一个未授信检出里的 `.agents/skills` 正是那个仓库能控制的目录。页面会把整张矩阵摊开显示，包括不可用那一行携带的原因，因此“未授信”不会看起来像“这个组合不存在”；用户选中的两个轴会传到 Host，由它在自己这一侧重新解析一次——两次读取之间，文件夹可能已经失去授信。每一种投放挂载各自独立的受管根 id，因为复用社区根的 id 会把页面读取自身列表的那个根卸下来；而移除会搜索每一个受管根，所以被投放出去的 Skill 仍能在当初添加它的那张卡片上移除。
 
-这个投放位置会被记住，而“记在哪里”是刻意选择的：选择写入 `freecodego-harness` 设置文档（`preferredSkillPlacement`，两个轴 —— 绝不存它解析出的根目录，因为那个路径由工作区、`$DSH_HOME` 与 home 三者共同决定，存档下来会比三者都活得久）。因此它能跨重启保留、与其他开关一起在设置文件里可读可改，并且由本 Host 的每一个客户端共享，而不是躺在某个浏览器的 localStorage 里。如果记住的那一行在当前文件夹不可用，它依然会被如实上报并原样发出去：安装会带着矩阵自己的原因被拒绝，而不是悄悄落到社区目录——一个会静默改道的偏好，比一个说清楚自己为什么无法被满足的偏好更糟。
+这个投放位置会被记住，而“记在哪里”是刻意选择的：选择写入本插件自有组合条目的设置文档（`preferredSkillPlacement`，两个轴 —— 绝不存它解析出的根目录，因为那个路径由工作区、`$DSH_HOME` 与 home 三者共同决定，存档下来会比三者都活得久）。因此它能跨重启保留、与其他开关一起在设置文件里可读可改，并且由本 Host 的每一个客户端共享，而不是躺在某个浏览器的 localStorage 里。如果记住的那一行在当前文件夹不可用，它依然会被如实上报并原样发出去：安装会带着矩阵自己的原因被拒绝，而不是悄悄落到社区目录——一个会静默改道的偏好，比一个说清楚自己为什么无法被满足的偏好更糟。
 
 <a id="optional-harness-capabilities"></a>
 ## 可选的本体能力
@@ -391,7 +391,50 @@ Codex 在每次提示词之前刷新这份清单，Claude 为每次查询重建�
 <a id="media-defaults"></a>
 ## 媒体默认值
 
-Host 为 DeepSeek、Codex 与 Claude 注册 `freecodego_generate_image`、`freecodego_generate_video` 与 `freecodego_generate_audio`。每次执行都从 `freecodego-harness.mediaDefaults` 读取实时的图像／视频／音频默认值；面向模型的 schema 刻意没有模型覆盖项。网关请求复用 Host vault 账号令牌与所选模型的路由键。Agnes 默认值复用既有的 Agnes Host 客户端。Base64 图像响应被接纳进 Harness 附件存储并作为 image 内容块返回；音频字节保存到活动工作区的 `.freecodego/generated-media` 目录下。
+Host 为 DeepSeek、Codex 与 Claude 注册 `freecodego_generate_image`、`freecodego_generate_video` 与 `freecodego_generate_audio`。每次执行都从本条目的 `mediaDefaults` 读取实时的图像／视频／音频默认值；面向模型的 schema 刻意没有模型覆盖项。网关请求复用 Host vault 账号令牌与所选模型的路由键。Agnes 默认值复用既有的 Agnes Host 客户端。Base64 图像响应被接纳进 Harness 附件存储并作为 image 内容块返回；音频字节保存到活动工作区的 `.freecodego/generated-media` 目录下。
+
+### 生图与视频开关
+
+`mediaGenerationEnabled`（默认开启）是「生成图片与视频」的总开关。它管辖 `freecodego_generate_image`、`freecodego_generate_video`，以及同一能力在旧名字下的 `agnes_generate_image` / `agnes_generate_video`。关掉它是把这些工具**注销**：名字整体离开模型的工具表，而不是等到调用时才报错——被关掉的东西正是「这几份 schema 每步都随请求重发」这笔开销。`freecodego_generate_audio` 与 `freecodego_transcribe_audio` 刻意不在其中：一个往活动工作区写文件，一个从活动工作区读文件，所以「别再给我画图、剪片」并不是要连它们一起失去。设置页把开关与它管辖的名字一起呈现（`mediaGenerationStatus` / `mediaGenerationSetEnabled`），并把「开关拥有什么」与「这个配置实际挂载了什么」分开报告：没有 Agnes 账号的配置不会被描述成少了它本来就不可能有的工具。
+
+### 支持哪些协议
+
+传输方式由 **provider** 决定，绝不由模型 id 里的关键词决定：id 里带 "image" 的网关模型仍然是网关的，把它送进别的 provider 的传输只会以一条指错原因的凭据错误失败。生图共六种形状：
+
+| Provider 家族 | 端点与请求体 |
+|---|---|
+| `openai`、`grok`、网关（`freecodego` / `logfare` / `agnes`），以及一切未识别的 provider | `POST /images/generations`；`response_format: b64_json`，但 `gpt-image*` 例外——它会拒掉这个字段 |
+| 同上，但带参考图 | `POST /images/edits`（`image`，其余进 `images[]`） |
+| `volcengine` / `ark` / `seedance` / `bytedance` / `doubao`（Seedream） | 仍是 `/images/generations`，源图放 `image: [...]` |
+| `google` / `gemini` | `POST /models/{model}:generateContent`，带 `responseModalities: ['TEXT','IMAGE']` |
+| id 里含 `imagen` 的 `google` / `gemini` | `POST /models/{model}:predict`；源图必须内联 base64，因为那条协议没有给 URL 留字段 |
+| `dashscope` / `qwen` / `aliyun` | `POST /api/v1/services/aigc/multimodal-generation/generation`，尺寸写作 `2048*2048` |
+
+响应按固定顺序识别五种厂商形状——Images API 的 `data[]`、Gemini 的 inline parts、Imagen 的 `predictions[]`、DashScope 的 `output.choices[].message.content[].image`、Responses API 的 `output[].result`——所以一个同时匹配两种形状的响应体不可能产出同一张图两次。只带回 URL 的结果会被下载进附件存储，因为用户看不见的图不算图；只有下载失败时才保留 URL。
+
+生视频共九条协议：
+
+| 协议 | 匹配的 provider | 创建 → 轮询 | 已知时长 |
+|---|---|---|---|
+| `kling` | `kling` / `kuaishou` / 可灵 | `/videos/text2video` · `image2video` · `multi-image2video` → 同路径加 `{id}` | 5 或 10 秒（以字符串拼写） |
+| `ark` | `volcengine` / `ark` / `seedance` / `bytedance` / `doubao` | `/contents/generations/tasks` → `/contents/generations/tasks/{id}` | 未声明 |
+| `dashscope` | `dashscope` / `aliyun` / `qwen` / `wanx` | `/api/v1/services/aigc/video-generation/video-synthesis`（必须带 `X-DashScope-Async: enable`）→ `/api/v1/tasks/{id}` | 未声明 |
+| `minimax` | `minimax` / `hailuo` | `/v2/video_generation` → `/v2/query/video_generation/{id}` | 未声明 |
+| `vidu` | `vidu` | `/ent/v2/text2video` · `img2video` · `start-end2video` · `reference2video` → `/ent/v2/tasks/{id}/creations` | 未声明 |
+| `gemini` | `google` / `gemini` | `/models/{model}:predictLongRunning` → operation 的 `name` | 未声明 |
+| `xai` | `xai` / `grok` | `/videos/generations` → `/videos`；带源视频时是 `/videos/edits` · `/videos/extensions` | 2 到 10 秒 |
+| `openai` | `openai` | `/videos` → `/videos/{id}` | 未声明 |
+| `gateway` | 网关，以及一切未识别的 provider | `/videos/generations` → `/videos/generations/{id}` | 未声明 |
+
+Kling 用由 `KLING_ACCESS_KEY` / `KLING_SECRET_KEY` 现签的 HS256 令牌鉴权（配了单个 bearer key 时回退到它，这正是挂在它前面的 OpenAI 形状转卖商所期望的），Vidu 用 `Authorization: Token` 而非 `Bearer`。
+
+某条路线渲染不了的时长是**这条路线的能力边界，而不是请求有错**：消息会点名那条路线接受的时长，由回退阶梯去试下一条，而不是把数值夹进窗口、返回一个比你要的更短的视频。「未声明」表示插件不编码该 provider 的窗口、把调用方的值原样透传——发明一个窗口会把 provider 本来能服务的请求变成一次拒绝。
+
+### 支持哪些模型
+
+名单是**活的，不是钉死的**：候选路线每次请求实时汇总四路来源——Harness 模型目录（你在「模型」页配置的那些）、托管目录、Logfare 目录、Agnes 目录。路线的分类按 id 推断（`veo` / `seedance` / `kling` / `sora` / `wan` → 视频；`gpt-image` / `dall-e` / `imagen` / `flux` / `sdxl` / `stable-diffusion` / `midjourney` / `ideogram` / `recraft` / `qwen-image` → 生图），也可以在设置页的模型分类里手动覆盖。已收录的条目包括网关的 `gpt-image-2`（`images/generations` + `images/edits`）与 Logfare 的 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`。
+
+每次调用都带逐路线熔断：同一路线连续两次失败就先让位给健康路线五分钟；而因自身声明而退让的路线（渲染不了的时长）不计入失败，因为它一个字节都没发出去。只有路线自己的问题——余额耗尽、端点被关、被限流、上游故障——才落到下一条路线。密钥错或 prompt 被拒则直接失败，因为换哪条路线都是同一个答案，代价却是再来一次要付费的视频任务。
 
 <a id="model-picker-and-provider-accounts"></a>
 ## 模型选择器与供应商账号

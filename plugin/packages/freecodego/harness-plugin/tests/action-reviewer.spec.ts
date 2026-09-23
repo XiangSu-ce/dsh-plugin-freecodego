@@ -152,14 +152,19 @@ describe('renderTranscriptEntries', () => {
           content: [
             { type: 'reasoning', text: 'thinking' },
             { type: 'tool-call', name: 'read', arguments: '{"path":"a"}' },
-            { type: 'tool-result', content: [{ type: 'text', text: 'body' }, { type: 'image' }] },
             { type: 'image' },
             {},
           ],
         },
       }),
+      // A result is a message of its own now, and its blocks are that message's
+      // content — text beside a part the reviewer cannot read included. Both
+      // halves have to survive: the text is what was done, the marker says
+      // something was there that this renderer cannot quote.
+      event('tool/result', { message: { content: [{ type: 'text', text: 'body' }, { type: 'image' }] } }),
     ])
-    expect(entries[0]!.text).toBe('ASSISTANT:\nthinking\nread({"path":"a"})\nbody\n[image]\n[image]\n')
+    expect(entries[0]!.text).toBe('ASSISTANT:\nthinking\nread({"path":"a"})\n[image]\n')
+    expect(entries[1]!.text).toBe('TOOL RESULT:\nbody\n[image]')
   })
 
   it('tolerates a message payload that is not a message at all', () => {
@@ -176,15 +181,20 @@ describe('renderTranscriptEntries', () => {
           content: [
             { type: 'text' },
             { type: 'tool-call' },
-            { type: 'tool-result' },
-            { type: 'tool-result', content: [{}] },
-            { type: 'tool-result', content: [{ type: 'text' }] },
+            { type: 'image' },
             {},
           ],
         },
       }),
+      // The same question for a result: a tool-role message whose content is
+      // missing, and one whose single block carries no text, both render to
+      // nothing at all. An entry is dropped rather than emitted with an empty
+      // body, which is the same rule the other event kinds follow — a labelled
+      // silence would read to the reviewer as a fact.
+      event('tool/result', {}),
+      event('tool/result', { message: { content: [{ type: 'text' }] } }),
     ])
-    expect(entries).toEqual([{ index: 0, text: 'ASSISTANT:\n\n()\n\n[unknown]\n\n' }])
+    expect(entries).toEqual([{ index: 0, text: 'ASSISTANT:\n\n()\n[image]\n' }])
   })
 
   it('caps one entry so a single huge result cannot dominate the review', () => {

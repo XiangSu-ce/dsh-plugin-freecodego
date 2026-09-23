@@ -44,13 +44,14 @@ describe('the inspect tool reports the directory the session is in', () => {
   let home: string
   let previousHome: string | undefined
   let registered: Map<string, RecordedTool>
+  let ctx: Context
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'freecodego-inspect-ws-'))
     previousHome = process.env.DSH_HOME
     process.env.DSH_HOME = home
     registered = new Map<string, RecordedTool>()
-    const ctx = new Context()
+    ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
     // Captures the definitions the plugin registers, so the test can call the tool
     // the way a session would rather than reaching into private state.
@@ -66,6 +67,12 @@ describe('the inspect tool reports the directory the session is in', () => {
   })
 
   afterEach(async () => {
+    // Close the plugin before the home goes: the engineering pack is on by
+    // default and opens its SQLite stores under the active home, and Windows
+    // will not unlink a database another handle holds open — the removal's
+    // retries then never settle. The pack has nothing to do with what this spec
+    // asserts; it is only why the order below is load-bearing.
+    await ctx.fiber.dispose()
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
     await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })

@@ -330,7 +330,7 @@ export class FreeCodeGoAdvisorRuntime {
       const evidence = new AdvisorEvidenceCache((call, signal) => executeReviewTool(this.ctx, agent, call, signal))
       const findings = await Promise.all((Object.entries(COUNCIL_ROLES) as readonly [keyof typeof COUNCIL_ROLES, string][]).map(async ([role, instruction]) => {
         const messages: Message[] = [createUserMessage({
-          source: { kind: 'plugin', plugin: 'freecodego-advisor-council' },
+          source: { kind: 'freecodego-advisor-council' },
           content: [{ type: 'text', text: `${reviewPrompt(delta, watchdog.instructions)}\n\nCouncil perspective: ${role}. ${instruction}` }],
         })]
         const advice = await this.runReviewLoop(agent, route, messages, controller.signal, instruction, evidence)
@@ -437,7 +437,7 @@ export class FreeCodeGoAdvisorRuntime {
     const watchdog = await discoverWatchdog(agent.session.header.cwd)
     this.watchdogFilesBySession.set(String(agent.id), watchdog.files)
     const messages: Message[] = [createUserMessage({
-      source: { kind: 'plugin', plugin: 'freecodego-advisor' },
+      source: { kind: 'freecodego-advisor' },
       content: [{ type: 'text', text: reviewPrompt(delta, watchdog.instructions) }],
     })]
     try {
@@ -582,7 +582,7 @@ export class FreeCodeGoAdvisorRuntime {
     })
     const content = `<advisory severity="${advice.severity}" guidance="weigh, do not blindly obey">\n${escapeXml(advice.note)}\n</advisory>`
     const message = createUserMessage({
-      source: { kind: 'plugin', plugin: 'freecodego-advisor' },
+      source: { kind: 'freecodego-advisor' },
       content: [{ type: 'text', text: content }],
     })
     // A session closed mid-review cannot record the note; skip delivery
@@ -668,7 +668,9 @@ function messageText(message: Message): string {
   return message.content.map((block) => {
     if (block.type === 'text' || block.type === 'reasoning') return block.text
     if (block.type === 'tool-call') return `${block.name}(${block.arguments})`
-    if (block.type === 'tool-result') return block.content.map(item => item.type === 'text' ? item.text : `[${item.type}]`).join('\n')
+    // Tool results stopped being content blocks: one result is now a tool-role
+    // message whose content is the result's own blocks, so the text arrives here
+    // through the `text` branch like any other model-facing text.
     return `[${block.type}]`
   }).join('\n')
 }

@@ -16,8 +16,9 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: |
-      You are an Augment-style coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+    suffix: Your working directory is {{cwd}}.
+    prefix: |-
+      You are an Augment-style coding agent powered by the {{model}} model.
 
       # Output
 

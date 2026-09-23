@@ -1,4 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -23,10 +24,11 @@ import { AGNES_VIDEO_SECONDS } from '../src/agnes.ts'
 import { COUNCIL_ENGINES, VERIFICATION_STAGES } from '../src/engineering-remote-utils.ts'
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
 import { AUDIO_FORMATS } from '../src/media-generation.ts'
+import { FreeCodeGoPolicy } from '../src/policy.ts'
 import type { SessionDeletionPersistence, SessionEventsPersistence } from '../src/session-storage-utils.ts'
 import { runDsh } from '../src/plugin-update.ts'
 import { modelDshPluginCli } from './support/dsh-plugin-cli.ts'
-import { idleAgent, liveSession, provideHostService, provideHostServiceAs, registrationHandle, runContext, settingsValue, type AgentEnginesFace, type EngineRouterFace, type WorkspaceRegistryFace } from './support/host-services.ts'
+import { idleAgent, liveSession, pluginConfig, provideHostService, provideHostServiceAs, registrationHandle, runContext, settingsDescriptor, settingsSink, type AgentEnginesFace, type EngineRouterFace, type WorkspaceRegistryFace } from './support/host-services.ts'
 
 function AgentEngineRegistry(ctx: Context): void {
   provideHostServiceAs<AgentEnginesFace>(ctx, 'agentEngines', { setAvailability: () => undefined })
@@ -71,6 +73,20 @@ interface SchemaProperty {
 
 /** See {@link RecordedDefinition}: the test-facing view of one recorded tool. */
 const toolView = (definition: ToolDefinition | undefined): RecordedDefinition => definition as unknown as RecordedDefinition
+
+describe('the Config the settings port resolves', () => {
+  it('answers the conflict switch with its schema default before anyone writes it', () => {
+    // This is the fact that makes the settings port the *only* reader of the switch, and it is
+    // pinned rather than asserted in prose because a guard that also read the value off disk
+    // used to exist on the belief that no document was available yet. None is needed:
+    // schemastery resolves a `.volatile()` field by wrapping the value it resolved for absent
+    // input, which is `meta.default`, so a Config parsed from an empty row config already
+    // contains a live reference answering `true`. `FreeCodeGoPolicy.get()` reports every such
+    // reference, so the port answers with nothing written — and a shipped mount always has one.
+    const config = z.resolve({}, FreeCodeGoHarnessPlugin.Config, {})[0]
+    expect(new FreeCodeGoPolicy(config).get()?.pluginConflictProtectionEnabled).toBe(true)
+  })
+})
 
 describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('stores the VyceAI key in Host credentials and lists its metered roster behind the key', async () => {
@@ -174,11 +190,9 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
     let stored: Record<string, unknown> = { defaultModel: 'vyce/deepseek-v4.1', defaultEngine: 'claude' }
-    provideHostService(ctx, 'settings', {
-      register: () => ({ get: () => settingsValue(stored), watch: () => () => undefined, update: async (patch: Record<string, unknown>) => { stored = { ...stored, ...patch } }, replace: async () => undefined }),
-    })
+    const settings = settingsSink(ctx, stored)
     provideHostService(ctx, 'credentials', { resolve: async () => undefined, set: async () => undefined, unset: async () => undefined })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
     try {
       expect(plugin.defaultAgentOptions()).toMatchObject({ engine: 'claude', provider: 'vyce', model: 'vyce/deepseek-v4.1' })
     } finally {
@@ -194,16 +208,8 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     // left the block registered with nothing to remove it.
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    let stored: Record<string, unknown> = { headroomVerbosityLevel: 1 }
-    const settingsScope = {
-      register: () => ({
-        get: () => settingsValue(stored),
-        watch: () => () => undefined,
-        update: async (patch: Record<string, unknown>) => { stored = { ...stored, ...patch } },
-        replace: async () => undefined,
-      }),
-    }
-    provideHostService(ctx, 'settings', settingsScope)
+    const stored: Record<string, unknown> = { headroomVerbosityLevel: 1 }
+    const settings = settingsSink(ctx, stored)
     provideHostService(ctx, 'credentials', { resolve: async () => undefined, set: async () => undefined, unset: async () => undefined })
     // Stands in for the real registry: one section per name, and a second
     // registration of the same name throws.
@@ -218,7 +224,7 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
         return () => sections.delete(section.name)
       },
     })
-    new FreeCodeGoHarnessPlugin(ctx, {})
+    new FreeCodeGoHarnessPlugin(ctx, settings.config)
     try {
       const section = sections.get('freecodego: headroom output steering')
       expect(section).toBeDefined()
@@ -231,9 +237,9 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
       }
       const level1 = textAt()
       expect(level1).not.toBe('')
-      stored = { ...stored, headroomVerbosityLevel: 3 }
+      stored.headroomVerbosityLevel = 3
       expect(textAt()).not.toBe(level1)
-      stored = { ...stored, headroomVerbosityLevel: 0 }
+      stored.headroomVerbosityLevel = 0
       expect(textAt()).toBe('')
       // One registration for every level: re-registering per level would throw here.
       expect(sections.size).toBe(1)
@@ -249,11 +255,9 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
     let stored: Record<string, unknown> = { defaultModel: 'vyce/deepseek-v4.1', defaultEngine: 'claude' }
-    provideHostService(ctx, 'settings', {
-      register: () => ({ get: () => settingsValue(stored), watch: () => () => undefined, update: async (patch: Record<string, unknown>) => { stored = { ...stored, ...patch } }, replace: async () => undefined }),
-    })
+    const settings = settingsSink(ctx, stored)
     provideHostService(ctx, 'credentials', { resolve: async () => undefined, set: async () => undefined, unset: async () => undefined })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
     try {
       expect(plugin.defaultAgentOptions()).toMatchObject({ engine: 'claude', provider: 'vyce', model: 'vyce/deepseek-v4.1' })
     } finally {
@@ -265,11 +269,9 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
     let stored: Record<string, unknown> = { defaultModel: 'logfare/claude-opus-4-6', defaultEngine: 'claude' }
-    provideHostService(ctx, 'settings', {
-      register: () => ({ get: () => settingsValue(stored), watch: () => () => undefined, update: async (patch: Record<string, unknown>) => { stored = { ...stored, ...patch } }, replace: async () => undefined }),
-    })
+    const settings = settingsSink(ctx, stored)
     provideHostService(ctx, 'credentials', { resolve: async () => undefined, set: async () => undefined, unset: async () => undefined })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
     try {
       expect(plugin.defaultAgentOptions()).toEqual({ engine: 'claude', provider: 'logfare', model: 'claude-opus-4-6' })
       stored.defaultModel = 'logfare/gpt-5.6-sol'
@@ -282,19 +284,22 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('keeps a user-defined llm-pi-ai route out of the FreeCodeGo gateway', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    const settings = {
+    const settings: Record<string, unknown> = {
       defaultModel: 'custom-model',
       defaultEngine: 'deepseek',
       providers: { 'my-openai': { baseURL: 'https://provider.example/v1', models: [{ id: 'custom-model' }] } },
     }
+    // This plugin's own document rides in the Config it is constructed with; a peer's is
+    // only reachable as a descriptor, so the fake answers `describe` alone and the entry
+    // id it answers under is the peer's own.
     provideHostService(ctx, 'settings', {
-      get: (namespace: string) => settingsValue(namespace === 'llm-pi-ai' ? { providers: settings.providers } : settings),
-      register: (namespace: string) => namespace === 'llm-pi-ai'
-        ? { get: () => settingsValue({ providers: settings.providers }), watch: () => () => undefined, update: async () => undefined, replace: async () => undefined }
-        : { get: () => settingsValue(settings), watch: () => () => undefined, update: async () => undefined, replace: async () => undefined },
+      // The plugin declares its own page policy in an injected effect, and a fake without
+      // `configure` there rejects inside that fiber instead of failing a test.
+      configure: () => () => undefined,
+      describe: () => [settingsDescriptor('llm-pi-ai', { providers: settings.providers })],
     })
     provideHostService(ctx, 'credentials', { resolve: async () => undefined, set: async () => undefined, unset: async () => undefined })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, pluginConfig(settings))
     try {
       expect(plugin.defaultAgentOptions()).toEqual({ engine: 'deepseek', provider: 'my-openai', model: 'custom-model' })
       const routed = plugin.nativeAgentOptionsAlpha(undefined, { provider: 'freecodego', model: 'custom-model', freeCodeGoEngine: 'deepseek' } as never)
@@ -369,16 +374,12 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('enables the Advisor closed loop by default and persists only namespaced Advisor settings', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    let stored: Record<string, unknown> = { defaultModel: '' }
-    provideHostService(ctx, 'settings', {
-      register: () => ({
-        get: () => settingsValue(stored),
-        watch: () => () => undefined,
-        update: async (patch: Record<string, unknown>) => { stored = { ...stored, ...patch } },
-        replace: async () => undefined,
-      }),
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const stored: Record<string, unknown> = { defaultModel: '' }
+    const settings = settingsSink(ctx, stored)
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
+    // What is asserted is what landed in the record, so the plugin needs the profile
+    // entry a Loader would have assigned to the fiber it was created in.
+    settings.attach(plugin)
     try {
       expect(plugin.advisorStatus()).toMatchObject({
         enabled: true,
@@ -514,17 +515,15 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     process.env.DSH_HOME = await mkdtemp(join(tmpdir(), 'freecodego-media-default-'))
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    let stored: Record<string, unknown> = { defaultModel: '', mediaDefaults: { image: 'gpt-image-2', video: 'video-default', audio: 'audio-default' } }
-    provideHostService(ctx, 'settings', {
-      register: () => ({ get: () => settingsValue(stored), watch: () => () => undefined, update: async (patch: Record<string, unknown>) => { stored = { ...stored, ...patch } }, replace: async () => undefined }),
-    })
+    const stored: Record<string, unknown> = { defaultModel: '', mediaDefaults: { image: 'gpt-image-2', video: 'video-default', audio: 'audio-default' } }
+    const settings = settingsSink(ctx, stored, { autoSubagentModelSelection: false })
     const definitions: ToolDefinition[] = []
     provideHostService(ctx, 'tools', {
       register: (definition) => { definitions.push(definition); return () => undefined },
       guard: () => () => undefined,
       schemas: () => [],
     })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, { autoSubagentModelSelection: false }) as unknown as {
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config) as unknown as {
       gatewayMediaJson: (model: string, endpoint: string, body: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>
     }
     const request = vi.fn(async () => ({ data: [{ url: 'https://cdn.example/generated.png' }] }))
@@ -552,12 +551,11 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     process.env.DSH_HOME = await mkdtemp(join(tmpdir(), 'freecodego-media-route-'))
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    provideHostService(ctx, 'settings', {
-      register: () => ({ get: () => settingsValue({ defaultModel: '', mediaDefaults: { image: 'gpt-image-2', video: '', audio: '' } }), watch: () => () => undefined, update: async () => undefined, replace: async () => undefined }),
-    })
+    const stored: Record<string, unknown> = { defaultModel: '', mediaDefaults: { image: 'gpt-image-2', video: '', audio: '' } }
+    const settings = settingsSink(ctx, stored, { autoSubagentModelSelection: false })
     const definitions: ToolDefinition[] = []
     provideHostService(ctx, 'tools', { register: (definition) => { definitions.push(definition); return () => undefined }, guard: () => () => undefined, schemas: () => [] })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, { autoSubagentModelSelection: false }) as unknown as {
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config) as unknown as {
       gatewayMediaJson: (model: string, endpoint: string, body: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>
       requireAgnes: () => unknown
     }
@@ -999,10 +997,16 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
       const result = await plugin.communityInstalled()
       expect(result.activation['@example/community']).toEqual({ state: 'live' })
     } finally {
+      // The teardown order decides whether this cleanup survives. The engineering
+      // pack is on by default and opens its SQLite stores under the active home,
+      // and Windows will not unlink a database another handle holds open — the
+      // removal's retries then never settle. Closing the plugin releases them, and
+      // only then can the home go. (The pack is unrelated to what this test
+      // asserts; it is only the reason the order is load-bearing.)
+      await ctx.fiber.dispose()
       if (previousHome === undefined) delete process.env.DSH_HOME
       else process.env.DSH_HOME = previousHome
       await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-      await ctx.fiber.dispose()
     }
   })
 
@@ -1045,10 +1049,16 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
       const ledger = JSON.parse(await readFile(join(profile, '.dsh-market', 'freecodego-community-installations.json'), 'utf8')) as { entries: Record<string, readonly string[]> }
       expect(ledger.entries[sourceUrl]).toBeUndefined()
     } finally {
+      // The teardown order decides whether this cleanup survives. The engineering
+      // pack is on by default and opens its SQLite stores under the active home,
+      // and Windows will not unlink a database another handle holds open — the
+      // removal's retries then never settle. Closing the plugin releases them, and
+      // only then can the home go. (The pack is unrelated to what this test
+      // asserts; it is only the reason the order is load-bearing.)
+      await ctx.fiber.dispose()
       if (previousHome === undefined) delete process.env.DSH_HOME
       else process.env.DSH_HOME = previousHome
       await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-      await ctx.fiber.dispose()
     }
   })
 
@@ -1336,8 +1346,13 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     }) as typeof globalThis.fetch
     const ctx = new Context()
     try {
+      // Through the registry rather than by hand: `AgentEngineRegistry` provides these two
+      // services already, and awaiting a root plugin is what joins the invariant service this
+      // file's specs run under. Disposing a root context before that join settles leaves the
+      // invariant setup providing onto a dead fiber, which surfaces as an unhandled rejection
+      // rather than as a failure of this test.
+      await ctx.plugin(AgentEngineRegistry)
       provideHostService(ctx, 'credentials', {})
-      provideHostService(ctx, 'agents', { list: () => [], get: () => undefined })
       const plugin = new FreeCodeGoHarnessPlugin(ctx, {
         gateway: { baseUrl: 'https://freecodego.com' },
       }) as unknown as { gatewayBaseUrl: string; account: unknown; api: { getQuota: (request: { accessToken: string }) => Promise<unknown> } }
@@ -1659,15 +1674,8 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('ignores stale engine settings and keeps the FreeCodeGo provider', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    provideHostService(ctx, 'settings', {
-      register: () => ({
-        get: () => settingsValue({ defaultModel: '' }),
-        watch: () => () => undefined,
-        update: async () => undefined,
-        replace: async () => undefined,
-      }),
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const settings = settingsSink(ctx, { defaultModel: '' })
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
     expect(plugin.catalog().defaultEngine).toBe('freecodego')
     await ctx.fiber.dispose()
   })
@@ -1675,18 +1683,9 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('exposes an explicit native engine selector', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    let stored = { defaultModel: '' }
-    provideHostService(ctx, 'settings', {
-      register: () => ({
-        get: () => settingsValue(stored),
-        watch: () => () => undefined,
-        update: async (patch: Partial<typeof stored>) => { stored = { ...stored, ...patch } },
-        replace: async () => undefined,
-      }),
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {
-      defaultModel: '',
-    })
+    const stored = { defaultModel: '' }
+    const settings = settingsSink(ctx, stored)
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
     expect((plugin as unknown as { setDefaultEngine?: unknown }).setDefaultEngine).toBeTypeOf('function')
     expect(plugin.catalog().defaultEngine).toBe('freecodego')
     await ctx.fiber.dispose()
@@ -1695,16 +1694,10 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('persists a model default without changing the selected engine', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    let stored: { defaultModel: string } = { defaultModel: '' }
-    provideHostService(ctx, 'settings', {
-      register: () => ({
-        get: () => settingsValue(stored),
-        watch: () => () => undefined,
-        update: async (patch: Partial<typeof stored>) => { stored = { ...stored, ...patch } },
-        replace: async () => undefined,
-      }),
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const stored: { defaultModel: string } = { defaultModel: '' }
+    const settings = settingsSink(ctx, stored)
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
+    settings.attach(plugin)
     await expect(plugin.setDefaultModel('deepseek-chat')).resolves.toEqual({ model: 'deepseek-chat' })
     expect(stored.defaultModel).toBe('deepseek-chat')
     expect(plugin.defaultAgentOptions()).toEqual({ engine: 'deepseek', provider: 'freecodego', model: 'deepseek-chat' })
@@ -1714,15 +1707,8 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('migrates a legacy OpenCode default out of the FreeCodeGo provider', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    provideHostService(ctx, 'settings', {
-      register: () => ({
-        get: () => settingsValue({ defaultModel: 'hy3' }),
-        watch: () => () => undefined,
-        update: async () => undefined,
-        replace: async () => undefined,
-      }),
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const settings = settingsSink(ctx, { defaultModel: 'hy3' })
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
     expect(plugin.defaultAgentOptions()).toEqual({ engine: 'deepseek', provider: 'opencode', model: 'hy3' })
     await ctx.fiber.dispose()
   })
@@ -1730,11 +1716,10 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('routes Agnes default models through the isolated Agnes provider', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    let stored: { defaultModel: string } = { defaultModel: '' }
-    provideHostService(ctx, 'settings', {
-      register: () => ({ get: () => settingsValue(stored), watch: () => () => undefined, update: async (patch: Partial<typeof stored>) => { stored = { ...stored, ...patch } }, replace: async () => undefined }),
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const stored: { defaultModel: string } = { defaultModel: '' }
+    const settings = settingsSink(ctx, stored)
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
+    settings.attach(plugin)
     await expect(plugin.setDefaultModel('agnes-3.0-flash')).resolves.toEqual({ model: 'agnes-3.0-flash' })
     expect(plugin.defaultAgentOptions()).toEqual({ engine: 'deepseek', provider: 'agnes', model: 'agnes-3.0-flash' })
     await ctx.fiber.dispose()
@@ -1743,11 +1728,10 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
   it('keeps a selected native engine separate from an Agnes provider route', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    let stored: { defaultModel: string; defaultEngine: string } = { defaultModel: '', defaultEngine: 'claude' }
-    provideHostService(ctx, 'settings', {
-      register: () => ({ get: () => settingsValue(stored), watch: () => () => undefined, update: async (patch: Partial<typeof stored>) => { stored = { ...stored, ...patch } }, replace: async () => undefined }),
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+    const stored: { defaultModel: string; defaultEngine: string } = { defaultModel: '', defaultEngine: 'claude' }
+    const settings = settingsSink(ctx, stored)
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
+    settings.attach(plugin)
     await expect(plugin.setDefaultModel('agnes-3.0-flash')).resolves.toEqual({ model: 'agnes-3.0-flash' })
     expect(plugin.defaultAgentOptions()).toEqual({ engine: 'claude', provider: 'agnes', model: 'agnes-3.0-flash' })
     await ctx.fiber.dispose()

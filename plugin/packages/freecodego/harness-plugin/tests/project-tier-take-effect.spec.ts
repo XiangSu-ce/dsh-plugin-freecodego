@@ -35,7 +35,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { CompiledCommandPolicy } from '../src/command-policy.ts'
 import { collectHookHandlers, selectHookHandlers, type HookDocument } from '../src/hooks/surface.ts'
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
-import { provideHostService, provideHostServiceAs, registrationHandle, sessionAt, settingsValue, type AgentEnginesFace, type CommandsFace } from './support/host-services.ts'
+import { pluginConfig, provideHostService, provideHostServiceAs, registrationHandle, sessionAt, type AgentEnginesFace, type CommandsFace } from './support/host-services.ts'
 import { PROJECT_CONFIG_RELATIVE_PATH } from '../src/project-config.ts'
 import { projectCommandPolicyDenial } from '../src/tool-guards.ts'
 import { FOLDER_TRUST_ENV } from '../src/trust.ts'
@@ -83,7 +83,7 @@ async function tierHarness(options: { readonly folderTrustEnabled?: boolean } = 
   process.env.DSH_HOME = home
   delete process.env[FOLDER_TRUST_ENV]
   execFileSync('git', ['init', '--quiet', workspace], { stdio: 'ignore' })
-  const settings = {
+  const settings: Record<string, unknown> = {
     engineeringEnabled: false,
     engineeringMemoryEnabled: false,
     advisorProvider: 'opencode',
@@ -97,7 +97,6 @@ async function tierHarness(options: { readonly folderTrustEnabled?: boolean } = 
     provideHostService(scope, 'agents', { list: () => [], get: () => undefined })
     provideHostServiceAs<AgentEnginesFace>(scope, 'agentEngines', { setAvailability: () => undefined })
     provideHostService(scope, 'sessions', { get: () => sessionAt(CWD), list: () => [] })
-    provideHostService(scope, 'settings', { register: () => ({ get: () => settingsValue(settings), watch: () => () => undefined, update: async () => undefined, replace: async () => undefined }) })
     provideHostService(scope, 'llm', {
       registerAdapter: () => registrationHandle(),
       stream(_generation: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -108,7 +107,7 @@ async function tierHarness(options: { readonly folderTrustEnabled?: boolean } = 
     provideHostServiceAs<CommandsFace>(scope, 'commands', { register: () => () => undefined })
     provideHostService(scope, 'systemPrompt', { section: () => () => undefined })
   })
-  const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+  const plugin = new FreeCodeGoHarnessPlugin(ctx, pluginConfig(settings))
   const internals = plugin as unknown as PluginInternals
   return {
     plugin,

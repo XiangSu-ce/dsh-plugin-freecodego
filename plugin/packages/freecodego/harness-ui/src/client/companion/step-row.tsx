@@ -4,20 +4,25 @@
  * Inside a turn, upstream animates every row that is still working with one
  * *sweep*: a translucent band glides across the row from off-left to off-right,
  * washing its glyphs toward the background as it passes. Measured on the synced
- * client, that single idiom is spelled five times — `dsh-reasoning-row-sweep`
- * (`ReasoningRow`), `dsh-command-row-sweep` (`GenericCommandCard`),
- * `dsh-tool-row-sweep` (`ui-tool`'s `ToolRow`), its own class on `ui-skill`'s row,
- * and `dsh-bash-row-sweep` on the bash row's own box — and it is always the *same
- * shape*: an animated `::after` on the element that carries the row's line, either
- * the running element itself or a row element inside it.
+ * client, that single idiom is spelled twice — `dsh-reasoning-row-sweep`
+ * (`ReasoningRow`) and its own class on `ui-skill`'s row — and it is always the *same
+ * shape*: an animated `::after` painted on a row element *inside* the running
+ * element.
  *
- * So this seat does not enumerate those five spellings; it **finds the band**, by
- * asking the one question they all answer the same way: *which element inside this
- * running row paints an animated `::after`?* That is `findBandHost`, and the
- * answer is also where the character goes, because the element that paints the row
- * is the row. A new sweep upstream — a sixth spelling, a renamed keyframe, a
- * different row component — is covered on the same pass, and a band that moves from
- * a pseudo-element to a real element stops being found, which the stylesheet gate in
+ * Five spellings did when this seat was measured: the revision that introduced the
+ * turn-process row dropped the other three (`GenericCommandCard`, `ui-tool`'s
+ * `ToolRow`, the bash row's own box) and moved the two that stayed one level in, from
+ * the running element itself onto the `.row` inside it. Those three rows now keep the
+ * shell's own look, which is the correct outcome here — there is no band left to
+ * replace, so the character does not stand where an animation no longer passes.
+ *
+ * So this seat does not enumerate the spellings; it **finds the band**, by asking the
+ * one question they all answer the same way: *which element inside this running row
+ * paints an animated `::after`?* That is `findBandHost`, and the answer is also where
+ * the character goes, because the element that paints the row is the row. Another
+ * sweep upstream — a new spelling, a renamed keyframe, a different row component — is
+ * covered on the same pass, and a band that moves from a pseudo-element to a real
+ * element stops being found, which the stylesheet gate in
  * `tests/companion-step-row.client.spec.tsx` fails on rather than silently keeping
  * the sweep.
  *
@@ -187,6 +192,7 @@ export function installStepRows(
   const probe = options.bandProbe ?? paintsBand
   const sources: StoreFaceSources = {
     sessions: ctx.sessions.list,
+    jobs: ctx.jobs.state,
     statuses: ctx.uiSession.sessionStatus,
     activity,
   }

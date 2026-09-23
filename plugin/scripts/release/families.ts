@@ -535,10 +535,19 @@ class FreeCodeGoFamily extends ReleaseFamily {
 /**
  * Every package path a manifest directs a loader to, in payload-relative form.
  *
- * `exports` and the `dsh.bundle.patch`/`dsh.bootstrap.module` fields name files a
- * host loads. Every other field in `dsh` names something else: `client.inject`
- * names packages and `bootstrap.export` names a symbol, and reading either as a
- * path would report a file that was never supposed to exist.
+ * `exports` and the `dsh.bundle.patch` field name files a host loads. Every other
+ * field in `dsh` names something else: `client.inject` names packages and
+ * `client.platform` names a platform, and reading either as a path would report a
+ * file that was never supposed to exist. There used to be a third path-bearing
+ * field, `dsh.bootstrap.module`, collected here; it is gone because the Harness
+ * declares no such field and no reader resolved it.
+ *
+ *
+ * Arrays are descended into rather than skipped, because `dsh.bundle.patch` is
+ * "a file path or a list of file paths" (`bundlePatchFiles`). Skipping the list
+ * form silently exempted every file in it: this gate reported a complete payload
+ * for a bundle whose preset layers were never packed, which is the one load-time
+ * failure it exists to catch.
  * @param manifest - parsed package manifest.
  * @returns Sorted payload-relative paths the manifest resolves to.
  */
@@ -550,7 +559,7 @@ function declaredPayloadPaths(manifest: Readonly<Record<string, unknown>>): stri
       if (path !== '') paths.add(path)
       return
     }
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return
+    if (value === null || typeof value !== 'object') return
     for (const nested of Object.values(value)) collect(nested)
   }
   /** One named field of an object-valued manifest field, or undefined. */
@@ -561,7 +570,6 @@ function declaredPayloadPaths(manifest: Readonly<Record<string, unknown>>): stri
   collect(manifest.main)
   collect(manifest.exports)
   collect(field(field(manifest.dsh, 'bundle'), 'patch'))
-  collect(field(field(manifest.dsh, 'bootstrap'), 'module'))
   return [...paths].sort()
 }
 

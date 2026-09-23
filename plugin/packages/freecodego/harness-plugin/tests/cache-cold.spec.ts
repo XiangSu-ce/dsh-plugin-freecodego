@@ -167,7 +167,9 @@ describe('per-conversation clearing state', () => {
 
 describe('the stable view', () => {
   const call = (id: string, name: string): MessageLike => ({ role: 'assistant', content: [{ type: 'tool-call', id, name }] })
-  const result = (callId: string, text: string): MessageLike => ({ role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] })
+  // A tool result is a tool-role message now, and its blocks are that message's
+  // own content: the call id sits on the message instead of on a block.
+  const result = (callId: string, text: string): MessageLike => ({ role: 'tool', toolCallId: callId, content: [{ type: 'text', text }] })
   // The first result has to clear the reclaim floor (2,000 tokens at the default
   // 4-chars-per-token estimate), or the policy correctly refuses to shrink at all.
   const history = [call('c1', 'read'), result('c1', 'x'.repeat(40_000)), call('c2', 'read'), result('c2', 'y'.repeat(100)), call('c3', 'read'), result('c3', 'z'.repeat(100)), call('c4', 'read'), result('c4', 'w'.repeat(100)), call('c5', 'read'), result('c5', 'v'.repeat(100)), call('c6', 'read'), result('c6', 'u'.repeat(100))]
@@ -224,7 +226,9 @@ describe('the stable view', () => {
 
 describe('the view transform', () => {
   const call = (id: string, name: string): MessageLike => ({ role: 'assistant', content: [{ type: 'tool-call', id, name }] })
-  const result = (callId: string, text: string): MessageLike => ({ role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] })
+  // A tool result is a tool-role message now, and its blocks are that message's
+  // own content: the call id sits on the message instead of on a block.
+  const result = (callId: string, text: string): MessageLike => ({ role: 'tool', toolCallId: callId, content: [{ type: 'text', text }] })
 
   it('clears all but the newest eligible results and leaves the rest by reference', () => {
     const history = [
@@ -238,8 +242,8 @@ describe('the view transform', () => {
     // Saving is the replaced text minus the marker that replaces it, which is the
     // quantity the model actually sees shrink.
     expect(applied.reclaimedChars).toBe(4_000 - CLEARED_RESULT_MARKER.length)
-    const cleared = applied.messages[1] as { content: { content: { text: string }[] }[] }
-    expect(cleared.content[0]!.content[0]!.text).toBe(CLEARED_RESULT_MARKER)
+    const cleared = applied.messages[1] as { content: { text: string }[] }
+    expect(cleared.content[0]!.text).toBe(CLEARED_RESULT_MARKER)
     // Untouched messages must not be rebuilt, or the transform would perturb
     // bytes it has no business touching.
     expect(applied.messages[2]).toBe(history[2])
@@ -318,14 +322,16 @@ describe('the view transform', () => {
     const history = [call('c1', 'grep'), result('c1', 'x'.repeat(100)), call('c2', 'grep'), result('c2', 'y'.repeat(10))]
     const applied = clearOldToolResults(history, { keepRecentResults: 1, clearableTools: ['grep'], marker: '<gone>' })
     expect(applied.clearedCallIds).toEqual(['c1'])
-    expect((applied.messages[1] as { content: { content: { text: string }[] }[] }).content[0]!.content[0]!.text).toBe('<gone>')
+    expect((applied.messages[1] as { content: { text: string }[] }).content[0]!.text).toBe('<gone>')
   })
 })
 
 describe('the retrieval path', () => {
   const call = (id: string, name: string): MessageLike => ({ role: 'assistant', content: [{ type: 'tool-call', id, name }] })
-  const result = (callId: string, text: string): MessageLike => ({ role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] })
-  const markerText = (message: unknown): string => (message as { content: { content: { text: string }[] }[] }).content[0]!.content[0]!.text
+  // A tool result is a tool-role message now, and its blocks are that message's
+  // own content: the call id sits on the message instead of on a block.
+  const result = (callId: string, text: string): MessageLike => ({ role: 'tool', toolCallId: callId, content: [{ type: 'text', text }] })
+  const markerText = (message: unknown): string => (message as { content: { text: string }[] }).content[0]!.text
   // The first result clears the reclaim floor; the other five fill the keep window.
   const history = [call('c1', 'read'), result('c1', 'x'.repeat(40_000)), call('c2', 'read'), result('c2', 'y'.repeat(100)), call('c3', 'read'), result('c3', 'z'.repeat(100)), call('c4', 'read'), result('c4', 'w'.repeat(100)), call('c5', 'read'), result('c5', 'v'.repeat(100)), call('c6', 'read'), result('c6', 'u'.repeat(100))]
   const shrunk = (): CacheColdView => {
@@ -423,7 +429,9 @@ describe('the keep window counts assistant turns', () => {
   // One assistant message carrying several calls is what a parallel turn looks
   // like on the wire, and it is the only shape where a turn differs from a result.
   const parallelCall = (...ids: string[]): MessageLike => ({ role: 'assistant', content: ids.map(id => ({ type: 'tool-call', id, name: 'read' })) })
-  const result = (callId: string, text: string): MessageLike => ({ role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] })
+  // A tool result is a tool-role message now, and its blocks are that message's
+  // own content: the call id sits on the message instead of on a block.
+  const result = (callId: string, text: string): MessageLike => ({ role: 'tool', toolCallId: callId, content: [{ type: 'text', text }] })
 
   it('keeps a fat recent turn whole rather than keeping five of its twelve results', () => {
     // Twelve parallel reads in one turn all answer the question the model just
@@ -480,19 +488,18 @@ describe('the keep window counts assistant turns', () => {
 
 describe('a result that is not all text is never clearable', () => {
   const call = (id: string, name: string): MessageLike => ({ role: 'assistant', content: [{ type: 'tool-call', id, name }] })
-  const result = (callId: string, text: string): MessageLike => ({ role: 'user', content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }] })
+  // A tool result is a tool-role message now, and its blocks are that message's
+  // own content: the call id sits on the message instead of on a block.
+  const result = (callId: string, text: string): MessageLike => ({ role: 'tool', toolCallId: callId, content: [{ type: 'text', text }] })
   const blockTypes = (message: unknown): readonly unknown[] =>
-    (message as { content: { content: { type: unknown }[] }[] }).content[0]!.content.map(block => block.type)
+    (message as { content: { type: unknown }[] }).content.map(block => block.type)
   // `tool-fs`'s `read_image` returns exactly this shape: a text summary beside the
   // image itself. The text is what `resultText` measures, so nothing about the
   // accounting reveals that a rewrite would delete the block next to it.
   const imageResult = (callId: string): MessageLike => ({
-    role: 'user',
-    content: [{
-      type: 'tool-result',
-      toolCallId: callId,
-      content: [{ type: 'text', text: '<type>image</type>' }, { type: 'image', attachment: { id: 'a1' } }],
-    }],
+    role: 'tool',
+    toolCallId: callId,
+    content: [{ type: 'text', text: '<type>image</type>' }, { type: 'image', attachment: { id: 'a1' } }],
   })
 
   it('leaves an image result untouched, because the rewrite would delete the image', () => {
@@ -515,7 +522,7 @@ describe('a result that is not all text is never clearable', () => {
     // clearable tools already demonstrated once.
     const reasoningResult: MessageLike = {
       role: 'user',
-      content: [{ type: 'tool-result', toolCallId: 'g1', content: [{ type: 'reasoning', text: 'r' }, { type: 'text', text: 't' }] }],
+      content: [{ type: 'reasoning', text: 'r' }, { type: 'text', text: 't' }],
     }
     const history = [call('g1', 'read'), reasoningResult, call('r1', 'read'), result('r1', 'x'.repeat(4_000)), call('r2', 'read'), result('r2', 'y'.repeat(10))]
     const applied = clearOldToolResults(history, { keepRecentResults: 1 })

@@ -27,7 +27,7 @@ import type { FinishReason, GenerateOptions, StreamChunk } from '@deepseek-ai/ds
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
-import { provideHostService, provideHostServiceAs, registrationHandle, sessionAt, settingsValue, type AgentEnginesFace } from './support/host-services.ts'
+import { pluginConfig, provideHostService, provideHostServiceAs, registrationHandle, sessionAt, type AgentEnginesFace } from './support/host-services.ts'
 import {
   acquireDreamLease,
   DREAM_LEASE_FILENAME,
@@ -615,20 +615,6 @@ async function pluginHarness(options: {
     provideHostService(scope, 'agents', { list: () => [], get: () => undefined })
     provideHostServiceAs<AgentEnginesFace>(scope, 'agentEngines', { setAvailability: () => undefined })
     provideHostService(scope, 'sessions', { get: () => sessionAt(CWD), list: () => [] })
-    provideHostService(scope, 'settings', {
-      register: () => ({
-        get: () => settingsValue({
-          memoryRollout: options.memoryRollout ?? 'off',
-          engineeringEnabled: true,
-          engineeringMemoryEnabled: true,
-          advisorProvider: 'opencode',
-          advisorModel: 'auto',
-        }),
-        watch: () => () => undefined,
-        update: async () => undefined,
-        replace: async () => undefined,
-      }),
-    })
     provideHostService(scope, 'llm', {
       // The plugin registers its own provider adapters during boot; the double
       // accepts them and does nothing, which is what an unmanaged install does.
@@ -640,7 +626,13 @@ async function pluginHarness(options: {
       },
     })
   })
-  const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+  const plugin = new FreeCodeGoHarnessPlugin(ctx, pluginConfig({
+    memoryRollout: options.memoryRollout ?? 'off',
+    engineeringEnabled: true,
+    engineeringMemoryEnabled: true,
+    advisorProvider: 'opencode',
+    advisorModel: 'auto',
+  }))
   const observations = options.observations ?? [observation()]
   const internals = plugin as unknown as { engineering: { memoryAvailable: boolean; memory: unknown } }
   internals.engineering.memoryAvailable = true

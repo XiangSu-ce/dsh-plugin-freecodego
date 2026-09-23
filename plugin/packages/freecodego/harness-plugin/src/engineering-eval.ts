@@ -38,7 +38,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AttachmentId, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { createUserMessage, ToolCallId, type GenerateOptions } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId, type GenerateOptions } from '@deepseek-ai/dsh-llm'
 import type { FreeCodeGoCatalog, FreeCodeGoModelRouteOption, FreeCodeGoRouteChoice } from '@deepseek-ai/dsh-freecodego-api'
 import { isCredentialPath, DoomLoopGuard } from './tool-guards.ts'
 import { extractDefinitions, pagerank } from './engineering-repo-map.ts'
@@ -606,24 +606,30 @@ const WIRE_CASES: readonly CaseSpec[] = [
   {
     id: 'wire.tool-results-stay-adjacent',
     suite: 'wire',
-    claim: 'Tool results immediately follow their assistant frame; trailing text becomes a later user turn.',
+    claim: 'A tool result is its own tool-role message and follows the assistant frame that asked for it, with later text as a user turn.',
     measure: () => {
-      // A message the loop could actually hand over: the factory mints its id, the
-      // call id carries its brand, and the source tag comes from the producer.
+      // A history the loop could actually hand over: a tool result is one message
+      // now, not a `tool-result` block inside a user turn, so the whole shape the
+      // serializer has to preserve is the log's own order.
       const request: GenerateOptions = {
-        provider: 'logfare', model: 'gpt-5.6-sol', messages: [createUserMessage({
-          source: { kind: 'user' },
-          content: [
-            { type: 'text', text: 'Continue the discussion.' },
-            { type: 'tool-result', toolCallId: ToolCallId('call-1'), content: [{ type: 'text', text: 'ok' }] },
-          ],
-        })],
+        provider: 'logfare', model: 'gpt-5.6-sol', messages: [
+          createAssistantMessage({
+            source: { provider: 'logfare', model: 'gpt-5.6-sol' },
+            content: [{ type: 'tool-call', id: ToolCallId('call-1'), name: 'read', arguments: '{"path":"a"}' }],
+          }),
+          createToolResultMessage({
+            callId: ToolCallId('call-1'),
+            content: [{ type: 'text', text: 'ok' }],
+            isError: false,
+          }),
+          createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue the discussion.' }] }),
+        ],
       }
       const body = serializeRequest(request)
       const roles = wireMessages(body).map(message => message.role)
       // Interleaving a user turn between tool_calls and their results is a hard
       // rejection on strict providers, so the order is the whole contract.
-      const adjacent = roles.join(',') === 'tool,user'
+      const adjacent = roles.join(',') === 'assistant,tool,user'
       return { observed: adjacent ? 1 : 0, required: 1, detail: `roles=${roles.join(',')}` }
     },
   },
@@ -634,11 +640,10 @@ const WIRE_CASES: readonly CaseSpec[] = [
     measure: () => {
       const attachment: ImageAttachmentRef = { attachmentId: AttachmentId('att-1'), mediaType: 'image/png', bytes: 4, width: 1, height: 1 }
       const request: GenerateOptions = {
-        provider: 'logfare', model: 'gpt-5.6-sol', messages: [createUserMessage({
-          source: { kind: 'user' },
-          content: [
-            { type: 'tool-result', toolCallId: ToolCallId('call-1'), content: [{ type: 'image', attachment }] },
-          ],
+        provider: 'logfare', model: 'gpt-5.6-sol', messages: [createToolResultMessage({
+          callId: ToolCallId('call-1'),
+          content: [{ type: 'image', attachment }],
+          isError: false,
         })],
       }
       const body = serializeRequest(request)
@@ -2928,18 +2933,50 @@ const ADAPTER_CASES: readonly CaseSpec[] = [
   },
 ]
 
+/**
+ * The settings service as the routing sync consumes it.
+ *
+ * `describe()` and a revision-guarded `update()` *are* the shipped surface —
+ * 0.1.7 removed `get(ns)` — so this fake is built from the real signature, not
+ * from this module's own idea of it. A fake that accepts anything is how a
+ * removed method keeps passing every case here while the feature is dead at
+ * runtime, which is exactly what happened to this sync.
+ * @param value - the entry's current value.
+ * @param onWrite - receives each patch the sync writes.
+ * @returns the structural settings service.
+ */
+function routingSettings(
+  value: unknown,
+  onWrite: (patch: Record<string, unknown>) => void = () => undefined,
+): {
+  describe: () => readonly { readonly ns: string; readonly value: unknown; readonly revision: number }[]
+  update: (ns: string, patch: Record<string, unknown>, expectedRevision?: number) => Promise<void>
+} {
+  return {
+    describe: () => [{ ns: 'subagent-model-selection', value, revision: 3 }],
+    update: async (_ns: string, patch: Record<string, unknown>) => { onWrite(patch) },
+  }
+}
+
+/** A composition that declares no Subagent model-selection entry at all. */
+const NO_ROUTING_SETTINGS = {
+  describe: () => [] as readonly { readonly ns: string; readonly value: unknown; readonly revision: number }[],
+  update: async (): Promise<void> => undefined,
+}
+
 const ROUTING_CASES: readonly CaseSpec[] = [
   {
     id: 'routing.sync-needs-a-settings-namespace',
     suite: 'routing',
-    claim: 'A composition without the subagent settings namespace syncs nothing.',
+    claim: 'A composition that declares no Subagent model-selection entry syncs nothing and writes nothing.',
     measure: async () => {
-      const settings = { get: () => undefined, update: async () => undefined }
+      let writes = 0
+      const settings = { ...NO_ROUTING_SETTINGS, update: async (): Promise<void> => { writes += 1 } }
       const llm = { listProviders: () => [{ id: 'p' }], listModels: async () => [{ id: 'm' }] }
       const result = await synchronizeSubagentModelRoutes(settings, llm)
-      // Writing into a namespace the user never configured would create a
+      // Writing into a settings entry the user never configured would create a
       // setting they did not ask for.
-      return { observed: result.length === 0 ? 1 : 0, required: 1, detail: `routes=${result.length}` }
+      return { observed: result.length === 0 && writes === 0 ? 1 : 0, required: 1, detail: `routes=${result.length} writes=${writes}` }
     },
   },
   {
@@ -2948,10 +2985,7 @@ const ROUTING_CASES: readonly CaseSpec[] = [
     claim: 'Unavailable and non-text models are excluded, and duplicates are collapsed.',
     measure: async () => {
       const written: Record<string, unknown>[] = []
-      const settings = {
-        get: () => ({ allowedModels: [], enabled: undefined } as never),
-        update: async (_ns: string, value: Record<string, unknown>) => { written.push(value) },
-      }
+      const settings = routingSettings({ allowedModels: [], enabled: undefined }, patch => { written.push(patch) })
       const llm = {
         listProviders: () => [{ id: 'p' }],
         listModels: async () => [
@@ -2975,10 +3009,7 @@ const ROUTING_CASES: readonly CaseSpec[] = [
     claim: 'A provider that answered with nothing loses its stale routes; one that failed keeps them.',
     measure: async () => {
       const previous = [{ provider: 'answered', model: 'stale' }, { provider: 'failed', model: 'keep' }, { provider: 'removed', model: 'drop' }]
-      const settings = {
-        get: () => ({ allowedModels: previous, enabled: true } as never),
-        update: async () => undefined,
-      }
+      const settings = routingSettings({ allowedModels: previous, enabled: true })
       const llm = {
         listProviders: () => [{ id: 'answered' }, { id: 'failed' }, { id: 'live' }],
         listModels: async (id: string) => {
@@ -3002,10 +3033,7 @@ const ROUTING_CASES: readonly CaseSpec[] = [
     measure: async () => {
       const writes: Record<string, unknown>[] = []
       const run = async (enabled: boolean | undefined): Promise<void> => {
-        const settings = {
-          get: () => ({ allowedModels: [], enabled } as never),
-          update: async (_ns: string, value: Record<string, unknown>) => { writes.push(value) },
-        }
+        const settings = routingSettings({ allowedModels: [], enabled }, patch => { writes.push(patch) })
         const llm = { listProviders: () => [{ id: 'p' }], listModels: async () => [{ id: 'm', availability: 'available', inputModalities: ['text'] }] }
         await synchronizeSubagentModelRoutes(settings, llm)
       }
@@ -3026,10 +3054,10 @@ const ROUTING_CASES: readonly CaseSpec[] = [
     claim: 'An unchanged catalog does not rewrite the settings document.',
     measure: async () => {
       let updates = 0
-      const settings = {
-        get: () => ({ allowedModels: [{ provider: 'p', model: 'm' }], enabled: true } as never),
-        update: async () => { updates += 1 },
-      }
+      const settings = routingSettings(
+        { allowedModels: [{ provider: 'p', model: 'm' }], enabled: true },
+        () => { updates += 1 },
+      )
       const llm = { listProviders: () => [{ id: 'p' }], listModels: async () => [{ id: 'm', availability: 'available', inputModalities: ['text'] }] }
       await synchronizeSubagentModelRoutes(settings, llm)
       // A write per boot would churn the settings file and fire a document

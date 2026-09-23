@@ -120,10 +120,20 @@ export interface OpenAiCompatibleAdapterOptions {
    */
   readonly onRateLimited?: (provider: string, status: number) => void
   /**
-   * Extra user-facing hint appended to the thrown `RATE_LIMIT` LlmError so
-   * the raw HTTP status is never the only thing the UI can show.
+   * Extra user-facing hint (bilingual) appended to the thrown non-2xx
+   * `LlmError` so the raw HTTP status is never the only thing the UI can show.
+   *
+   * The provider decides which statuses it can explain, because the same number
+   * means different things on different routes: a `429` is a rate limit
+   * everywhere, while a `403` is only worth explaining when the body says which
+   * gate was hit — OpenCode's free tier answers `403` with `FreeTierError` when
+   * it will not serve the request from this egress.
+   * @param provider - the provider name this adapter reports.
+   * @param status - the HTTP status the upstream answered with.
+   * @param detail - the redacted response body.
+   * @returns the hint to append, or `undefined` when this status needs none.
    */
-  readonly rateLimitedHint?: (provider: string) => string
+  readonly rateLimitedHint?: (provider: string, status: number, detail: string) => string | undefined
   readonly defaultContextWindow?: number
   readonly defaultMaxTokens?: number
   /** Let the provider choose its own default output budget when true. */
@@ -291,9 +301,10 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
       const detail = redactProviderDetail(await response.text().catch(() => ''))
       if (response.status === 400) onBadRequest?.(detail)
       if (response.status === 429) this.config.onRateLimited?.(this.config.providerName, response.status)
-      // The bare status is useless to the operator on a 429: append the
-      // provider-configured proxy/IP suggestion (bilingual) when present.
-      const rateHint = response.status === 429 ? this.config.rateLimitedHint?.(this.config.providerName) : undefined
+      // The bare status is useless to the operator: append the provider-configured
+      // bilingual suggestion whenever that provider has one for this status — a 429
+      // rate limit, or the gate a free tier answers a 403 with.
+      const rateHint = this.config.rateLimitedHint?.(this.config.providerName, response.status, detail)
       // The code is the shared status policy, not a local ladder. It used to read
       // `401 || 403 ? 'AUTH'`, which reported the plan gate on a paid route as a
       // rejected key: the UI asked the user to sign in again over a working

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SESSION_DELETE_FAILED_EVENT } from '../src/client/session-delete-menu-item.tsx'
 import { SessionDeleteOverlay } from '../src/client/session-delete-overlay.tsx'
 
 let row: HTMLElement
@@ -122,6 +123,22 @@ describe('SessionDeleteOverlay', () => {
     fireEvent.pointerOver(row)
     fireEvent.click(await screen.findByRole('button', { name: '删除对话 乙' }))
     await waitFor(() => { expect(deleteSession).toHaveBeenCalledWith('session-2') })
+  })
+
+  it('reports a failure the row menu published after dismissing itself', async () => {
+    // The menu has no surface left once it closes, so its refusals arrive here.
+    // Both callers therefore end in one message, which is the only reason the
+    // menu row can delete at all.
+    const useSessions = <T,>(selector: (snapshot: SessionsSnapshot) => T): T =>
+      selector(sessionsSnapshot([{ id: 'session-1', displayTitle: '未分组会话' }]))
+    render(<SessionDeleteOverlay useSessions={useSessions} deleteSession={vi.fn()} />)
+
+    globalThis.dispatchEvent(new CustomEvent(SESSION_DELETE_FAILED_EVENT, {
+      detail: 'SESSION_DELETE_REQUIRES_CLOSED_SESSION: close or switch away from this conversation before deleting it',
+    }))
+    const banner = await screen.findByRole('alert')
+    expect(banner.textContent).toContain('删除对话失败：')
+    expect(banner.textContent).toContain('SESSION_DELETE_REQUIRES_CLOSED_SESSION')
   })
 
   it('hides the delete control while the currently open session is hovered', async () => {

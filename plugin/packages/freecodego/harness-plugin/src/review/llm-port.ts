@@ -32,7 +32,7 @@
 import { BlockAssembler, createUserMessage, type GenerateOptions, type Message, type MessageSource, type StreamChunk } from '@deepseek-ai/dsh-llm'
 
 /** Provenance recorded on every review prompt, so the transcript says who asked. */
-const REVIEW_MESSAGE_SOURCE: MessageSource = { kind: 'plugin', plugin: 'freecodego/review' }
+const REVIEW_MESSAGE_SOURCE: MessageSource = { kind: 'freecodego/review' }
 import { approximateTokens, type ReviewModelPort, type ReviewModelRequest, type ReviewModelResult } from './model.ts'
 import { redactCredentialShapes } from '../secret-scan.ts'
 

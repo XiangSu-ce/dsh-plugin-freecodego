@@ -2,13 +2,20 @@
  * The companion's fifth seat: the shell's *ongoing* dot.
  *
  * `StateDot` draws the shell's in-flight mark in two forms — a solid disc for the
- * settled outcomes, and, for `state="ongoing"`, a 10px pixel-chase: eight `rect`
- * cells around a 3×3 matrix, each holding a discrete brightness step on
- * `dsh-state-dot-chase`. That second form is the shell's *loading animation* away
+ * settled outcomes, and, for `state="ongoing"`, a spinner: a ring whose arc breathes
+ * on `dsh-state-dot-dash` while the glyph rotates on `dsh-state-dot-spin`, both on
+ * one shared 1.5s period. That second form is the shell's *loading animation* away
  * from the row sweeps, and it is exactly one element in the document —
- * `svg[data-state="ongoing"]`, which only `StateDot` emits (its other four states
- * are a `span`, and a settled state is an outcome colour, not an animation, so
- * those are left alone).
+ * `svg[data-state="ongoing"]`, which only `StateDot` emits (its other states are a
+ * `span`, and a settled state is an outcome colour, not an animation, so those are
+ * left alone).
+ *
+ * The mark was eight chasing `rect` cells on `dsh-state-dot-chase` when this seat was
+ * measured; the shell replaced that with the ring, which is why nothing here reads a
+ * cell, a frame, or a keyframe name. The seat never depended on the drawing — it takes
+ * over the element, not its animation — but the stylesheet gate in
+ * `tests/companion-dot-row.client.spec.tsx` pins the shape that was replaced, so that
+ * gate is what has to move when the shell redraws the mark.
  *
  * The seat's decisions:
  *
@@ -74,16 +81,24 @@ export const CONVERSATION_SURFACE = [
  * Whether an element belongs to the conversation the character speaks for.
  *
  * The body and the scrollport are found upwards from the dot; the session header
- * publishes no marker on itself, so it is recognised as the nearest `header` that
+ * publishes no marker on itself, so it is recognised as the nearest ancestor that
  * holds its own slots (a settings page's `<header>` holds none, and is not the
  * conversation's).
+ *
+ * The ancestor *tag* used to be part of this test — the header was a `header`
+ * element, and requiring it was the belt to the slots' braces. The shell then rewrote
+ * the header as `div.titleRow`, at which point the tag check stopped recognising the
+ * header at all: the jobs mark in its `actions` seat fell out of the conversation and
+ * the seat ignored it. The slots are the marker that survived the rewrite, so they are
+ * the whole test — they are also the exclusion the tag was being read for, because no
+ * other header in the shell holds them.
  * @param element - the element to place; the dot, or the row considering it.
  * @returns true when the element is inside the conversation's chrome.
  */
 export function inConversationSurface(element: Element): boolean {
   for (let node = element.parentElement; node !== null; node = node.parentElement) {
     if (node.matches(CONVERSATION_SURFACE)) return true
-    if (node.matches('header') && node.querySelector(HEADER_SLOT_SELECTOR) !== null) return true
+    if (node.querySelector(HEADER_SLOT_SELECTOR) !== null) return true
   }
   return false
 }
@@ -91,6 +106,11 @@ export function inConversationSurface(element: Element): boolean {
 /**
  * The session header's own slots. Its `actions` seat — where the jobs list's dot
  * lives — carries no marker, so the header is recognised by the slots around it.
+ *
+ * Only the corner is emitted by the current shell: the leading marker went with the
+ * rewrite into `div.titleRow`. It is kept in the selector anyway, because a slot that
+ * comes back should be recognised again rather than silently ignored — and the
+ * stylesheet gate in the tests records which of the two is on disk today.
  */
 const HEADER_SLOT_SELECTOR = '[data-conversation-header-leading], [data-conversation-header-corner]'
 
@@ -120,8 +140,8 @@ const DOT_FALLBACK_PX = 10
  *
  * Keyed on the marker rather than on upstream's class names, which the bundle
  * hashes. `display: none` rather than `content: none`: the mark is a real element
- * with cells inside it, and hiding it is what stops the chase — a hidden subtree is
- * no longer laid out or painted.
+ * with a ring and its animations on it, and hiding it is what stops them — a hidden
+ * subtree is no longer laid out or painted.
  */
 const SHEET = `
   [${DOT_ATTR}] {
@@ -156,6 +176,7 @@ export function faceEdgeFor(dot: Element): number {
 export function installDotFaces(ctx: ClientContext, activity: CompanionActivitySource): () => void {
   const sources: StoreFaceSources = {
     sessions: ctx.sessions.list,
+    jobs: ctx.jobs.state,
     statuses: ctx.uiSession.sessionStatus,
     activity,
   }

@@ -2,9 +2,9 @@
 /**
  * The companion's seat at the shell's in-flight dot.
  *
- * `StateDot` draws the ongoing state as an eight-cell pixel chase — a real element
- * with cells inside it, and the shell's loading animation away from the row sweeps.
- * What belongs to this seat is asserted here:
+ * `StateDot` draws the ongoing state as a spinner — a real element with a ring and
+ * its own animations inside it, and the shell's loading animation away from the row
+ * sweeps. What belongs to this seat is asserted here:
  *
  * - the character stands where the dot was: in the dot's own slot, inside the
  *   element that held it, with the dot's own classes carried over so the callsite's
@@ -21,9 +21,10 @@
  *   for the agent and not for a fiber.
  *
  * The last block pins the premise against the synced upstream source: the ongoing
- * state is the only `svg[data-state]` `StateDot` emits, its animation is on the
- * cells, and a running present row is exactly the case the two seats split between
- * them (the row seat's own half is `./companion-step-row.client.spec.tsx`).
+ * state is the only `svg[data-state]` `StateDot` emits, its animation is the ring,
+ * and a running present row now hands its state to `DisclosureRow` and a text label
+ * instead of showing a mark at all — which is why nothing is replaced there any more
+ * (the row seat's own half is `./companion-step-row.client.spec.tsx`).
  */
 
 import { readFileSync } from 'node:fs'
@@ -95,9 +96,13 @@ function context(): ClientContext {
       list: source({
         ids: ['s1'],
         byId: { s1: { id: 's1', running: true, retainedBy: { mainView: 1 } } },
-        jobsBySession: { s1: [] },
+        phase: 'ready',
+        projectionsBySession: {},
       }),
     },
+    // Jobs have their own client service now, and the seats bind its snapshot at
+    // install time — so the fake context publishes one, empty.
+    jobs: { state: source({ rows: {}, observed: {} }) },
     uiSession: { sessionStatus: source(new Map()) },
   } as unknown as ClientContext
 }
@@ -115,13 +120,20 @@ function face(): HTMLElement | null {
 /** The jobs trigger's mark, as `JobListAction` renders it. */
 const TRIGGER = '<button class="trigger"><svg data-state="ongoing" class="matrix triggerDot" width="10" height="10" viewBox="0 0 10 10"></svg><span class="count">2</span></button>'
 
-/** The session header, whose `actions` seat is where the jobs trigger lives. */
+/**
+ * The session header, whose `actions` seat is where the jobs trigger lives.
+ *
+ * Upstream rewrote this header from a `header` element into `div.titleRow`: the
+ * leading marker went with the rewrite and the corner is the one that survived. The
+ * fixture follows the markup that is on disk, because the header is recognised by the
+ * slots it holds — and it is installed *outside* the chat column, as it is on screen,
+ * so recognising it is the only thing that can put its dot in the conversation.
+ */
 const HEADER = `
-  <header>
-    <div data-conversation-header-leading=""></div>
+  <div class="titleRow">
     <div class="actions">${TRIGGER}</div>
     <div data-conversation-header-corner=""></div>
-  </header>
+  </div>
 `
 
 /**
@@ -292,11 +304,17 @@ describe('companion dot: the upstream mark this was measured from', () => {
     expect(ONGOING_DOT_SELECTOR).toBe('svg[data-state="ongoing"]')
   })
 
-  it('animates the cells, which is the loading animation being replaced', () => {
+  it('animates the ring, which is the loading animation being replaced', () => {
     const css = upstream('ui-primitives/src/StateDot.module.css')
-    expect(css).toContain('.cell {')
-    expect(css).toContain('animation: dsh-state-dot-chase')
-    expect(css).toContain('@keyframes dsh-state-dot-chase')
+    // Re-measured: the eight chasing cells and `dsh-state-dot-chase` are gone, and the
+    // ongoing mark is one ring — a full track behind an arc that breathes on one
+    // keyframe while the whole glyph rotates on another, both on the same 1.5s period.
+    // The seat takes over the element rather than the drawing, so what this pins is the
+    // thing the character stands in for: an animation, on this element.
+    expect(css).toContain('.spinner {')
+    expect(css).toContain('animation: dsh-state-dot-spin 1.5s linear infinite')
+    expect(css).toContain('@keyframes dsh-state-dot-spin')
+    expect(css).toContain('@keyframes dsh-state-dot-dash')
   })
 
   it('scopes itself by anchors the shell publishes, not by page shape', () => {
@@ -309,17 +327,25 @@ describe('companion dot: the upstream mark this was measured from', () => {
     // The header publishes no marker on itself, so the seat recognises it by the
     // slots inside it — which is what keeps a settings page's `<header>` out.
     const session = upstream('ui-conversation/src/client/skeleton/ConversationSession.tsx')
-    expect(session).toContain('data-conversation-header-leading=""')
+    // Re-measured: the header is no longer a `header` element — it is `div.titleRow`
+    // with the corner inside it — and the leading marker went with the rewrite. The
+    // corner is the one that survives, which is why the seat's recognition asks for the
+    // slots and not for the tag. The absence is pinned too: it is what the header test
+    // above would stop covering if the marker quietly came back.
     expect(session).toContain('data-conversation-header-corner=""')
-    expect(session).toContain('<header className=')
+    expect(session).toContain('css.headerCorner')
+    expect(session).not.toContain('data-conversation-header-leading=""')
+    expect(session).not.toContain('<header className=')
   })
 
-  it('is what a running present row shows, with the state on a wrapper', () => {
-    // The pair the two seats split: the row reports `running` on a wrapper and shows
-    // the ongoing dot as its own mark, so the character goes in the dot's slot and the
-    // row seat stays out of it.
+  it('is what a running present row shows, now without a mark of its own', () => {
+    // Re-measured: the row still reports its state on a wrapper, but it no longer
+    // renders an ongoing mark — a running present row hands `state` to `DisclosureRow`
+    // and says `running` in a text label. So there is no dot here for the character to
+    // stand in, and the pair the two seats used to split is gone from this surface.
     const source = upstream('ui-deliverables/src/client/PresentRow.tsx')
     expect(source).toContain('data-state={state}')
-    expect(source).toContain("state === 'running' ? 'ongoing'")
+    expect(source).toContain('<DisclosureRow')
+    expect(source).not.toContain("state === 'running' ? 'ongoing'")
   })
 })

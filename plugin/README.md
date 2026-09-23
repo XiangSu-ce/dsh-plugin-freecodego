@@ -47,10 +47,10 @@ The FreeCodeGo bundle is installed into a Harness Profile rather than invoked as
 ```sh
 npm install --global @deepseek-ai/dsh pnpm
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.6-alpha.2/freecodego-0.1.6-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2/freecodego-0.1.7-alpha.2.tgz
 ```
 
-One release exists per Harness line, tagged `freecodego-v<version>` and carrying a single tarball named after the Harness version it mounts on, so the asset name itself says which Harness a release is for: the URL above installs the bundle for Harness `0.1.6-alpha.2`. Substitute your own Harness version in the tag and in the asset name — the settings page shows it as `Harness <version>` beside the installed plugin version. Pinning is the URL itself, since a release is never reused and a bad one is withdrawn by editing it. Afterwards the settings page's update check resolves the release for the running Harness and installs it with this same command.
+One release exists per Harness line, tagged `freecodego-v<version>` and carrying a single tarball named after the Harness version it mounts on, so the asset name itself says which Harness a release is for: the URL above installs the bundle for Harness `0.1.7-alpha.2`. Substitute your own Harness version in the tag and in the asset name — the settings page shows it as `Harness <version>` beside the installed plugin version. Pinning is the URL itself, since a release is never reused and a bad one is withdrawn by editing it. Afterwards the settings page's update check resolves the release for the running Harness and installs it with this same command.
 
 Desktop must be a build that includes that Harness version. Its private `dsh` and `pnpm` shims use the active `DSH_HOME`; selecting the same Harness home and Profile lets Web and Desktop read the same plugin data.
 

@@ -3,7 +3,7 @@
 import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, FinishReason, GenerateOptions, Message, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
-import { callIdFor, closeStream, openBlock, DONE } from './wire-shared.ts'
+import { callIdFor, closeStream, openBlock, DONE, unsupported } from './wire-shared.ts'
 import type { OpenBlock } from './wire-shared.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 
@@ -70,17 +70,18 @@ export function serializeRequest(options: GenerateOptions, defaults: { readonly 
   const messages: WireMessage[] = []
   if (options.system !== undefined) messages.push({ role: 'system', content: options.system })
   for (const message of options.messages) {
-    assertTextOnly(message.content)
-    if (message.role === 'system') { messages.push({ role: 'system', content: text(message.content) }); continue }
+    if (message.role === 'system') { assertTextOnly(message.content); messages.push({ role: 'system', content: text(message.content) }); continue }
     if (message.role === 'assistant') { messages.push(serializeAssistant(message)); continue }
-    const results = message.content.filter((block): block is Extract<ContentBlock, { type: 'tool-result' }> => block.type === 'tool-result')
-    // Tool results must immediately follow their assistant tool_calls frame;
-    // trailing text from the same message would otherwise interleave a user
-    // turn between them and strict providers reject the sequence. Emit results
-    // first and fold any surrounding text into a trailing user message.
-    const content = text(message.content.filter(block => block.type !== 'tool-result'))
-    for (const result of results) messages.push({ role: 'tool', tool_call_id: result.toolCallId, content: text(result.content) || '(no output)' })
-    if (content !== '' || results.length === 0) messages.push({ role: 'user', content })
+    // A tool result is its own message now, naming the call it answers. It used
+    // to ride inside a user message as a `tool-result` content block, which is
+    // why this loop once filtered those blocks out and folded whatever text
+    // surrounded them into a trailing user turn. The ordering that made that
+    // necessary is already the log's own order: the assistant `tool_calls`
+    // frame, then one tool frame per result.
+    if (message.role === 'tool') { messages.push({ role: 'tool', tool_call_id: message.toolCallId, content: text(message.content) || '(no output)' }); continue }
+    if (message.role === 'developer') unsupported('developer message')
+    assertTextOnly(message.content)
+    messages.push({ role: 'user', content: text(message.content) })
   }
   return requestWithMessages(options, messages, defaults)
 }
@@ -109,11 +110,12 @@ export async function serializeRequestWithInlineImages(
       messages.push(serializeAssistant(message))
       continue
     }
-    const results = message.content.filter((block): block is Extract<ContentBlock, { type: 'tool-result' }> => block.type === 'tool-result')
-    // Keep tool frames adjacent to their assistant tool_calls here too.
-    const content = await inlineUserContent(message.content.filter(block => block.type !== 'tool-result'), images)
-    for (const result of results) messages.push({ role: 'tool', tool_call_id: result.toolCallId, content: text(result.content) || '(no output)' })
-    if (content.length > 0 || results.length === 0) messages.push({ role: 'user', content: inlineUserWireContent(content) })
+    // Keep tool frames adjacent to their assistant tool_calls here too; see
+    // `serializeRequest` for why the filter this replaced is gone.
+    if (message.role === 'tool') { messages.push({ role: 'tool', tool_call_id: message.toolCallId, content: text(message.content) || '(no output)' }); continue }
+    if (message.role === 'developer') unsupported('developer message')
+    const content = await inlineUserContent(message.content, images)
+    messages.push({ role: 'user', content: inlineUserWireContent(content) })
   }
   return requestWithMessages(options, messages, defaults)
 }

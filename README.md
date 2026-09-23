@@ -6,6 +6,30 @@ English | [中文](README.zh.md)
 
 FreeCodeGo is **not** a DeepSeek product, and this is not an official DeepSeek distribution: it is a plugin that mounts into a Harness you install yourself. See [TRADEMARK.md](plugin/TRADEMARK.md) for the naming policy that applies to forks of this repository.
 
+## Screenshots
+
+The five views below are the plugin as it looks mounted: the plugin market card shows the same set, and the first one is what that card previews.
+
+**Model picker** — the managed catalog and the free providers it reads, grouped by provider, each row carrying its own free and latency label; the composer's engine selector sits beside it.
+
+![Model picker: provider groups with free rows and the engine selector in the composer](plugin/packages/freecodego/bundle-latest/screenshots/01-model-picker.png)
+
+**Accounts and providers** — Settings → FreeCodeGo → Accounts & providers: each provider's key stays in the Harness host, and that provider's free-model roster is listed under it.
+
+![Settings showing a per-provider API key field and the provider's free-model roster](plugin/packages/freecodego/bundle-latest/screenshots/02-providers-and-accounts.png)
+
+**Engineering enhancement** — the master switch and what sits behind it: engineering skills, project-long-term memory, the code graph, post-implementation verification, and multi-role review.
+
+![Engineering enhancement settings: the master switch and its per-capability toggles](plugin/packages/freecodego/bundle-latest/screenshots/03-engineering-enhancement.png)
+
+**Plugin safety and updates** — conflict protection at load time, the release update check, and the unified MCP / Skill capability layer.
+
+![Plugin conflict protection, the update check, and the MCP/Skill capability layer](plugin/packages/freecodego/bundle-latest/screenshots/04-plugin-safety-and-updates.png)
+
+**Community picks** — the DSH market ranking and the MCP.SO directory, installed into the local Harness with one click.
+
+![Community picks: the DSH market ranking and the MCP.SO directory, each with one-click install](plugin/packages/freecodego/bundle-latest/screenshots/05-community-mcp-marketplace.png)
+
 ## What it adds
 
 - **Managed model catalogs** — one picker over the FreeCodeGo gateway and the free providers it manages (OpenCode, Logfare, SenseNova, NVIDIA, VyceAI, Kilo, Agnes, Cline, WorkBuddy International, Qoder, TRAE, Groq Whisper), each row carrying its own health, rate, and training-data label.
@@ -28,9 +52,9 @@ Every free row below comes from the provider's own directory, read when you open
 
 | Provider | Free models | Directory |
 |---|---|---|
-| **OpenCode** | `big-pickle`, `deepseek-v4-flash-free`, `jev-1.13-free`, `ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `mimo-v2.6-flash-free`, `muse-spark-1.2`, `muse-spark-1.2-contributor-free`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free` | 12 of 76 rows; public, no sign-in |
-| **Kilo** | `cohere/north-mini-code:free`, `dots-studio/dots-3-note-preview:free`, `inclusionai/ling-3.0-flash-fin:free`, `inclusionai/ling-3.0-flash-sante:free`, `inclusionai/ling-3.0-flash-vl:free`, `kilo-auto/free`, `liquid/lfm-2.5-2.6b:free`, `nex-agi/nex-n2.5-mini:free`, `nex-agi/nex-n2.5-pro:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-content-safety:free`, `nvidia/nemotron-3.5-lightning:free`, `openrouter/free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `qwen/qwen3.8-27b:free`, `stepfun/step-3.7-flash:free`, `thinkingmachines/inkling-small:free`, `z-ai/glm-5.2:free` | 21 of 385 rows; public, 200 requests/hour per egress IP |
-| **Logfare** | chat `deepseek-v3.2`, `deepseek-v4-pro-0813`, `gemma-4-26b`, `gemma-4-31b-it`, `glm-5`, `glm-5.3`, `glm-5.3-flash`, `grok-4.6`, `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`, `logfare/auto`, `moondream3.1`, `qwen-3.8-27b`, `step-3.7-flash`; images `flux-1-schnell`, `flux-2-dev`, `flux-2-klein-4b`, `flux-2-klein-9b`, `sdxl-lightning`; audio `melotts`, `whisper-large-v3-turbo`; other routes `aura-2-en`, `lucid-origin`, `nova-3`, `phoenix-1.0` | 26 rows; 18 need a training-data opt-in, the other 8 do not |
+| **OpenCode** | `big-pickle`, `deepseek-v4-flash-free`, `jev-1.13-free`, `ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `mimo-v2.6-flash-free`, `muse-spark-1.2`, `muse-spark-1.2-contributor-free`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, `space-bunny-free` | 13 of 80 rows; public, no sign-in |
+| **Kilo** | `cohere/north-mini-code:free`, `dots-studio/dots-3-note-preview:free`, `inclusionai/ling-3.0-flash-fin:free`, `inclusionai/ling-3.0-flash-sante:free`, `inclusionai/ling-3.0-flash-vl:free`, `kilo-auto/free`, `liquid/lfm-2.5-2.6b:free`, `nex-agi/nex-n2.5-mini:free`, `nex-agi/nex-n2.5-pro:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-content-safety:free`, `nvidia/nemotron-3.5-lightning:free`, `openrouter/free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `qwen/qwen3.8-27b:free`, `stepfun/step-3.7-flash:free`, `thinkingmachines/inkling-small:free`, `z-ai/glm-5.2:free` | 21 of 394 rows; public, 200 requests/hour per egress IP |
+| **Logfare** | chat `claude-opus-4.6`, `deepseek-v3.2`, `deepseek-v4-pro-0813`, `gemma-4-26b`, `glm-5`, `glm-5.3`, `glm-5.3-flash`, `grok-4.6`, `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`, `kimi-k3`, `logfare/auto`, `moondream3.1`, `qwen-3.8-27b`, `step-3.7-flash`; images `flux-1-schnell`, `flux-2-dev`, `flux-2-klein-4b`, `flux-2-klein-9b`, `sdxl-lightning`; audio `melotts`, `whisper-large-v3-turbo`; other routes `aura-2-en`, `lucid-origin`, `nova-3`, `phoenix-1.0` | 27 rows; 20 need a training-data opt-in, the other 7 do not |
 | **Qoder** | `Qwen 3.8 Flash` (route `qmodel_38flash`) | the free flash route, plus daily check-in campaigns |
 | **NVIDIA** | `google/gemma-4-31b-it`, `moonshotai/kimi-k3`, `z-ai/glm-5.3`, `z-ai/glm-5.3-flash` — the roster also names `deepseek-ai/deepseek-v4-flash-0731` and `deepseek-ai/deepseek-v4-pro-0813`, which are gone from NVIDIA's live catalogue of 82 rows | an API key is required to call them; cross-checked 2026-09-23 |
 | **SenseNova** | `deepseek-v4-flash`, `deepseek-v4-pro`, `glm-5.2`, `kimi-k3`, `sensenova-6.8-flash-lite` — 1M context and 128K output each | roster ships in the bundle; an API key is required |
@@ -45,7 +69,7 @@ These lists follow their directories: a route upstream retires leaves the table 
 
 TRAE, Cline, WorkBuddy International, Agnes publish no stable roster, so their rows are counted when they arrive rather than listed here.
 
-18 Logfare rows sit behind a training-data opt-in, which the picker labels rather than hides.
+20 Logfare rows sit behind a training-data opt-in, which the picker labels rather than hides.
 
 <!-- generated:free-models:end -->
 
@@ -55,7 +79,7 @@ TRAE, Cline, WorkBuddy International, Agnes publish no stable roster, so their r
 
 - **Three engines, one router.** DeepSeek executes in the official AgentLoop; Codex and Claude run behind a managed native runtime (a child-process host plus the Host-in-process Claude Agent SDK runtime) and stream back through the Host bridge. The router is the **only** Harness `AgentFactory`, so a session asked for a native engine never silently falls back to DeepSeek.
 - **Admission, not assumption.** A native engine is admitted only when its verified manifest, digest, protocol ABI, worker path, and state directory arrive together. Runtimes are downloaded through one shared path that hashes while it streams, retries a transient transfer once, and treats a digest mismatch as final.
-- **Defaults.** `setDefaultEngine` and `setDefaultModel` set what new sessions start on and persist in the `freecodego-harness` settings namespace; existing sessions keep their durable plan.
+- **Defaults.** `setDefaultEngine` and `setDefaultModel` set what new sessions start on and persist in the settings document of this plugin's own composition entry (`freecodego-harness-plugin`); existing sessions keep their durable plan.
 - **Subagent routing** (`autoSubagentModelSelection`, on). Every live text-model route is synchronized into Harness's `subagent-model-selection`, so new top-level sessions receive `provider` / `model` / `reasoning_effort` plus an on-demand `list_subagent_models` discovery tool. Children inherit the parent's execution engine and may override the exact LLM route per delegation; a temporarily failing provider keeps its last authorized routes.
 - **Third-party plugin tools in native sessions.** Codex and Claude project the same Agent-scoped tool schemas DeepSeek sees — including tools registered by later plugins — with no name allowlist, and calls return through the Host ToolRuntime so the owning plugin keeps validation, permissions, audit, and cancellation. Codex refreshes the inventory before every prompt; Claude rebuilds its in-process MCP server for every query.
 - **Local routes.** OpenAI-compatible and Anthropic-compatible providers use the existing `dsh-llm-pi-ai` plugin and the shared Models settings editor; API keys are stored through the Harness credential service and never reach the browser.
@@ -74,7 +98,9 @@ TRAE, Cline, WorkBuddy International, Agnes publish no stable roster, so their r
 - **One failure table, three decisions.** The same failure arrives in a different shape from every route — a `fetch` rejection, a status code on a custom error, a DOMException from an abort signal, an adapter's machine code, a provider's own wording — and reacting to the message at each call site is how a rate limit gets retried forever while a context overflow is retried until the budget is gone. Every failure is classified once, and each kind maps to one decision: retry, cool the account down, or fail the turn.
 - **Redaction is the rule.** The browser receives only redacted state: no provider credential, session token, or API key is ever sent to the UI, and no parallel credential protocol is added beside the Harness one.
 - **Gateway account, billing, and plans.** With `gateway.baseUrl` configured (default `https://freecodego.com`, HTTPS required) the settings surface shows account, quota, and usage details, selects payment methods and plans, opens checkout links, polls orders, and renders the live model pricing table, reusing the FreeCodeGo v1 routes for mobile authentication, bootstrap/model state, quota, runtime health, pricing, plans, checkout, and order polling. Payment verification/cancellation and receipt-email delivery are wired; provider-specific payment confirmation, binary receipt download, complete runtime artifact coverage, clean-profile installation, and assembled Web E2E remain release gates.
-- **Media defaults** (`freecodego-harness.mediaDefaults`). `freecodego_generate_image`, `freecodego_generate_video`, `freecodego_generate_audio`, and `freecodego_transcribe_audio` are registered for all three engines and read the live default at execution time; the model-facing schema deliberately has no model override. Gateway media requests reuse the Host-vault account token, base64 images are admitted to Harness attachment storage and returned as image content blocks, and generated audio is saved under the workspace's `.freecodego/generated-media`.
+- **Media defaults** (this entry's `mediaDefaults`). `freecodego_generate_image`, `freecodego_generate_video`, `freecodego_generate_audio`, and `freecodego_transcribe_audio` read the live default at execution time; the model-facing schema deliberately has no model override. Gateway media requests reuse the Host-vault account token, base64 images are admitted to Harness attachment storage and returned as image content blocks, and generated audio is saved under the workspace's `.freecodego/generated-media`.
+- **Image and video generation is one switch away from gone** (`mediaGenerationEnabled`, on by default). It governs `freecodego_generate_image`, `freecodego_generate_video`, and the legacy `agnes_generate_image` / `agnes_generate_video` names, and switching it off **unregisters** them so they leave the model's tool list instead of failing at call time. `freecodego_generate_audio` and `freecodego_transcribe_audio` are outside it: one writes into the active workspace and the other reads out of it.
+- **Image and video routes follow the provider, not the model name.** Image generation speaks the OpenAI Images contract (`/images/generations`, `/images/edits` when sources are attached), Seedream's `image: [...]` fusion body, Gemini's `:generateContent`, Imagen's `:predict`, and DashScope's `multimodal-generation`. Video generation speaks nine: Kling (`text2video` / `image2video` / `multi-image2video`), Ark (`/contents/generations/tasks`), DashScope's async video-synthesis, MiniMax Hailuo, Vidu, Gemini's Veo `:predictLongRunning`, xAI's `/videos/generations` including edits and extensions, OpenAI's `/videos`, and the gateway's portable shape for everything unrecognized. The model roster is read live from the Harness model directory, the managed catalog, Logfare, and Agnes rather than pinned, and the package README carries the full table.
 
 ### Advisor review loop
 
@@ -85,7 +111,7 @@ TRAE, Cline, WorkBuddy International, Agnes publish no stable roster, so their r
 
 ### Engineering enhancement
 
-Engineering Enhancement sits behind one master switch (`engineeringEnabled`, **off** by default). Turning it on mounts audited bundled engineering Skills, static asset Doctor checks, bounded declared-script verification, and Host-owned tools shared by DeepSeek, Claude, and Codex. The settings page holds the master switch; the detailed controls live in the dynamic Engineering sidebar entry.
+Engineering Enhancement sits behind one master switch (`engineeringEnabled`, **on** by default). It mounts audited bundled engineering Skills, static asset Doctor checks, bounded declared-script verification, and Host-owned tools shared by DeepSeek, Claude, and Codex. Switching it off stands the whole pack down. The settings page holds the master switch; the detailed controls live in the dynamic Engineering sidebar entry.
 
 #### Multi-engine review and verification
 
@@ -191,8 +217,9 @@ These mechanisms share one idea: a rule that only exists as prose cannot be enfo
 - **LSP auto-mount** (`lspEnabled`, on). The core LSP stack attaches only when candidate language-server executables actually resolve on PATH, so a machine without them boots normally instead of failing at load.
 - **Scheduling and hook chains.** The Harness owns reminders and this plugin does not own a second scheduler; what it adds is the calendar arithmetic the Harness's rule set cannot express ("every weekday at 09:00", "the first of the month"), answered through `freecodego_schedule_plan`. `hookChainsEnabled` (on) adds declarative failure-recovery rules over a small event vocabulary with a depth guard and a cooldown, because a recovery layer that can storm is worse than none.
 - **Media, transcription, and voice.** Image, video, and audio generation plus Whisper transcription as described above, and a voice-input control in the composer (`voiceInputEnabled`) that transcribes through the Groq Whisper route.
+- **Web-search provider.** The stock web-search page configures an endpoint, a key, and a search budget, and leaves the model at DeepSeek's own default — the one part a FreeCodeGo installation wants to change. This plugin adds a model list under that page's own configuration, built from the directory it routes, and choosing a row writes that model's Anthropic-compatible endpoint, its wire model id, and a key of its own (`FREECODEGO_WEB_SEARCH_API_KEY`, never the provider's own reference, which keeps a user's DeepSeek key intact) into the `web-search-deepseek` namespace. The endpoint is normalized for the provider's join rule, and a provider reached through the local bridge is rebuilt automatically after a restart, because its route id and secret are minted per process: the Host re-resolves the remembered provider and model at startup, before the first search can run, and the page does the same on load when the Host could not (no credentials or settings service mounted). Only a binding this plugin never recorded a provider/model for — or one whose rebuild failed — asks the user to pick again.
 - **Agent presets and personas.** The bundled agent presets are installed into `<DSH_HOME>/.agent-presets/` and kept in sync — written when absent, overwritten when the plugin's own version marker is recognized, and left alone when the user hand-edited them, so a preset appears in the mode picker without touching Harness source or restarting. Personas are TOML files with a stated precedence (inline settings → project `.freecodego/personas/` → `$DSH_HOME/freecodego/personas/` → bundled), a declarative input/output contract that can refuse a spawn when a required input is missing (a missing required output only warns), and a `default_isolation` that resolves into the worktree machinery. The project tier is trust-gated, so an untrusted checkout's persona files are not opened at all.
-- **Housekeeping.** Session deletion (`sessionDeleteEnabled`) clears a stale sidebar row idempotently when the log is already gone while a live session must be closed first, and the companion shows the selected session's activity as a character in two seats that always agree — the rail mark and a strip above the composer — with a labelled pose for each state rather than a shape that has to be guessed.
+- **Housekeeping.** Session deletion (`sessionDeleteEnabled`) is reachable two ways that share one gate and one failure report: the trash control that appears at the end of a hovered session row, and a named *Delete session* row in that session's "…" menu under *Archive* — which is the only route a touch user or a keyboard user has to the same action. A delete from the menu dismisses the menu and reports its refusal through the same alert the hover control uses. It clears a stale sidebar row idempotently when the log is already gone, while a live session must be closed first, and the companion shows the selected session's activity as a character in two seats that always agree — the rail mark and a strip above the composer — with a labelled pose for each state rather than a shape that has to be guessed.
 
 ### Settings surface
 
@@ -212,7 +239,7 @@ Route creation and editing deliberately stay in the shared Models settings surfa
 
 ### Plugin conflict protection
 
-`pluginConflictProtectionEnabled` (on) installs a guard before the Loader starts the profile tree. FreeCodeGo then statically scans each later entry module and its local imports for literal duplicate Tool names, command names, settings namespaces, HTTP routes, model Provider ids, and UI Slot ids. When it finds an exclusive resource already owned by an active entry, it keeps the earlier entry, disables the later one before it runs, and saves a repair record for the settings page; the notification names both entries and the duplicate resource. The scanner never executes third-party code and intentionally ignores dynamic or computed registrations — it prevents reliable duplicate registrations, not unrelated plugins that merely provide similar user-facing features.
+`pluginConflictProtectionEnabled` (on) installs the guard when the plugin's own composition entry activates. FreeCodeGo then statically scans every entry module and its local imports for literal duplicate Tool names, command names, settings namespaces, HTTP routes, model Provider ids, and UI Slot ids. Entries that initialize after that point are wrapped before they run, and the ones already running are recorded first, so an entry starting later is still refused a resource an earlier one owns; when that happens it keeps the earlier entry, disables the later one, and saves a repair record for the settings page, and the notification names both entries and the duplicate resource. The scanner never executes third-party code and intentionally ignores dynamic or computed registrations — it prevents reliable duplicate registrations, not unrelated plugins that merely provide similar user-facing features.
 
 ### Release updates
 
@@ -251,7 +278,7 @@ The plugin's own model-facing surface is declared once, in `tool-manifest.ts`, t
 ## Requirements
 
 - **Node** `^22.19.0 || >=24.0.0`
-- **DeepSeek Harness** `0.1.6-alpha.2`. The bundle declares `freecodego.harnessBaseline`, and an update is offered only for the line it was built for.
+- **DeepSeek Harness** `0.1.7-alpha.2`. The bundle declares `freecodego.harnessBaseline`, and an update is offered only for the line it was built for.
 
 ## Install
 
@@ -261,11 +288,11 @@ The bundle is distributed as a release asset, not from a package registry:
 dsh plugin --profile web add --save-exact <tarball-url>
 ```
 
-For example, the bundle built for Harness `0.1.6-alpha.2`:
+For example, the bundle built for Harness `0.1.7-alpha.2`:
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.6-alpha.2/freecodego-0.1.6-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2/freecodego-0.1.7-alpha.2.tgz
 ```
 
 `--profile web` is the profile `dsh web` runs under; substitute your own profile name if you launched the Harness differently. A Host restart is required before the new bundle is loaded.
@@ -280,7 +307,7 @@ pnpm run build
 
 ## Releases and asset naming
 
-Every release is tagged `freecodego-v<version>`, and its tarball is named `<package>-<Harness version>.tgz` — for this bundle, `freecodego-0.1.6-alpha.2.tgz`. The asset names the **Harness line** rather than the bundle version, so a hotfix (`v0.1.6-alpha.2.1`) still says which line it belongs to. A release whose asset carries the bundle version installs too, and a release holding a single tarball is accepted whatever it is called — a name that disagrees with the tag is not a reason to leave an update unreachable.
+Every release is tagged `freecodego-v<version>`, and its tarball is named `<package>-<Harness version>.tgz` — for this bundle, `freecodego-0.1.7-alpha.2.tgz`. The asset names the **Harness line** rather than the bundle version, so a hotfix (`v0.1.7-alpha.2.1`) still says which line it belongs to. A release whose asset carries the bundle version installs too, and a release holding a single tarball is accepted whatever it is called — a name that disagrees with the tag is not a reason to leave an update unreachable.
 
 The update service reads the releases of this repository, checks shortly after startup and then daily, and installs through the same `dsh plugin add --save-exact <url>` entry point the user installed with. Installation stages the bundle in a sibling Profile and promotes it atomically; the previous Profile stays restorable until the restarted Host is healthy.
 

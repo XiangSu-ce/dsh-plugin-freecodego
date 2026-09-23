@@ -13,6 +13,61 @@ is this bundle's own version, not the Harness line it mounts on. English only:
 the notes are the release's own text, and a paired translation of a published
 changelog would be a second thing to keep in step without a reader who needs it.
 
+## 0.1.7-alpha.2 — 2026-09-23
+
+### Changed
+
+- This release targets Harness `0.1.7-alpha.2`, and everything that names the
+  line moves together: the bundle's version, `freecodego.harnessBaseline`,
+  `engines.dsh`, the release tag, and the name of the asset it attaches. The
+  checked-in source has been the `0.1.7-alpha.2` tree since that commit was
+  recorded as the candidate in `harness.lock.json`; this release is the one that
+  promotes it, in that file and in `harness.config.json` and `COMPATIBILITY.md`
+  alike. A Host still on `0.1.6-alpha.2` is no longer offered an update, because
+  a bundle mounts one Harness line and this is the line it is built against.
+- Every peer a Host supplies now declares `>=0.1.7-alpha.2` instead of `*`. An
+  open `*` admits no prerelease version at all: node-semver lets a prerelease
+  satisfy a range only when a comparator carries the same `major.minor.patch`
+  tuple and a prerelease tag of its own, and this Harness line publishes
+  prereleases only — so the range named a Host that does not exist, which is the
+  shape the plugin list documents as the usual cause of an install-time
+  `ERESOLVE`. The floor is the value `engines.dsh` already carried, so the two
+  cannot state different lines, and `react` keeps `*` because no Host supplies
+  it. `scripts/check-workspace-constraints.ts` accepts the floor in place of `*`
+  for this subtree alone.
+- Engineering enhancement is on by default. An installation that never opened
+  the setting keeps it, and turning it off explicitly still turns it off.
+- A model a curated provider offers is no longer hidden from the picker by its
+  price, and the default visible set gains `claude-sonnet-4-6`: a user who chose
+  a provider can see what that provider offers.
+- An OpenCode free-tier refusal now says what it is. The hint is claimed only by
+  a 403 carrying the provider's own free-tier marker, and Kilo's rate-limit
+  message no longer answers for a status it never described.
+
+### Added
+
+- A switch for image and video generation (`mediaGenerationEnabled`, on by
+  default) in the FreeCodeGo settings tab. Turning it off unregisters
+  `freecodego_generate_image` and `freecodego_generate_video` — and the legacy
+  `agnes_generate_*` aliases — rather than refusing them at call time, so their
+  schemas leave the model's tool list with them and no tool is left visible but
+  uncallable. Audio generation and transcription stay outside the switch: one
+  writes into the workspace, the other reads from it. The panel reports what the
+  switch governs and what this installation actually mounts as two separate
+  facts, so an installation without an Agnes account is not described as missing
+  tools.
+- The model that answers web search is selectable. The page over
+  `web-search-deepseek` edits the key, the endpoint and the search budget, and
+  leaves the model at the schema default; the new section lists the models this
+  plugin routes, takes the endpoint and the credential from the Host, and writes
+  the choice into the same `web-search-deepseek` namespace, so the two surfaces
+  cannot disagree.
+- Deleting a conversation is reachable from the session row's menu, after
+  Archive. The hover control exists only while a pointer is over the row; the
+  named row is the same action for touch and keyboard, reports its failure
+  through the overlay that outlives the menu, and hides itself under the same
+  `sessionDeleteEnabled` switch.
+
 ## 0.1.6-alpha.2.4 — 2026-09-23
 
 Nothing in the bundle itself changes in this version either: it carries the

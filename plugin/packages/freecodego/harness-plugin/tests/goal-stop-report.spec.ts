@@ -27,7 +27,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
-import { agentValue, provideHostService, provideHostServiceAs, registrationHandle, sessionValue, settingsValue, type AgentEnginesFace, type CommandsFace, type GoalsFace } from './support/host-services.ts'
+import { agentValue, pluginConfig, provideHostService, provideHostServiceAs, registrationHandle, sessionValue, type AgentEnginesFace, type CommandsFace, type GoalsFace } from './support/host-services.ts'
 
 const CWD = '/workspace'
 const GOAL_ID = 'goal_0123456789abcdef'
@@ -77,14 +77,6 @@ async function goalHarness(): Promise<GoalHarness> {
     provideHostService(scope, 'agents', { get: () => agentValue(agent), list: () => [agentValue(agent)] })
     provideHostServiceAs<AgentEnginesFace>(scope, 'agentEngines', { setAvailability: () => undefined })
     provideHostService(scope, 'sessions', { get: () => sessionValue({ id: AGENT_ID, header: { cwd: CWD } }), list: () => [] })
-    provideHostService(scope, 'settings', {
-      register: () => ({
-        get: () => settingsValue({ engineeringEnabled: true, engineeringLoopAutoContinue: true }),
-        watch: () => () => undefined,
-        update: async () => undefined,
-        replace: async () => undefined,
-      }),
-    })
     provideHostService(scope, 'llm', {
       registerAdapter: () => registrationHandle(),
       stream() { return (async function* empty(): AsyncGenerator<never> { /* boot makes no request */ })() },
@@ -100,7 +92,7 @@ async function goalHarness(): Promise<GoalHarness> {
     // an `active` phase exactly like this, and the next block follows it.
     provideHostServiceAs<GoalsFace>(scope, 'goals', { get: () => goal() })
   })
-  new FreeCodeGoHarnessPlugin(ctx, {})
+  new FreeCodeGoHarnessPlugin(ctx, pluginConfig({ engineeringEnabled: true, engineeringLoopAutoContinue: true }))
   // The event is declared by `@deepseek-ai/dsh-goal`, which this package does not
   // depend on for types (see the listener's own structural view in `index.ts`),
   // so the emitter is reached through the same narrow shape.

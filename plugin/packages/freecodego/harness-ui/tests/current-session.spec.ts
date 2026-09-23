@@ -23,7 +23,7 @@ const contextWith = (list: Partial<SessionListState>): ClientContext => ({
   sessions: {
     list: {
       getSnapshot: () => ({
-        ids: [], byId: {}, phase: 'ready', subagentsByParent: {}, jobsBySession: {},
+        ids: [], byId: {}, phase: 'ready', projectionsBySession: {},
         ...list,
       }),
     },

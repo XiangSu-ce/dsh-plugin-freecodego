@@ -11,7 +11,13 @@ const root = resolve(import.meta.dirname, '../..')
 
 const bundleManifest = JSON.parse(
   readFileSync(join(root, 'packages/freecodego/bundle-latest/package.json'), 'utf8'),
-) as { name: string; version: string; engines: { node: string; dsh: string }; freecodego: { harnessBaseline: string } }
+) as {
+  name: string
+  version: string
+  engines: { node: string; dsh: string }
+  freecodego: { harnessBaseline: string }
+  peerDependencies: Record<string, string>
+}
 
 /**
  * Every path the bundle's manifest resolves to, as a host loading it would see
@@ -20,7 +26,7 @@ const bundleManifest = JSON.parse(
  *
  * Only manifest-resolved paths belong here. `validatePayload` requires every
  * path the manifest declares to be present, and "declared" is exactly `exports`,
- * `main`, `dsh.bundle.patch` and `dsh.bootstrap.module`, so a row no manifest
+ * `main`, `exports` and `dsh.bundle.patch`, so a row no manifest
  * names is inert: dropping it changes no verdict, and a build that stopped
  * writing the file it names would go unnoticed. The spec below asserts that
  * property row by row, and three rows that could never assert anything were
@@ -36,8 +42,17 @@ const bundleManifest = JSON.parse(
 const bundlePayload = [
   'package.json',
   'cordis.patch.yml',
+  // Both preset layers, resolved through the manifest's `dsh.bundle.patch` list.
+  // They are the two rows the Agent-preset registry mounts, so a pack that lost
+  // one would ship a composition whose preset selector is missing a mode.
+  'presets/freecodego.patch.yml',
+  'presets/augmentcode.patch.yml',
   'dist/bootstrap.js',
   'dist/client.cjs',
+  // The module the `freecodego-harness-plugin` row loads. It is a re-export of
+  // `bootstrap.js`, so a build that stopped emitting it would take every setting
+  // of this plugin with it while the tarball still looked complete.
+  'dist/harness-plugin.js',
   'dist/session-events.js',
   'dist/agent-team.js',
   'dist/tool-agent-team.js',
@@ -149,6 +164,28 @@ describe('freecodego release family', () => {
     expect(bundleManifest.engines.dsh).toBe(`>=${bundleManifest.freecodego.harnessBaseline}`)
   })
 
+  it('states the Harness line in every peer a Host supplies', () => {
+    // The peers are the one place the line is written down a second time, and the
+    // reason they cannot be `*` on their own: node-semver admits no prerelease
+    // version into an open range, so a Host running this line is an unmet peer to
+    // an installer that evaluates peers. A peer that drifts from the baseline is
+    // therefore either a line this bundle is not built for or a floor that
+    // excludes the Host it is built for.
+    //
+    // Which shapes the gate accepts is `check-workspace-constraints.ts`'s answer;
+    // this is the half that says the accepted one has to agree with the baseline.
+    // The packages a Host supplies are the scoped ones — `react` is a peer of the
+    // client and says nothing about the line — so the rule is stated over those.
+    const hosts = Object.entries(bundleManifest.peerDependencies)
+      .filter(([name]) => name.startsWith('@deepseek-ai/'))
+    expect(hosts.length).toBeGreaterThan(1)
+    expect([...new Set(hosts.map(([, range]) => range))])
+      .toEqual([`>=${bundleManifest.freecodego.harnessBaseline}`])
+    expect([...new Set(Object.entries(bundleManifest.peerDependencies)
+      .filter(([name]) => !name.startsWith('@deepseek-ai/'))
+      .map(([, range]) => range))]).toEqual(['*'])
+  })
+
   it('refuses a bundle that cannot name the Harness line it publishes on', () => {
     const family = releaseFamily('freecodego')
     const bundle = family.members(root)[0]!
@@ -203,6 +240,24 @@ describe('freecodego release family', () => {
     const inert = bundlePayload.filter(row =>
       accepts(bundlePayload.filter(candidate => candidate !== row)))
     expect(inert).toStrictEqual([])
+  })
+
+  it('requires every file of a list-shaped dsh.bundle.patch, not only a single one', () => {
+    // `dsh.bundle.patch` is documented as "a file path or a list of file paths"
+    // (`bundlePatchFiles`, `packages/boot/app-boot/src/profile.ts`). The gate read the
+    // scalar form only — `Object.values` was skipped for arrays — so every file of a
+    // list-shaped declaration went unvalidated, and this bundle's preset layers are
+    // named exactly that way: a pack that dropped one reported a complete payload.
+    const family = releaseFamily('freecodego')
+    const bundle = family.members(root)[0]!
+    const listed: ReleaseMember = {
+      ...bundle,
+      manifest: { ...bundle.manifest, dsh: { ...bundle.manifest.dsh as object, bundle: { patch: ['./cordis.patch.yml', './presets/freecodego.patch.yml', './presets/augmentcode.patch.yml'] } } },
+    }
+    expect(() => { family.validatePayload(listed, bundlePayload) }).not.toThrow()
+    expect(() => {
+      family.validatePayload(listed, bundlePayload.filter(path => path !== 'presets/augmentcode.patch.yml'))
+    }).toThrow(/does not carry presets\/augmentcode\.patch\.yml/)
   })
 
   it('rejects a payload that publishes source, as every other family does', () => {

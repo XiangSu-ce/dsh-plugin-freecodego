@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-面向 DeepSeek Harness `freecodego@0.1.6-alpha.2` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.1.6-alpha.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.1.6-alpha.2`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
+面向 DeepSeek Harness `freecodego@0.1.7-alpha.2` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.1.7-alpha.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.1.7-alpha.2`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
 
 ## 目录
 
@@ -18,6 +18,7 @@ kind: "package-bundle"
 - [代码审查](#code-review)
 - [项目记忆](#project-memory)
 - [Agent Teams](#agent-teams)
+- [生图与视频生成](#image-and-video-generation)
 - [模型体验](#model-experience)
 - [已知限制与延期工作](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
@@ -31,10 +32,10 @@ kind: "package-bundle"
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.6-alpha.2/freecodego-0.1.6-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2/freecodego-0.1.7-alpha.2.tgz
 ```
 
-`freecodego-0.1.6-alpha.2.tgz` 就是面向 Harness `0.1.6-alpha.2` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
+`freecodego-0.1.7-alpha.2.tgz` 就是面向 Harness `0.1.7-alpha.2` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
 
 `dsh` 命令由 Harness CLI 提供，不来自本 bundle。普通终端里请先用 `npm install --global @deepseek-ai/dsh` 安装它（并确保 `pnpm` 可用）。桌面端通过自己的私有 shim 运行同一条命令并传入当前 `DSH_HOME`，因此 Web 与桌面端选择同一个 Harness home 时共用同一份 Profile 数据目录。
 
@@ -57,9 +58,9 @@ gh workflow run release-freecodego.yml --ref freecodego-v<version>
 
 | 提供商 | 免费模型 | 目录 |
 |---|---|---|
-| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free` | 76 行中的 12 行；公开，无需登录 |
-| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`inclusionai/ling-3.0-flash-vl:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nex-agi/nex-n2.5-mini:free`、`nex-agi/nex-n2.5-pro:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free`、`z-ai/glm-5.2:free` | 385 行中的 21 行；公开，每个出口 IP 每小时 200 次 |
-| **Logfare** | 对话 `deepseek-v3.2`、`deepseek-v4-pro-0813`、`gemma-4-26b`、`gemma-4-31b-it`、`glm-5`、`glm-5.3`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`kimi-k2.6`、`kimi-k2.7-code`、`logfare/auto`、`moondream3.1`、`qwen-3.8-27b`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`；音频 `melotts`、`whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nova-3`、`phoenix-1.0` | 26 行；18 行需要训练数据授权，其余 8 行不需要 |
+| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 80 行中的 13 行；公开，无需登录 |
+| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`inclusionai/ling-3.0-flash-vl:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nex-agi/nex-n2.5-mini:free`、`nex-agi/nex-n2.5-pro:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free`、`z-ai/glm-5.2:free` | 394 行中的 21 行；公开，每个出口 IP 每小时 200 次 |
+| **Logfare** | 对话 `claude-opus-4.6`、`deepseek-v3.2`、`deepseek-v4-pro-0813`、`gemma-4-26b`、`glm-5`、`glm-5.3`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`kimi-k2.6`、`kimi-k2.7-code`、`kimi-k3`、`logfare/auto`、`moondream3.1`、`qwen-3.8-27b`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`；音频 `melotts`、`whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nova-3`、`phoenix-1.0` | 27 行；20 行需要训练数据授权，其余 7 行不需要 |
 | **Qoder** | `Qwen 3.8 Flash`（路由 `qmodel_38flash`） | 免费 flash 路由，另有每日签到活动 |
 | **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（82 行）中 | 调用需要 API key；核对于 2026-09-23 |
 | **SenseNova** | `deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k3`、`sensenova-6.8-flash-lite` —— 均为 1M 上下文 / 128K 输出 | 名单随 bundle 内置；需要 API key |
@@ -74,7 +75,7 @@ gh workflow run release-freecodego.yml --ref freecodego-v<version>
 
 TRAE、Cline、WorkBuddy 国际版、Agnes 不公布固定名单，因此它们的行在到达时计数，而不在此列名。
 
-Logfare 有 18 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
 
 <!-- generated:free-models:end -->
 
@@ -94,6 +95,15 @@ Logfare 有 18 行位于训练数据授权之后，选择器会标注而不是�
 ## Agent Teams
 
 bundle 以同引擎子会话启用 Harness Agent Teams。DeepSeek 父会话创建 DeepSeek 队友，Codex 父会话创建 Codex 队友，Claude 父会话创建 Claude 队友；子会话路由继承自父会话，而不是从进程默认值中选取。团队名册、邮箱、任务看板与队友 Session 记录仍由 Harness 持有。Web Chat 在父对话内渲染实时的委派 Agent 进度树，包括每个任务标签、当前工具、状态与工具使用次数。
+
+<a id="image-and-video-generation"></a>
+## 生图与视频生成
+
+bundle 为 DeepSeek、Codex 与 Claude 注册生图与生视频工具，执行时读取这一类目配置的模型，而不是钉死某个模型。`mediaGenerationEnabled`（默认开启）就是那个开关：关掉后 `freecodego_generate_image`、`freecodego_generate_video` 与旧名字 `agnes_generate_image` / `agnes_generate_video` 会被**注销**——它们从模型的工具表里整体离开，而不是等到调用时才报错——而 `freecodego_generate_audio` 与 `freecodego_transcribe_audio` 保留，因为一个往活动工作区写文件、一个从活动工作区读文件。
+
+路线由 **provider** 决定，绝不由模型 id 里的关键词决定。生图讲 OpenAI Images 契约（`/images/generations`，带源图时走 `/images/edits`）、Seedream 的 `image: [...]` 融合体、Gemini 的 `:generateContent`、Imagen 的 `:predict`，以及 DashScope 的 `multimodal-generation`。生视频讲九条：Kling 的 `text2video` / `image2video` / `multi-image2video`、Ark 的 `/contents/generations/tasks`、DashScope 的异步 `video-synthesis`、MiniMax Hailuo 的 `/v2/video_generation`、Vidu 的四条 `ent/v2` 路由、Gemini 的 Veo `:predictLongRunning`、xAI 的 `/videos/generations`（给源视频时含编辑与续写）、OpenAI 的 `/videos`，以及网关对一切未识别 provider 的通用形状。
+
+模型名单是**活的，不是钉死的**：候选每次请求实时从 Harness 模型目录、托管目录、Logfare 与 Agnes 汇总，路线分类按 id 推断，也可在设置页的模型分类里手动覆盖。每次调用都带逐路线熔断，只有路线自己的问题才会落到下一条——密钥错或 prompt 被拒直接失败，而不是再付一次尝试的钱。完整表格（包括哪些 provider 接受尾帧、每条路线能渲染多长）见 `harness-plugin` 的包内 README。
 
 -----
 

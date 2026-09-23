@@ -191,4 +191,38 @@ describe('OpenAI-compatible route', () => {
     expect(request.max_tokens).toBeUndefined()
   })
 
+  it('asks the provider about every failed status, and leaves the bare status when it declines', async () => {
+    // A 429 is not the only failure a status does not explain: OpenCode's free
+    // tier answers 403, and the wording that says so is in the body. So the hook
+    // is consulted for the status and the body together, and the provider — the
+    // only layer that knows what its own numbers mean — decides.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(
+      JSON.stringify({ error: { message: 'this model is no longer available' } }),
+      { status: 403, headers: { 'content-type': 'application/json' } },
+    ))
+    const seen: { provider: string; status: number; detail: string }[] = []
+    const adapter = new OpenAiCompatibleAdapter({
+      providerName: 'Gated route',
+      listModels: async provider => [{ provider, id: 'auto', name: 'Auto' }],
+      resolveConnection: async () => ({ baseURL: 'https://example.invalid/v1', apiKey: 'test-key' }),
+      rateLimitedHint: (provider, status, detail) => {
+        seen.push({ provider, status, detail })
+        return status === 403 && detail.includes('no longer available') ? undefined : 'hint'
+      },
+    })
+    const failure = await (async () => {
+      for await (const _chunk of adapter.stream({
+        provider: 'gated', model: 'auto',
+        messages: [{ id: MessageId('m6'), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] }],
+      })) { /* consume */ }
+      return new Error('the request was expected to fail')
+    })().catch((error: unknown) => error as Error)
+    expect(seen).toEqual([{ provider: 'Gated route', status: 403, detail: '{"error":{"message":"this model is no longer available"}}' }])
+    // Declining means the message ends at the provider's own words: an empty
+    // line where a hint would be is worse than no hint at all.
+    expect(failure.message).not.toContain('hint')
+    expect(failure.message).toBe('Gated route provider request failed (HTTP 403): {"error":{"message":"this model is no longer available"}}')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
 })

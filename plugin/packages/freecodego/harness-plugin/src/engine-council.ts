@@ -728,7 +728,7 @@ export class FreeCodeGoEngineCouncil {
     const prompt = reviewPrompt(runtime.engine, request, round, board)
     try {
       signal.throwIfAborted()
-      agent.followup(createUserMessage({ source: { kind: 'plugin', plugin: 'freecodego-engine-council' }, content: [{ type: 'text', text: prompt }] }))
+      agent.followup(createUserMessage({ source: { kind: 'freecodego-engine-council' }, content: [{ type: 'text', text: prompt }] }))
       await agent.whenIdle()
       const output = finalAssistantText(agent.session.snapshotEvents())
       if (output === '') throw new Error(`${runtime.engine} council participant returned no final answer`)
@@ -1138,7 +1138,7 @@ function injectCouncilHandoff(parent: Agent, report: FreeCodeGoEngineeringCounci
   // durable report is the source of truth on restart.
   try {
     parent.inject(createUserMessage({
-      source: { kind: 'plugin', plugin: 'freecodego-engine-council' },
+      source: { kind: 'freecodego-engine-council' },
       content: [{
         type: 'text',
         text: 'Engineering council ' + report.id + ' finished with state ' + report.state + '. Read the durable report before proceeding. ' + report.finalRecommendation,

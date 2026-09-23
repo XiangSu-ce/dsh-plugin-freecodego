@@ -98,7 +98,7 @@ describe('session-start capability map', () => {
     const text = mapText(injected)
     expect(text).toBeDefined()
     expect(injected).toHaveLength(1)
-    expect(injected[0]?.source).toMatchObject({ kind: 'plugin', plugin: 'freecodego-engineering-skills' })
+    expect(injected[0]?.source).toMatchObject({ kind: 'freecodego-engineering-skills' })
     // The map's whole job: say which Skills exist and who may call them.
     expect(text).toContain('<freecodego-skill-map>')
     expect(text).toContain('User-invoked')
@@ -144,7 +144,7 @@ describe('session-start capability map', () => {
     expect(first.injected).toHaveLength(1)
 
     // A second session whose copy is still in the inbox must not queue another.
-    const queued = fakeAgent('session-pending', { kind: 'plugin', plugin: 'freecodego-engineering-skills' })
+    const queued = fakeAgent('session-pending', { kind: 'freecodego-engineering-skills' })
     await registry.skillMapForTest(queued.agent)
     expect(queued.injected).toHaveLength(0)
     await registry.dispose()

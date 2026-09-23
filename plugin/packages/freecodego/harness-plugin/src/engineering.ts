@@ -19,7 +19,6 @@ import { dangerousCommandFindings } from './dangerous-command-patterns.ts'
 import { containsSecret } from './secret-scan.ts'
 import { isRecord } from './untrusted-json.ts'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import z from '@deepseek-ai/schemastery'
 import { apply as applySkillFilesystem } from '@deepseek-ai/dsh-skill-filesystem'
 import { ENGINEERING_MEMORY_KINDS } from './types.ts'
 import type { FreeCodeGoEngineeringCanvasGraph, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoEngineeringCodeGraphProjectStatus, FreeCodeGoEngineeringCodeGraphRuntimePackage, FreeCodeGoEngineeringCodeGraphRuntimeStatus, FreeCodeGoEngineeringDoctorReport, FreeCodeGoEngineeringFinding, FreeCodeGoEngineeringGraphProjectStatus, FreeCodeGoEngineeringGraphRuntimePackage, FreeCodeGoEngineeringGraphRuntimeStatus, FreeCodeGoEngineeringLoopPhase, FreeCodeGoEngineeringLoopStatus, FreeCodeGoEngineeringMemoryBackup, FreeCodeGoEngineeringMemoryDetail, FreeCodeGoEngineeringMemoryIndex, FreeCodeGoEngineeringMemoryPage, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringMemoryRetentionResult, FreeCodeGoEngineeringMemoryTimeline, FreeCodeGoEngineeringModuleStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringVerificationResult, FreeCodeGoSkillMapBudget, FreeCodeGoSkillMapBudgetStrategy, FreeCodeGoSkillPackStatus } from './types.ts'
@@ -47,96 +46,7 @@ import type { MemoryDocumentRecord } from './memory/memory-document.ts'
 import { selectMemories, type MemoryRecallCandidate, type MemoryRecallDrop, type MemoryRecallStrategy, type MemorySelector } from './memory/memory-recall.ts'
 import { VERIFICATION_TOOL_NAME } from './verify-on-stop.ts'
 
-/**
- * Schema of the engineering settings document, as the Host validates it.
- */
-export const FreeCodeGoEngineeringSettingsSchema = z.object({
-  engineeringEnabled: z.boolean().default(false),
-  /**
-   * The rest of the bundled engineering library is opt-in: 23 audited Skills
-   * (the remainder of the authored set plus the vendored `mattpocock/skills`
-   * entries that are not in the default-on starter root) stay unmounted until
-   * the user turns this on.
-   */
-  engineeringSkillsEnabled: z.boolean().default(false),
-  /**
-   * The starter set is on by default: ten Skills whose value does not depend on
-   * adopting a whole methodology. Four are disciplines the model applies on its
-   * own (evidence before completion claims, navigation before broad reading,
-   * planning multi-file work, root-cause debugging); the rest are `/name`
-   * entries a user reaches for on demand and that cost nothing until typed
-   * (a prompt-technique reference, the grilling interview and its primitive, a
-   * re-pitch escape hatch, a handoff document, and a questionnaire for
-   * decisions the agent cannot settle). They live in their own asset root so
-   * "all engineering Skills" stays the union of the roots — no skill file is
-   * duplicated, and no audit can disagree with a mount.
-   */
-  engineeringStarterSkillsEnabled: z.boolean().default(true),
-  /**
-   * The vendored superpowers workflow pack is a separate opt-in: it is the
-   * auto-triggering, plan-then-dispatch methodology, so it must be a deliberate
-   * choice rather than a side effect of enabling the engineering disciplines.
-   */
-  engineeringSuperpowersSkillsEnabled: z.boolean().default(false),
-  /**
-   * Injects a bounded capability map of the mounted Skills at session start.
-   * A default-off Skill library is invisible otherwise: the model never lists
-   * it, and a user who turned a pack on has no way to see what arrived.
-   */
-  engineeringSkillMapEnabled: z.boolean().default(true),
-  /** Enables bounded project-declared verification after an approved council plan. */
-  engineeringQualityEnabled: z.boolean().default(true),
-  engineeringMemoryEnabled: z.boolean().default(true),
-  engineeringCouncilEnabled: z.boolean().default(true),
-  engineeringCouncilDeepseekEnabled: z.boolean().default(true),
-  engineeringCouncilCodexEnabled: z.boolean().default(true),
-  engineeringCouncilClaudeEnabled: z.boolean().default(true),
-  engineeringMemoryContextTokenBudget: z.number().step(1).min(0).max(4_000).default(1_200),
-  /**
-   * Default off, deliberately: the lexical rerank is free, deterministic, and
-   * already ranks by term coverage. Flipping this on spends one small model
-   * request per memory search to catch the memories that share no wording with
-   * the query — worth it for a user who searches by concept, wasted for one who
-   * greps for identifiers.
-   */
-  engineeringMemorySelectorEnabled: z.boolean().default(false),
-  /**
-   * Default off, deliberately: this lets a model approve a pending action without
-   * asking the user. Off means every approval keeps prompting. On means an action
-   * whose arguments the reviewer can actually read may be cleared automatically —
-   * anything it refuses, cannot read, or declines to judge still goes to the user.
-   */
-  engineeringActionReviewEnabled: z.boolean().default(false),
-  engineeringCodeGraphEnabled: z.boolean().default(true),
-  engineeringCodeGraphAutoUpdate: z.boolean().default(true),
-  engineeringGraphEngine: z.union([z.const('auto'), z.const('graphify'), z.const('codegraph')]).default('auto'),
-  engineeringCouncilMaxRounds: z.number().step(1).min(1).max(3).default(2),
-  engineeringCouncilTimeoutMs: z.number().step(1).min(10_000).max(300_000).default(120_000),
-  engineeringCouncilQuorum: z.number().step(1).min(1).max(3).default(2),
-  engineeringCouncilAutoRun: z.boolean().default(false),
-  /**
-   * The three phases of the autonomous engineering loop. Each is a separate
-   * switch because they carry different risk: creating a goal only commits the
-   * user to finishing, while enabling the driver lets work continue with no
-   * human turn in between.
-   *
-   * - `engineeringLoopCapturePlan` — when the user approves a council decision,
-   *   persist the approved plan as a durable Harness goal.
-   * - `engineeringLoopVerifyOnComplete` — when the active goal's driver reports
-   *   it finished, run the declared verification stages and record the result.
-   * - `engineeringLoopAutoContinue` — let the Harness goal-round driver start
-   *   the next round without a user turn. Off by default: a goal that continues
-   *   unattended is the one behaviour a user must opt into explicitly.
-   */
-  engineeringLoopCapturePlan: z.boolean().default(true),
-  engineeringLoopVerifyOnComplete: z.boolean().default(true),
-  engineeringLoopAutoContinue: z.boolean().default(false),
-  /** Round cap for a captured plan goal; bounds unattended continuation. */
-  engineeringLoopMaxGoalRounds: z.number().step(1).min(1).max(256).default(24),
-  engineeringCouncilMaxTokens: z.number().step(100).min(1_200).max(20_000).default(3_600),
-  engineeringCouncilMaxConcurrent: z.number().step(1).min(1).max(8).default(2),
-  engineeringCouncilDecisionTtlMs: z.number().step(60_000).min(60_000).max(7 * 24 * 60 * 60_000).default(30 * 60_000),
-}) as z<FreeCodeGoEngineeringSettings>
+
 
 type Fiber = { dispose(): Promise<void> }
 /** Harness tools.register() returns a callable disposer in alpha. Keep the
@@ -1876,7 +1786,7 @@ codeGraphMcpCall(cwd: string, command: CodeGraphQueryCommand, input: { readonly 
         }),
         fence.close,
       ].join('\n')
-      agent.inject(createUserMessage({ source: { kind: 'plugin', plugin: 'freecodego-engineering-memory' }, content: [{ type: 'text', text }] }))
+      agent.inject(createUserMessage({ source: { kind: 'freecodego-engineering-memory' }, content: [{ type: 'text', text }] }))
     } catch {
       // Recall is an optional local aid. A damaged database must not block session start.
     }
@@ -1910,7 +1820,7 @@ codeGraphMcpCall(cwd: string, command: CodeGraphQueryCommand, input: { readonly 
       // built and bounded is worth reporting even if the Host drops the message,
       // because the truncation happened at the build, not at the delivery.
       this.skillMapBudget = built.metrics
-      agent.inject(createUserMessage({ source: { kind: 'plugin', plugin: 'freecodego-engineering-skills' }, content: [{ type: 'text', text: built.text }] }))
+      agent.inject(createUserMessage({ source: { kind: 'freecodego-engineering-skills' }, content: [{ type: 'text', text: built.text }] }))
     } catch {
       // Discovery is an optional aid; a damaged asset tree must not block session start.
     }
@@ -2582,7 +2492,11 @@ export function selectGraphEngine(preference: 'auto' | 'graphify' | 'codegraph',
 
 function normalizeSettings(value: Partial<FreeCodeGoEngineeringSettings> | undefined): FreeCodeGoEngineeringSettings {
   return {
-    engineeringEnabled: value?.engineeringEnabled === true,
+    // Default on: the pack mounts read-only Skills and local state, so the
+    // useful state is the mounted one and only an explicit `false` — the user
+    // switching the master switch off — stands it down. A profile that predates
+    // the switch has no stored value and gets the pack.
+    engineeringEnabled: value?.engineeringEnabled !== false,
     // Opt-in: only an explicit `true` mounts the bundled Skill library. A
     // profile that predates this switch has no stored value and stays off.
     engineeringSkillsEnabled: value?.engineeringSkillsEnabled === true,
@@ -2626,13 +2540,19 @@ function normalizeSettings(value: Partial<FreeCodeGoEngineeringSettings> | undef
  *  `agent/session-start` can fire again (multi-resume, recovery republish)
  *  while the earlier copy still sits unclaimed, so the only way to keep the
  *  chat free of identical context-injection rows is to look at the queue
- *  itself. Best-effort: an inbox-less agent double never blocks recall. */
-function pendingRecall(agent: EngineeringAgent, plugin: string): boolean {
+ *  itself. Best-effort: an inbox-less agent double never blocks recall.
+ *
+ * The producer is named by `source.kind` alone now: the core removed the
+ * catch-all `plugin` member this used to read, so `producer` is the declared
+ * source kind (`freecodego-engineering-memory`, `freecodego-engineering-skills`).
+ * A check that kept looking for `kind: 'plugin'` would match nothing and report
+ * "nothing is pending" forever — which is how a duplicate row reaches the chat. */
+function pendingRecall(agent: EngineeringAgent, producer: string): boolean {
   try {
     const inbox = (agent as unknown as { readonly inbox?: { readonly nextStep?: readonly { readonly source?: unknown }[]; readonly nextTurn?: readonly { readonly source?: unknown }[] } }).inbox
     if (inbox === undefined) return false
-    const fromPlugin = (message: { readonly source?: unknown }): boolean => isRecord(message.source) && message.source.kind === 'plugin' && message.source.plugin === plugin
-    return (inbox.nextStep ?? []).some(fromPlugin) || (inbox.nextTurn ?? []).some(fromPlugin)
+    const fromProducer = (message: { readonly source?: unknown }): boolean => isRecord(message.source) && message.source.kind === producer
+    return (inbox.nextStep ?? []).some(fromProducer) || (inbox.nextTurn ?? []).some(fromProducer)
   } catch {
     return false
   }

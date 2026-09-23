@@ -37,12 +37,12 @@ const usePanelInfo: GlobalStandardProps['usePanelInfo'] = selector => selector({
 type SessionsSnapshot = Parameters<Parameters<GlobalStandardProps['useSessions']>[0]>[0]
 const noSessions: SessionsSnapshot = {
   ids: [], byId: {}, phase: 'ready',
-  subagentsByParent: {}, jobsBySession: {},
+  projectionsBySession: {},
 }
 const useSessions: GlobalStandardProps['useSessions'] = selector => selector(noSessions)
 
 type WorkspacesSnapshot = Parameters<Parameters<GlobalStandardProps['useWorkspaces']>[0]>[0]
-const noWorkspaces: WorkspacesSnapshot = { items: [], archivedSessionIds: [], state: 'idle', phase: 'ready', error: null }
+const noWorkspaces: WorkspacesSnapshot = { items: [], archivedSessionIds: [], pinnedSessionIds: [], state: 'idle', phase: 'ready', error: null }
 const useWorkspaces: GlobalStandardProps['useWorkspaces'] = selector => selector(noWorkspaces)
 
 type SessionStatusSnapshot = Parameters<Parameters<GlobalStandardProps['useSessionStatus']>[0]>[0]
@@ -4479,5 +4479,70 @@ describe('provider daily check-in', () => {
     }
     expect(checkinSummary(report, 'zh')).toBe('A：今日已签到 · B：签到活动未开启 · C：签到失败（boom）')
     expect(checkinSummary(report, 'en')).toBe('A: already checked in today · B: campaign not running · C: failed (boom)')
+  })
+})
+
+describe('image and video generation switch', () => {
+  const status = (over: Record<string, unknown> = {}) => ({
+    enabled: true,
+    // The four names the switch owns, against the two this profile mounted: the panel
+    // exists to show that difference, so the fixture has to carry both lists.
+    gated: ['freecodego_generate_image', 'freecodego_generate_video', 'agnes_generate_image', 'agnes_generate_video'],
+    registered: ['freecodego_generate_image', 'freecodego_generate_video'],
+    ...over,
+  })
+  // The remote has to resolve a RemoteResult: the panel chains `.then` on it, so a bare
+  // `vi.fn()` would throw an unhandled rejection and poison later tests in this file.
+  const offAnswer = (): Promise<{ ok: true; value: ReturnType<typeof status> }> => Promise.resolve({ ok: true as const, value: status({ enabled: false, registered: [] }) })
+  const renderPanel = async (setEnabled = vi.fn(offAnswer)): Promise<typeof setEnabled> => {
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      mediaGenerationStatus={vi.fn().mockResolvedValue({ ok: true as const, value: status() })}
+      mediaGenerationSetEnabled={setEnabled}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('设置'))
+    await screen.findByLabelText('启用生图与生视频')
+    return setEnabled
+  }
+
+  it('writes the toggle through and then shows the state the Host answered with', async () => {
+    const setEnabled = await renderPanel()
+    const toggle = await screen.findByLabelText('启用生图与生视频') as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+    fireEvent.click(toggle)
+    expect(setEnabled).toHaveBeenCalledWith(false)
+    // The panel renders the snapshot the write answered with rather than its own idea of
+    // the click: a refused write leaves the old value in force, and a switch left flipped
+    // would describe the profile as doing something it is not doing.
+    await waitFor(() => { expect(toggle.checked).toBe(false) })
+    // Scoped to this section: every other panel on the page carries the same badge text,
+    // so an unscoped read would pass while this one still said "已开启".
+    const section = (await screen.findByText('生图与视频')).closest('section')
+    expect(section).not.toBeNull()
+    expect(within(section as HTMLElement).getByText('已关闭')).toBeTruthy()
+  })
+
+  it('lists the tools it governs apart from the ones this profile mounted', async () => {
+    await renderPanel()
+    // Unmounted names are labelled rather than omitted: "the switch owns this and you do
+    // not have it" is a different fact from "the switch does not govern it".
+    expect(await screen.findByText('管辖的工具（4 个）')).toBeTruthy()
+    const chips = await screen.findByText('agnes_generate_image')
+    expect(chips.textContent).toContain('未注册')
+    expect((await screen.findByText('freecodego_generate_image')).textContent).toContain('已注册')
   })
 })

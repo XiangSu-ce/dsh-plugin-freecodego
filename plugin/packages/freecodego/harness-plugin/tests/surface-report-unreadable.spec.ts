@@ -25,7 +25,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
-import { provideHostService, provideHostServiceAs, registrationHandle, runContext, sessionAt, settingsValue, type AgentEnginesFace, type CommandsFace } from './support/host-services.ts'
+import { pluginConfig, provideHostService, provideHostServiceAs, registrationHandle, runContext, sessionAt, type AgentEnginesFace, type CommandsFace } from './support/host-services.ts'
 
 /** The report shape this spec reads, kept structural so the assertions name fields. */
 interface SurfaceReportView {
@@ -67,14 +67,6 @@ async function surfaceHarness(options: {
     provideHostService(scope, 'agents', { list: () => [], get: () => undefined })
     provideHostServiceAs<AgentEnginesFace>(scope, 'agentEngines', { setAvailability: () => undefined })
     provideHostService(scope, 'sessions', { get: () => sessionAt(workspace), list: () => [] })
-    provideHostService(scope, 'settings', {
-      register: () => ({
-        get: () => settingsValue({ engineeringEnabled: true, engineeringMemoryEnabled: true, advisorProvider: 'opencode', advisorModel: 'auto' }),
-        watch: () => () => undefined,
-        update: async () => undefined,
-        replace: async () => undefined,
-      }),
-    })
     provideHostService(scope, 'llm', {
       registerAdapter: () => registrationHandle(),
       stream(_generation: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -92,7 +84,7 @@ async function surfaceHarness(options: {
     provideHostServiceAs<CommandsFace>(scope, 'commands', { register: () => () => undefined })
     provideHostService(scope, 'systemPrompt', { section: () => () => undefined })
   })
-  new FreeCodeGoHarnessPlugin(ctx, {})
+  new FreeCodeGoHarnessPlugin(ctx, pluginConfig({ engineeringEnabled: true, engineeringMemoryEnabled: true, advisorProvider: 'opencode', advisorModel: 'auto' }))
   const tool = tools.get('engineering_surface_report')
   if (tool === undefined) throw new Error('engineering_surface_report was not registered')
   const execute = tool.execute

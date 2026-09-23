@@ -8,12 +8,15 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-freecodego-harness-plugin/remote'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import type { AdvisorSnapshot, AdvisorUpdate, EngineeringMemoryIndex } from './settings-tab.tsx'
 import freeCodeGoRemote from '@deepseek-ai/dsh-freecodego-harness-plugin/remote'
 import { ADVISOR_CHANGE_EVENT, CAPABILITY_CHANGE_EVENT, ENGINEERING_CHANGE_EVENT, AdvisorSettingsSection, EngineeringSettingsSection, FreeCodeGoSettingsSection, McpSettingsSection, PluginConflictNotice, SkillSettingsSection, type EngineeringLoopStatus, type EngineeringSettings, type EngineeringStatus, type EngineeringTeamDecision, type EngineeringTeamImplementation, type EngineeringTeamJob, type EngineeringTeamReport, type EngineeringTeamVerification } from './settings-tab.tsx'
+import { SessionDeleteMenuItem } from './session-delete-menu-item.tsx'
 import { SessionDeleteOverlay } from './session-delete-overlay.tsx'
+import { WEB_SEARCH_NAMESPACE, WebSearchProviderSection, type WebSearchModelOption, type WebSearchNamespaceValue } from './web-search-provider-section.tsx'
 import { EngineAction, EngineExecutionBadge, LanguageAction, VoiceInputAction } from './toolbar-actions.tsx'
 import { installFreeCodeGoSidebarIcons } from './sidebar-icons.ts'
 import { installCompanion } from './companion/companion.tsx'
@@ -28,6 +31,20 @@ import { registerAgentProgressUi } from './agent-progress.tsx'
 import './theme.css'
 
 const NS = 'settings.freecodego'
+
+/**
+ * The profile entry this plugin's settings are addressed by.
+ *
+ * An entry id, not a namespace. The Host's settings service no longer publishes a
+ * namespace per plugin — a plugin's `Config` *is* its settings document, and both the
+ * read (`describe`) and the write (`update`) address the entry the profile declares, an
+ * entry id the CLI writes into `cordis.patch.yml`. The previous spelling, the old
+ * namespace `freecodego-harness`, matches nothing now: the reads silently answered `{}`
+ * and every write was refused as an unknown entry, which is why the value is pinned here
+ * and checked against that file by `tests/settings-entry.spec.ts` rather than written
+ * twice from memory.
+ */
+const SETTINGS_ENTRY = 'freecodego-harness-plugin'
 type ManagedCatalog = { readonly catalogRevision: string; readonly groups?: readonly { readonly id: number; readonly name: string; readonly enabled: boolean; readonly default?: boolean; readonly rateMultiplier?: number; readonly sortOrder?: number }[]; readonly models: readonly { readonly id: string; readonly displayName: string; readonly provider: string; readonly protocol: string; readonly availability: string; readonly compatibleEngines: readonly FreeCodeGoEngineId[]; readonly choices: readonly { readonly routeKey: string; readonly label: string; readonly availability: string; readonly compatibleEngines: readonly FreeCodeGoEngineId[]; readonly zeroPrice?: boolean; readonly locked?: boolean; readonly rateMultiplier?: number; readonly groupName?: string; readonly groupId?: number; readonly protocol?: string; readonly access?: string; readonly unlockRequired?: boolean; readonly unlockReason?: string; readonly unlockExpiresAt?: string }[] }[] }
 type CapabilitySnapshot = { readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly voiceInputEnabled: boolean; readonly sessionDeleteEnabled: boolean; readonly modelCategories: Readonly<Record<string, 'text' | 'image' | 'video' | 'audio'>>; readonly mcpServers: readonly { readonly id: string; readonly enabled: boolean; readonly transport: 'stdio' | 'streamable-http'; readonly serverName: string; readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>>; readonly cwd: string; readonly url: string; readonly headers: Readonly<Record<string, string>> }[]; readonly skillRoots: readonly { readonly id: string; readonly enabled: boolean; readonly path: string }[]; readonly skillInvocationOverrides?: Readonly<Record<string, boolean>> | undefined; readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly { readonly name: string; readonly description: string; readonly source: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }
 type CapabilityMarketplacePage = { readonly kind: 'mcp' | 'skill'; readonly total: number; readonly offset: number; readonly limit: number; readonly query?: string; readonly categories: readonly { readonly id: string; readonly label: string; readonly count?: number }[]; readonly items: readonly { readonly id: string; readonly kind: 'mcp' | 'skill'; readonly title: string; readonly description: string; readonly category: string; readonly sourceUrl: string; readonly iconUrl?: string; readonly author?: string; readonly popularity: number; readonly installed: boolean; readonly installable: boolean; readonly requiresConfiguration?: boolean }[] }
@@ -80,7 +97,12 @@ function useEpochSelector(store: EpochStore): SnapshotSelectorHook<number> {
 // reports as `freecodego: failed`. The provider (`@deepseek-ai/dsh-client-ui-session`)
 // is part of the stock web composition, and the core UI entries that consume it
 // (`ui-chat`, `ui-approval`) already declare it the same way.
-export const inject = ['slots', 'locale', 'remote', 'connection', 'sessions', 'uiSession', 'uiConversation']
+// `jobs` is declared for the companion: a job roster stopped being a field of the
+// Session list state, so each seat binds the jobs snapshot itself through its slot
+// entry's `hooks` compartment — the route `@deepseek-ai/dsh-client-ui-jobs` takes
+// for its own job list. An undeclared service is not a soft failure here either:
+// the Context getter throws and the whole client entry ends up FAILED.
+export const inject = ['slots', 'locale', 'remote', 'connection', 'sessions', 'jobs', 'uiSession', 'uiConversation']
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -192,6 +214,25 @@ export const zh = {
   telegramGroup: 'Telegram 官方群聊',
   telegramHint: '遇到问题需要反馈，或想跟进版本进展，点击加入官方群聊。',
   telegramJoin: '加入群聊',
+  sessionDelete: '删除会话',
+  searchProviderTitle: '搜索方模型',
+  searchProviderHint: '选择本插件内任意模型担任网页搜索。选定后会把该模型的 Anthropic 兼容接口与密钥写入上方“接口地址 / API Key”，并由下方的搜索提供方使用。',
+  searchProviderCurrent: '当前搜索方：',
+  searchProviderNone: '当前使用 DeepSeek 官方默认模型（未指定搜索方）。',
+  searchProviderUse: '用作搜索方',
+  searchProviderActive: '当前搜索方',
+  searchProviderReset: '恢复 DeepSeek 默认',
+  searchProviderUnavailable: '本部署未提供设置写入服务，暂时无法在这里选择搜索方。',
+  searchProviderLoading: '正在读取模型列表…',
+  searchProviderLoadFailed: '模型列表读取失败，请刷新后重试。',
+  searchProviderSaving: '正在绑定…',
+  searchProviderSaved: '已写入接口地址与密钥，搜索将由该模型执行。',
+  searchProviderSavedEphemeral: '已绑定。该提供方经本地桥接转发，端点属于当前进程：Harness 下次启动会自动重建。',
+  searchProviderRefused: '本部署没有接受这次写入，已保留原设置。',
+  searchProviderFailed: '绑定失败：',
+  searchProviderRebuilt: '检测到上次的本地桥接端点已失效，已按你此前的选择自动重建。',
+  searchProviderNeedsPick: '当前搜索方指向的本地桥接端点已失效，且没有留下可重建的记录，请在上方重新选择一次。',
+  searchProviderRepairFailed: '本地桥接端点已失效，自动重建没有成功，请在上方重新选择一次。',
 } as const
 
 /**
@@ -294,6 +335,25 @@ export const en = {
   telegramGroup: 'Official Telegram group',
   telegramHint: 'Report a problem or follow release progress by joining the official group.',
   telegramJoin: 'Join the group',
+  sessionDelete: 'Delete session',
+  searchProviderTitle: 'Search provider model',
+  searchProviderHint: 'Pick any model this plugin routes to answer web searches. The choice writes that model\u2019s Anthropic-compatible endpoint and key into the endpoint and API key fields above, where the search provider reads them.',
+  searchProviderCurrent: 'Search provider: ',
+  searchProviderNone: 'Search runs on DeepSeek\u2019s own default model (no model chosen here).',
+  searchProviderUse: 'Use as search provider',
+  searchProviderActive: 'Current search provider',
+  searchProviderReset: 'Restore the DeepSeek default',
+  searchProviderUnavailable: 'This deployment exposes no settings writer, so the search provider cannot be chosen here.',
+  searchProviderLoading: 'Reading the model list…',
+  searchProviderLoadFailed: 'The model list could not be read. Refresh and retry.',
+  searchProviderSaving: 'Binding…',
+  searchProviderSaved: 'The endpoint and key were written; this model answers searches now.',
+  searchProviderSavedEphemeral: 'Bound. This provider is reached through the local bridge, so its endpoint belongs to this process — Harness rebuilds it on the next start.',
+  searchProviderRefused: 'This deployment refused the write; the previous settings were kept.',
+  searchProviderFailed: 'Binding failed: ',
+  searchProviderRebuilt: 'The saved local-bridge endpoint from a previous run was dead, so it was rebuilt from your earlier choice.',
+  searchProviderNeedsPick: 'The search provider points at a local-bridge endpoint from a previous run, and no record of the choice survived to rebuild it. Pick one above.',
+  searchProviderRepairFailed: 'The saved local-bridge endpoint is dead and rebuilding it did not succeed. Pick one above.',
 } satisfies Record<keyof typeof zh, string>
 
 export function apply(ctx: ClientContext): void {
@@ -319,20 +379,24 @@ export function apply(ctx: ClientContext): void {
   const readFreeCodeGoSettings = async (): Promise<Record<string, unknown>> => {
     const settings = ctx.get('remote.settings') as {
       describe?: () => Promise<RemoteResult<{ readonly namespaces: readonly { readonly ns: string; readonly value: unknown }[] }>>
-      update?: (namespace: string, patch: Record<string, JsonValue>, expectedRevision: undefined) => Promise<RemoteResult<unknown>>
+      update?: (entry: string, patch: Record<string, JsonValue>, expectedRevision: undefined) => Promise<RemoteResult<unknown>>
     } | undefined
     if (typeof settings?.describe !== 'function') throw new Error('Harness settings Remote service did not become available')
     const response = await settings.describe()
     if (!response.ok) throw new Error(response.error.message)
-    const value = response.value.namespaces.find(item => item.ns === 'freecodego-harness')?.value
+    const value = response.value.namespaces.find(item => item.ns === SETTINGS_ENTRY)?.value
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
   }
   const updateFreeCodeGoSettings = async (patch: Record<string, unknown>): Promise<void> => {
     const settings = ctx.get('remote.settings') as {
-      update?: (namespace: string, patch: Record<string, JsonValue>, expectedRevision: undefined) => Promise<RemoteResult<unknown>>
+      update?: (entry: string, patch: Record<string, JsonValue>, expectedRevision: undefined) => Promise<RemoteResult<unknown>>
     } | undefined
     if (typeof settings?.update !== 'function') throw new Error('Harness settings Remote service did not become available')
-    const response = await settings.update('freecodego-harness', patch as Record<string, JsonValue>, undefined)
+    // `undefined` revision: this is a merge of one field from a gesture, and the writer
+    // this plugin also performs (a model saved from the picker) bumps the entry's revision
+    // between a page read and a toggle. A conflict check here would surface those as a
+    // failed switch; the merge is what makes the two writers compose.
+    const response = await settings.update(SETTINGS_ENTRY, patch as Record<string, JsonValue>, undefined)
     if (!response.ok) throw new Error(response.error.message)
   }
   const connectionEpoch = createEpochStore()
@@ -553,6 +617,8 @@ export function apply(ctx: ClientContext): void {
   const headroomUpdate = (patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean }): Promise<RemoteResult<HeadroomStats>> => backendCall<HeadroomStats>('headroomUpdate', patch)
   const deferredToolsStatus = (): Promise<RemoteResult<DeferredToolStatus>> => backendCall<DeferredToolStatus>('deferredToolsStatus')
   const deferredToolsSetEnabled = (enabled: boolean): Promise<RemoteResult<DeferredToolStatus>> => backendCall<DeferredToolStatus>('deferredToolsSetEnabled', enabled)
+  const mediaGenerationStatus = (): Promise<RemoteResult<FreeCodeGoMediaToolStatus>> => backendCall<FreeCodeGoMediaToolStatus>('mediaGenerationStatus')
+  const mediaGenerationSetEnabled = (enabled: boolean): Promise<RemoteResult<FreeCodeGoMediaToolStatus>> => backendCall<FreeCodeGoMediaToolStatus>('mediaGenerationSetEnabled', enabled)
   const reviewStatus = (sessionId: string): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewStatus', sessionId)
   const reviewStart = (sessionId: string, request: FreeCodeGoReviewStartRequest): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewStart', sessionId, request)
   const reviewUpdate = (sessionId: string, patch: FreeCodeGoReviewUpdate): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewUpdate', sessionId, patch)
@@ -685,8 +751,15 @@ export function apply(ctx: ClientContext): void {
   }
   const capabilityMarketplace = (input: { readonly kind: 'mcp' | 'skill'; readonly query?: string; readonly category?: string; readonly offset?: number; readonly limit?: number }): Promise<RemoteResult<CapabilityMarketplacePage>> => backendCall<CapabilityMarketplacePage>('capabilityMarketplace', input)
   const mcpPresetInstall = (id: string): Promise<RemoteResult<CapabilitySnapshot>> => backendCall<CapabilitySnapshot>('mcpPresetInstall', id)
-  const deleteSession = async (sessionId: string): Promise<void> => {
-    const result = await backendCall<{ readonly deleted: true }>('sessionDelete', sessionId)
+  // One reader for the delete capability, shared by both of this plugin's
+  // delete surfaces (the row menu entry and the hover overlay). They have to
+  // agree: a row that offers the action while the overlay hides is exactly the
+  // state a user would call a bug, and two copies of this expression is how they
+  // drift.
+  const sessionDeleteEnabled = async (): Promise<boolean> => {
+    try { return (await readFreeCodeGoSettings()).sessionDeleteEnabled !== false } catch { return true }
+  }
+  const deleteSession = async (sessionId: string): Promise<void> => {    const result = await backendCall<{ readonly deleted: true }>('sessionDelete', sessionId)
     if (!result.ok) throw new Error(result.error.message)
     // The deleted Session may be the displayed one, but alpha.2 keeps that
     // selection on the view owner (`ISessions` has neither `clear` nor
@@ -707,8 +780,71 @@ export function apply(ctx: ClientContext): void {
   }, PluginConflictNotice))
   shellSlots.inject('shell.overlay', () => shellSlots.register({
     name: 'shell.overlay', id: 'freecodego-session-delete-overlay', order: 40,
-    inject: () => ({ deleteSession, capabilities, isEnabled: async () => { try { return (await readFreeCodeGoSettings()).sessionDeleteEnabled !== false } catch { return true } } }),
+    inject: () => ({ deleteSession, capabilities, isEnabled: sessionDeleteEnabled }),
   }, SessionDeleteOverlay))
+  // The named row for the same action, in every session's "..." menu. `inject`
+  // waits for the core workspace browser to declare the list, so an installation
+  // without that surface never registers this entry at all — there is nothing to
+  // hide on a page that renders no rows.
+  shellSlots.inject('sidebar.workspaces.session.menu.item', () => shellSlots.register({
+    name: 'sidebar.workspaces.session.menu.item', id: 'freecodego-session-delete', order: 500, locale: NS,
+    // The open session id rides along so the row can step aside for it, the same
+    // rule the hover control follows: the Host refuses to delete the session it
+    // is holding open.
+    inject: () => ({ deleteSession, isEnabled: sessionDeleteEnabled, currentSessionId: () => mainViewSessionId(ctx) }),
+  }, SessionDeleteMenuItem))
+
+  // The stock web-search page edits a key, an endpoint, and a search budget over
+  // `web-search-deepseek`, and has no control for the one field a FreeCodeGo
+  // installation needs to change: the model. Its schema pins `deepseek-v4-flash`
+  // against DeepSeek's own endpoint, so the page can only ever search on a
+  // provider nobody here pays per call. This section is that missing control,
+  // rendered in the page's own detail slot so the choice sits directly under the
+  // endpoint and key it completes.
+  const webSearchForm = (): ConfigForm<WebSearchNamespaceValue> | undefined => {
+    // Optional service lookup, like `remote.settings` above: the settings shell
+    // is part of the stock web composition, and a page that lacks it loses this
+    // section rather than failing the whole client entry.
+    const forms = ctx.get('configForms') as { get?: <T>(entryId: string) => ConfigForm<T> } | undefined
+    return typeof forms?.get === 'function' ? forms.get<WebSearchNamespaceValue>(WEB_SEARCH_NAMESPACE) : undefined
+  }
+  // The picker lists the plugin's own directory — the same rows the chat model
+  // menu renders — so a model offered here is one the Host can really route.
+  const webSearchModels = async (): Promise<readonly WebSearchModelOption[]> => {
+    // The managed catalog, not the engine list: these are the rows the chat model
+    // menu renders for this account, which is the directory a search route has to
+    // come from.
+    const result = await backendCall<ManagedCatalog>('backendCatalog')
+    if (!result.ok) throw new Error(result.error.message)
+    const options: WebSearchModelOption[] = []
+    const seen = new Set<string>()
+    for (const model of result.value.models) {
+      if (model.availability !== 'available') continue
+      const provider = model.provider.trim().toLowerCase()
+      if (provider === '') continue
+      const key = `${provider}\u0000${model.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      options.push({ provider, id: model.id, label: model.displayName })
+    }
+    return options
+  }
+  const webSearchBind = (input: { readonly provider: string; readonly model: string }): Promise<RemoteResult<FreeCodeGoWebSearchBinding>> => backendCall<FreeCodeGoWebSearchBinding>('webSearchBind', input)
+  const webSearchBindingStatus = (): Promise<RemoteResult<FreeCodeGoWebSearchBindingStatus>> => backendCall<FreeCodeGoWebSearchBindingStatus>('webSearchBindingStatus')
+  // The pair goes into this plugin's own settings, not the stock namespace: the
+  // namespace has no field for it, and it is what lets a restart rebuild a binding
+  // whose endpoint belongs to one process (`web-search-binding.ts`).
+  const rememberWebSearchBinding = async (pair: { readonly provider: string; readonly model: string }): Promise<void> => {
+    await updateFreeCodeGoSettings({ webSearchBindingProvider: pair.provider, webSearchBindingModel: pair.model })
+  }
+  const webSearchCredentials = (): { set(ref: string, value: string): Promise<unknown> } | undefined => ctx.get('remote.credentials') as { set(ref: string, value: string): Promise<unknown> } | undefined
+  shellSlots.inject('plugins.detail.section', () => shellSlots.register({
+    name: 'plugins.detail.section', id: 'freecodego-web-search-provider', order: 60, locale: NS,
+    inject: () => ({
+      models: webSearchModels, bind: webSearchBind, status: webSearchBindingStatus,
+      form: webSearchForm, credentials: webSearchCredentials, remember: rememberWebSearchBinding, t,
+    }),
+  }, WebSearchProviderSection))
 
   // These are additive plugin slots: the core settings shell and conversation
   // composer remain untouched, while every settings page gets the same
@@ -957,6 +1093,8 @@ export function apply(ctx: ClientContext): void {
       headroomUpdate,
       deferredToolsStatus,
       deferredToolsSetEnabled,
+      mediaGenerationStatus,
+      mediaGenerationSetEnabled,
       reviewStatus,
       reviewStart,
       reviewUpdate,

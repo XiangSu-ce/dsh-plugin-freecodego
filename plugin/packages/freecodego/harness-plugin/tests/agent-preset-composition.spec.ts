@@ -1,18 +1,27 @@
 /**
  * The bundled agent presets have to be composable against the Harness they ship for.
  *
- * Harness preset discovery resolves every row's package against the installed
- * harness (`packages/preset/agent-presets/src/discovery.ts`, `compositionProblem`)
- * and reports the **whole preset** as broken when one enabled row cannot be
- * resolved. That verdict is what the roster card renders as "Failed to load":
- * the preset stays listed, and it can be neither selected nor duplicated.
+ * A preset's rows are mounted by the roster that owns it, and a row the
+ * installed harness cannot resolve makes the **whole preset** unusable rather
+ * than dropping that one row. The roster card renders that verdict as "Failed
+ * to load": the preset stays listed, and it can be neither selected nor
+ * duplicated.
+ *
+ * Up to 0.1.6 that verdict came from `packages/preset/agent-presets/src/discovery.ts`
+ * (`compositionProblem`, `unresolvableRows`), which skipped a row only while
+ * `Boolean(row.disabled)`. 0.1.7 replaced that package with the declared
+ * registry, whose audit is
+ * `packages/preset/agent-preset-registry/src/mount.ts` → `auditRows`: it waits
+ * for the mounted subtree and reports import failures, activation failures, and
+ * rows left waiting for a service the composition does not supply. Same
+ * consequence for the preset, so the checks below keep their meaning.
  *
  * The failure this spec exists for is a row naming a package the Harness no
  * longer ships. Both bundled presets named
  * `@deepseek-ai/dsh-workflow-worker-thread`, which no 0.1.6 line installs — the
  * composition was copied from a pre-0.1.6 surface rather than from the shipped
  * `standard` preset, so it also carried that surface's `ralph` row and lacked
- * the rows `standard` has. Discovery could only report the first of those as a
+ * the rows `standard` has. The audit could only report the first of those as a
  * name it cannot resolve; the rest were silent capability differences.
  *
  * So there are two checks, and they fail for different reasons:
@@ -45,8 +54,20 @@ const PRESET_ROOT = fileURLToPath(new URL('../assets/presets', import.meta.url))
 /** The composition file that makes a preset directory a preset. */
 const COMPOSITION_FILE = 'agent.cordis.yml'
 
-/** The shipped composition the bundled presets mirror. */
-const STANDARD_COMPOSITION = join(HARNESS_ROOT, 'packages', 'preset', 'agent-presets', 'presets', 'standard', COMPOSITION_FILE)
+/**
+ * The shipped composition the bundled presets mirror, in either harness layout.
+ *
+ * Up to 0.1.6 the shuffled-out standard preset was a file of its own, at
+ * `packages/preset/agent-presets/presets/standard/agent.cordis.yml`. 0.1.7
+ * ships it as a composition *patch* — `packages/bundle/web-app/presets/standard.patch.yml`,
+ * one `@deepseek-ai/dsh-agent-preset` row whose `config.plugins` holds the very
+ * rows that used to be the file. The 0.1.7 layout is preferred when both are
+ * present, because that is the one this harness reads.
+ */
+const STANDARD_PRESETS: readonly string[] = [
+  join(HARNESS_ROOT, 'packages', 'bundle', 'web-app', 'presets', 'standard.patch.yml'),
+  join(HARNESS_ROOT, 'packages', 'preset', 'agent-presets', 'presets', 'standard', COMPOSITION_FILE),
+]
 
 /**
  * The composition loader's expression tag, `!!js`.
@@ -84,8 +105,7 @@ interface CompositionRow {
  * @param compositionPath - absolute path of a preset's composition file.
  * @returns the top-level rows and every row nested in a group.
  */
-function rowsOf(compositionPath: string): CompositionRow[] {
-  const document: unknown = load(readFileSync(compositionPath, 'utf8'), { schema: COMPOSITION_SCHEMA })
+function rowsOfDocument(document: unknown): CompositionRow[] {
   const flatten = (rows: unknown): CompositionRow[] => {
     if (!Array.isArray(rows)) return []
     const collected: CompositionRow[] = []
@@ -98,6 +118,52 @@ function rowsOf(compositionPath: string): CompositionRow[] {
     return collected
   }
   return flatten(document)
+}
+
+function rowsOf(compositionPath: string): CompositionRow[] {
+  return rowsOfDocument(load(readFileSync(compositionPath, 'utf8'), { schema: COMPOSITION_SCHEMA }))
+}
+
+/**
+ * The rows a composition patch contributes, with its `insert:` lists expanded.
+ *
+ * A patch row is not a plugin row: it names no plugin and carries the real rows
+ * under `insert`. The Loader inlines those before starting anything, so a
+ * reader that skipped this step would see one anonymous row per patch — the
+ * shape that made this spec's mirror check pass vacuously.
+ * @param rows - the patch document's top-level rows.
+ * @returns the inserted rows, in place, with groups still flattened.
+ */
+function expandedPatches(rows: readonly CompositionRow[]): CompositionRow[] {
+  const collected: CompositionRow[] = []
+  for (const row of rows) {
+    const insert = (row as { readonly insert?: unknown }).insert
+    if (Array.isArray(insert)) collected.push(...rowsOfDocument(insert))
+    else collected.push(row)
+  }
+  return collected
+}
+
+/**
+ * The shipped `standard` preset's rows, from whichever layout this checkout has.
+ *
+ * Handles both spellings the harness has used: the 0.1.6 preset file, where the
+ * rows *are* the document, and the 0.1.7 preset patch, where they sit under the
+ * `config.plugins` of one `@deepseek-ai/dsh-agent-preset` row that a patch
+ * `insert` carries.
+ * @returns the rows, or `undefined` when this checkout ships neither layout.
+ */
+function standardRows(): CompositionRow[] | undefined {
+  for (const path of STANDARD_PRESETS) {
+    if (!existsSync(path)) continue
+    const rows = expandedPatches(rowsOfDocument(load(readFileSync(path, 'utf8'), { schema: COMPOSITION_SCHEMA })))
+    // The preset file's own rows are the composition; a patch contributes the
+    // declaration row, and the plugin rows are what it declares.
+    const declaration = rows.find(row => row.name === '@deepseek-ai/dsh-agent-preset')
+    const declared = rowsOfDocument((declaration?.config as { readonly plugins?: unknown } | undefined)?.plugins)
+    return declared.length > 0 ? declared : rows
+  }
+  return undefined
 }
 
 /**
@@ -116,10 +182,13 @@ function starts(row: CompositionRow): boolean {
 /**
  * Where a row's `name` reaches its module, classified as the loader does.
  *
- * Copied from `packages/preset/agent-presets/src/specifier.ts` rather than
- * approximated: a classification that disagrees with the loader's reports a
- * preset healthy that then fails to load, which is the failure this spec is
- * here to prevent. `cordis:group` is a Loader builtin nothing resolves.
+ * Copied from the loader's own specifier handling rather than approximated: a
+ * classification that disagrees with the loader's reports a preset healthy that
+ * then fails to load, which is the failure this spec is here to prevent. The
+ * 0.1.6 harness kept that classification in
+ * `packages/preset/agent-presets/src/specifier.ts`; 0.1.7 moved it into the
+ * loader (`@deepseek-ai/cordis-plugin-loader`), which is where a row's `name`
+ * was always resolved. `cordis:group` is a Loader builtin nothing resolves.
  * @param specifier - a row's `name`, exactly as the composition writes it.
  * @returns the kind, deciding which base the row is resolved from.
  */
@@ -240,10 +309,14 @@ function label(row: CompositionRow): string {
  * @param compositionPath - absolute path of a preset's composition file.
  * @returns one `id | name | starts` line per row, sorted.
  */
-function rowShapes(compositionPath: string): string[] {
-  return rowsOf(compositionPath)
+function rowShapesOf(rows: readonly CompositionRow[]): string[] {
+  return rows
     .map(row => `${String(row.id ?? '')} | ${String(row.name ?? '')} | ${String(starts(row))}`)
     .sort()
+}
+
+function rowShapes(compositionPath: string): string[] {
+  return rowShapesOf(rowsOf(compositionPath))
 }
 
 describe('bundled agent preset compositions', () => {
@@ -279,10 +352,12 @@ describe('bundled agent preset compositions', () => {
   it('keeps mirroring the shipped standard composition, row for row', () => {
     // The standard preset is upstream source: absent in a checkout synced
     // without it, and this spec has nothing to compare against there.
-    if (!existsSync(STANDARD_COMPOSITION)) return
-    const standard = rowShapes(STANDARD_COMPOSITION)
+    const standard = standardRows()
+    if (standard === undefined) return
+    expect(standard.length).toBeGreaterThan(20)
+    const shapes = rowShapesOf(standard)
     for (const presetId of BUNDLED_PRESET_IDS) {
-      expect(rowShapes(join(PRESET_ROOT, presetId, COMPOSITION_FILE)), presetId).toStrictEqual(standard)
+      expect(rowShapes(join(PRESET_ROOT, presetId, COMPOSITION_FILE)), presetId).toStrictEqual(shapes)
     }
   })
 })

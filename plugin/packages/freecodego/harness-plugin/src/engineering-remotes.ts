@@ -338,7 +338,7 @@ export async function engineeringTeamDecision(
     if (goalId !== undefined) host.engineering.armApprovedPlanGoal(agent)
   }
   agent.inject(createUserMessage({
-    source: { kind: 'plugin', plugin: 'freecodego-engine-council' },
+    source: { kind: 'freecodego-engine-council' },
     content: [{
       type: 'text',
       text: decision.state === 'approved'
@@ -408,7 +408,7 @@ export async function engineeringTeamVerify(
   }
   await host.engineCouncil.recordVerification(agent, input.id, result)
   agent.inject(createUserMessage({
-    source: { kind: 'plugin', plugin: 'freecodego-engine-council' },
+    source: { kind: 'freecodego-engine-council' },
     content: [{
       type: 'text',
       text: 'Engineering council ' + input.id + ' verification is complete. Read the durable verification result and report failed, skipped, unavailable, or cancelled stages accurately.',
@@ -438,7 +438,7 @@ export async function engineeringTeamImplementation(host: EngineeringRemotesHost
   // council's failed state, never as an unhandled rejection.
   const verification = engineeringTeamVerify(host, sessionId, { id: request.id }).catch(() => undefined)
   void verification
-  agent.inject(createUserMessage({ source: { kind: 'plugin', plugin: 'freecodego-engine-council' }, content: [{ type: 'text', text: `Implementation for engineering council ${request.id} was marked complete. Executed verification (build/types/lint/tests) is starting automatically; read its durable result when reporting completion.` }] }))
+  agent.inject(createUserMessage({ source: { kind: 'freecodego-engine-council' }, content: [{ type: 'text', text: `Implementation for engineering council ${request.id} was marked complete. Executed verification (build/types/lint/tests) is starting automatically; read its durable result when reporting completion.` }] }))
   return implementation
 }
 

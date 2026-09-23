@@ -25,7 +25,7 @@
  * its own degrades to the summary rather than to nothing.
  */
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { JobView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { JobView, JobsSnapshot } from '@deepseek-ai/dsh-api-job-controller/client'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { CompanionSignals } from './arbiter.ts'
@@ -81,14 +81,14 @@ export function sessionRunning(state: SessionListState, sessionId: SessionId | u
 }
 
 /**
- * @param state - the Session list snapshot.
+ * @param jobs - the client jobs snapshot.
  * @param sessionId - the Session to read.
  * @returns how many of that Session's background jobs are still open.
  */
-export function liveJobCount(state: SessionListState, sessionId: SessionId | undefined): number {
+export function liveJobCount(jobs: JobsSnapshot, sessionId: SessionId | undefined): number {
   if (sessionId === undefined) return 0
   let live = 0
-  for (const job of state.jobsBySession[sessionId] ?? NO_JOBS) if (isLiveJob(job)) live += 1
+  for (const job of jobs.rows[sessionId] ?? NO_JOBS) if (isLiveJob(job)) live += 1
   return live
 }
 
@@ -99,14 +99,14 @@ export function liveJobCount(state: SessionListState, sessionId: SessionId | und
  * is the most recently started one, and its id is what changes when another job
  * fails. See `CompanionObservation.failedJobKey` for why a boolean cannot stand
  * in for this.
- * @param state - the Session list snapshot.
+ * @param jobs - the client jobs snapshot.
  * @param sessionId - the Session to read.
- * @returns the newest failed job's id, or undefined when the list holds none.
+ * @returns the newest failed job's id, or undefined when the roster holds none.
  */
-export function newestFailedJobKey(state: SessionListState, sessionId: SessionId | undefined): string | undefined {
+export function newestFailedJobKey(jobs: JobsSnapshot, sessionId: SessionId | undefined): string | undefined {
   if (sessionId === undefined) return undefined
   let newest: string | undefined
-  for (const job of state.jobsBySession[sessionId] ?? NO_JOBS) {
+  for (const job of jobs.rows[sessionId] ?? NO_JOBS) {
     if (job.status === 'failed') newest = job.id
   }
   return newest

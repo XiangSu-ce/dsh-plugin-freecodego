@@ -212,7 +212,7 @@ function wrapChild(handle: AgentHandle, maxOutputChars: number): ReviewSubagentH
   return {
     async run(prompt: string): Promise<void> {
       handle.agent.followup(createUserMessage({
-        source: { kind: 'plugin', plugin: 'freecodego-review' },
+        source: { kind: 'freecodego-review' },
         content: [{ type: 'text', text: prompt }],
       }))
       await handle.agent.whenIdle()

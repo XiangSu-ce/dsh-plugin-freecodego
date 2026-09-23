@@ -284,12 +284,31 @@ interface JobsRow {
 interface SessionsStateInput {
   current?: string | undefined
   byId?: Record<string, Omit<SessionRow, 'id' | 'retainedBy'>>
-  jobsBySession?: Record<string, readonly JobsRow[]>
+  jobs?: Record<string, readonly JobsRow[]>
 }
 
+/**
+ * The Session list snapshot the readers consume.
+ *
+ * No jobs: a roster moved out of this snapshot into the client jobs service, so
+ * {@link Fixture} carries both and the seat binds each one its own way.
+ */
 interface SessionsState {
   byId: Record<string, SessionRow>
-  jobsBySession: Record<string, readonly JobsRow[]>
+  phase: 'ready'
+  projectionsBySession: Record<string, never>
+}
+
+/** The client jobs snapshot: the roster the seat reads through its own hook. */
+interface JobsState {
+  rows: Record<string, readonly JobsRow[]>
+  observed: Record<string, never>
+}
+
+/** Everything one case's seat reads: the Session list and the job roster. */
+interface Fixture {
+  sessions: SessionsState
+  jobs: JobsState
 }
 
 /** The component's own props type, so the stubs cannot drift from the seat. */
@@ -316,11 +335,14 @@ function pendingStatuses(pending: ReadonlySet<string>): ReadonlyMap<string, Sess
 }
 
 /** Render the seat against stub standard-prop hooks. */
-function setup(sessions: SessionsState, pending: ReadonlySet<string> = new Set(), activity = activityFixture()) {
+function setup(fixture: Fixture, pending: ReadonlySet<string> = new Set(), activity = activityFixture()) {
   const props = {
     size: 24,
-    useSessions: (selector: (state: SessionsState) => unknown) => selector(sessions),
+    useSessions: (selector: (state: SessionsState) => unknown) => selector(fixture.sessions),
     useSessionStatus: (selector: (map: ReadonlyMap<string, SessionStatus>) => unknown) => selector(pendingStatuses(pending)),
+    // Jobs reach the seat through its own entry's `hooks` compartment rather than
+    // through the standard kit, so the stub stands in for a bound `useJobs`.
+    useJobs: (selector: (roster: JobsState) => unknown) => selector(fixture.jobs),
     // The live feed is injected rather than read from a store, by design: the rail
     // mark is outside any session scope and still shows the phases inside a turn.
     activity,
@@ -337,15 +359,19 @@ function setup(sessions: SessionsState, pending: ReadonlySet<string> = new Set()
  * keeps every case below reading as the fact it is about instead of restating
  * ownership at each call site.
  */
-function state(over: SessionsStateInput = {}): SessionsState {
-  const { current, byId = {}, jobsBySession = {} } = over
+function state(over: SessionsStateInput = {}): Fixture {
+  const { current, byId = {}, jobs = {} } = over
   return {
-    byId: Object.fromEntries(Object.entries(byId).map(([id, row]) => [id, {
-      ...row,
-      id,
-      retainedBy: id === current ? { mainView: 1 } : {},
-    }])),
-    jobsBySession,
+    sessions: {
+      byId: Object.fromEntries(Object.entries(byId).map(([id, row]) => [id, {
+        ...row,
+        id,
+        retainedBy: id === current ? { mainView: 1 } : {},
+      }])),
+      phase: 'ready',
+      projectionsBySession: {},
+    },
+    jobs: { rows: jobs, observed: {} },
   }
 }
 
@@ -371,26 +397,26 @@ describe('companion seat: session activity drives the pose', () => {
   })
 
   it('works while a background job is live and asks when one fails', () => {
-    const busy = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobsBySession: { s1: [{ id: 'job-live', status: 'running' }] } })
+    const busy = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobs: { s1: [{ id: 'job-live', status: 'running' }] } })
     const first = setup(busy)
     pump()
     expect(pose(first.container)).toBe('orbit')
 
-    const broken = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobsBySession: { s1: [{ id: 'job-failed', status: 'failed' }] } })
+    const broken = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobs: { s1: [{ id: 'job-failed', status: 'failed' }] } })
     const second = setup(broken)
     pump()
     expect(pose(second.container)).toBe('exclaim')
   })
 
   it('stops for a stalled job as well as a running one', () => {
-    const sessions = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobsBySession: { s1: [{ id: 'job-stopping', status: 'stopping' }] } })
+    const sessions = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobs: { s1: [{ id: 'job-stopping', status: 'stopping' }] } })
     const { container } = setup(sessions)
     pump()
     expect(pose(container)).toBe('orbit')
   })
 
   it('ignores jobs of sessions that are not selected', () => {
-    const sessions = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobsBySession: { s2: [{ id: 'job-other', status: 'running' }] } })
+    const sessions = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobs: { s2: [{ id: 'job-other', status: 'running' }] } })
     const { container } = setup(sessions)
     pump()
     expect(pose(container)).toBe('idle')
@@ -419,11 +445,16 @@ describe('companion seat: session activity drives the pose', () => {
     pump()
     expect(pose(view.container)).toBe('thinking')
 
-    sessions.byId.s1 = { id: 's1', running: false, blank: false, retainedBy: { mainView: 1 } }
+    sessions.sessions.byId.s1 = { id: 's1', running: false, blank: false, retainedBy: { mainView: 1 } }
     view.rerender(<FreeCodeGoCompanion {...({
       size: 24,
-      useSessions: (selector: (value: SessionsState) => unknown) => selector(sessions),
+      useSessions: (selector: (value: SessionsState) => unknown) => selector(sessions.sessions),
       useSessionStatus: (selector: (map: ReadonlyMap<string, SessionStatus>) => unknown) => selector(new Map()),
+      // The jobs stub has to be here as well as in `setup`: a seat reaches its
+      // roster through its own entry's `hooks` compartment, so a rerender that
+      // forgot it would fail as `hooks.useJobs is not a function` instead of
+      // measuring the pose.
+      useJobs: (selector: (roster: JobsState) => unknown) => selector(sessions.jobs),
       activity,
     }) as CompanionProps} />)
     // The completion outranks the resting pose but not an in-flight one, so the
@@ -468,10 +499,13 @@ describe('companion: taking its seats', () => {
       // over; both are empty here, since this case is about the seating itself.
       sessions: {
         list: {
-          getSnapshot: () => ({ ids: [], byId: {}, jobsBySession: {} }),
+          getSnapshot: () => ({ ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }),
           subscribe: () => () => {},
         },
       },
+      // The seats bind `ctx.jobs.state` at registration time, so the fake context
+      // has to publish one even when the case is about the seating itself.
+      jobs: { state: { getSnapshot: () => ({ rows: {}, observed: {} }), subscribe: () => () => {} } },
       uiSession: { sessionStatus: { getSnapshot: () => new Map(), subscribe: () => () => {} } },
       locale: {
         register: (ns: string, values: unknown) => {
@@ -550,7 +584,7 @@ describe('companion seat: reduced motion', () => {
       addEventListener: () => {},
       removeEventListener: () => {},
     }))
-    const sessions = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobsBySession: { s1: [{ id: 'job-orbit', status: 'running' }] } })
+    const sessions = state({ current: 's1', byId: { s1: { running: false, blank: false } }, jobs: { s1: [{ id: 'job-orbit', status: 'running' }] } })
     const { container } = setup(sessions)
     pump()
     expect(pose(container)).toBe('orbit')

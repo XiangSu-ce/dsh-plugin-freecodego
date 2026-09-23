@@ -49,21 +49,11 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import z from '@deepseek-ai/schemastery'
 import { HookChainRuntime, type HookChainDispatchResult, type HookChainOutcome, type HookChainStatus } from './hooks/hook-chains.ts'
 import { toolDefinition as rawTool, type ToolDefinitionShape } from './tool-definition.ts'
 import { CRON_SEARCH_HORIZON_YEARS, describeCronExpression, parseCronExpression, cronFixedRateSeconds, nextCronOccurrences, type CronOccurrence } from './scheduler/cron.ts'
 import type { FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate } from './types.ts'
 
-/** Settings schema for the automation switches: hook chains and calendar planning. */
-export const FreeCodeGoAutomationSettingsSchema = z.object({
-  /** Master switch for declarative failure recovery. */
-  hookChainsEnabled: z.boolean().default(true),
-  hookChainsMaxDepth: z.number().step(1).min(0).max(10).default(2),
-  hookChainsCooldownMs: z.number().step(1_000).min(0).max(24 * 60 * 60 * 1_000).default(30_000),
-  /** Master switch for the calendar planner. */
-  scheduledTasksEnabled: z.boolean().default(true),
-})
 
 // The two shapes this runtime reads and writes are declared in `./types.ts`,
 // because a Remote boundary type has to live on the package's public type

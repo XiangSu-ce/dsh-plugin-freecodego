@@ -182,10 +182,18 @@ function messageText(content: unknown, depth = 4): string {
   return parts.join('\n')
 }
 
-/** Whether one event is the compaction summary carrier rather than a real turn. */
+/**
+ * Whether one event is the compaction summary carrier rather than a real turn.
+ *
+ * The summary is written by the core's compaction, and the source kind it stamps is
+ * `compact-checkpoint` — the name that subsystem declares. This used to look for a
+ * `compaction` kind, which nothing ever wrote, so the first branch was dead and only
+ * the text markers below could recognise a summary. A summary the markers miss is
+ * counted as a real turn, which inflates the turn bucket of the breakdown.
+ */
 function isSummaryEvent(data: Record<string, unknown>): boolean {
   const message = data.message as { readonly source?: { readonly kind?: unknown } } | undefined
-  if (message?.source?.kind === 'compaction') return true
+  if (message?.source?.kind === 'compact-checkpoint') return true
   const text = messageText((message as { readonly content?: unknown } | undefined)?.content)
   return text.startsWith('<summary>') || text.includes('<compacted-conversation')
 }

@@ -58,7 +58,6 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import z from '@deepseek-ai/schemastery'
 import { freeCodeGoDataHome } from './data-home.ts'
 import type { FreeCodeGoTrustDecision, FreeCodeGoTrustRecord, FreeCodeGoTrustStatus } from './types.ts'
 
@@ -73,18 +72,6 @@ const MAX_GIT_OUTPUT = 4_096
 /** Record schema version; a mismatched version is treated as "no record" rather than migrated. */
 export const TRUST_RECORD_VERSION = 1
 
-/** Settings for the gate. Kept in the FreeCodeGo settings namespace. */
-export const FreeCodeGoTrustSettingsSchema = z.object({
-  /**
-   * Master switch for the whole gate.
-   *
-   * Off means every project-scoped surface is treated as trusted — the
-   * pre-gate behaviour, kept reachable so a deployment that already controls
-   * which repositories it opens is not forced to grant each one. It is
-   * deliberately not the default: the safe state must not be the opt-in one.
-   */
-  folderTrustEnabled: z.boolean().default(true),
-})
 
 /** The folder-trust switches this plugin reads from settings. */
 export interface FreeCodeGoTrustSettings {

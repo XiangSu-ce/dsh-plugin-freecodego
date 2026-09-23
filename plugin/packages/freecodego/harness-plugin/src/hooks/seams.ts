@@ -273,7 +273,7 @@ function hookSignalOf(value: unknown): AbortSignal | undefined {
  */
 function hookContextMessage(text: string): ReturnType<typeof createUserMessage> {
   return createUserMessage({
-    source: { kind: 'plugin', plugin: 'freecodego-hooks' },
+    source: { kind: 'freecodego-hooks' },
     content: [{ type: 'text', text }],
   })
 }

@@ -75,7 +75,7 @@ export function createMemoryDreamPlanner(options: MemoryDreamOptions): MemoryDre
       provider: options.route.provider,
       model: options.route.model,
       messages: [createUserMessage({
-        source: { kind: 'plugin', plugin: 'freecodego-memory-dream' },
+        source: { kind: 'freecodego-memory-dream' },
         content: [{ type: 'text', text: dreamPrompt(request) }],
       })],
       system: request.system,

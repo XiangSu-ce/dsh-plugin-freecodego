@@ -1,4 +1,4 @@
-# Standard DeepSeek Harness 0.1.6-alpha.2 FreeCodeGo composition.
+# Standard DeepSeek Harness 0.1.7-alpha.2 FreeCodeGo composition.
 # Neither official route is disabled. `llm-deepseek` is the only row that
 # registers provider `deepseek-official`, and the base composition names that
 # provider twice (`agent-default-model.provider`, `web.searchProvider`) — so
@@ -96,11 +96,15 @@
     #    fails on an install that lacks it, so these rows are `disabled` and carry
     #    the recipe for whoever wants them.
     # 2. **They fail closed at different grains, so the grain decides.** Mounted
-    #    in a *preset*, one unresolvable enabled row makes the whole preset
-    #    unselectable — `packages/preset/agent-presets/src/discovery.ts`,
-    #    `unresolvableRows`, skips a row only while `Boolean(row.disabled)` — which
-    #    is the "Failed to load" failure the bundled presets already record once.
-    #    Mounted here, an enabled row that cannot load fails *that entry alone*:
+    #    in a *preset*, one unusable enabled row makes the whole preset
+    #    unselectable: 0.1.6 reached that verdict in
+    #    `packages/preset/agent-presets/src/discovery.ts` (`unresolvableRows`,
+    #    which skipped a row only while `Boolean(row.disabled)`), and 0.1.7
+    #    reaches the same one in `packages/preset/agent-preset-registry/src/mount.ts`
+    #    (`auditRows`, which reports import failures, activation failures, and
+    #    rows still waiting for a service). Either way it is the "Failed to
+    #    load" failure the bundled presets already record once. Mounted here, an
+    #    enabled row that cannot load fails *that entry alone*:
     #    `Entry._init` catches the import error, logs it and returns, and the rest
     #    of the tree keeps running. The host plane is therefore the plane that can
     #    hold an optional capability at all.
@@ -185,6 +189,38 @@
     - id: tool-session-query
       name: '@deepseek-ai/dsh-tool-session-query'
       disabled: true
+
+    # ── the Harness plugin's own row ───────────────────────────────────────
+    #
+    # The plugin is a Loader entry, not a programmatic mount from the `freecodego`
+    # row below. Being an entry is what makes it configurable, and that is the
+    # whole difference: the settings service addresses a plugin by its profile
+    # entry id, reads the live document from `entry.fiber.config`, and validates a
+    # write against that entry's own `Config`.
+    #
+    # `SettingsForms.describe`/`write` resolve an entry through
+    # `configEditor.entries()` and drop any entry whose fiber has no runtime
+    # `Config` (`packages/settings/settings/src/index.ts`). Mounted with
+    # `ctx.plugin()` inside the `freecodego` row's `apply`, this plugin inherited
+    # the *bundle's* entry: `ctx.fiber.entry.options.id` was `freecodego`, that
+    # entry has no schema, and every write was refused with `No configurable
+    # plugin entry "freecodego"` while every read answered the empty document.
+    # Nothing in this plugin could be turned on from the FreeCodeGo settings tab,
+    # and nothing stayed on across a restart.
+    #
+    # Three readers depend on this id, and they are the ones to check before
+    # renaming the row: `harness-ui` reads and writes it (its
+    # `tests/settings-entry.spec.ts` pins the client constant to this line),
+    # `plugin-conflicts.ts` reads the switch out of this row's `config` before the
+    # Loader starts, and the settings service appends its own override row here.
+    #
+    # Position is last in this layer on purpose, which is exactly where the
+    # programmatic mount used to happen: the rows above are mounted *before* it,
+    # and the team runtime, the browser/desktop providers, and the session-history
+    # tools each document that position as a requirement of their own.
+    - id: freecodego-harness-plugin
+      name: 'freecodego/harness-plugin'
+      config: {}
 
     - id: freecodego
       name: 'freecodego'

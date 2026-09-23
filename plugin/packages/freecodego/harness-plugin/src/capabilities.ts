@@ -13,7 +13,6 @@ import { isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { redactCredentialShapes } from './secret-scan.ts'
 import { asRecord as plainRecord } from './untrusted-json.ts'
-import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
@@ -25,7 +24,15 @@ import type { FreeCodeGoCapabilitySettings, FreeCodeGoCapabilitySnapshot, FreeCo
 import { listSkillCompanionFiles, readSkillCompanionFile, skillForwardTargets, skillResourceLocation, type SkillCompanionFs } from './skill-detail.ts'
 import { omitRecordKey } from './record-utils.ts'
 
-const SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/
+/**
+ * The MCP server-name shape the plugin accepts.
+ *
+ * Exported because it is now spelled twice by necessity: the plugin class's `static Config`
+ * carries the schema that enforces it (the flat literal is what the config catalog and the
+ * readers gate can walk), and this module carries the runtime check that reports a bad name
+ * as an error instead of as a settings-write refusal.
+ */
+export const SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/
 /** Kebab-case Skill name, the same shape the registry accepts. */
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const MAX_CONFIGURED_SERVERS = 24
@@ -99,49 +106,6 @@ export type NativeCapabilityConfiguration = {
   readonly harnessTools: readonly ToolSchema[]
 }
 
-/** Schema kept in the FreeCodeGo settings namespace; settings snapshots never contain runtime handles. */
-export const FreeCodeGoCapabilitySettingsSchema = z.object({
-  mcpEnabled: z.boolean().default(false),
-  skillEnabled: z.boolean().default(false),
-  voiceInputEnabled: z.boolean().default(true),
-  sessionDeleteEnabled: z.boolean().default(true),
-  modelCategories: z.dict(z.union([z.const('text'), z.const('image'), z.const('video'), z.const('audio')])).default({}),
-  mcpServers: z.array(z.object({
-    id: z.string().min(1).max(80),
-    enabled: z.boolean().default(true),
-    transport: z.union([z.const('stdio'), z.const('streamable-http')]),
-    serverName: z.string().pattern(SERVER_NAME),
-    command: z.string().default(''),
-    args: z.array(z.string().max(4096)).default([]),
-    env: z.dict(z.string()).default({}),
-    cwd: z.string().default(''),
-    url: z.string().default(''),
-    headers: z.dict(z.string()).default({}),
-  })).default([]),
-  skillRoots: z.array(z.object({
-    id: z.string().min(1).max(80),
-    enabled: z.boolean().default(true),
-    path: z.string().min(1).max(4096),
-  })).default([]),
-  skillInvocationOverrides: z.dict(z.boolean()).default({}),
-  // Declared without a default, the way `Config`'s optional fields are: schemastery
-  // has no optional-object spelling, and an absent key *is* the answer here — no
-  // preference, which means the community root. A default would have to invent a
-  // placement on every install that never chose one.
-  //
-  // `null` is the *clear*, and it is here because a settings write is a **merge**
-  // (`mergeLayers` in the settings service: plain objects merge recursively, other
-  // values replace, and `undefined` entries are stripped so that "a sparse patch cannot
-  // erase lower keys"). Omitting the field therefore cannot remove a stored preference —
-  // the live harness proved it — so clearing has to say so with a value.
-  preferredSkillPlacement: z.union([
-    z.object({
-      agent: z.union([z.const('harness'), z.const('agents')]),
-      scope: z.union([z.const('project'), z.const('user')]),
-    }),
-    z.const(null),
-  ]),
-}) as z<FreeCodeGoCapabilitySettings>
 
 type Fiber = { dispose(): Promise<void> }
 

@@ -282,7 +282,17 @@ describe('the remote call contract', () => {
     // Stripe order. Its second side is one dispatch site in `client/index.ts`, like the
     // receipt beside it, so the two counts below move with REMOTES — the pair check is
     // what says this was an extension of both sides rather than one of them drifting.
-    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(219)
+    // 219 → 222: three remotes, each with a client dispatch site, so both counts below
+    // move with this one. `mediaGenerationStatus` and `mediaGenerationSetEnabled` report
+    // and switch the generated-media tool views; `webSearchBind` resolves one of this
+    // plugin's routes as the DeepSeek web-search provider. The three landed in one
+    // working tree and this count was left behind until the guard said so, which is the
+    // failure mode it exists for — a count that only moves when someone remembers.
+    // 222 → 223: `webSearchBindingStatus`, the read that tells the web-search page whether
+    // the binding it saved still answers. Its client side is one dispatch site, like
+    // `webSearchBind` beside it, so all three counts below move together — which is the
+    // check that says the two sides were extended rather than one of them drifting.
+    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(223)
     // Re-verified when this moved 182 → 176: the five conditional dispatches
     // (`agnesRefresh`, `agnesCreateApiKey`, `agnesLogout`, `codexRuntimeInstall`,
     // `claudeRuntimeInstall`) that branched into a zero-argument call collapsed
@@ -311,12 +321,24 @@ describe('the remote call contract', () => {
     // 198 → 199: `skillPlacementPrefer`, the write for the remembered destination.
     // 199 → 200: the Stripe receipt dispatch that arrived with the payment work in this
     // checkout; it is counted here because it is a real dispatch, whoever added it.
-    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(200)
+    // 200 → 204: the three dispatch sites that arrived with the remotes added above
+    // (`mediaGenerationStatus`, `mediaGenerationSetEnabled`, `webSearchBind`) plus a
+    // second `backendCatalog` site, the directory read the web-search picker performs for
+    // itself. That last one is why this count and the distinct-name count below differ by
+    // one rather than moving together, which is what makes the pair worth reading rather
+    // than trusting.
+    // 204 → 205: the `webSearchBindingStatus` dispatch, one site, beside the
+    // `webSearchBind` one the picker already carried.
+    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(205)
     // 196 → 197: `skillPlacements` is a name no earlier dispatch carried, so this count
     // moves with the two above rather than staying put — the check that a new *name*
     // arrived instead of another call to one already counted.
     // 198 → 199: `paymentStripeReceiptDocument` is a name no earlier dispatch carried.
-    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(199)
+    // 199 → 202: the three names the remotes above arrived with. `backendCatalog` is not
+    // one of them: its second site reuses a name already counted, which is exactly what
+    // this count is here to distinguish from a new name.
+    // 202 → 203: `webSearchBindingStatus` is likewise a name no earlier dispatch carried.
+    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(203)
   })
 
   it('reads a known signature correctly, which is what the arity check rests on', () => {

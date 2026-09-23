@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { EVAL_SUITES, runEngineeringEval } from '../src/engineering-eval.ts'
+import { createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 
 // The evaluation contains cases that wait on real timers (cache expiry), so a
 // full run takes tens of seconds. The default 5s budget is calibrated for unit
@@ -179,18 +180,20 @@ describe('evaluation sensitivity', () => {
     const { serializeRequest } = await import('../src/openai-wire.ts')
     const build = (withText: boolean): string => {
       const body = serializeRequest({
-        provider: 'p', model: 'm', messages: [{
-          role: 'user', source: { kind: 'user' }, content: [
-            ...(withText ? [{ type: 'text' as const, text: 'trailing' }] : []),
-            { type: 'tool-result' as const, toolCallId: 'c1', content: [{ type: 'text' as const, text: 'ok' }] },
-          ],
-        }],
-      } as never)
+        provider: 'p', model: 'm', messages: [
+          createAssistantMessage({ source: { provider: 'p', model: 'm' }, content: [{ type: 'tool-call', id: 'c1' as never, name: 'read', arguments: '{}' }] }),
+          createToolResultMessage({ callId: 'c1' as never, content: [{ type: 'text', text: 'ok' }], isError: false }),
+          ...(withText ? [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'trailing' }] })] : []),
+        ],
+      })
       return (body.messages as readonly { readonly role: string }[]).map(message => message.role).join(',')
     }
-    // The tool frame must come first either way; trailing text may only follow it.
-    expect(build(true).startsWith('tool')).toBe(true)
-    expect(build(false)).toBe('tool')
+    // The result is its own frame now, so the order the provider sees is the
+    // order the log holds — an assistant frame, its result, then any text. A
+    // serializer that folded the result into the user turn, or sorted frames,
+    // would answer with a different string here.
+    expect(build(true)).toBe('assistant,tool,user')
+    expect(build(false)).toBe('assistant,tool')
   })
 
   it('the conflict case distinguishes a tool receiver from a command receiver', async () => {
@@ -479,7 +482,13 @@ describe('evaluation sensitivity', () => {
   it('the routing case keeps an explicit opt-out through a catalog sync', async () => {
     const { synchronizeSubagentModelRoutes } = await import('../src/subagent-model-routing.ts')
     const writes: Record<string, unknown>[] = []
-    const settings = { get: () => ({ allowedModels: [], enabled: false } as never), update: async (_n: string, v: Record<string, unknown>) => { writes.push(v) } }
+    // The shipped 0.1.7 surface: `describe()` to read, revision-guarded
+    // `update()` to write. A fake with the removed `get(ns)` would typecheck
+    // against nothing and hide the same removal this case exists to notice.
+    const settings = {
+      describe: () => [{ ns: 'subagent-model-selection', value: { allowedModels: [], enabled: false }, revision: 1 }],
+      update: async (_n: string, v: Record<string, unknown>) => { writes.push(v) },
+    }
     const llm = { listProviders: () => [{ id: 'p' }], listModels: async () => [{ id: 'm', availability: 'available', inputModalities: ['text'] }] }
     await synchronizeSubagentModelRoutes(settings, llm)
     // The sync still writes routes; the opt-out survives inside the patch.

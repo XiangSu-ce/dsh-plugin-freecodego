@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { serializeRequest, serializeRequestWithInlineImages, translate } from '../src/openai-wire.ts'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
+import { createToolResultMessage, createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
 
 const attachment = {
   attachmentId: 'att-generated' as never,
@@ -11,17 +11,23 @@ const attachment = {
 }
 
 describe('OpenAI-compatible history serialization', () => {
+  // A tool result is its own message now, so the history these two cases build is
+  // the history the log actually holds: a tool-role message, then the user turn
+  // that continues the discussion.
+  const toolResultWithImage = createToolResultMessage({
+    callId: 'call-1' as never,
+    content: [{ type: 'image', attachment }],
+    isError: false,
+  })
+
   it('downgrades generated image tool results to text instead of rejecting the next text turn', () => {
     const body = serializeRequest({
-      provider: 'logfare', model: 'gpt-5.6-sol', messages: [{
-        role: 'user', source: { kind: 'user' }, content: [
-          { type: 'text', text: 'Continue the discussion.' },
-          { type: 'tool-result', toolCallId: 'call-1' as never, content: [{ type: 'image', attachment }] },
-        ],
-      }],
-    } as never)
-    // Tool frames stay adjacent to their assistant tool_calls; trailing text
-    // from the same Harness message follows as a later user turn.
+      provider: 'logfare', model: 'gpt-5.6-sol', messages: [
+        toolResultWithImage,
+        createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue the discussion.' }] }),
+      ],
+    })
+    // The tool frame keeps its place ahead of the text turn that follows it.
     expect(body.messages).toEqual([{
       role: 'tool',
       tool_call_id: 'call-1',
@@ -34,13 +40,11 @@ describe('OpenAI-compatible history serialization', () => {
 
   it('does not resolve historical tool-result images as new user uploads', async () => {
     const body = await serializeRequestWithInlineImages({
-      provider: 'logfare', model: 'gpt-5.6-sol', messages: [{
-        role: 'user', source: { kind: 'user' }, content: [
-          { type: 'text', text: 'Continue.' },
-          { type: 'tool-result', toolCallId: 'call-1' as never, content: [{ type: 'image', attachment }] },
-        ],
-      }],
-    } as never, { resolveImage: async () => { throw new Error('historical images must not be uploaded again') } })
+      provider: 'logfare', model: 'gpt-5.6-sol', messages: [
+        toolResultWithImage,
+        createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue.' }] }),
+      ],
+    }, { resolveImage: async () => { throw new Error('historical images must not be uploaded again') } })
     expect(body.messages).toEqual([{
       role: 'tool',
       tool_call_id: 'call-1',

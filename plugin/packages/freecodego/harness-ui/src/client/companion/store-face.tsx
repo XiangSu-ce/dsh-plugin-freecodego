@@ -3,7 +3,7 @@
  *
  * Every *seat* gets its session facts as Hooks the framework builds over two
  * stores; an injected row (`./running-row.tsx`, `./step-row.tsx`) is outside the
- * slot system, so it reads those same two stores itself. That difference is a
+ * slot system, so it reads those same stores itself. That difference is a
  * subscription wrapper and nothing else — the facts are the readers in
  * `./signals.ts`, the pose is the same arbiter, and the frame comes from the same
  * engine through the same `useCompanionView`, which is what keeps an injected face
@@ -12,6 +12,7 @@
 import type { ReactNode } from 'react'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { JobsSnapshot } from '@deepseek-ai/dsh-api-job-controller/client'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { CompanionActivity } from './activity.ts'
 import { CompanionSvg } from './render.tsx'
@@ -23,9 +24,11 @@ export const STORE_FACE_INK = 'var(--fcg-text-primary, currentColor)'
 /** The surface behind the character; only visible through the eye holes. */
 export const STORE_FACE_PAPER = 'var(--fcg-bg-base, #f9f9f9)'
 
-/** The three sources the fact readers need: two snapshots and the live event feed. */
+/** The four sources the fact readers need: three snapshots and the live event feed. */
 export interface StoreFaceSources {
   readonly sessions: HostObservable<SessionListState>
+  /** The client jobs snapshot; the same service a slot seat binds as `useJobs`. */
+  readonly jobs: HostObservable<JobsSnapshot>
   readonly statuses: HostObservable<SessionStatusSnapshot>
   /** The session's own event log; the *same* instance every slot seat reads. */
   readonly activity: HostObservable<CompanionActivity>
@@ -44,7 +47,7 @@ export function StoreFace({ sources, size, className }: {
   readonly className: string
 }): ReactNode {
   const view = useCompanionView(
-    useObservedCompanionObservation(sources.sessions, sources.statuses, sources.activity),
+    useObservedCompanionObservation(sources.sessions, sources.jobs, sources.statuses, sources.activity),
   )
   return (
     <CompanionSvg

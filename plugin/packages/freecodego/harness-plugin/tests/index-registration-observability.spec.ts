@@ -26,7 +26,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
 import type { UpstreamPlanMode } from '../src/plan-mode.ts'
-import { provideHostService, provideHostServiceAs, registrationHandle, runContext, sessionAt, settingsValue, type AgentEnginesFace, type CommandsFace } from './support/host-services.ts'
+import { pluginConfig, provideHostService, provideHostServiceAs, registrationHandle, runContext, sessionAt, type AgentEnginesFace, type CommandsFace } from './support/host-services.ts'
 
 const CWD = '/workspace'
 
@@ -76,14 +76,6 @@ async function registrationHarness(options: {
     provideHostService(scope, 'agents', { list: () => [], get: () => undefined })
     provideHostServiceAs<AgentEnginesFace>(scope, 'agentEngines', { setAvailability: () => undefined })
     provideHostService(scope, 'sessions', { get: () => sessionAt(CWD), list: () => [] })
-    provideHostService(scope, 'settings', {
-      register: () => ({
-        get: () => settingsValue({ engineeringEnabled: true, engineeringMemoryEnabled: true, advisorProvider: 'opencode', advisorModel: 'auto' }),
-        watch: () => () => undefined,
-        update: async () => undefined,
-        replace: async () => undefined,
-      }),
-    })
     provideHostService(scope, 'llm', {
       registerAdapter: () => registrationHandle(),
       stream(_generation: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -134,7 +126,7 @@ async function registrationHarness(options: {
     warnings.push(args.map(argument => String(argument)).join(' '))
     ;(inner as (...forwarded: unknown[]) => void)(...args)
   })
-  const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+  const plugin = new FreeCodeGoHarnessPlugin(ctx, pluginConfig({ engineeringEnabled: true, engineeringMemoryEnabled: true, advisorProvider: 'opencode', advisorModel: 'auto' }))
   return {
     plugin,
     warnings,

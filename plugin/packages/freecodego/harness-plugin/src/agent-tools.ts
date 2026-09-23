@@ -16,7 +16,7 @@ import type { FreeCodeGoEngineeringRegistry } from './engineering.ts'
 import { COUNCIL_ENGINES, VERIFICATION_STAGES, normalizeEngineeringCouncilRequest, validateEngineeringVerificationStages, workspaceForAgent } from './engineering-remote-utils.ts'
 import { normalizeEngineeringProbes, probeCommandDenial } from './engineering-quality.ts'
 import type { CompiledCommandPolicy } from './command-policy.ts'
-import { renderGeneratedImages, type ImageGenerationArgs } from './media-generation.ts'
+import { renderGeneratedImages, type ImageGenerationArgs, type MediaToolRegistration } from './media-generation.ts'
 import type { MediaVideoArgs } from './media-utils.ts'
 import { toolDefinition as rawAgnesTool, type ToolDefinitionShape } from './tool-definition.ts'
 import type { FreeCodeGoEngineeringCouncilRequest, FreeCodeGoEngineeringVerificationResult, FreeCodeGoEngineeringVerificationStage, FreeCodeGoEngineeringVerificationVerdict } from './types.ts'
@@ -289,15 +289,30 @@ export function registerAdvisorTools(deps: AgentToolsDeps): void {
   }, 'freecodego: Advisor and engineering council tools')
 }
 
-/** Model-facing media tools keep Agnes API keys and requests in the Host.
- * @param deps - the services and providers the Agnes tools are built from.
+/**
+ * The two legacy names the image/video switch governs beside the generic pair.
+ *
+ * Declared once and read by both the registration below and the switch's status, the
+ * same contract `MEDIA_GENERATION_TOOL_NAMES` follows on the other half.
  */
-export function registerAgnesTools(deps: AgentToolsDeps): void {
+export const AGNES_MEDIA_TOOL_NAMES = { image: 'agnes_generate_image', video: 'agnes_generate_video' } as const
+
+/**
+ * Register the legacy Agnes-named image and video tools, and return their disposer.
+ *
+ * These are the historical spellings of the two image/video tools — kept callable for
+ * persisted prompts — so they belong to the same switch as the generic pair and are
+ * mounted and unmounted by the same code. A disposer rather than an `ctx.effect` is what
+ * makes that possible.
+ * @param deps - the services and providers the Agnes tools are built from.
+ * @returns the mounted names and the disposer that releases them.
+ */
+export function registerAgnesMediaTools(deps: AgentToolsDeps): MediaToolRegistration {
   const client = deps.agnes
   const tools = deps.ctx.get('tools') as { register: (tool: ToolDefinitionShape) => () => void } | undefined
-  if (client === undefined || tools === undefined) return
+  if (client === undefined || tools === undefined) return { names: [], dispose: () => undefined }
   const disposeImage = tools.register(rawAgnesTool({
-    name: 'agnes_generate_image',
+    name: AGNES_MEDIA_TOOL_NAMES.image,
     description: 'Legacy image-generation tool name. Generate an image with the FreeCodeGo Settings image default; do not assume Agnes is selected. The Host routes this request through the configured default image model and falls back safely when unavailable.',
     parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Detailed image prompt.' }, size: { type: 'string', description: 'Image size accepted by the default image model, for example 1024x1024.' } }, required: ['prompt'], additionalProperties: false },
     output: {
@@ -314,7 +329,7 @@ export function registerAgnesTools(deps: AgentToolsDeps): void {
     presentCall: (args: { prompt: string }) => ({ card: 'generic', title: `Generate image: ${args.prompt}` }),
   }))
   const disposeVideo = tools.register(rawAgnesTool({
-    name: 'agnes_generate_video',
+    name: AGNES_MEDIA_TOOL_NAMES.video,
     description: 'Legacy video-generation tool name. Generate a video with the FreeCodeGo Settings video default; do not assume Agnes is selected. The Host routes this request through the configured default video model and falls back safely when unavailable.',
     parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Detailed video prompt.' }, seconds: { type: 'string', enum: [...AGNES_VIDEO_SECONDS], description: 'Video duration in seconds; the Agnes route renders 4 through 12.' }, aspectRatio: { type: 'string', description: 'Video aspect ratio, for example 16:9.' }, images: { type: 'array', items: { type: 'string' }, description: 'Optional reference image URLs; the first entry becomes the source frame.' } }, required: ['prompt'], additionalProperties: false },
     output: {
@@ -332,5 +347,5 @@ export function registerAgnesTools(deps: AgentToolsDeps): void {
     },
     presentCall: (args: { prompt: string }) => ({ card: 'generic', title: `Generate video: ${args.prompt}` }),
   }))
-  deps.ctx.effect(() => () => { disposeImage(); disposeVideo() }, 'freecodego: Agnes media tools')
+  return { names: [AGNES_MEDIA_TOOL_NAMES.image, AGNES_MEDIA_TOOL_NAMES.video], dispose: () => { disposeImage(); disposeVideo() } }
 }

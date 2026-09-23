@@ -74,7 +74,8 @@ describe('source collection', () => {
       { type: 'assistant/message', seq: 2, data: { message: { role: 'assistant', content: [{ type: 'text', text: 'working on it' }] } } },
       { type: 'tool/call', seq: 3, data: { callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' } },
       { type: 'tool/result', seq: 4, data: { message: { source: { kind: 'tool', callId: 'c1' }, content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'a.ts' }] }] } } },
-      { type: 'user/message', seq: 5, data: { message: { role: 'user', source: { kind: 'compaction' }, content: [{ type: 'text', text: 'the summary so far' }] } } },
+      // The kind the core's compaction actually stamps on a summary message.
+      { type: 'user/message', seq: 5, data: { message: { role: 'user', source: { kind: 'compact-checkpoint', compactionId: 'c1' }, content: [{ type: 'text', text: 'the summary so far' }] } } },
     ])
     expect(sources.rules).toHaveLength(1)
     expect(sources.conversation).toContain('do the thing\n')
@@ -100,7 +101,7 @@ describe('source collection', () => {
     // Both carry the same characters, so counting both would report the
     // summarized conversation at twice its size — a bigger error than zero.
     const sources = collectPromptCompositionSources(undefined, [
-      { type: 'user/message', seq: 1, data: { message: { role: 'user', source: { kind: 'compaction' }, content: [{ type: 'text', text: 'condensed' }] } } },
+      { type: 'user/message', seq: 1, data: { message: { role: 'user', source: { kind: 'compact-checkpoint', compactionId: 'c1' }, content: [{ type: 'text', text: 'condensed' }] } } },
       { type: 'compaction/summary', seq: 2, data: { compactionId: 'c1', summary: [{ type: 'text', text: 'condensed' }] } },
     ])
     expect(sources.summary).toEqual(['condensed'])

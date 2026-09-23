@@ -10,7 +10,6 @@
  */
 
 import { createHash } from 'node:crypto'
-import z from '@deepseek-ai/schemastery'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { COMPILED_BUILT_IN_COMMAND_POLICY, commandPolicyDenial, commandProgramIndexes, type CompiledCommandPolicy } from './command-policy.ts'
 import { pathArgumentsOf } from './sandbox/profiles.ts'
@@ -21,59 +20,7 @@ import { realpathThroughMissingTail } from './sandbox/realpath.ts'
 import { planModeRefusal } from './plan-mode.ts'
 import { stableJson } from './stable-json.ts'
 
-/** Guard toggles persisted with the FreeCodeGo profile (defaults in the schema below). */
-export const FreeCodeGoGuardSettingsSchema = z.object({
-  // Fail-closed by default: the model has no legitimate need for secret
-  // material, and a denial message tells it how to proceed instead.
-  envReadGuardEnabled: z.boolean().default(true),
-  // Stops the token-burning failure mode where a stuck engine repeats one
-  // failing call until the user cancels the session. It applies to the native
-  // engines' own tools, which is the population no other loop check covers:
-  // Harness-dispatched calls are the Harness's own advisory guard's business.
-  doomLoopGuardEnabled: z.boolean().default(true),
-  // Probe-based LSP stack: on by default, mounts only when language-server
-  // binaries resolve on PATH so boot never depends on tooling being present.
-  lspEnabled: z.boolean().default(true),
-  // Declarative command policy: rules live in `command-policy.ts` as data with
-  // their own positive/negative examples, and only `forbidden` rules can deny
-  // here — this guard is monotonic, so `prompt` is left to the approval layer.
-  commandPolicyEnabled: z.boolean().default(true),
-  // Plan Mode: while a session is in `plan`, file-mutating tools and any command
-  // the policy does not clear are refused. The mode is per conversation, not per
-  // tool call, so it is read from durable state rather than from arguments.
-  planModeEnabled: z.boolean().default(true),
-  // Model-visible context budget: the model is told how full its window is, at
-  // band granularity, so it can choose a targeted read over a whole file. A
-  // model that never learns the number cannot avoid the cost the number causes.
-  contextBudgetEnabled: z.boolean().default(true),
-  // Cache-cold clearing: when the prompt cache is provably expired, shrinking the
-  // prompt costs nothing, because the whole prefix is about to be re-sent anyway.
-  cacheColdClearEnabled: z.boolean().default(true),
-  // Request-shape attribution: fingerprint the request before it is sent, so a
-  // cache miss can name the tool whose description moved instead of only saying
-  // "the prefix changed".
-  cacheBreakAttributionEnabled: z.boolean().default(true),
-  // Assistant-output repetition guard: the doom-loop guard above catches a tool
-  // call repeated with identical arguments, which is a different failure from
-  // the model looping inside its own prose. That one is only ever stopped by the
-  // token budget today, so this watches `agent/assistant-stream` and answers with
-  // a reminder first and a cancelled turn second.
-  assistantLoopGuardEnabled: z.boolean().default(true),
-  // Paged recall of a parked tool result. On by default: the artifact already
-  // exists on disk, so this only changes how it is read back, and reading it with
-  // no statement of what is left is the failure it removes.
-  spillRecallEnabled: z.boolean().default(true),
-  // Compaction-summary fidelity: a summary replaces the history it was written
-  // from, in the same commit, so the only moment its quotations can be checked
-  // against the record is before it lands. An unfaithful summary is logged, never
-  // enforced — it is already appended by the time it can be read.
-  compactionFidelityEnabled: z.boolean().default(true),
-  // Prompt-composition reporting: the model can ask where its own context goes
-  // rather than only how full it is. `context-budget.ts` answers "how much is
-  // left"; without this the answer to "too much of *what*" is a guess, which is
-  // what leaves the tool block and an over-long transcript indistinguishable.
-  promptCompositionEnabled: z.boolean().default(true),
-})
+
 
 /**
  * The argument keys a path-taking tool can carry its target under.

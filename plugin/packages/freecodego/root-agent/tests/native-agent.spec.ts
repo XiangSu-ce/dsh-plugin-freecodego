@@ -413,7 +413,9 @@ describe('FreeCodeGoNativeAgent', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ data: { name: 'bash', arguments: '{"command":"echo hi"}' } })
     expect(results).toHaveLength(1)
-    expect(results[0]).toMatchObject({ data: { message: { source: { callId: 'call-1' }, content: [{ type: 'tool-result', isError: false, content: [{ type: 'text', text: 'hi\n' }] }] } } })
+    // The result is the tool-role message's own content now, with the call it
+    // answers and the failure flag on the message instead of on a block.
+    expect(results[0]).toMatchObject({ data: { message: { role: 'tool', source: { kind: 'tool', callId: 'call-1' }, toolCallId: 'call-1', isError: false, content: [{ type: 'text', text: 'hi\n' }] } } })
     await ctx.fiber.dispose()
   })
 

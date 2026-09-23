@@ -1,5 +1,31 @@
 /** Public, redacted types shared by the FreeCodeGo Host RPC and Web client. */
 
+import type { Volatile } from '@deepseek-ai/cordis'
+
+/**
+ * One settings group as the plugin's Config carries it: every field a live reference.
+ *
+ * The settings service no longer registers a namespace per plugin — a plugin's `Config`
+ * *is* its settings document, and `volatile()` is what marks a field as editable while the
+ * plugin runs (a volatile-only change is committed into the running references instead of
+ * remounting the plugin). Reading therefore means calling `.get()` on each field, so the
+ * shape the Config actually holds is this projection of the declared settings type, not
+ * the type itself.
+ *
+ * Deriving it keeps one declaration of every field: the settings types below stay the
+ * contract this package, `harness-ui`, and the agent runtimes agree on, and this is the
+ * same contract with its references unresolved. A hand-written second interface would be
+ * a second thing to keep in step, which is the drift the schema witnesses exist to catch.
+ *
+ * Every field is `?` even where the document it derives from declares it required. The
+ * two types describe two different things: the settings types are the *resolved* document
+ * a reader sees after defaults are applied, while the Config is what an installation may
+ * write — and an installation that sets one field still leaves the rest to the schema's
+ * defaults. Widening here is what keeps `Config` writable by halves, and the totals are
+ * restored at exactly one place, {@link FreeCodeGoPolicy.get}, which reads every field.
+ */
+export type Live<T> = { readonly [K in keyof T]?: Volatile<T[K]> }
+
 /** Public engine id carried by the FreeCodeGo settings RPC. */
 /** Legacy engine ids remain wire-compatible for old snapshots; the UI no
  * longer exposes them and new sessions always use provider `freecodego`. */
@@ -1090,34 +1116,69 @@ export interface ClineLoginPoll {
 }
 /** One persisted third-party MCP server definition. */
 export interface FreeCodeGoMcpServer {
+  /** Stable id this definition is addressed by in a save, a remove, and the snapshot. */
   readonly id: string
+  /** Whether the server is mounted; a disabled definition stays on disk. */
   readonly enabled: boolean
+  /** How the Host reaches the server: a spawned process, or an HTTP endpoint. */
   readonly transport: 'stdio' | 'streamable-http'
+  /** Name the server registers under, which prefixes the tools it contributes. */
   readonly serverName: string
+  /** Executable the stdio transport spawns. */
   readonly command: string
+  /** Arguments passed to the spawned executable, in order. */
   readonly args: readonly string[]
+  /** Extra environment variables for the spawned process. */
   readonly env: Readonly<Record<string, string>>
+  /** Working directory the spawned process starts in; empty means the Host's own. */
   readonly cwd: string
+  /** Endpoint the `streamable-http` transport connects to. */
   readonly url: string
+  /** Request headers the HTTP transport sends, such as an authorization token. */
   readonly headers: Readonly<Record<string, string>>
 }
 
 /** One extra filesystem root supplied to the shared Skill registry. */
 export interface FreeCodeGoSkillRoot {
+  /** Stable id this root is addressed by in a save, a remove, and the snapshot. */
   readonly id: string
+  /** Whether the root is scanned; a disabled root stays on disk. */
   readonly enabled: boolean
+  /** Directory scanned for Skill folders. */
   readonly path: string
+}
+
+/**
+ * The web-search provider binding this plugin wrote for the stock search page.
+ *
+ * Kept because the stock namespace (`web-search-deepseek`) can say which endpoint the
+ * search provider calls, but not which of this plugin's routes that endpoint stands
+ * for — and only the pair can rebuild a binding that died with the process: a bridge
+ * endpoint's port, route id, and secret are minted per process, so the saved URL is
+ * dead the moment this Host starts. `web-search-binding.ts` reads this pair at boot.
+ */
+export interface FreeCodeGoWebSearchSettings {
+  /** Provider the chosen search model belongs to (`vyce`, `freecodego`, …); empty when none was chosen here. */
+  readonly webSearchBindingProvider: string
+  /** Model id the chosen search route runs; empty when none was chosen here. */
+  readonly webSearchBindingModel: string
 }
 
 /** Persisted feature switches and managed extension definitions. */
 export interface FreeCodeGoCapabilitySettings {
+  /** Master switch for the MCP capability; while off, no stored server is mounted. */
   readonly mcpEnabled: boolean
+  /** Master switch for the shared Skill registry. */
   readonly skillEnabled: boolean
+  /** Dictation in the composer, transcribed through the Host's own key. */
   readonly voiceInputEnabled: boolean
+  /** The session-delete affordance in the sidebar. */
   readonly sessionDeleteEnabled: boolean
   /** Explicit category overrides keyed as `${provider}\u0000${model}`. */
   readonly modelCategories: Readonly<Record<string, FreeCodeGoModelCategory>>
+  /** MCP servers this profile declares; only an `enabled` row is started. */
   readonly mcpServers: readonly FreeCodeGoMcpServer[]
+  /** Extra Skill roots mounted beside the ones the Host manages itself. */
   readonly skillRoots: readonly FreeCodeGoSkillRoot[]
   /**
    * Per-Skill model-invocation overrides, keyed by Skill name.
@@ -1216,6 +1277,60 @@ export interface FreeCodeGoSkillDetail extends FreeCodeGoSkillEntry {
   readonly file?: { readonly path: string; readonly bytes: number; readonly content: string }
 }
 
+/**
+ * One of this plugin's model routes resolved as the DeepSeek web-search provider.
+ *
+ * The web-search page above this answer edits the key, the endpoint, and the
+ * search budget of `web-search-deepseek`; the model stays at the provider's own
+ * default, because a stock schema default is not something a user can choose
+ * between. This is that missing choice, resolved on the Host so the provider keys
+ * and the route decision never leave it.
+ */
+export interface FreeCodeGoWebSearchBinding {
+  /** Provider the chosen row belongs to (`vyce`, `freecodego`, `opencode`, …), lowercased. */
+  readonly provider: string
+  /** Model id the search request carries on the wire. */
+  readonly model: string
+  /** Anthropic-compatible base URL; the search provider appends `/messages` to it. */
+  readonly baseURL: string
+  /** Settings field the search provider resolves its key from. */
+  readonly apiKeyEnv: string
+  /** The key itself, written through the credentials domain and never into the settings file. */
+  readonly apiKey: string
+  /**
+   * Whether the endpoint outlives the Host process.
+   *
+   * True only for a provider that serves its own Anthropic API. Every other
+   * provider is reached through the local bridge, whose route id and secret are
+   * minted per process: a binding saved from one of those works until the Host
+   * restarts, and the page has to say so when it saves one.
+   */
+  readonly durable: boolean
+}
+
+/**
+ * What the stock web-search page's saved binding is, as this plugin sees it.
+ *
+ * The page cannot answer this for itself: a bridge route id is only meaningful to the
+ * process that minted it, and a fresh resolution mints a new one, so "is what I have
+ * still served?" is a question for the Host (see `web-search-binding.ts`).
+ */
+export interface FreeCodeGoWebSearchBindingStatus {
+  /**
+   * Whose binding the page's namespace holds.
+   *
+   * `none` is a namespace no Host in this composition serves, `other` is one whose
+   * binding this plugin did not write — including the unconfigured default — and
+   * `durable` / `bridge` are this plugin's, split by whether the endpoint outlives
+   * the process. Only a `bridge` binding can need rebuilding.
+   */
+  readonly state: 'none' | 'other' | 'durable' | 'bridge'
+  /** Whether the saved endpoint is still served: always true unless a bridge route died with a previous process. */
+  readonly alive: boolean
+  /** The pair this plugin recorded for its own binding, when it has one. */
+  readonly remembered?: { readonly provider: string; readonly model: string }
+}
+
 /** Browser-safe extension inventory returned by the FreeCodeGo Host Remote. */
 export interface FreeCodeGoCapabilitySnapshot extends FreeCodeGoCapabilitySettings {
   readonly mcpTools: readonly { readonly name: string; readonly description: string }[]
@@ -1284,7 +1399,9 @@ export interface FreeCodeGoSkillRemoveReport {
  * could name. The matrix reports those rows as unresolved instead.
  */
 export interface FreeCodeGoSkillPlacement {
+  /** Agent family the install targets. */
   readonly agent: 'harness' | 'agents'
+  /** Whether the install lands in the project's own directory or the user's. */
   readonly scope: 'project' | 'user'
 }
 
@@ -1351,7 +1468,9 @@ export interface FreeCodeGoSkillInstallReport {
 
 /** Persisted controls for the optional, plugin-owned engineering enhancement pack. */
 export interface FreeCodeGoEngineeringSettings {
+  /** Master switch for the pack; off leaves every part of it unmounted. */
   readonly engineeringEnabled: boolean
+  /** The remaining engineering Skills, beyond the default-on starter subset. */
   readonly engineeringSkillsEnabled: boolean
   /** The default-on starter subset (evidence, navigation, planning, debugging,
    *  and the user-invoked prompt-technique reference) that lives in its own
@@ -1365,13 +1484,19 @@ export interface FreeCodeGoEngineeringSettings {
   /** Injects a one-screen capability map of the mounted Skills at session
    *  start, so a default-off library is still discoverable. */
   readonly engineeringSkillMapEnabled: boolean
+  /** Post-implementation verification against the project's own build, type, lint, and test scripts. */
   readonly engineeringQualityEnabled: boolean
+  /** Durable project memory: decisions, fixes, and cross-agent handoffs. */
   readonly engineeringMemoryEnabled: boolean
+  /** The multi-engine review council. */
   readonly engineeringCouncilEnabled: boolean
   /** Independent participation switches for each council engine. */
   readonly engineeringCouncilDeepseekEnabled: boolean
+  /** Let the Codex engine take part in council rounds. */
   readonly engineeringCouncilCodexEnabled: boolean
+  /** Let the Claude engine take part in council rounds. */
   readonly engineeringCouncilClaudeEnabled: boolean
+  /** Token budget the recalled memory may occupy in one request. */
   readonly engineeringMemoryContextTokenBudget: number
   /**
    * Let a model choose which memories a keyword search recalls, instead of the
@@ -1386,7 +1511,9 @@ export interface FreeCodeGoEngineeringSettings {
    * read, or declines to judge still reaches the user prompt.
    */
   readonly engineeringActionReviewEnabled: boolean
+  /** The queryable file, module, and function graph the engineering tools navigate with. */
   readonly engineeringCodeGraphEnabled: boolean
+  /** Refresh that graph on its own schedule, rather than only when asked to. */
   readonly engineeringCodeGraphAutoUpdate: boolean
   /** Which code-graph engine owns the Agent tool family. `auto` prefers the
    *  self-contained CodeGraph engine and falls back to Graphify. Only the
@@ -2059,13 +2186,21 @@ export type FreeCodeGoPluginConflictResource =
 
 /** A plugin entry disabled before activation because it duplicated an active resource. */
 export interface FreeCodeGoPluginConflictRecord {
+  /** Stable id this record is addressed by in the status projection. */
   readonly id: string
+  /** Epoch milliseconds at which the conflict was detected. */
   readonly detectedAt: number
+  /** Kind of resource the two entries contended for. */
   readonly resource: FreeCodeGoPluginConflictResource
+  /** The contended resource's own name, such as a tool or command name. */
   readonly resourceName: string
+  /** The entry that was stopped to resolve the conflict. */
   readonly disabledEntryId: string
+  /** Module the stopped entry loaded from, for a reader that has no entry list. */
   readonly disabledModuleName: string
+  /** The entry that kept the resource. */
   readonly keptEntryId: string
+  /** Module the kept entry loaded from, for a reader that has no entry list. */
   readonly keptModuleName: string
   /**
    * True when the stopped entry is one of this plugin's own stand-in mounts and
@@ -2081,7 +2216,9 @@ export interface FreeCodeGoPluginConflictRecord {
 
 /** Durable policy and recent automatic repairs for third-party plugin conflicts. */
 export interface FreeCodeGoPluginConflictSettings {
+  /** Whether the protection may resolve a conflict without being asked. */
   readonly pluginConflictProtectionEnabled: boolean
+  /** The repairs it performed, as the settings panel reports them. */
   readonly pluginConflictRecords: readonly FreeCodeGoPluginConflictRecord[]
 }
 
@@ -2100,6 +2237,7 @@ export interface FreeCodeGoPluginConflictStatus extends FreeCodeGoPluginConflict
 
 /** Persisted policy for checking the published FreeCodeGo package. */
 export interface FreeCodeGoPluginUpdateSettings {
+  /** Whether the Host checks for a newer published package. */
   readonly pluginUpdateChecksEnabled: boolean
 }
 
@@ -2236,10 +2374,15 @@ export interface FreeCodeGoReviewStartRequest {
 export interface FreeCodeGoAdvisorSettings {
   /** Prefix avoids collisions with the bundle's default-engine settings. */
   readonly advisorEnabled: boolean
+  /** When a review runs: alongside the turn, after it, or only for a blocker. */
   readonly advisorMode: 'async' | 'catchup' | 'blocker-only'
+  /** Route the reviewer model is reached through. */
   readonly advisorProvider: string
+  /** Model the reviewer runs on; `auto` follows the rotating free roster at request time. */
   readonly advisorModel: string
+  /** Whether a finding may steer or interrupt the working agent at all. */
   readonly advisorAllowAgentControl: boolean
+  /** Turns to wait after an interrupt before the Advisor may interrupt again. */
   readonly advisorInterruptCooldownTurns: number
   /** Feed durable Advisor findings into project memory as pending drafts. */
   readonly advisorMemoryDraftsEnabled: boolean
@@ -2445,6 +2588,28 @@ export interface DeferredToolStatus {
   readonly immediateChars: number
   /** Agents currently holding a deferral scope. */
   readonly activeAgents: number
+}
+
+/**
+ * Live image/video generation tool state (Remote boundary type).
+ *
+ * Exists so the settings switch is readable as well as writable, the same reason
+ * {@link DeferredToolStatus} does: a knob the panel can only write renders as
+ * permanently off regardless of the setting.
+ *
+ * Two name lists rather than one, because "this switch owns it" and "it is mounted
+ * right now" are different facts and reporting them as one number would hide the
+ * difference: `gated` is what the switch governs, `registered` is what the Host
+ * actually mounted — empty while the switch is off, and short by the legacy Agnes
+ * aliases on a profile with no Agnes client. Both are read off the registrations, so
+ * neither is a list written down a second time.
+ */
+export interface FreeCodeGoMediaToolStatus {
+  readonly enabled: boolean
+  /** Image and video tool names this switch governs, registered or not. */
+  readonly gated: readonly string[]
+  /** The subset mounted right now. */
+  readonly registered: readonly string[]
 }
 
 /** Runtime kind of one Headroom context compression. */
@@ -2952,3 +3117,49 @@ export type { ProjectConfigReport } from './project-config.ts'
 export type { MemoryConsolidation } from './memory/memory-pipeline.ts'
 export type { MemoryManifest } from './memory/manifest.ts'
 export type { ForgetRefusal } from './memory/forget.ts'
+
+/**
+ * The durable message sources this plugin's producers write.
+ *
+ * The core's `MessageSourceMap` is a merge-extensible sum type with no catch-all: a
+ * producer declares its own `kind` in its own module, which is why this block sits in
+ * the plugin's types module rather than in a module of its own — a file whose only
+ * statement is `declare module` is a *script*, so its declaration would shadow
+ * `@deepseek-ai/dsh-llm` instead of augmenting it. That shadowing is silent and total:
+ * every symbol the core exports from that package stops resolving, in this package and
+ * in every package compiled with it.
+ *
+ * The fork wrote `kind: 'plugin'` while the core still had that member. The current core
+ * removed it and kept the rest — `MessageSource.kind` still answers *who produced this* —
+ * so the producer names the fork was already writing are the kinds now. Nothing else
+ * changes: the durable record still names its producer, and `MessageSource.kind` is what
+ * a projection shows for a source it does not otherwise recognise.
+ */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'freecodego-action-review': { kind: 'freecodego-action-review' }
+    'freecodego-advisor': { kind: 'freecodego-advisor' }
+    'freecodego-advisor-council': { kind: 'freecodego-advisor-council' }
+    'freecodego-agent-progress': { kind: 'freecodego-agent-progress' }
+    'freecodego-assistant-loop-guard': { kind: 'freecodego-assistant-loop-guard' }
+    'freecodego-context-budget': { kind: 'freecodego-context-budget' }
+    'freecodego-engine-council': { kind: 'freecodego-engine-council' }
+    'freecodego-engineering-loop': { kind: 'freecodego-engineering-loop' }
+    'freecodego-engineering-memory': { kind: 'freecodego-engineering-memory' }
+    'freecodego-engineering-skills': { kind: 'freecodego-engineering-skills' }
+    'freecodego-hooks': { kind: 'freecodego-hooks' }
+    'freecodego-memory-dream': { kind: 'freecodego-memory-dream' }
+    'freecodego-memory-recall': { kind: 'freecodego-memory-recall' }
+    'freecodego-persona': { kind: 'freecodego-persona' }
+    'freecodego-plan-mode': { kind: 'freecodego-plan-mode' }
+    'freecodego-rehydration': { kind: 'freecodego-rehydration' }
+    'freecodego-review': { kind: 'freecodego-review' }
+    // The review port and the subagent reviewer are two producers of the same
+    // feature, and the port has written this spelling since before the core
+    // required a declaration. It keeps it: renaming a source silently changes
+    // what the transcript says produced a message, and the old catch-all `plugin`
+    // member recorded the two apart.
+    'freecodego/review': { kind: 'freecodego/review' }
+    'freecodego-verify-on-stop': { kind: 'freecodego-verify-on-stop' }
+  }
+}

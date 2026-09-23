@@ -256,7 +256,7 @@ describe('Stop: the one seam that continues a turn', () => {
     // a shape nothing else in the process produces.
     expect(typeof message.id).toBe('string')
     expect(message.role).toBe('user')
-    expect(message.source).toEqual({ kind: 'plugin', plugin: 'freecodego-hooks' })
+    expect(message.source).toEqual({ kind: 'freecodego-hooks' })
   })
 
   test('steers through the agent as the receiver, not as a bare function', async () => {
@@ -641,7 +641,7 @@ describe('the observing seams', () => {
     expect(decision.kind).toBe('accept')
     expect(decision.content).toBe(base.content)
     expect(decision.additionalContexts?.[0]?.content[0]?.text).toBe('the linter wanted tabs')
-    expect(decision.additionalContexts?.[0]?.source).toEqual({ kind: 'plugin', plugin: 'freecodego-hooks' })
+    expect(decision.additionalContexts?.[0]?.source).toEqual({ kind: 'freecodego-hooks' })
   })
 })
 

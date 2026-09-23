@@ -4,7 +4,7 @@ import { join, relative } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { LlmError } from '@deepseek-ai/dsh-llm'
-import { AUDIO_FORMATS, gatewayMediaJson, generateAudioWithFallback, generateVideoWithFallback, persistGeneratedImages, pollGeneratedVideo, registerMediaTools, renderGeneratedImages } from '../src/media-generation.ts'
+import { AUDIO_FORMATS, gatewayMediaJson, generateAudioWithFallback, generateVideoWithFallback, persistGeneratedImages, pollGeneratedVideo, registerAudioTools, renderGeneratedImages } from '../src/media-generation.ts'
 import { MediaRouteLimitation, mediaFallbackAllowed } from '../src/media-utils.ts'
 
 afterEach(() => vi.restoreAllMocks())
@@ -130,7 +130,7 @@ describe('freecodego_transcribe_audio', () => {
   // workspace each case is about.
   const transcribeTool = async (_workspace: string, denyCredentials = true, onUpload?: (audioBase64: string) => void): Promise<TranscribeTool> => {
     const registered: TranscribeTool[] = []
-    registerMediaTools({
+    registerAudioTools({
       ctx: {
         get: (name: string) => name === 'tools' ? { register: (tool: typeof registered[number]) => { registered.push(tool); return () => undefined } } : undefined,
         effect: () => undefined,

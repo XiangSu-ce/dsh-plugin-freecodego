@@ -131,6 +131,13 @@ describe('evaluation case falsifiability', () => {
  *
  * The list may only shrink, and each entry states what is cast and why, because
  * the reason is the thing a later reader needs in order to finish the job.
+ *
+ * The four `routing.*` entries left it the way the rest should: their fixtures
+ * are built from the shipped settings service's own surface (`describe()` plus
+ * a revision-guarded `update()`), so the compiler now checks them. They were
+ * the case that demonstrated the cost — a cast let the fixture keep the removed
+ * `get(ns)` signature, so every case passed while the sync applied no routes on
+ * 0.1.7 at all.
  */
 const UNTYPED_FIXTURES: ReadonlyMap<string, string> = new Map([
   ['guard.doom-loop-detection', 'the tool-run context the guard reads, built field by field for two turns'],
@@ -141,10 +148,6 @@ const UNTYPED_FIXTURES: ReadonlyMap<string, string> = new Map([
   ['community.install-target-resolution', 'a catalog row whose npm and url fields are absent'],
   ['account.snapshot-redacts-by-status', 'the coordinator snapshot, entered at one status per row'],
   ['adapter.image-content-detection', 'a message whose content parts are reduced to their type names'],
-  ['routing.filters-unusable-models-and-dedups', 'the settings value the model filter reads'],
-  ['routing.empty-catalog-is-authoritative-when-it-answers', 'the settings value the model filter reads'],
-  ['routing.never-re-enables-an-explicit-opt-out', 'the settings value the model filter reads'],
-  ['routing.no-write-when-nothing-changed', 'the settings value the model filter reads'],
   ['spec.task-derivation-order', 'the memory records the task list is derived from'],
 ])
 

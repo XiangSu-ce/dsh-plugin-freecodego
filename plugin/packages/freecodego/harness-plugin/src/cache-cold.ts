@@ -460,10 +460,21 @@ export function clearedResultMarker(location: ClearedResultLocation): string {
   return `${CLEARED_RESULT_PREFIX} the full text was parked instead, and can be read back: ${location.locator} (${location.retrievalHint})]`
 }
 
-/** The minimum a message must expose to be filtered. */
+/**
+ * The minimum a message must expose to be filtered.
+ *
+ * A tool result is a `tool`-role message whose `content` IS the result's own
+ * blocks and whose `toolCallId` names the call it answers. It used to be a
+ * `user`-role message holding one `tool-result` block that carried those same
+ * two things one level down, which is why every reader here used to reach into
+ * `content[0]`; the transform was independent of the transcript's storage shape
+ * except for that nesting, and the nesting is what the core removed.
+ */
 export interface MessageLike {
   readonly role?: unknown
   readonly content?: unknown
+  /** The call this result answers, on a tool-role message. */
+  readonly toolCallId?: unknown
 }
 
 /**
@@ -562,10 +573,8 @@ function isHarnessPruned(message: MessageLike): boolean {
  * @returns whether every content block in this tool result is visible text.
  */
 function hasOnlyTextContent(message: MessageLike): boolean {
-  if (message.role !== 'user' || !Array.isArray(message.content)) return false
-  const outer = (message.content as readonly { readonly type?: unknown; readonly content?: unknown }[])[0]
-  if (outer?.type !== 'tool-result' || !Array.isArray(outer.content)) return false
-  const blocks = outer.content as readonly ({ readonly type?: unknown } | undefined)[]
+  if (message.role !== 'tool' || !Array.isArray(message.content)) return false
+  const blocks = message.content as readonly ({ readonly type?: unknown } | undefined)[]
   if (blocks.length === 0) return false
   return blocks.every(block => block?.type === 'text')
 }
@@ -596,20 +605,16 @@ function isClearableResult(message: MessageLike, tool: string | undefined, clear
  * measuring agree on the payload the model actually saw.
  */
 function resultText(message: MessageLike): string | undefined {
-  if (message.role !== 'user' || !Array.isArray(message.content)) return undefined
-  const outer = (message.content as readonly { readonly type?: unknown; readonly content?: unknown }[])[0]
-  if (outer?.type !== 'tool-result' || !Array.isArray(outer.content)) return undefined
+  if (message.role !== 'tool' || !Array.isArray(message.content)) return undefined
   const texts: string[] = []
-  for (const block of outer.content as readonly { readonly type?: unknown; readonly text?: unknown }[]) {
+  for (const block of message.content as readonly { readonly type?: unknown; readonly text?: unknown }[]) {
     if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text)
   }
   return texts.join('\n')
 }
 
 function resultCallId(message: MessageLike): string | undefined {
-  if (message.role !== 'user' || !Array.isArray(message.content)) return undefined
-  const first = (message.content as readonly { readonly type?: unknown; readonly toolCallId?: unknown }[])[0]
-  return first?.type === 'tool-result' && typeof first.toolCallId === 'string' ? first.toolCallId : undefined
+  return message.role === 'tool' && typeof message.toolCallId === 'string' ? message.toolCallId : undefined
 }
 
 /**
@@ -687,7 +692,10 @@ export function clearOldToolResults(
     // saving the model will see rather than the message's raw size.
     const blockChars = original.reduce((sum, block) => sum + textCharsIn(block), 0)
     reclaimedChars += Math.max(0, blockChars - replacement.length)
-    return { ...message, content: [{ type: 'tool-result' as const, toolCallId: callId, content: [{ type: 'text' as const, text: replacement }] }] }
+    // Only `content` is replaced: `role`, `toolCallId`, `source`, and `isError`
+    // stay, so the cleared result still answers the same call and the caller's
+    // tool bookkeeping sees no change beyond the text.
+    return { ...message, content: [{ type: 'text' as const, text: replacement }] }
   })
   return { messages: next, clearedCallIds, reclaimedChars, keptCallIds }
 }

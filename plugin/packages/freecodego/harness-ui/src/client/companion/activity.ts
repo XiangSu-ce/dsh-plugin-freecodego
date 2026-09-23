@@ -51,6 +51,7 @@ import type {
   SessionEventSource,
   SessionEventWindow,
 } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { JobsSnapshot } from '@deepseek-ai/dsh-api-job-controller/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { mainViewSessionId } from './signals.ts'
@@ -96,6 +97,16 @@ export type CompanionActivitySource = HostObservable<CompanionActivity> & {
  */
 export interface CompanionSeatInjected {
   readonly activity: CompanionActivitySource
+  /**
+   * The client jobs snapshot as the bare source a slot entry's reserved `hooks`
+   * compartment takes; the framework binds it to the component as `useJobs`.
+   *
+   * A seat supplies this itself because the standard kit does not carry it: jobs
+   * are no longer a field of the Session list state, and the `jobs` client service
+   * is the only thing that publishes a roster — the same route
+   * `@deepseek-ai/dsh-client-ui-jobs` takes for its own job list.
+   */
+  readonly hooks: { readonly jobs: HostObservable<JobsSnapshot> }
 }
 
 /** Every fact false and every identity unset: a Session that is doing nothing. */
@@ -293,8 +304,14 @@ class SessionActivity implements CompanionActivitySource {
       case 'user/message':
         // Only a message this turn did not ask for is news: the loop's own
         // `agent.inject()` context (a cron notice, a file-change notice, a subagent
-        // result) carries a plugin source, while the human's prompt carries `user`.
-        if (event.data.source.kind === 'plugin') this.noticeKey = `${event.seq}`
+        // result) carries its producer's own source kind, while the human's prompt
+        // — typed or sent from a browser — carries `user`.
+        //
+        // This used to test for the core's catch-all `plugin` kind, which no longer
+        // exists: every injection writes a kind of its own now, so the question is
+        // the inverse one. Asking `!== 'user'` also covers producers this client
+        // has never heard of, which the old allowlist could not.
+        if (event.data.source.kind !== 'user') this.noticeKey = `${event.seq}`
         break
       default:
         break

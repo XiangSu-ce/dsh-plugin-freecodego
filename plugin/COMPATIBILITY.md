@@ -1,7 +1,7 @@
 # Harness Target
 
-FreeCodeGo targets DeepSeek Harness `0.1.6-alpha.2` at tag
-`dsh-v0.1.6-alpha.2`. The checked-in candidate source follows that official
+FreeCodeGo targets DeepSeek Harness `0.1.7-alpha.2` at tag
+`dsh-v0.1.7-alpha.2`. The checked-in candidate source follows that official
 at the commit recorded in `harness.lock.json`; that lock file is the sole
 source used by assembly, builds, tests, and release verification.
 
@@ -149,7 +149,7 @@ listed in `packages/freecodego/bundle-latest/cordis.patch.yml` as
 
 ## NPM Version Selection
 
-The public package is `freecodego@0.1.6-alpha.2`. Its version and
+The public package is `freecodego@0.1.7-alpha.2`. Its version and
 `freecodego.harnessBaseline` must exactly equal the supported Harness version.
 Do not publish another patch-level plugin version for this Harness line. The
 bundle metadata and release checks reject a package whose declared Harness

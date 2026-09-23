@@ -100,7 +100,8 @@ async function pump(advanceMs = 16): Promise<void> {
 interface SessionsState {
   ids: string[]
   byId: Record<string, { id: string; running: boolean; retainedBy: { mainView?: number } }>
-  jobsBySession: Record<string, readonly { id: string; status: string }[]>
+  phase: 'ready'
+  projectionsBySession: Record<string, never>
 }
 
 /** A snapshot source the test pushes into, shaped like `ObservableSnapshot`. */
@@ -117,10 +118,14 @@ function context(): ClientContext {
   const sessions: SessionsState = {
     ids: ['s1'],
     byId: { s1: { id: 's1', running: true, retainedBy: { mainView: 1 } } },
-    jobsBySession: { s1: [] },
+    phase: 'ready',
+    projectionsBySession: {},
   }
   return {
     sessions: { list: source(sessions) },
+    // No job here, but the source still has to exist: the seat reads
+    // `ctx.jobs.state` while it installs.
+    jobs: { state: source({ rows: {}, observed: {} }) },
     uiSession: { sessionStatus: source(new Map()) },
   } as unknown as ClientContext
 }
@@ -370,13 +375,19 @@ describe('companion step rows: the probe the browser answers', () => {
 })
 
 describe('companion step rows: the upstream shapes this was measured from', () => {
-  /** The five sheets that carry the sweep, as spellings inside the client. */
+  /**
+   * The sheets that still carry the sweep, as spellings inside the client.
+   *
+   * Re-measured: five of them did when this seat was written, and the revision that
+   * introduced the turn-process row dropped three — `GenericCommandCard`, `ui-tool`'s
+   * `ToolRow`, and the bash sample. Those rows now keep the shell's own look, which is
+   * the right outcome: there is no band left for the seat to replace. Only the two
+   * spellings that stayed are listed, so the gate fails on a sheet that has lost its
+   * sweep rather than on one that legitimately never had it.
+   */
   const SWEEP_SHEETS = [
-    'ui-chat/src/client/chat/GenericCommandCard.module.css',
     'ui-chat/src/client/chat/ReasoningRow.module.css',
     'ui-skill/src/client/SkillRow.module.css',
-    'ui-tool/src/client/tool/components/ToolRow.module.css',
-    'ui-tool/src/client/tool/toolviews/bash-sample.module.css',
   ]
 
   /** Read a file out of the synced upstream client. */
@@ -402,10 +413,15 @@ describe('companion step rows: the upstream shapes this was measured from', () =
     // nowhere else, so the three rows that render one are answered without a probe.
     expect(upstream('ui-primitives/src/DisclosureRow.tsx')).toContain('data-disclosure-row')
     // The two shapes the probe exists for: the skill card hand-rolls its row, and the
-    // bash row reports the state on the box that paints the band.
+    // reasoning row reports the state on the box around the row it paints the band on.
     expect(upstream('ui-skill/src/client/SkillRow.tsx')).not.toContain('DisclosureRow')
     expect(upstream('ui-skill/src/client/SkillRow.tsx')).toContain('data-state={model.state}')
-    expect(upstream('ui-tool/src/client/tool/toolviews/bash-sample.module.css'))
-      .toContain(".root[data-state='running']::after")
+    // Re-measured: both surviving spellings paint the band one level in — on the row
+    // *inside* the running element, not on that element itself. The probe asks which
+    // element paints the band either way, so the character follows it in.
+    expect(upstream('ui-chat/src/client/chat/ReasoningRow.module.css'))
+      .toContain(".root[data-state='running'] .row::after")
+    expect(upstream('ui-skill/src/client/SkillRow.module.css'))
+      .toContain(".card[data-state='running'] .row::after")
   })
 })

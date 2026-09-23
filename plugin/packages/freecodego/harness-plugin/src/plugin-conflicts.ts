@@ -15,9 +15,9 @@
  * the Harness owns, on weaker evidence, through a private seam (`init`/`_start`
  * wrapping — a seam the Loader moved once already, in 0.1.6).
  *
- * So it is now an override rather than a default: with the switch off — and off is
- * what an absent settings key means — nothing is intercepted and the Harness's own
- * behaviour is what a deployment gets. With it on, the owner already kept is
+ * So it is an override that ships enabled, not a mechanism the deployment has to opt into:
+ * with the switch off nothing is intercepted and the Harness's own behaviour is what a
+ * deployment gets, and the settings page is one click away from that. With it on, the owner already kept is
  * preserved and the later claimant is disabled before its code runs, which is the
  * one thing the Harness does not offer: a plugin that cannot start is not the same
  * as a plugin that is told why it cannot.
@@ -25,18 +25,13 @@
 
 import { createRequire } from 'node:module'
 import { readFile, stat } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { harnessHomeDirectory } from './data-home.ts'
 import { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type { Entry, EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
-import z from '@deepseek-ai/schemastery'
 import type { FreeCodeGoSettingsPort } from './policy.ts'
 import type {
   FreeCodeGoPluginConflictRecord,
   FreeCodeGoPluginConflictResource,
-  FreeCodeGoPluginConflictSettings,
   FreeCodeGoPluginConflictStatus,
 } from './types.ts'
 
@@ -44,6 +39,21 @@ const MAX_SOURCE_BYTES = 2_000_000
 const MAX_SOURCE_FILES = 50
 const MAX_RECORDS = 100
 const RESOURCE_NAME = /^[A-Za-z0-9_.:/@-]{1,256}$/
+/** Setting name the switch is stored under, in this plugin's own settings document. */
+const CONFLICT_PROTECTION_KEY = 'pluginConflictProtectionEnabled'
+/**
+ * The switch's answer for a guard built with no settings port at all.
+ *
+ * Off, and deliberately not described as "the default": no deployment lands here. Every shipped
+ * mount supplies a port — `index.ts` passes the policy — and that port's document *always*
+ * carries this field, because it is a `volatile()` field and schemastery resolves one by taking
+ * its schema default when nothing has been written (`Schema.resolve`'s volatile branch wraps the
+ * resolved value, which for absent input is `meta.default`). So the document answers `true`
+ * before the user ever touches the switch, and this constant describes only a programmatic mount
+ * that supplied no document — which is nothing to intercept on behalf of, since interception is
+ * this plugin taking a decision the Harness owns.
+ */
+const NO_SETTINGS_PORT_CONFLICT_PROTECTION = false
 
 type ResourceClaim = {
   readonly resource: FreeCodeGoPluginConflictResource
@@ -88,27 +98,6 @@ function isOwnStandIn(moduleName: string, entryId: string): boolean {
   return OWN_STAND_IN_ENTRY_IDS.has(tail)
 }
 
-/** Schema embedded in the FreeCodeGo settings namespace. */
-export const FreeCodeGoPluginConflictSettingsSchema = z.object({
-  pluginConflictProtectionEnabled: z.boolean().default(false),
-  pluginConflictRecords: z.array(z.object({
-    id: z.string().min(1).max(256),
-    detectedAt: z.number(),
-    resource: z.union([
-      z.const('tool'), z.const('command'), z.const('settings'), z.const('route'), z.const('provider'), z.const('slot'),
-    ]),
-    resourceName: z.string().min(1).max(256),
-    disabledEntryId: z.string().min(1).max(512),
-    disabledModuleName: z.string().min(1).max(512),
-    keptEntryId: z.string().min(1).max(512),
-    keptModuleName: z.string().min(1).max(512),
-    // Declared so the flag survives the settings document round trip: an
-    // undeclared key is dropped when the document is parsed, and the panel would
-    // then describe a stand-down as a repair that the Harness lost. Schemastery
-    // leaves a field without `.required()` optional, so an old record parses too.
-    yieldedToOfficial: z.boolean(),
-  })).default([]),
-}) as z<FreeCodeGoPluginConflictSettings>
 
 /**
  * Extract only literal registrations that have a globally exclusive identity.
@@ -186,7 +175,7 @@ export class FreeCodeGoPluginConflictGuard {
   ) {
     this.settings = settings
     this.records = settings?.get()?.pluginConflictRecords ?? []
-    this.enabled = settings?.get()?.pluginConflictProtectionEnabled ?? bootstrapConflictProtectionEnabled()
+    this.enabled = settings?.get()?.[CONFLICT_PROTECTION_KEY] ?? NO_SETTINGS_PORT_CONFLICT_PROTECTION
   }
 
   /**
@@ -227,15 +216,19 @@ export class FreeCodeGoPluginConflictGuard {
     }, 'freecodego: plugin conflict lifecycle guard')
   }
 
-  /** Attach settings after a pre-Loader bootstrap installation.
+  /** Attach the settings port this guard reads the switch and its records through.
+   *
+   * The guard is a per-root singleton, so a later mount that carries a port re-points the
+   * existing instance at the live document instead of leaving it on the answer it was
+   * constructed with.
    * @param settings - the plugin settings port, when one is available.
    */
   configure(settings: FreeCodeGoSettingsPort | undefined): void {
     if (settings === undefined || settings === this.settings) return
     this.settings = settings
-    this.enabled = settings.get()?.pluginConflictProtectionEnabled ?? bootstrapConflictProtectionEnabled()
-    // The switch may already be on when the settings port arrives (the guard is
-    // installed before the Loader, where only the raw settings file was readable).
+    this.enabled = settings.get()?.[CONFLICT_PROTECTION_KEY] ?? NO_SETTINGS_PORT_CONFLICT_PROTECTION
+    // The switch may already be on when the settings port arrives: a guard built without one
+    // starts with the portless answer, and a later mount can turn it on through `setEnabled`.
     if (this.started) this.installInterception()
     const persisted = settings.get()?.pluginConflictRecords ?? []
     const merged = [...persisted, ...this.records.filter(record => !persisted.some(item => sameConflict(item, record)))].slice(-MAX_RECORDS)
@@ -290,13 +283,26 @@ export class FreeCodeGoPluginConflictGuard {
     return this.settings?.get()?.pluginConflictProtectionEnabled ?? this.enabled
   }
 
-  /** Persist the global automatic-repair switch. 
+  /**
+   * Persist the global automatic-repair switch, and start or stop acting on it.
+   *
+   * Recording the value is not enough in the on direction. A guard built while the switch was
+   * off never installed its wrappers — that is deliberate, since leaving them in place would
+   * keep this plugin reading every entry's package while the deployment had said not to — so a
+   * guard that only wrote the new value would report protection as on while the running Loader
+   * went on starting every duplicate, and would silently stay inert until the next boot. The
+   * install has to come after the write resolves, because the live document is what
+   * {@link protectionEnabled} reads back.
+   *
+   * The off direction needs nothing: the wrappers ask `protectionEnabled()` per entry, so a
+   * switch turned off stops the answering without being uninstalled.
    * @param enabled - whether this capability is switched on.
    * @returns the plugin Conflict Status.
    */
   async setEnabled(enabled: boolean): Promise<FreeCodeGoPluginConflictStatus> {
     this.enabled = enabled
     await this.settings?.update({ pluginConflictProtectionEnabled: enabled })
+    if (enabled) this.installInterception()
     return this.snapshot()
   }
 
@@ -614,21 +620,6 @@ function relativeModuleSpecifiers(source: string): readonly string[] {
   return [...specifiers]
 }
 
-function bootstrapConflictProtectionEnabled(): boolean {
-  const settingsPath = join(harnessHomeDirectory(), 'settings.yaml')
-  try {
-    const source = readFileSync(settingsPath, 'utf8')
-    const match = source.match(/^freecodego-harness:\s*\r?\n(?:[ \t]+[^\r\n]*\r?\n)*?[ \t]+pluginConflictProtectionEnabled:\s*(true|false)\s*(?:#.*)?$/m)
-    // Absent means off, and the file is read raw because this runs before the
-    // settings service exists — a guard installed pre-Loader has no other way to
-    // know whether this deployment asked for the override.
-    return match?.[1] === 'true'
-  } catch {
-    // The settings document is absent before the profile's first start.
-    return false
-  }
-}
-
 function sameConflict(left: FreeCodeGoPluginConflictRecord, right: FreeCodeGoPluginConflictRecord): boolean {
   return left.resource === right.resource
     && left.resourceName === right.resourceName
@@ -640,10 +631,18 @@ function sameConflict(left: FreeCodeGoPluginConflictRecord, right: FreeCodeGoPlu
 
 const installedGuards = new WeakMap<Context, FreeCodeGoPluginConflictGuard>()
 
-/** Install the guard before Loader starts the profile's configured entries. 
+/**
+ * Install (or re-point) this process's conflict guard and start interception when the switch is on.
+ *
+ * Timing is relative, not absolute. The guard wraps each entry's start path through
+ * `loader/entry-init`, so it protects the entries that initialize after it is installed; for the
+ * ones already running, {@link FreeCodeGoPluginConflictGuard.seed} wraps them and records the
+ * claims they hold, so an entry starting later is still refused a resource an earlier one owns.
+ * It does not need to precede the Loader — and cannot, once this plugin is itself a Loader entry —
+ * and a deployment whose switch is off intercepts nothing at all.
  * @param ctx - context carrying the services this call reads.
+ * @param settings - the Host settings handle the guard reads the switch and records through.
  * @returns the plugin Conflict Guard.
- * @param settings - the Host settings handle the guard reads command conflicts through.
  */
 export function installFreeCodeGoPluginConflictGuard(
   ctx: Context,

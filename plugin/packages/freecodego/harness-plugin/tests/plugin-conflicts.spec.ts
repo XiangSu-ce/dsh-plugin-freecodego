@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { installFreeCodeGoPluginConflictGuard, scanPluginResourceClaims } from '../src/plugin-conflicts.ts'
-import { provideHostService } from './support/host-services.ts'
+import { FreeCodeGoPolicy } from '../src/policy.ts'
+import { pluginConfig, provideHostService } from './support/host-services.ts'
 
 const startedKey = '__freecodegoPluginConflictStarts'
 
@@ -104,15 +105,15 @@ describe('FreeCodeGoPluginConflictGuard', () => {
   })
 
   it('leaves a duplicate entry to the Harness when nothing asked for the override', async () => {
-    // The default: no settings file and no settings port, which is what a fresh
-    // profile looks like. The second plugin starts, keeps its own fiber, and the
-    // duplicate name is the Harness's own registry's business — its error names
-    // the resource, and a refused `init()` fails that one entry. The guard must
-    // also not have read either package: interception is what the switch turns on,
-    // so a default deployment does not get this plugin watching every entry.
+    // A guard built with no settings port — not what a deployment looks like: the plugin is
+    // a Loader entry and mounts with its own port, whose document answers this field's schema
+    // default (`true`) before anyone writes it. So this pins the rule for a *programmatic*
+    // mount that supplied no document: nothing asked, so nothing is intercepted. The second
+    // plugin starts, keeps its own fiber, and the duplicate name is the Harness's own
+    // registry's business — its error names the resource, and a refused `init()` fails that
+    // one entry. The guard must also not have read either package: interception is what the
+    // switch turns on, and a mount that supplied nothing gets none of it.
     const directory = await mkdtemp(join(tmpdir(), 'freecodego-plugin-conflict-default-'))
-    const previousHome = process.env.DSH_HOME
-    process.env.DSH_HOME = directory
     const first = join(directory, 'first.mjs')
     const second = join(directory, 'second.mjs')
     const pluginSource = (label: string): string => [
@@ -147,16 +148,17 @@ describe('FreeCodeGoPluginConflictGuard', () => {
       expect(Object.hasOwn(secondEntry as object, 'init')).toBe(false)
     } finally {
       await ctx.fiber.dispose()
-      if (previousHome === undefined) delete process.env.DSH_HOME
-      else process.env.DSH_HOME = previousHome
       await rm(directory, { recursive: true, force: true })
     }
   })
 
-  it('allows duplicate entries when the user disables automatic repair', async () => {
+  it('allows duplicate entries when the settings document turns the switch off', async () => {
+    // The off case on the path the plugin actually mounts with: the switch arrives through the
+    // settings port. The case above is the separate portless rule, and nothing else answers it —
+    // this test used to drive the switch through a legacy `settings.yaml`, which the guard read
+    // from disk; a document on disk is not where a shipped guard looks, so it stopped being a
+    // test of anything the product does.
     const directory = await mkdtemp(join(tmpdir(), 'freecodego-plugin-conflict-disabled-'))
-    const previousHome = process.env.DSH_HOME
-    process.env.DSH_HOME = directory
     const first = join(directory, 'first.mjs')
     const second = join(directory, 'second.mjs')
     const pluginSource = (label: string): string => [
@@ -168,12 +170,16 @@ describe('FreeCodeGoPluginConflictGuard', () => {
     ].join('\n')
     await writeFile(first, pluginSource('first'))
     await writeFile(second, pluginSource('second'))
-    await writeFile(join(directory, 'settings.yaml'), 'freecodego-harness:\n  pluginConflictProtectionEnabled: false\n')
 
     const ctx = new Context()
     provideHostService(ctx, 'tools', { register: () => () => undefined })
     await ctx.plugin(Loader, { baseUrl: pathToFileURL(join(directory, 'loader.mjs')).href })
-    const guard = installFreeCodeGoPluginConflictGuard(ctx)
+    // The port is built the way the plugin builds it — a policy over a Config — rather than as a
+    // hand-shaped stub, so the read this drives is the read production drives.
+    const guard = installFreeCodeGoPluginConflictGuard(
+      ctx,
+      new FreeCodeGoPolicy(pluginConfig({ pluginConflictProtectionEnabled: false })),
+    )
 
     try {
       // `create` takes `Omit<EntryOptions, 'id'>` — the tree derives the id from
@@ -183,11 +189,61 @@ describe('FreeCodeGoPluginConflictGuard', () => {
       await ctx.loader.await()
 
       expect(startedInvocations()).toEqual(['first', 'second'])
+      expect(guard.snapshot().pluginConflictProtectionEnabled).toBe(false)
       expect(guard.snapshot().pluginConflictRecords).toEqual([])
     } finally {
       await ctx.fiber.dispose()
-      if (previousHome === undefined) delete process.env.DSH_HOME
-      else process.env.DSH_HOME = previousHome
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('starts intercepting when the switch is turned on inside a running Loader', async () => {
+    // The panel's switch is a live control, and the boot it is flipped in may be one that had it
+    // off. A guard built then installed nothing, so writing the new value has to install too:
+    // otherwise the panel reads "on" while the Loader keeps starting every duplicate, and the
+    // switch appears to do nothing until the next restart.
+    const directory = await mkdtemp(join(tmpdir(), 'freecodego-plugin-conflict-toggle-'))
+    const first = join(directory, 'first.mjs')
+    const second = join(directory, 'second.mjs')
+    const pluginSource = (label: string): string => [
+      'export function apply(ctx) {',
+      `  globalThis.${startedKey} = [...(globalThis.${startedKey} ?? []), '${label}']`,
+      "  ctx.tools.register({ name: 'duplicate-tool' })",
+      '}',
+      '',
+    ].join('\n')
+    await writeFile(first, pluginSource('first'))
+    await writeFile(second, pluginSource('second'))
+
+    // A port over a live document, written the way the plugin's own writer writes it, so the
+    // turn-on below is the one the settings page performs rather than a value handed back.
+    const stored: Record<string, unknown> = { pluginConflictProtectionEnabled: false }
+    const settings = new FreeCodeGoPolicy(pluginConfig(stored), {
+      update: async (patch: object) => { Object.assign(stored, patch) },
+    })
+    const ctx = new Context()
+    provideHostService(ctx, 'tools', { register: () => () => undefined })
+    await ctx.plugin(Loader, { baseUrl: pathToFileURL(join(directory, 'loader.mjs')).href })
+    const guard = installFreeCodeGoPluginConflictGuard(ctx, settings)
+
+    try {
+      // Off at boot: the first entry starts, and nothing records what it claimed.
+      await ctx.loader.create({ name: './first.mjs' })
+      await ctx.loader.await()
+      expect(startedInvocations()).toEqual(['first'])
+
+      expect((await guard.setEnabled(true)).pluginConflictProtectionEnabled).toBe(true)
+
+      // The next claim of the same resource is refused before its plugin code runs.
+      await ctx.loader.create({ name: './second.mjs' })
+      await ctx.loader.await()
+      expect(startedInvocations()).toEqual(['first'])
+      const entries = [...ctx.loader.entries()]
+      const secondEntry = entries.find(entry => entry.id === 'second' || (entry.options as { name?: string }).name === './second.mjs')
+      expect(secondEntry, `entries: ${entries.map(entry => entry.id).join(', ')}`).toBeDefined()
+      expect(secondEntry?.disabled).toBe(true)
+    } finally {
+      await ctx.fiber.dispose()
       await rm(directory, { recursive: true, force: true })
     }
   })
@@ -329,3 +385,4 @@ describe('FreeCodeGoPluginConflictGuard', () => {
     }
   })
 })
+

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
-import { ClaudeProtocolBridge, encodeCodexBridgeRoute } from '../src/claude-protocol-bridge.ts'
+import { ClaudeProtocolBridge, bridgeRouteIdOf, encodeCodexBridgeRoute } from '../src/claude-protocol-bridge.ts'
 
 const bridges: ClaudeProtocolBridge[] = []
 
@@ -45,6 +45,26 @@ describe('ClaudeProtocolBridge', () => {
     })
 
     await expect(count.json()).resolves.toMatchObject({ input_tokens: expect.any(Number) })
+  })
+
+  it('mints endpoints whose route id its own parser reads back, and drops them on dispose', async () => {
+    // The parser and the minter are one contract: `web-search-binding.ts` decides "this
+    // saved endpoint is my route, so a restart may rebuild it" purely from what
+    // `bridgeRouteIdOf` returns, so a mint format the parser cannot read turns every
+    // saved binding of ours into someone else's and silently stops repairing it.
+    const bridge = new ClaudeProtocolBridge({
+      async *stream() { yield { type: 'finish', reason: { kind: 'stop' } } },
+    })
+    bridges.push(bridge)
+    const endpoint = await bridge.endpoint('vyce', 'deepseek-v4.1')
+    const routeId = bridgeRouteIdOf(endpoint.baseURL)
+    expect(routeId).toBeDefined()
+    expect(bridge.hasRoute(routeId!)).toBe(true)
+
+    await bridge.dispose()
+    // A route belongs to the listener that minted it, so the same id answers nothing in
+    // the next process — which is exactly what a saved binding has to be told.
+    expect(bridge.hasRoute(routeId!)).toBe(false)
   })
 
   it('forwards the selected reasoning depth and emits valid thinking blocks', async () => {

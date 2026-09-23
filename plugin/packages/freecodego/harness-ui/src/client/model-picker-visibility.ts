@@ -69,21 +69,22 @@ export const FREE_TIER_PROVIDERS: ReadonlySet<string> = new Set(['opencode', 'ki
  * provider whose roster the plugin does not curate. VyceAI is the exception:
  * every one of its routes is metered, so listing its whole directory in the
  * chat menu by default would offer a dozen ways to spend money the moment a key
- * is saved. Only the two routes that shipped as the defaults start switched on;
+ * is saved. Only the three routes that are the default offer start switched on;
  * the rest are one click away, and an explicit choice is stored as the opposite
  * of the default (see {@link isModelVisible}).
  *
  * Ids are the bare wire ids, so both the `vyce/deepseek-v4.1` the picker spells
  * and a bare `deepseek-v4.1` match.
  *
- * This list is only consulted for a row whose price is `unknown`: a priced route
- * is decided by its price, which for a metered provider means every row there is
- * off until asked for — including the two named here. Naming a route therefore
- * says "this one is the default when nobody has priced it", not "this one
- * overrides its price".
+ * A name outranks a price here. `deepseek-v4.1` publishes per-million prices, so
+ * the row's own description reads as `paid` — and it is still one of the
+ * defaults, because the whole point of the provider is that the daily check-in
+ * credit pays for exactly these routes; dropping it would hide the offer the
+ * provider was configured for. A priced route that is *not* named is unaffected
+ * and still starts off (see {@link METERED_DEFAULT_HIDDEN_PROVIDERS}).
  */
 export const DEFAULT_VISIBLE_MODELS: Readonly<Record<string, readonly string[]>> = {
-  vyce: ['deepseek-v4.1', 'qwen3.8-flash'],
+  vyce: ['deepseek-v4.1', 'qwen3.8-flash', 'claude-sonnet-4-6'],
 }
 
 /**
@@ -149,9 +150,12 @@ export function isProviderVisible(visibility: ModelPickerVisibility, provider: s
 /**
  * Whether a provider's rows start shown.
  *
- * A priced row of a metered provider starts hidden; beyond that a curated
- * provider (see {@link DEFAULT_VISIBLE_MODELS}) starts hidden unless the model
- * is named, and every other provider starts shown.
+ * A curated provider (see {@link DEFAULT_VISIBLE_MODELS}) is decided by its own
+ * list and nothing else: naming a route is the plugin's statement about which
+ * routes this provider is configured for, and it is a sharper answer than the
+ * price is — which is why a named route stays on even when the directory prices
+ * it. Every other provider follows the price rule: a priced row of a metered
+ * provider starts hidden, the rest start shown.
  *
  * An `unknown` price is not read as `paid`: a route the directory does not price
  * is still an answer to "may this be in my list" that the user already gave by
@@ -164,9 +168,8 @@ export function isProviderVisible(visibility: ModelPickerVisibility, provider: s
  */
 export function modelDefaultVisible(provider: string, modelId: string, price: ModelPriceClass = 'unknown'): boolean {
   const key = provider.trim().toLowerCase()
-  if (price === 'paid' && METERED_DEFAULT_HIDDEN_PROVIDERS.has(key)) return false
   const set = DEFAULT_VISIBLE_SETS.get(key)
-  if (set === undefined) return true
+  if (set === undefined) return !(price === 'paid' && METERED_DEFAULT_HIDDEN_PROVIDERS.has(key))
   const bare = bareModelId(modelId)
   const prefix = `${key}/`
   const slug = (bare.toLowerCase().startsWith(prefix) ? bare.slice(prefix.length) : bare).toLowerCase()

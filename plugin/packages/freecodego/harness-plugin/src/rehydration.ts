@@ -227,7 +227,7 @@ export function installRehydration(ctx: Context, deps: {
       // Live agents register themselves under their session id.
       const agent = (ctx.agents as unknown as { get?: (id: string) => RehydrationAgent | undefined } | undefined)?.get?.(String(session.id))
       if (agent === undefined || typeof agent.inject !== 'function') return
-      agent.inject(createUserMessage({ source: { kind: 'plugin', plugin: 'freecodego-rehydration' }, content: [{ type: 'text', text: body }] }))
+      agent.inject(createUserMessage({ source: { kind: 'freecodego-rehydration' }, content: [{ type: 'text', text: body }] }))
     } catch { /* rehydration is advisory; compaction already succeeded */ }
   })
 }

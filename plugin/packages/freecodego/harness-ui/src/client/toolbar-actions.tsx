@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { IconGlobeOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconGlobeOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './toolbar-actions.module.css'
 import { VoiceInputButton } from './voice-input.tsx'
@@ -14,7 +14,7 @@ export function LanguageAction({ locale, t }: LanguageActionProps): ReactNode {
   const active = locale.getLocale().active
   const next = active === 'zh' ? 'en' : 'zh'
   return <button className={css.action} type="button" onClick={() => { locale.setLocale(next) }} title={t('language.switch')} aria-label={t('language.switch')}>
-    <IconGlobeOutline14 />
+    <IconGlobeOutlineRegular />
     <span>{active === 'zh' ? '中' : 'EN'}</span>
   </button>
 }

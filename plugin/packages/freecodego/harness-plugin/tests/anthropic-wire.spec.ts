@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { serializeAnthropicRequest, serializeAnthropicRequestWithInlineImages, translateAnthropic } from '../src/anthropic-wire.ts'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
+import { createToolResultMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { AttachmentId, ImageVariantId } from '@deepseek-ai/dsh-attachment'
 import type { RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
 
@@ -112,7 +112,10 @@ describe('Anthropic Messages serialization', () => {
           { type: 'tool-call', id: 'call-1' as never, name: 'read_files', arguments: '{"path":"a.ts"}' },
           { type: 'tool-call', id: 'call-2' as never, name: 'grep', arguments: 'not json' },
         ] },
-        { role: 'user', content: [{ type: 'tool-result', toolCallId: 'call-1' as never, content: [{ type: 'text', text: 'ok' }] }] },
+        // One result per message, as the log now holds it. Anthropic still
+        // receives it as a `tool_result` block in a user turn, which is what the
+        // expectation below pins.
+        createToolResultMessage({ callId: 'call-1' as never, content: [{ type: 'text', text: 'ok' }], isError: false }),
       ],
     } as never)
     expect(body.messages).toEqual([

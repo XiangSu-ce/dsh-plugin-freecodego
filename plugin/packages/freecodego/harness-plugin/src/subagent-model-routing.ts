@@ -1,4 +1,18 @@
-/** Automatically authorize the live text-model directory for Subagent delegation. */
+/**
+ * Automatically authorize the live text-model directory for Subagent delegation.
+ *
+ * Reads and writes use the settings service's 0.1.7 seam. That revision removed
+ * `get(ns)` — `describe()` is the only public read — and it is also where the
+ * revision a write must carry comes from, so a read-modify-write cannot clobber
+ * a concurrent edit by the user or another plugin.
+ *
+ * The removal was silent here, which is why this note exists: `settings.get(ns)`
+ * threw the moment the method went away, and the one caller's catch swallowed
+ * it, so automatic Subagent model routing applied no routes at all without a
+ * symptom to notice. Any read of a service that is not the one this module
+ * declares must be modelled against the shipped service, not against this
+ * module's idea of it.
+ */
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -21,9 +35,28 @@ interface ModelDirectoryRuntime {
   listModels(provider: string): Promise<readonly ModelEntry[]>
 }
 
+/**
+ * The settings service, as this module consumes it.
+ *
+ * A structural copy of the shipped surface rather than an import: the service is
+ * a Host peer, and `describe()` plus the revision-guarded `update()` are the two
+ * calls this module is allowed to make.
+ */
 interface SettingsRuntime {
-  get(namespace: SettingsNamespace): unknown
-  update(namespace: SettingsNamespace, patch: object): Promise<void>
+  /** Every composed settings entry, with its live value and revision. */
+  describe(): readonly SettingsDescriptorView[]
+  /** Write one entry's section, guarded by the revision it was read at. */
+  update(namespace: string, patch: object, expectedRevision?: number): Promise<void>
+}
+
+/** The descriptor fields this module reads. */
+interface SettingsDescriptorView {
+  /** Entry id, which is what a settings read addresses. */
+  readonly ns: string
+  /** The entry's live value. */
+  readonly value: unknown
+  /** Revision to hand back to {@link SettingsRuntime.update}. */
+  readonly revision: number
 }
 
 function routesOf(value: unknown): ModelRoute[] {
@@ -53,8 +86,11 @@ export async function synchronizeSubagentModelRoutes(
   settings: SettingsRuntime,
   llm: ModelDirectoryRuntime,
 ): Promise<readonly ModelRoute[]> {
-  const current = settings.get(SUBAGENT_MODEL_SELECTION_NAMESPACE)
-  if (current === undefined) return []
+  // No descriptor means the composition declares no such entry: writing one here
+  // would create a setting the user never asked for.
+  const descriptor = settings.describe().find(row => row.ns === SUBAGENT_MODEL_SELECTION_NAMESPACE)
+  if (descriptor === undefined) return []
+  const current = descriptor.value
   const previous = routesOf(current)
   const previousByProvider = new Map<string, ModelRoute[]>()
   for (const route of previous) {
@@ -113,7 +149,7 @@ export async function synchronizeSubagentModelRoutes(
   // re-enables a feature the user turned off.
   if (currentRecord.enabled === undefined) patch.enabled = true
   if (!sameRoutes(previous, filtered) || currentRecord.enabled === undefined) {
-    await settings.update(SUBAGENT_MODEL_SELECTION_NAMESPACE, patch)
+    await settings.update(SUBAGENT_MODEL_SELECTION_NAMESPACE, patch, descriptor.revision)
   }
   return filtered
 }
@@ -143,9 +179,21 @@ export class FreeCodeGoSubagentModelRouting {
     const llm = this.ctx.get('llm') as ModelDirectoryRuntime | undefined
     if (settings === undefined || llm === undefined) return
     const operation = (async () => {
+      let retries = 0
       do {
         this.rerun = false
-        await synchronizeSubagentModelRoutes(settings, llm)
+        try {
+          await synchronizeSubagentModelRoutes(settings, llm)
+          retries = 0
+        } catch {
+          // Advisory, and reachable in normal operation: a write loses its
+          // revision race the moment the user edits the settings page in the
+          // same second. One retry re-reads and reapplies; a second failure
+          // waits for the next catalog or credential event rather than looping.
+          if (retries >= 1 || this.disposed) break
+          retries += 1
+          this.rerun = true
+        }
       } while (this.rerun && !this.disposed)
     })().catch(() => undefined).finally(() => {
       if (this.pending === operation) this.pending = undefined

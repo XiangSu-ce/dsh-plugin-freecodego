@@ -504,7 +504,7 @@ export class AssistantLoopGuard {
   private injectReminder(agent: Agent, finding: AssistantLoopFinding): void {
     try {
       agent.inject(createUserMessage({
-        source: { kind: 'plugin', plugin: 'freecodego-assistant-loop-guard' },
+        source: { kind: 'freecodego-assistant-loop-guard' },
         content: [{ type: 'text', text: renderAssistantLoopReminder(finding) }],
       }))
     } catch {

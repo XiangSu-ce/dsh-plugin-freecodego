@@ -89,7 +89,7 @@ export function createMemorySelector(options: MemorySelectorOptions): MemorySele
       provider: options.route.provider,
       model: options.route.model,
       messages: [createUserMessage({
-        source: { kind: 'plugin', plugin: 'freecodego-memory-recall' },
+        source: { kind: 'freecodego-memory-recall' },
         content: [{ type: 'text', text: selectorPrompt(query, excerpts, limit) }],
       })],
       system: SYSTEM,

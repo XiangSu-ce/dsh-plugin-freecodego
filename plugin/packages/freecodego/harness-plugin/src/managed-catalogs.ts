@@ -15,10 +15,9 @@ import { harnessHomeDirectory } from './data-home.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
-import type { SettingsScope } from '@deepseek-ai/dsh-settings'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoManagedRuntime } from '@deepseek-ai/dsh-freecodego-api'
 import type { LlmAdapter, LlmModelInfo } from '@deepseek-ai/dsh-llm'
-import type { FreeCodeGoManagedCatalog, FreeCodeGoCapabilitySettings, FreeCodeGoAdvisorSettings, FreeCodeGoReviewSettings, FreeCodeGoPluginConflictSettings, FreeCodeGoPluginUpdateSettings, FreeCodeGoEngineeringSettings, WorkBuddyInternationalAccount, WorkBuddyInternationalModel, QoderModelInfo } from './types.ts'
+import type { FreeCodeGoManagedCatalog, WorkBuddyInternationalAccount, WorkBuddyInternationalModel, QoderModelInfo } from './types.ts'
 import type { ClaudeProtocolBridge } from './claude-protocol-bridge.ts'
 import { AgnesAdapter, agnesMediaCategory, AGNES_DOCUMENTED_MODELS } from './agnes.ts'
 import type { AgnesClient } from './agnes.ts'
@@ -51,9 +50,40 @@ export const RATE_LIMIT_PROXY_HINT = '当前 IP 可能被上游限流：请尝�
  * hour, and the failure carries no `retry-after`. Measured from a network whose
  * egress is shared, all 21 free routes answered 429 within a second of the
  * request while the same address kept fetching the model directory, so "try
- * again" is the actionable half and a local proxy is not necessarily the cause.
+ * again" alone is not actionable: the metered thing is the exit address, and
+ * the two levers a user has over it are the ones the OpenCode refusal names — a
+ * different node IP, or no proxy at all. Both are stated here, in that order,
+ * because a shared node egress is the likelier cause of a budget already spent.
  */
-export const KILO_RATE_LIMIT_HINT = 'Kilo 免费通道按出口 IP 限流（官方配额：每小时 200 次，登录与否都一样），当前网络可能已用完：稍后重试，或更换网络出口。\nKilo meters its free routes per egress IP (200 requests/hour, signed in or not) and this network may be out of budget: retry later, or use a different network egress.'
+export const KILO_RATE_LIMIT_HINT = 'Kilo 免费通道按出口 IP 限流（官方配额：每小时 200 次，登录与否都一样），当前网络可能已用完：请更换节点 IP 后重试，或关闭代理、用真实 IP 访问。\nKilo meters its free routes per egress IP (200 requests/hour, signed in or not) and this network may be out of budget: switch to a different node IP, or disable your proxy and retry from your real IP.'
+/**
+ * Bilingual hint for OpenCode's free-tier refusal.
+ *
+ * OpenCode answers `403` with `{"type":"FreeTierError"}` and "free tier can only
+ * be used from within OpenCode" when the request did not come from its own
+ * client — observed from a proxied egress. The provider's own words name neither
+ * the cause nor a remedy, and the row the user picked is not the problem: the
+ * exit address is. So the hint names the lever to pull — a different node IP, or
+ * no proxy at all.
+ */
+export const OPENCODE_FREE_TIER_HINT = 'OpenCode 免费额度按出口 IP 判定：当前节点 IP 被上游判为非官方客户端（上游原文：free tier can only be used from within OpenCode），不是模型或密钥的问题。请更换节点 IP 后重试，或关闭代理、用真实 IP 访问。\nOpenCode decides its free tier by egress IP: this node address is not accepted as its own client (upstream: "free tier can only be used from within OpenCode"), so neither the model nor the key is the problem. Switch to a different node IP, or disable your proxy and retry from your real IP.'
+
+/**
+ * Whether an upstream answer is OpenCode refusing its free tier.
+ *
+ * Matched on the provider's own marker rather than on the status alone: a `403`
+ * on this route can also mean the row was retired upstream, and appending an IP
+ * suggestion to that would send the user to change a network setting that is not
+ * the cause. Both spellings are accepted because the type arrives in the JSON
+ * body while the prose is what a human reads.
+ * @param status - the HTTP status the upstream answered with.
+ * @param detail - the redacted response body.
+ * @returns whether this failure is OpenCode declining its free tier for this egress.
+ */
+export function isOpenCodeFreeTierRefusal(status: number, detail: string): boolean {
+  if (status !== 403) return false
+  return /FreeTierError|free tier can only be used/iu.test(detail)
+}
 import { readJsonFile, writeJsonFile } from './community-storage.ts'
 import { PendingWriteDrain } from './abort-drain.ts'
 import { mediaSelection } from './media-utils.ts'
@@ -123,84 +153,6 @@ function vyceModelDescription(model: VyceModel): string {
   return `VyceAI · $${model.inputPricePerMillion}/$${model.outputPricePerMillion} · 签到免费额度可用`
 }
 
-/** Persisted engine settings scope shared by the plugin and its catalog runtime. */
-export type FreeCodeGoEngineSettingsScope = SettingsScope<{
-  defaultModel: string
-  defaultEngine: string
-  mediaDefaults: { image: string; video: string; audio: string }
-} & FreeCodeGoCapabilitySettings & FreeCodeGoAdvisorSettings & FreeCodeGoReviewSettings & FreeCodeGoPluginConflictSettings & FreeCodeGoPluginUpdateSettings & FreeCodeGoEngineeringSettings & {
-  /**
-   * Folder-trust gate for project-scoped surfaces (trust.ts).
-   *
-   * Declared here rather than folded in as `& FreeCodeGoTrustSettings` because
-   * this whole trailing object is the *hand-maintained* shape of the zip in
-   * `index.ts`: the schema list and this type are two descriptions of one
-   * contract, and the assignment of `settings.register(...)` to
-   * {@link FreeCodeGoEngineSettingsScope} in `index.ts` is what holds them
-   * together.
-   *
-   * Which direction that check catches, stated exactly
-   * -------------------------------------------------
-   * **A field declared here and missing from the schema is a compile error**, at
-   * that assignment: the registered scope is not assignable to this type. A field
-   * the schema offers and this type does not declare is **not** caught — TypeScript
-   * allows an object with extra properties to be assigned to a narrower type, so no
-   * assertion here can see it. That direction is the one that produces a toggle a
-   * user can set and nothing reads, so it is called out rather than implied: a
-   * setting added to the schema alone needs a field declared here as well, and the
-   * only thing that can catch a miss is a runtime comparison of the two key sets,
-   * which needs a runtime key list this type does not currently have.
-   */
-  folderTrustEnabled: boolean
-  /**
-   * Sandbox profile deny globs, enforced in the plugin policy layer.
-   *
-   * A direct list rather than a profile *name*: the named-profile documents live in
-   * `sandbox-profiles.json`, and resolving a name to its globs at read time would put
-   * a filesystem read behind a settings lookup. `sandbox/profiles.ts` owns the
-   * spelling rules, and only its normalization is applied here.
-   */
-  sandboxDenyPatterns: string[]
-  /** Credential-file read protection toggle (tool-guards). */
-  envReadGuardEnabled: boolean
-  /** Doom-loop detection toggle for the native engines' own tools (tool-guards). */
-  doomLoopGuardEnabled: boolean
-  /** Probe-based LSP stack toggle (lsp-mount). */
-  lspEnabled: boolean
-  /** Post-compaction rehydration of todo list and durable memory (rehydration.ts). */
-  rehydrationEnabled: boolean
-  /** Opt-in conversation-arc section in the rehydrated context (rehydration.ts). */
-  rehydrationArcEnabled: boolean
-  /** Declarative command policy with load-time example validation (command-policy.ts). */
-  commandPolicyEnabled: boolean
-  /** Plan Mode: structural refusal of workspace mutation (plan-mode.ts). */
-  planModeEnabled: boolean
-  /** Model-visible context budget, injected at band granularity (context-budget.ts). */
-  contextBudgetEnabled: boolean
-  /** Shrink the prompt when the cache is provably expired (cache-cold.ts). */
-  cacheColdClearEnabled: boolean
-  /** Pre-call request-shape fingerprinting for cache-break attribution (request-shape.ts). */
-  cacheBreakAttributionEnabled: boolean
-  /** Streaming repetition guard for the model's own output (assistant-loop-guard.ts). */
-  assistantLoopGuardEnabled: boolean
-  /** Model-visible prompt-composition breakdown and usage tree (prompt-composition.ts). */
-  promptCompositionEnabled: boolean
-  /** Compaction-summary fidelity audit against the replaced history (compaction-fidelity.ts). */
-  compactionFidelityEnabled: boolean
-  /** Paged byte-exact recall of parked tool results (spill-recall.ts). */
-  spillRecallEnabled: boolean
-  /**
-   * Memory consolidation rollout (memory/rollout.ts).
-   *
-   * A string stage rather than a boolean, because consolidation has two
-   * intermediate positions that matter: `record_only` captures without calling a
-   * model, and `shadow` calls the model without committing. Typed as `string`
-   * rather than as the four-value union because this document is the shape of the
-   * user's own file, and a value the schema would have rejected must still be
-   * readable so `resolveMemoryRollout` can report it instead of failing at load.
-   */
-  memoryRollout: string
-}>
 
 /**
  * What one direct provider's directory read produced. `ids` is empty for
@@ -487,7 +439,15 @@ export class FreeCodeGoManagedCatalogs {
       normalizeReasoningEffort: effort => isDirectReasoningEffort(effort) ? effort : undefined,
       defaultReasoningEffort: 'off',
       reasoningEffortsForModel: () => DIRECT_REASONING_EFFORTS,
-      rateLimitedHint: () => RATE_LIMIT_PROXY_HINT,
+      // Two answers need explaining on this route, and they are not the same
+      // answer: a `429` is the proxy/IP rate limit every direct provider shares,
+      // while a `403` carrying `FreeTierError` is the free tier declining this
+      // egress. Anything else keeps the bare status, which is the only honest
+      // thing to say about it.
+      rateLimitedHint: (_provider, status, detail) => {
+        if (isOpenCodeFreeTierRefusal(status, detail)) return OPENCODE_FREE_TIER_HINT
+        return status === 429 ? RATE_LIMIT_PROXY_HINT : undefined
+      },
       omitDefaultMaxTokens: true,
       omitMaxTokens: true,
       defaultContextWindow: 1_000_000,
@@ -520,8 +480,9 @@ export class FreeCodeGoManagedCatalogs {
         return { baseURL: KILO_GATEWAY_BASE_URL, apiKey: KILO_ANONYMOUS_API_KEY, model: found.upstreamId, headers: { 'user-agent': 'freecodego/kilo' } }
       },
       // A bare 429 sent the user looking for a broken model; the quota is
-      // Kilo's, per egress IP, and it is the same on every free route.
-      rateLimitedHint: () => KILO_RATE_LIMIT_HINT,
+      // Kilo's, per egress IP, and it is the same on every free route. Kilo has
+      // nothing to say about the other statuses, so it says nothing there.
+      rateLimitedHint: (_provider, status) => status === 429 ? KILO_RATE_LIMIT_HINT : undefined,
       reasoningWire: 'standard',
       normalizeReasoningEffort: effort => isDirectReasoningEffort(effort) ? effort : undefined,
       defaultReasoningEffort: 'off',

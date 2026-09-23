@@ -21,13 +21,13 @@
   "references": [
     { "path": "../../../vendor/cordis" },
     { "path": "../../api/remotes/tsconfig.client.json" },
-    { "path": "../../client/locale" },
+    { "path": "../../client/locale/tsconfig.client.json" },
     { "path": "../../client/connection/tsconfig.client.json" },
     { "path": "../../client/store" },
     { "path": "../../client/ui-renderer" },
-    { "path": "../../client/ui-conversation" },
-    { "path": "../../client/ui-chat" },
-    { "path": "../../client/ui-settings" },
+    { "path": "../../client/ui-conversation/tsconfig.client.json" },
+    { "path": "../../client/ui-chat/tsconfig.client.json" },
+    { "path": "../../client/ui-settings/tsconfig.client.json" },
     { "path": "../../client/ui-slots" },
     { "path": "../../client/ui-sidebar" },
     { "path": "../harness-plugin" }

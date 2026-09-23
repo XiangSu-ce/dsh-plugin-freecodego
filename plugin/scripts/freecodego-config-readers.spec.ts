@@ -94,6 +94,18 @@ const WHOLE_OBJECT_EXEMPTIONS: Readonly<Record<string, {
     reason: 'The parent object is forwarded whole as engineSystemPrompts; the factory picks the per-engine entry.',
     consumer: { file: 'packages/freecodego/root-agent/src/factory.ts', type: 'NativeAgentSystemPrompts' },
   },
+  'harness-plugin:mediaDefaults.audio': {
+    reason: "`setDefaultModel` reads the whole object and indexes it by media category, so no leaf is ever named.",
+    consumer: { file: 'packages/freecodego/harness-plugin/src/plugin-config.ts', type: 'FreeCodeGoInlineSettings' },
+  },
+  'harness-plugin:mediaDefaults.image': {
+    reason: "`setDefaultModel` reads the whole object and indexes it by media category, so no leaf is ever named.",
+    consumer: { file: 'packages/freecodego/harness-plugin/src/plugin-config.ts', type: 'FreeCodeGoInlineSettings' },
+  },
+  'harness-plugin:mediaDefaults.video': {
+    reason: "`setDefaultModel` reads the whole object and indexes it by media category, so no leaf is ever named.",
+    consumer: { file: 'packages/freecodego/harness-plugin/src/plugin-config.ts', type: 'FreeCodeGoInlineSettings' },
+  },
 }
 
 /** One `static Config` schema, reduced to the fields it declares. */

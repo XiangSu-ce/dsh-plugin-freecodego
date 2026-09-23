@@ -26,6 +26,26 @@ import { redactCredentialShapes } from './secret-scan.ts'
 /** The frame both dialects end their stream with. */
 export const DONE = '[DONE]'
 
+/**
+ * Refuse a message this wire has no frame for.
+ *
+ * `developer` messages exist in the durable log but have no provider slot: the
+ * core's own adapters both refuse them (`llm-deepseek` returns
+ * `unsupported('developer message')` with the reason "provider serialization is
+ * intentionally deferred"; `llm-pi-ai` throws `UNSUPPORTED_CONTENT`), so a wire
+ * here must not invent one. Folding it into the user turn would be worse than
+ * refusing: the tool-change blocks a developer message carries have no text of
+ * their own, so the frame would arrive empty and the model would never learn
+ * that its tool set changed — a silent failure, which is the one outcome this
+ * package's callers cannot diagnose.
+ *
+ * @param what - the message or content with no frame on this dialect.
+ * @throws LlmError marked `UNSUPPORTED_CONTENT`, the code the core classifies.
+ */
+export function unsupported(what: string): never {
+  throw new LlmError(`${what} cannot be serialized on this wire`, 'UNSUPPORTED_CONTENT')
+}
+
 /** Read one SSE stream into its payloads, stopping at {@link DONE}.
  * @param stream - the response body to frame.
  * @returns the data payload of each event, in arrival order.

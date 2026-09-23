@@ -2,48 +2,33 @@
  * The settings seam, on its own.
  *
  * What is left to test here is small and worth stating plainly, because it is the
- * whole contract: one read that always asks the registered scope, one write that
- * goes to that same scope, and an `undefined` answer (rather than a crash) when
- * the composition has no settings service at all.
+ * whole contract: one read that resolves the plugin's own `Config`, one write that goes
+ * to the writer built from the settings service and this plugin's profile entry, and an
+ * `undefined` answer (rather than a crash) when the composition supplies no configuration
+ * at all.
  *
- * The per-call behaviour is the part with a real failure mode: a policy that read
- * the scope once and cached it would serve a user's settings change out of stale
- * memory for the lifetime of the process, and every consumer of this port would
- * inherit that staleness without a single call site being wrong.
+ * The per-call behaviour is the part with a real failure mode: a policy that resolved the
+ * Config once and cached the document would serve a user's settings change out of stale
+ * memory for the lifetime of the process, and every consumer of this port would inherit
+ * that staleness without a single call site being wrong.
  */
 
 import { describe, expect, it } from 'vitest'
-import { FreeCodeGoPolicy, type FreeCodeGoEngineSettings, type FreeCodeGoSettingsPort, type FreeCodeGoSettingsReadPort } from '../src/policy.ts'
-import type { FreeCodeGoEngineSettingsScope } from '../src/managed-catalogs.ts'
+import { FreeCodeGoPolicy, type FreeCodeGoSettingsPort, type FreeCodeGoSettingsReadPort, type FreeCodeGoSettingsWriter } from '../src/policy.ts'
+import { pluginConfig } from './support/host-services.ts'
 
-/** A registered scope whose document the test owns. */
-function scopeFor(document_: FreeCodeGoEngineSettings | undefined): {
-  readonly scope: FreeCodeGoEngineSettingsScope
-  readonly patches: object[]
-  readonly set: (next: FreeCodeGoEngineSettings | undefined) => void
-} {
-  const state = { document: document_ }
-  const patches: object[] = []
-  const scope = {
-    get: () => state.document,
-    update: async (patch: object) => { patches.push(patch) },
-  } as unknown as FreeCodeGoEngineSettingsScope
-  return { scope, patches, set: (next) => { state.document = next } }
-}
-
-/** A document with one field set, so an assertion can name something. */
-function documentWithRollout(stage: 'off' | 'active'): FreeCodeGoEngineSettings {
-  return { memoryRollout: stage } as unknown as FreeCodeGoEngineSettings
+/** A settings record the test owns, so a read has something to resolve. */
+function documentWithRollout(stage: string): Record<string, unknown> {
+  return { memoryRollout: stage }
 }
 
 describe('FreeCodeGoPolicy', () => {
-  it('reads the resolved document from the registered scope', () => {
-    const { scope } = scopeFor(documentWithRollout('active'))
-    expect(new FreeCodeGoPolicy(scope).get()?.memoryRollout).toBe('active')
+  it('resolves the settings document out of the configuration', () => {
+    expect(new FreeCodeGoPolicy(pluginConfig(documentWithRollout('active'))).get()?.memoryRollout).toBe('active')
   })
 
-  it('reports an absent settings service rather than failing', () => {
-    // The composition may have no settings service — headless SDK trees and the
+  it('reports an absent configuration rather than failing', () => {
+    // The composition may supply no configuration — headless SDK trees and the
     // runtimes' own tests are both real cases — and the policy is still
     // constructible so no consumer has to branch on its existence.
     const policy = new FreeCodeGoPolicy(undefined)
@@ -51,32 +36,46 @@ describe('FreeCodeGoPolicy', () => {
     expect(policy.get()).toBeUndefined()
   })
 
-  it('reports a settings service as configured even when it answers nothing yet', () => {
-    const policy = new FreeCodeGoPolicy(scopeFor(undefined).scope)
+  it('reports a configuration as configured even when it carries no settings', () => {
+    const policy = new FreeCodeGoPolicy(pluginConfig())
     expect(policy.configured).toBe(true)
-    expect(policy.get()).toBeUndefined()
+    expect(policy.get()).toStrictEqual({})
+  })
+
+  it('leaves deployment input out of the settings document', () => {
+    // The Config holds two kinds of field and only one of them is a setting: the
+    // volatile marker is the distinction, and a document that carried deployment
+    // input would leak it into anything that spreads the document.
+    const policy = new FreeCodeGoPolicy(pluginConfig(documentWithRollout('active'), { autoSubagentModelSelection: false }))
+    expect(policy.get()).toStrictEqual({ memoryRollout: 'active' })
   })
 
   it('re-reads on every call, so a settings change is visible without rebuilding', () => {
-    // Mutation: returning a document captured on the first call makes this case
-    // fail on the second assertion, and no call site would have had to be wrong.
-    const { scope, set } = scopeFor(documentWithRollout('off'))
-    const policy = new FreeCodeGoPolicy(scope)
+    // Mutation: resolving the document on the first call and returning it makes this
+    // case fail on the second assertion, and no call site would have had to be wrong.
+    const stored = documentWithRollout('off')
+    const policy = new FreeCodeGoPolicy(pluginConfig(stored))
     expect(policy.get()?.memoryRollout).toBe('off')
-    set(documentWithRollout('active'))
+    stored.memoryRollout = 'active'
     expect(policy.get()?.memoryRollout).toBe('active')
   })
 
-  it('writes the patch straight to the registered scope', async () => {
-    // There is one layer, so the assertion is that the gesture reaches it
-    // unmodified — a policy that swallowed or reshaped a patch would be editing a
-    // document nobody reads.
-    const { scope, patches } = scopeFor(documentWithRollout('off'))
-    await new FreeCodeGoPolicy(scope).update({ memoryRollout: 'active' })
+  it('writes the patch straight to the writer', async () => {
+    // The writer is what the plugin builds from the settings service and its own
+    // profile entry, so the assertion is that the gesture reaches it unmodified — a
+    // policy that swallowed or reshaped a patch would be editing a document nobody
+    // reads.
+    const patches: object[] = []
+    const writer: FreeCodeGoSettingsWriter = { update: async (patch) => { patches.push(patch) } }
+    await new FreeCodeGoPolicy(pluginConfig(documentWithRollout('off')), writer).update({ memoryRollout: 'active' })
     expect(patches).toStrictEqual([{ memoryRollout: 'active' }])
   })
 
-  it('accepts a user gesture with no settings service instead of throwing', async () => {
+  it('accepts a user gesture with no writer instead of throwing', async () => {
+    await expect(new FreeCodeGoPolicy(pluginConfig(), undefined).update({ memoryRollout: 'active' })).resolves.toBeUndefined()
+  })
+
+  it('accepts a user gesture with no configuration at all instead of throwing', async () => {
     await expect(new FreeCodeGoPolicy(undefined).update({ memoryRollout: 'active' })).resolves.toBeUndefined()
   })
 

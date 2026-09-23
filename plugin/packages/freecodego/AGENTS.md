@@ -6,11 +6,11 @@ Instructions for any agent that builds, packs, or publishes this plugin. It cove
 
 A release asset is named after the package and the **Harness version the bundle mounts on**, never after the bundle's own version:
 
-    freecodego-0.1.6-alpha.2.tgz     # the bundle built for Harness 0.1.6-alpha.2
+    freecodego-0.1.7-alpha.2.tgz     # the bundle built for Harness 0.1.7-alpha.2
 
 Spelled out: `<package name>-<Harness version>.tgz`, with a scope flattened the way a packed tarball is named (`@scope/name` is `scope-name`). Three consequences worth holding before changing anything:
 
-- **The tag names the exact version; the asset names the line.** A release is tagged `freecodego-v<version>`, where the version is the bundle's own, read from `packages/freecodego/bundle-latest/package.json`. A hotfix on the same Harness line publishes a version one dotted segment deeper (`0.1.6-alpha.2.1`), so its tag and its asset name differ on purpose: the tag says exactly which version it is, and the asset says which Harness line it belongs to, which is the compatibility answer a user reads off a release.
+- **The tag names the exact version; the asset names the line.** A release is tagged `freecodego-v<version>`, where the version is the bundle's own, read from `packages/freecodego/bundle-latest/package.json`. A hotfix on the same Harness line publishes a version one dotted segment deeper (`0.1.7-alpha.2.1`), so its tag and its asset name differ on purpose: the tag says exactly which version it is, and the asset says which Harness line it belongs to, which is the compatibility answer a user reads off a release.
 - **A bundle names the file through `freecodego.harnessBaseline`.** The pack step reads it from the bundle manifest and fails a bundle that does not declare it, because a bundle that cannot say which Harness line it belongs to has no published name.
 - **Both spellings stay reachable.** The update checker looks for the Harness name first, then the bundle-version name, and settles for a release's only tarball. A release published under the older convention still updates; renaming an asset at upload time is the one way to publish a release no check finds.
 

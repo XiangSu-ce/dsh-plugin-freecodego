@@ -45,7 +45,7 @@
  */
 import { useCallback, useRef, useState } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls the SlotMap merge for `conversation.input.dock` (its owner
 // share and the session standard kit) plus the global seats both share.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -185,7 +185,7 @@ function useColumnWidth(): { ref: (node: HTMLElement | null) => void; width: num
  * and the live event feed this plugin injects.
  */
 export type CompanionBarProps =
-  PropsRuntime<'conversation.input.dock'> & PropsLocale<typeof NS> & CompanionSeatInjected
+  PropsRuntime<'conversation.input.dock'> & PropsLocale<typeof NS> & InjectFace<CompanionSeatInjected>
 
 /**
  * The agent's face, full width, above the composer.
@@ -265,6 +265,6 @@ export function installCompanionBar(ctx: ClientContext, activity: CompanionActiv
     order: COMPANION_DOCK_ORDER,
     locale: NS,
     registrant: 'freecodego-companion',
-    inject: (): CompanionSeatInjected => ({ activity }),
+    inject: (): CompanionSeatInjected => ({ activity, hooks: { jobs: ctx.jobs.state } }),
   }, CompanionBar))
 }

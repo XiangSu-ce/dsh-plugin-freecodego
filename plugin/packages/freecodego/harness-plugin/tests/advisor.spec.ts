@@ -338,7 +338,7 @@ describe('FreeCodeGoAdvisorRuntime', () => {
     for (let turn = 2; turn <= 8; turn += 1) {
       await runtime.reviewNow(agent as never)
       events.push({ type: 'turn/start', seq: events.length, time: events.length, data: { turn } } as SessionEvent)
-      events.push({ type: 'user/message', seq: events.length, time: events.length, data: createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `Turn ${turn}.` }] }) } as SessionEvent)
+      events.push({ type: 'user/message', seq: SessionSeq(events.length), time: events.length, surfaceOp: 'append', data: createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `Turn ${turn}.` }] }) })
       events.push({ type: 'turn/end', seq: events.length, time: events.length, data: { turn, reason: { kind: 'completed' } } } as SessionEvent)
     }
 
@@ -381,7 +381,7 @@ describe('FreeCodeGoAdvisorRuntime', () => {
     for (let turn = 2; turn <= 8; turn += 1) {
       await runtime.reviewNow(agent as never)
       events.push({ type: 'turn/start', seq: events.length, time: events.length, data: { turn } } as SessionEvent)
-      events.push({ type: 'user/message', seq: events.length, time: events.length, data: createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `Turn ${turn}.` }] }) } as SessionEvent)
+      events.push({ type: 'user/message', seq: SessionSeq(events.length), time: events.length, surfaceOp: 'append', data: createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `Turn ${turn}.` }] }) })
       events.push({ type: 'turn/end', seq: events.length, time: events.length, data: { turn, reason: { kind: 'completed' } } } as SessionEvent)
     }
 

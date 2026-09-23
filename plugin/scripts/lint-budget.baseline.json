@@ -558,7 +558,7 @@
       "@stylistic(max-len)": 5,
       "typescript(no-unnecessary-type-assertion)": 11
     },
-    "packages/freecodego/harness-plugin/tests/bai.spec.ts": {
+    "packages/freecodego/harness-plugin/tests/openai-compatible-adapter.spec.ts": {
       "typescript(no-base-to-string)": 6,
       "typescript(no-unsafe-assignment)": 2
     },

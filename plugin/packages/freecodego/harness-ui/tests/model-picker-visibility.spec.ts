@@ -68,7 +68,14 @@ describe('model picker visibility store', () => {
     // Both spellings of the id resolve to the same default.
     expect(isModelVisible(empty, 'vyce', 'deepseek-v4.1')).toBe(true)
     expect(isModelVisible(empty, 'vyce', 'vyce/qwen3.8-flash')).toBe(true)
+    expect(isModelVisible(empty, 'vyce', 'vyce/claude-sonnet-4-6')).toBe(true)
     expect(isModelVisible(empty, 'vyce', 'vyce/glm-5.3')).toBe(false)
+    // A named route stays on even when the directory prices it: the name is the
+    // plugin's statement about which routes the provider is configured for, and
+    // the daily check-in credit is what pays for exactly these.
+    expect(isModelVisible(empty, 'vyce', 'vyce/deepseek-v4.1', 'paid')).toBe(true)
+    // A priced route that is *not* named still starts off.
+    expect(isModelVisible(empty, 'vyce', 'vyce/deepseek-v4-flash-lr', 'paid')).toBe(false)
     // A provider with no declared default is untouched.
     expect(isModelVisible(empty, 'logfare', 'glm-5.3')).toBe(true)
   })
