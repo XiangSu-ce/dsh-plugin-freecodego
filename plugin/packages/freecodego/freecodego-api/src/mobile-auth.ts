@@ -61,6 +61,18 @@ export interface FreeCodeGoRegisterInput {
   readonly remember?: boolean
 }
 
+/**
+ * A password reset: the emailed code that proves the address, and the new secret.
+ *
+ * The gateway also accepts a link-borne `token` for its own web flow; the desktop
+ * card only ever has the code, so that is the one this carries.
+ */
+export interface FreeCodeGoPasswordResetInput {
+  readonly email: string
+  readonly verifyCode: string
+  readonly newPassword: string
+}
+
 /** User-entered password-login values. */
 export interface FreeCodeGoLoginInput {
   readonly email: string
@@ -133,6 +145,37 @@ readonly origin: string
   async sendVerifyCode(email: string, signal?: AbortSignal): Promise<{ readonly countdown: number }> {
     const payload = await this.request('/send-verify-code', { email }, signal)
     return { countdown: finiteNumber(payload.countdown, 'countdown') }
+  }
+
+  /**
+   * Ask the gateway to mail a password-reset code to one address.
+   *
+   * `method: 'code'` is what makes this the desktop flow: without it the gateway
+   * mails a browser link built from its own frontend URL instead, which a
+   * webview has nowhere to land. The gateway answers the same way whether or not
+   * the address is registered — that is deliberate anti-enumeration behaviour on
+   * its side, not an answer about this account.
+   * @param email - the address to send the reset code to.
+   * @param signal - aborts the request when the caller cancels.
+   */
+  async requestPasswordResetCode(email: string, signal?: AbortSignal): Promise<void> {
+    await this.request('/forgot-password', { email, method: 'code' }, signal)
+  }
+
+  /**
+   * Replace the account's password using the emailed reset code.
+   *
+   * Deliberately returns no tokens: the gateway does not issue a session here, so
+   * signing in stays a separate, explicit step with the new password.
+   * @param input - the address, the code, and the new password.
+   * @param signal - aborts the request when the caller cancels.
+   */
+  async resetPassword(input: FreeCodeGoPasswordResetInput, signal?: AbortSignal): Promise<void> {
+    await this.request('/reset-password', {
+      email: input.email,
+      verify_code: input.verifyCode,
+      new_password: input.newPassword,
+    }, signal)
   }
 
   /** Register and return an authenticated token pair to the host caller. 
@@ -261,16 +304,38 @@ function tokens(payload: Record<string, unknown>): FreeCodeGoTokenPair {
   }
 }
 
+/**
+ * The identifying half of an address, used when the account carries no username.
+ *
+ * `slice` rather than a split-and-index so an address with no `@` at all yields
+ * the address itself instead of throwing on an absent index.
+ */
+const addressLocalPart = (email: string): string => {
+  const at = email.indexOf('@')
+  return (at <= 0 ? email : email.slice(0, at)).trim()
+}
+
 function user(payload: Record<string, unknown>): FreeCodeGoAccountIdentity {
   const avatarUrl = typeof payload.avatar_url === 'string' && payload.avatar_url.trim() !== ''
     ? payload.avatar_url.trim()
     : typeof payload.avatarUrl === 'string' && payload.avatarUrl.trim() !== ''
       ? payload.avatarUrl.trim()
       : undefined
+  const email = requiredString(payload.email, 'user.email')
+  // An email registration carries no username: the gateway's own signup writes
+  // the address and a password and nothing else, and its response type spells
+  // `username` as an always-present string. Reading that as a required field made
+  // every account created from this card fail to sign in *after the gateway had
+  // already created it* — the registration succeeded, the response was refused,
+  // and the next attempt was told the address was taken. The address is the
+  // identity this card shows anyway, so an absent username falls back to it.
+  const username = typeof payload.username === 'string' && payload.username.trim() !== ''
+    ? payload.username.trim()
+    : addressLocalPart(email)
   return {
     id: finiteNumber(payload.id, 'user.id'),
-    username: requiredString(payload.username, 'user.username'),
-    email: requiredString(payload.email, 'user.email'),
+    username,
+    email,
     ...(avatarUrl === undefined ? {} : { avatarUrl }),
     role: requiredString(payload.role, 'user.role'),
     balance: finiteNumber(payload.balance, 'user.balance'),

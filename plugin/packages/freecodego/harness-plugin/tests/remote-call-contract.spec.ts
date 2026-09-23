@@ -292,7 +292,12 @@ describe('the remote call contract', () => {
     // the binding it saved still answers. Its client side is one dispatch site, like
     // `webSearchBind` beside it, so all three counts below move together — which is the
     // check that says the two sides were extended rather than one of them drifting.
-    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(223)
+    // 223 → 225: `accountForgotPassword` and `accountResetPassword`, the two halves of
+    // password recovery. Their client sides are cast-style calls, like `accountLogin`
+    // beside them, so REMOTES and the unreached count below move together while SITES
+    // and the distinct-name count do not — the pair check that says a cast-style pair was
+    // added rather than a dispatch site written to a name nothing declares.
+    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(225)
     // Re-verified when this moved 182 → 176: the five conditional dispatches
     // (`agnesRefresh`, `agnesCreateApiKey`, `agnesLogout`, `codexRuntimeInstall`,
     // `claudeRuntimeInstall`) that branched into a zero-argument call collapsed
@@ -370,7 +375,11 @@ describe('the remote call contract', () => {
     // 19 → 20 by `accountRememberedPassword`: it is reached through the
     // cast-style call in `client/index.ts` (like `accountLogin`), which is not a
     // dispatch site, so it lands here rather than in SITES.
-    expect(unused.length, `unreached remotes changed: ${unused.join(', ')}`).toBe(20)
+    // 20 → 22 by `accountForgotPassword` and `accountResetPassword`, both reached
+    // the same way from the account card's recovery form. They are in this list
+    // *and* have a caller, which is the distinction worth keeping straight: this
+    // count is about the dispatch mechanism, not about being unused.
+    expect(unused.length, `unreached remotes changed: ${unused.join(', ')}`).toBe(22)
   })
 
   it('reports an undeclared name and a wrong argument count, which is the defect this gate exists for', () => {

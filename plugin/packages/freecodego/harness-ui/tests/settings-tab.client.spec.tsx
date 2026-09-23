@@ -1878,6 +1878,161 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     await waitFor(() => { expect(register).toHaveBeenCalledWith({ email: 'me@example.com', password: 'secret', verifyCode: '654321' }) })
   })
 
+  // A registration that fails used to report only through the panel-wide
+  // `actionError`, which renders above the page tabs — far off screen from this
+  // card — so a rejected click looked exactly like a button that does nothing,
+  // and the reason the gateway sent was never read. It belongs beside the
+  // button, and the button has to acknowledge the press while the Host works.
+  it('shows why a registration was rejected, next to the button that sent it', async () => {
+    const labels: Record<string, string> = { login: '登录', register: '注册', email: '邮箱', password: '密码', verifyCode: '验证码', sendVerifyCode: '发送验证码', rememberLogin: '保持登录状态（重启后不用重新登录）' }
+    let settle: ((value: unknown) => void) | undefined
+    const register = vi.fn().mockImplementation(() => new Promise((resolve) => { settle = resolve }))
+    const accountStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={accountStatus}
+      login={vi.fn()}
+      register={register as never}
+      sendVerifyCode={vi.fn().mockResolvedValue({ ok: true as const, value: { countdown: 45 } })}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => (labels[key] ?? key) as never}
+    />)
+    expect(await screen.findByText('登录 FreeCodeGo')).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: '注册' }))
+    fireEvent.change(screen.getByPlaceholderText('邮箱'), { target: { value: 'me@example.com' } })
+    fireEvent.change(screen.getByPlaceholderText('验证码'), { target: { value: '000000' } })
+    fireEvent.change(screen.getByPlaceholderText('密码'), { target: { value: 'secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '注册并登录' }))
+    // While the Host is working the button says so and refuses a second press:
+    // the click is acknowledged even on a request that takes seconds.
+    const pending = await screen.findByRole('button', { name: '注册中…' })
+    expect((pending as HTMLButtonElement).disabled).toBe(true)
+    settle?.({ ok: false, error: { message: 'FreeCodeGo authentication request failed with HTTP 400: invalid or expired verification code' } })
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toContain('验证码无效或已过期')
+    // The gateway's own line is a log line, not copy; the card translates the
+    // shapes it can act on instead of dumping the transport prefix on the reader.
+    expect(screen.queryByText(/invalid or expired verification code/)).toBeNull()
+    expect((screen.getByRole('button', { name: '注册并登录' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  // The registration code channel refuses an address that already has an account,
+  // which is correct and which left a returning user with no way forward from the
+  // 注册 tab: the only fix the gateway offers is the reset channel, so the card
+  // has to offer it too. It is reached from the sign-in form, it keeps the address
+  // that was just rejected, and it hands the user back to sign-in — the gateway
+  // issues no session for a reset, so the card must not claim one.
+  it('recovers a password for an account the registration channel refuses', async () => {
+    const labels: Record<string, string> = { login: '登录', register: '注册', email: '邮箱', password: '密码', verifyCode: '验证码', sendVerifyCode: '发送验证码', rememberLogin: '保持登录状态（重启后不用重新登录）' }
+    const forgotPassword = vi.fn().mockResolvedValue({ ok: true as const, value: { sent: true } })
+    const resetPassword = vi.fn().mockResolvedValue({ ok: true as const, value: { reset: true } })
+    const accountStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={accountStatus}
+      login={vi.fn()}
+      register={vi.fn()}
+      sendVerifyCode={vi.fn()}
+      forgotPassword={forgotPassword as never}
+      resetPassword={resetPassword as never}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => (labels[key] ?? key) as never}
+    />)
+    expect(await screen.findByText('登录 FreeCodeGo')).toBeTruthy()
+    fireEvent.change(screen.getByPlaceholderText('邮箱'), { target: { value: '3527566745@qq.com' } })
+    fireEvent.click(screen.getByRole('button', { name: '忘记密码？' }))
+
+    // Recovery shares the address the sign-in form was carrying, so the reader
+    // does not retype the account that just failed.
+    expect((screen.getByPlaceholderText('邮箱') as HTMLInputElement).value).toBe('3527566745@qq.com')
+    // The registration channel is not offered here: it answers this address with
+    // EMAIL_EXISTS, and a control that can only fail is worse than no control.
+    expect(screen.queryByText('发送验证码')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '发送重置码' }))
+    await waitFor(() => { expect(forgotPassword).toHaveBeenCalledWith('3527566745@qq.com') })
+    // The gateway answers identically for an unknown address on purpose, so the
+    // confirmation states the condition rather than implying the account exists.
+    expect((await screen.findByRole('alert')).textContent).toContain('若该邮箱已注册')
+
+    fireEvent.change(screen.getByPlaceholderText('重置验证码'), { target: { value: '123456' } })
+    fireEvent.change(screen.getByPlaceholderText('新密码（至少 6 位）'), { target: { value: 'new-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '重置密码' }))
+    await waitFor(() => { expect(resetPassword).toHaveBeenCalledWith({ email: '3527566745@qq.com', verifyCode: '123456', newPassword: 'new-secret' }) })
+
+    // Back on the sign-in form, told what to do next, and with the new secret no
+    // longer in state or on screen.
+    expect(await screen.findByRole('button', { name: '登录' })).toBeTruthy()
+    expect((await screen.findByRole('alert')).textContent).toContain('密码已重置')
+    expect((screen.getByPlaceholderText('密码') as HTMLInputElement).value).toBe('')
+  })
+
+  // The reader of a Chinese card was shown whatever the Host forwarded, which is a
+  // log line: "FreeCodeGo authentication request failed with HTTP 400: ...". The
+  // shapes the card can act on are translated; anything else keeps the gateway's
+  // own wording so the cause is still readable, framed in the card's language so
+  // the reader can tell the click did something.
+  it('answers an unrecognised account failure in the card\u2019s own language', async () => {
+    const labels: Record<string, string> = { login: '登录', register: '注册', email: '邮箱', password: '密码', verifyCode: '验证码', sendVerifyCode: '发送验证码', rememberLogin: '保持登录状态（重启后不用重新登录）' }
+    const sendVerifyCode = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, error: { message: 'FreeCodeGo authentication request failed with HTTP 500: upstream mail provider refused the message' } })
+      .mockResolvedValueOnce({ ok: false as const, error: { message: 'FreeCodeGo authentication request failed with HTTP 409: email already exists' } })
+    const accountStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={accountStatus}
+      login={vi.fn()}
+      register={vi.fn()}
+      sendVerifyCode={sendVerifyCode as never}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => (labels[key] ?? key) as never}
+    />)
+    expect(await screen.findByText('登录 FreeCodeGo')).toBeTruthy()
+    fireEvent.change(screen.getByPlaceholderText('邮箱'), { target: { value: '3527566745@qq.com' } })
+    fireEvent.click(screen.getByRole('tab', { name: '注册' }))
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toContain('操作未成功')
+    expect(notice.textContent).toContain('upstream mail provider refused the message')
+    expect(notice.textContent).not.toContain('FreeCodeGo authentication')
+    fireEvent.click(screen.getByRole('button', { name: '知道了' }))
+
+    // The registrable failures are named, and named in Chinese: this is the one
+    // that told a user nothing but a raw gateway string before.
+    fireEvent.click(screen.getByRole('button', { name: '发送验证码' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('该邮箱已经注册过')
+  })
+
   // Google / GitHub are wired end to end from the card. Until the Host exposes
   // its provider endpoints the remote rejects with OAUTH_NOT_WIRED, which the
   // card has to explain in place — not by staying decorative or by looking like

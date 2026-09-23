@@ -9,9 +9,89 @@ none, so a version with no section here cannot be released by accident — the r
 stops in its first seconds instead of publishing a Release nobody can read.
 
 The heading names the version the tag publishes (`freecodego-v<version>`), which
-is this bundle's own version, not the Harness line it mounts on. English only:
-the notes are the release's own text, and a paired translation of a published
-changelog would be a second thing to keep in step without a reader who needs it.
+is this bundle's own version, not the Harness line it mounts on.
+
+From `0.1.7-alpha.2.2` on, a section carries both languages: `### English`, then
+`### 中文`, each holding its own category headings one level deeper (`#### Fixed`,
+`#### 修复`). Reading the notes treats only level-2 headings as boundaries, so the
+two language groups stay inside the version they belong to. Sections older than
+that one are English only: they were published that way, and rewriting them would
+change notes people have already read.
+
+## 0.1.7-alpha.2.2 — 2026-09-24
+
+### English
+
+A counter on the same Harness line: `freecodego.harnessBaseline`, `engines.dsh`
+and the asset name still state `0.1.7-alpha.2`, and only this bundle's own
+version moved — the hotfix form `packages/freecodego/AGENTS.md` documents.
+
+#### Fixed
+
+- **Creating an account no longer fails after the gateway has already created
+  it.** The response reader required `user.username`, while the mobile
+  registration channel writes an address and a password and nothing else: a
+  *successful* registration was refused with `FreeCodeGo response user.username
+  must be a non-empty string`, the account was taken from then on, and the next
+  request for that address was answered `EMAIL_EXISTS` — which is what the resend
+  control then reported, making a completed signup look like a broken form. An
+  absent or empty username now falls back to the address's local part (the
+  identity this card shows anyway), and every other field the profile needs is
+  still required, so the tolerance is scoped to the one field the gateway may
+  legitimately leave out.
+- **A rejected sign-in or registration now says why, beside the button that sent
+  it.** The reason travelled to the panel-wide alert above the page tabs, which is
+  off screen by the time the reader is typing a code, so a refused click was
+  indistinguishable from a button that does nothing — and what it showed was the
+  Host's own transport line, `FreeCodeGo authentication request failed with HTTP
+  400: …`, which is a log entry rather than a sentence. The card draws its own
+  notice where the button is, the button names the work in flight and refuses a
+  second press, and the failures the card can act on are stated in the card's
+  language; anything else keeps the gateway's wording, framed so the reader can
+  tell the click did something.
+- **Password recovery is reachable.** The registration code channel refuses an
+  address that already has an account by design, and the gateway's
+  `/mobile/auth/forgot-password` (called with `method: 'code'`, so it mails a code
+  instead of a link built for its browser flow) and `/mobile/auth/reset-password`
+  were not wired at all — so a returning user who had forgotten the password had
+  nowhere to go from the sign-up tab. Both now reach the Host through new
+  remotes, and the account card offers the form from the sign-in side, sharing
+  the address that was just rejected; a completed reset returns the reader to
+  sign-in with the new password cleared, because the gateway issues no session
+  for a reset. A Host predating those remotes hides the entry rather than
+  offering a flow that can only fail. `remote-call-contract.spec.ts` moves with
+  them, so a remote with no caller is still a failure rather than a discovery to
+  make in the browser.
+
+### 中文
+
+同一条 Harness 线上的又一次计数发布：`freecodego.harnessBaseline`、`engines.dsh`
+与资产名仍写 `0.1.7-alpha.2`，只有本 bundle 自身的版本号前进 —— 也就是
+`packages/freecodego/AGENTS.md` 记录的那种 hotfix 形式。
+
+#### 修复
+
+- **注册不再在网关已经把账号建好之后才报错。** 响应读取器把 `user.username` 当作必填，
+  而移动端注册通道只写邮箱与密码，别的什么都不写：一次**已经成功**的注册被拒，报的是
+  `FreeCodeGo response user.username must be a non-empty string`。此后这个邮箱已被占用，
+  下一次请求被回以 `EMAIL_EXISTS` —— 也就是「重新获取验证码」按钮当时显示的那句话，
+  于是一次完成的注册看起来像表单坏了。现在 username 缺失或为空串时回退到邮箱 @ 之前
+  那一段（这张卡片本来展示的就是它），而资料里其余字段仍然必填，所以这份宽容只覆盖
+  网关确实可能省略的那一个字段。
+- **登录或注册被拒时，理由显示在按钮旁边。** 原来理由被送到页面标签栏上方那块整屏提示
+  里 —— 等你开始输验证码时它早就在屏幕外 —— 于是「被拒的点击」和「按钮没反应」无从区分；
+  而且它渲染出的是 Host 自己的传输层原文（`FreeCodeGo authentication request failed with
+  HTTP 400: …`），那是日志，不是给人读的句子。现在卡片在按钮所在位置画出自己的提示条，
+  按钮会说明正在进行的操作并拒绝第二次点击；卡片能处理的失败用卡片自身语言陈述，其余
+  保留网关原话但加一层框架，读者能看出这次点击确实发生了。
+- **找回密码可以走通了。** 注册验证码通道按设计就拒绝已有账号的邮箱，而网关的
+  `/mobile/auth/forgot-password`（以 `method: 'code'` 调用，寄的是验证码，而不是给它自家
+  浏览器流程用的链接）与 `/mobile/auth/reset-password` 此前完全没有接线 —— 于是忘了密码的
+  老用户在注册标签页里无路可走。现在两者都经新的 remote 抵达 Host，账号卡片在登录一侧
+  提供该表单，并沿用刚刚被拒的那个邮箱；重置完成后回到登录，新密码被清空，因为网关不会
+  为一次重置签发会话。没有这两个 remote 的旧 Host 会隐藏该入口，而不是提供一个必然失败的
+  流程。`remote-call-contract.spec.ts` 随之更新，「有 remote 没有调用方」仍然是失败，而不是
+  留给浏览器去发现。
 
 ## 0.1.7-alpha.2.1 — 2026-09-23
 

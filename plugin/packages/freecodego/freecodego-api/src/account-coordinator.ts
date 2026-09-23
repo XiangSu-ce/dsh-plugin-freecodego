@@ -9,6 +9,7 @@ import type {
   FreeCodeGoLoginInput,
   FreeCodeGoLoginResult,
   FreeCodeGoMobileAuthClient,
+  FreeCodeGoPasswordResetInput,
   FreeCodeGoRegisterInput,
   FreeCodeGoTokenPair,
 } from './mobile-auth.ts'
@@ -231,6 +232,33 @@ export class FreeCodeGoAccountCoordinator {
    */
   async sendVerifyCode(email: string, signal?: AbortSignal): Promise<{ readonly countdown: number }> {
     return this.auth.sendVerifyCode(email, signal)
+  }
+
+  /**
+   * Mail a password-reset code for one address.
+   *
+   * Straight through to the gateway: recovery is the one account operation that
+   * needs no session, no vault write and no identity, so there is nothing here
+   * for the coordinator to keep.
+   * @param email - the address the reset code is sent to.
+   * @param signal - aborts the request when the caller cancels.
+   */
+  async requestPasswordResetCode(email: string, signal?: AbortSignal): Promise<void> {
+    return this.auth.requestPasswordResetCode(email, signal)
+  }
+
+  /**
+   * Replace the password using the emailed reset code.
+   *
+   * It deliberately does not sign in afterwards — the gateway issues no session
+   * here — so the caller keeps the login form as the next step. A reset also
+   * invalidates nothing locally: this machine's stored password, if the user
+   * asked for one to be kept, is the caller's business to rewrite.
+   * @param input - the address, the code, and the new password.
+   * @param signal - aborts the request when the caller cancels.
+   */
+  async resetPassword(input: FreeCodeGoPasswordResetInput, signal?: AbortSignal): Promise<void> {
+    return this.auth.resetPassword(input, signal)
   }
 
   /**

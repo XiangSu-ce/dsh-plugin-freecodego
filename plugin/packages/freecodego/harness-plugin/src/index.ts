@@ -37,7 +37,7 @@ import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoManagedRuntime, FreeCodeGoReceiptDocument } from '@deepseek-ai/dsh-freecodego-api'
-import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorStatus, FreeCodeGoAdvisorUpdate, FreeCodeGoAdvisorModel, FreeCodeGoAdvisorNote, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
+import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorStatus, FreeCodeGoAdvisorUpdate, FreeCodeGoAdvisorModel, FreeCodeGoAdvisorNote, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { createUserMessage, type LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import { CodexRuntimeManager, ClaudeRuntimeManager } from '@deepseek-ai/dsh-freecodego-native-runtime-host'
@@ -138,7 +138,7 @@ import { narrowTurnScope, turnChangePaths, type TurnScopeEvent, type TurnScopeSu
 import {
   accountDetail, accountStatus, backendBootstrap, backendCatalog, backendQuota, backendRuntimeHealth, backendUsage, completeMfa, deviceSessions, groqWhisperTranscribe, vyceSetKey, vyceStatus,
   revokeAllSessions, revokeDeviceSession,
-  logfareRegister, logfareSetKey, logfareSetTrainingOptIn, logfareStatus, login, logout, refreshAccount, register,
+  forgotPassword, logfareRegister, logfareSetKey, logfareSetTrainingOptIn, logfareStatus, login, logout, refreshAccount, register, resetPassword,
   readRememberedPassword, sendVerifyCode, sensenovaSetKey, sensenovaStatus, nvidiaSetKey, nvidiaStatus, restoreAccount as restoreDurableAccount, accountOAuthLogin,
   accountOAuthPendingStatus, accountOAuthPendingSendVerifyCode, accountOAuthPendingBind, accountOAuthPendingCreate,
   type AccountRemotesHost, type AccountRemotesState,
@@ -311,7 +311,7 @@ interface SandboxPolicyLike {
   resolve(request: { readonly session?: Session }): { readonly workspaceRoot: string }
 }
 
-export type { CommunityCatalogPlugin, FreeCodeGoBackendSnapshot, FreeCodeGoManagedCatalog, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentConfig, FreeCodeGoRegistrationRequest, JsonValue, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoPluginUpdateSettings, FreeCodeGoPluginUpdateStatus, AgnesStatus, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
+export type { CommunityCatalogPlugin, FreeCodeGoBackendSnapshot, FreeCodeGoManagedCatalog, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentConfig, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, JsonValue, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoPluginUpdateSettings, FreeCodeGoPluginUpdateStatus, AgnesStatus, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
 export type { Config, FreeCodeGoConfigInput } from './plugin-config.ts'
 export { installFreeCodeGoPluginConflictGuard } from './plugin-conflicts.ts'
 export { registerFreeCodeGoSessionEventTypes } from './session-events.ts'
@@ -5945,6 +5945,26 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
 @Remote('accountSendVerifyCode')
   async sendVerifyCode(email: string): Promise<{ readonly countdown: number }> {
     return sendVerifyCode(this.accountRemotesHost, email)
+  }
+
+    /**
+   * Mail the password-reset code for an existing account.
+   * @param email - the address the reset code is sent to.
+   * @returns whether the gateway accepted the request.
+   */
+@Remote('accountForgotPassword')
+  async forgotPassword(email: string): Promise<{ readonly sent: true }> {
+    return forgotPassword(this.accountRemotesHost, email)
+  }
+
+    /**
+   * Replace a password using the emailed reset code.
+   * @param input - the address, the emailed code, and the new password.
+   * @returns whether the gateway accepted the new password.
+   */
+@Remote('accountResetPassword')
+  async resetPassword(input: FreeCodeGoPasswordResetRequest): Promise<{ readonly reset: true }> {
+    return resetPassword(this.accountRemotesHost, input)
   }
 
     /**

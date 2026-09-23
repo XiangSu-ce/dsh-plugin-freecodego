@@ -660,6 +660,81 @@ describe('FreeCodeGoMobileAuthClient', () => {
     })
   })
 
+  it('accepts an account the gateway created without a username', async () => {
+    // The registration channel's own signup writes an address and a password and
+    // nothing else, while its response type spells `username` as always present.
+    // Reading the field as required therefore refused a registration that had
+    // already succeeded: the account existed, the card showed a raw English error
+    // instead of signing in, and every later attempt on that address was answered
+    // with `EMAIL_EXISTS`. The identity this card renders is the address anyway,
+    // so both an empty and an absent username fall back to it.
+    const login = async (user: Record<string, unknown>): Promise<unknown> => {
+      const client = new FreeCodeGoMobileAuthClient({
+        baseUrl: 'https://freecodego.example',
+        fetch: async () => response({ data: {
+          access_token: 'access', refresh_token: 'refresh', expires_in: 3600, token_type: 'Bearer',
+          user: { id: 7, role: 'user', balance: 0, status: 'active', email: '3527566745@qq.com', ...user },
+        } }),
+      })
+      return await client.login({ email: '3527566745@qq.com', password: 'password' })
+    }
+
+    await expect(login({ username: '' })).resolves.toMatchObject({
+      kind: 'authenticated', user: { username: '3527566745', email: '3527566745@qq.com' },
+    })
+    await expect(login({})).resolves.toMatchObject({
+      kind: 'authenticated', user: { username: '3527566745', email: '3527566745@qq.com' },
+    })
+    // The counterfactual, so the tolerance is scoped to the one field the gateway
+    // may omit: a payload missing something the identity genuinely needs is still
+    // refused, rather than quietly becoming an account with a blank address.
+    const client = new FreeCodeGoMobileAuthClient({
+      baseUrl: 'https://freecodego.example',
+      fetch: async () => response({ data: {
+        access_token: 'access', refresh_token: 'refresh', expires_in: 3600, token_type: 'Bearer',
+        user: { id: 7, username: '3527566745', email: '', role: 'user', balance: 0, status: 'active' },
+      } }),
+    })
+    await expect(client.login({ email: '3527566745@qq.com', password: 'password' })).rejects.toThrow('user.email')
+  })
+
+  it('requests the reset code in the form a desktop flow can use', async () => {
+    // Without `method: 'code'` the gateway mails a browser link built from its own
+    // frontend URL, which a webview has nowhere to land. This pins the one field
+    // that decides which of the two messages the user receives.
+    const seen: { url: string; body: unknown }[] = []
+    const client = new FreeCodeGoMobileAuthClient({
+      baseUrl: 'https://freecodego.example',
+      fetch: async (input, init) => {
+        seen.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+        return response({ data: { message: 'If your email is registered, you will receive a password reset code shortly.' } })
+      },
+    })
+
+    await expect(client.requestPasswordResetCode('3527566745@qq.com')).resolves.toBeUndefined()
+    expect(seen).toEqual([{
+      url: 'https://freecodego.example/api/v1/freecodego/mobile/auth/forgot-password',
+      body: { email: '3527566745@qq.com', method: 'code' },
+    }])
+  })
+
+  it('resets a password with the mailed code and issues no session', async () => {
+    const seen: { url: string; body: unknown }[] = []
+    const client = new FreeCodeGoMobileAuthClient({
+      baseUrl: 'https://freecodego.example',
+      fetch: async (input, init) => {
+        seen.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+        return response({ data: { message: 'Your password has been reset successfully.' } })
+      },
+    })
+
+    await expect(client.resetPassword({ email: '3527566745@qq.com', verifyCode: '123456', newPassword: 'new-secret' })).resolves.toBeUndefined()
+    expect(seen).toEqual([{
+      url: 'https://freecodego.example/api/v1/freecodego/mobile/auth/reset-password',
+      body: { email: '3527566745@qq.com', verify_code: '123456', new_password: 'new-secret' },
+    }])
+  })
+
   it('gives a rotation its own, wider bound than every other auth call', async () => {
     // The failure this pins: a rotation governed by the same short bound as the
     // small login/register calls is aborted by the *client* while the gateway is

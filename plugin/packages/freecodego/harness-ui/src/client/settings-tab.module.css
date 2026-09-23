@@ -497,6 +497,11 @@ that the provider key forms rely on keep their own density. */
 .authDivider { display: flex; align-items: center; gap: 10px; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
 .authDivider::before, .authDivider::after { flex: 1; height: 1px; background: var(--fcg-line); content: ''; }
 .authNotice { padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--fcg-brand) 26%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-brand) 6%, var(--fcg-bg-layer-1)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; text-align: center; }
+/* A failure inside the account card, drawn where the button is rather than in the
+   panel-wide alert above the page tabs. Same tone as .paymentNotice, which exists
+   for the same reason on the checkout button. */
+.authNoticeAlert { grid-column: 1 / -1; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 38%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 19px; text-align: left; }
+.authNoticeAlert button { flex: 0 0 auto; }
 .authFull { grid-column: 1 / -1; }
 .remember { display: flex; align-items: center; gap: 8px; color: var(--fcg-text-secondary); cursor: pointer; font-size: var(--fcg-font-caption); }
 .remember input { width: 15px; height: 15px; margin: 0; accent-color: var(--fcg-brand); cursor: pointer; }

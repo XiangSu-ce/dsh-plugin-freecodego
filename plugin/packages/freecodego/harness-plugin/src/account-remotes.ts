@@ -13,7 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient } from '@deepseek-ai/dsh-freecodego-api'
 import { randomUUID } from 'node:crypto'
-import type { FreeCodeGoAccountSnapshot, FreeCodeGoBackendSnapshot, FreeCodeGoCheckinReport, FreeCodeGoDeviceSessions, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoLoginRequest, FreeCodeGoManagedCatalog, FreeCodeGoNvidiaStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, WorkBuddyBrowserLogin, WorkBuddyInternationalAccount, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, WorkBuddyLoginPoll } from './types.ts'
+import type { FreeCodeGoAccountSnapshot, FreeCodeGoBackendSnapshot, FreeCodeGoCheckinReport, FreeCodeGoDeviceSessions, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoLoginRequest, FreeCodeGoManagedCatalog, FreeCodeGoNvidiaStatus, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, WorkBuddyBrowserLogin, WorkBuddyInternationalAccount, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, WorkBuddyLoginPoll } from './types.ts'
 import { buildTraeLoginUrl, TRAE_LOGIN_STATE_TTL_MS, traeCallbackUrl } from './trae/endpoints.ts'
 import { startTraeCallbackListener, type TraeCallbackListener } from './trae/callback-server.ts'
 import { exchangeTraeToken, parseTraeCallback, traeAccountFromLogin, traeMachineIdentity } from './trae/login.ts'
@@ -211,6 +211,38 @@ export async function register(host: AccountRemotesHost, input: FreeCodeGoRegist
 export async function sendVerifyCode(host: AccountRemotesHost, email: string): Promise<{ readonly countdown: number }> {
   if (host.account === undefined) throw backendNotConfigured()
   return host.account.sendVerifyCode(email)
+}
+
+/**
+ * Mail the password-reset code that lets an existing account choose a new password.
+ *
+ * The registered-address check lives on the gateway and stays there: it answers
+ * the same way for an unknown address, on purpose, and this side must not turn
+ * that into an account-existence oracle by reporting a different sentence.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param email - the address the reset code is sent to.
+ * @returns whether the gateway accepted the request.
+ */
+export async function forgotPassword(host: AccountRemotesHost, email: string): Promise<{ readonly sent: true }> {
+  if (host.account === undefined) throw backendNotConfigured()
+  await host.account.requestPasswordResetCode(email)
+  return { sent: true }
+}
+
+/**
+ * Replace an account's password with the code mailed by {@link forgotPassword}.
+ *
+ * No session is issued and none is stored here: the gateway leaves the user
+ * signed out after a reset, so the card keeps its login form as the next step
+ * instead of pretending the reset was a sign-in.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param input - the address, the emailed code, and the new password.
+ * @returns whether the gateway accepted the new password.
+ */
+export async function resetPassword(host: AccountRemotesHost, input: FreeCodeGoPasswordResetRequest): Promise<{ readonly reset: true }> {
+  if (host.account === undefined) throw backendNotConfigured()
+  await host.account.resetPassword(input)
+  return { reset: true }
 }
 
 /**

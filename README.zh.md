@@ -48,15 +48,15 @@ FreeCodeGo **不是** DeepSeek 的产品，本仓库也不是 DeepSeek 的官方
 ## 免费模型
 
 <!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
-下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-09-23 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
+下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-09-24 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
 
 | 提供商 | 免费模型 | 目录 |
 |---|---|---|
 | **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 80 行中的 13 行；公开，无需登录 |
-| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`inclusionai/ling-3.0-flash-vl:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nex-agi/nex-n2.5-mini:free`、`nex-agi/nex-n2.5-pro:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free`、`z-ai/glm-5.2:free` | 394 行中的 21 行；公开，每个出口 IP 每小时 200 次 |
+| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nex-agi/nex-n2.5-mini:free`、`nex-agi/nex-n2.5-pro:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stealth/space-bunny-alpha`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free`、`z-ai/glm-5.2:free` | 393 行中的 21 行；公开，每个出口 IP 每小时 200 次 |
 | **Logfare** | 对话 `claude-opus-4.6`、`deepseek-v3.2`、`deepseek-v4-pro-0813`、`gemma-4-26b`、`glm-5`、`glm-5.3`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`kimi-k2.6`、`kimi-k2.7-code`、`kimi-k3`、`logfare/auto`、`moondream3.1`、`qwen-3.8-27b`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`；音频 `melotts`、`whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nova-3`、`phoenix-1.0` | 27 行；20 行需要训练数据授权，其余 7 行不需要 |
 | **Qoder** | `Qwen 3.8 Flash`（路由 `qmodel_38flash`） | 免费 flash 路由，另有每日签到活动 |
-| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（82 行）中 | 调用需要 API key；核对于 2026-09-23 |
+| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（82 行）中 | 调用需要 API key；核对于 2026-09-24 |
 | **SenseNova** | `deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k3`、`sensenova-6.8-flash-lite` —— 均为 1M 上下文 / 128K 输出 | 名单随 bundle 内置；需要 API key |
 | **TRAE** | 其目录列出的那些行 | 免费额度每日重置，按账号 |
 | **Cline** | 目录标记 `×0 · 官方免费模型` 的那些行 | 账号池 |
@@ -292,7 +292,7 @@ dsh plugin --profile web add --save-exact <tarball-url>
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.1/freecodego-0.1.7-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.2/freecodego-0.1.7-alpha.2.tgz
 ```
 
 `--profile web` 就是 `dsh web` 运行的 profile；如果你用别的方式启动 Harness，请换成你自己的 profile 名。新 bundle 需要重启 Host 才会加载。
@@ -307,7 +307,7 @@ pnpm run build
 
 ## 发行与资产命名
 
-每个 release 打 `freecodego-v<version>` 标签，它的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本 bundle 是 `freecodego-0.1.7-alpha.2.tgz`。资产名带的是 **Harness 线**而不是 bundle 版本，所以 hotfix（`v0.1.7-alpha.2.1`）依然能说明自己属于哪条线。资产名写成 bundle 版本的 release 同样能装；一个 release 里只放一个 tarball 时，无论叫什么都会被接受 —— 名字与标签不一致，不该成为让更新永远不出现的理由。
+每个 release 打 `freecodego-v<version>` 标签，它的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本 bundle 是 `freecodego-0.1.7-alpha.2.tgz`。资产名带的是 **Harness 线**而不是 bundle 版本，所以 hotfix（`v0.1.7-alpha.2.2`）依然能说明自己属于哪条线。资产名写成 bundle 版本的 release 同样能装；一个 release 里只放一个 tarball 时，无论叫什么都会被接受 —— 名字与标签不一致，不该成为让更新永远不出现的理由。
 
 更新服务读取本仓库的 release，启动后不久检查一次、之后每天一次，并用与用户安装时相同的入口 `dsh plugin add --save-exact <url>` 安装。安装会先把 bundle 落在一个同级 Profile 里，再原子提升；在重启后的 Host 健康之前，上一个 Profile 始终可恢复。
 

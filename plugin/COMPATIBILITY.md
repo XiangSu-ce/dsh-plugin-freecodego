@@ -149,7 +149,7 @@ listed in `packages/freecodego/bundle-latest/cordis.patch.yml` as
 
 ## NPM Version Selection
 
-The public package is `freecodego@0.1.7-alpha.2.1`. It is published for the
+The public package is `freecodego@0.1.7-alpha.2.2`. It is published for the
 supported Harness version `0.1.7-alpha.2`, and `freecodego.harnessBaseline`,
 `engines.dsh` and the release's asset name all state that line exactly: the
 baseline is what a Host selects a version by, and the bundle metadata and
@@ -157,7 +157,7 @@ release checks reject a package whose declared baseline is not the supported
 source line.
 
 The version itself is the line, with a counter appended for a later publication
-on the same line (`0.1.7-alpha.2.1`, the hotfix form
+on the same line (`0.1.7-alpha.2.2`, the hotfix form
 `packages/freecodego/AGENTS.md` documents). Only the first publication on a line
 carries the bare line version, and a version is never reused: a tag is immutable
 in the published repository, so a release that has been tagged is never

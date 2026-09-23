@@ -57,8 +57,8 @@ const NPM_PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i
 /**
  * A release tag that names a bundle version, with the family prefix optional.
  *
- * `freecodego-v0.1.7-alpha.2.1` is what `release:freecodego` tags and what the
- * publishing workflow creates its release from; `v0.1.7-alpha.2.1` is accepted
+ * `freecodego-v0.1.7-alpha.2.2` is what `release:freecodego` tags and what the
+ * publishing workflow creates its release from; `v0.1.7-alpha.2.2` is accepted
  * because a release created under the bare form is still a release for the same
  * Harness line, and refusing it would hide an installable update. Any other
  * prefix — another family's tag — is not this bundle.

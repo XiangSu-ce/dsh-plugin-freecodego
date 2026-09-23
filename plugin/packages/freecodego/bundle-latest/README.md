@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.1.7-alpha.2.1`, targeting Harness baseline `0.1.7-alpha.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.1.7-alpha.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
+Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.1.7-alpha.2.2`, targeting Harness baseline `0.1.7-alpha.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.1.7-alpha.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
 
 ## Table of Contents
 
@@ -32,7 +32,7 @@ Install the release for the Harness baseline you run; each release carries one t
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.1/freecodego-0.1.7-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.2/freecodego-0.1.7-alpha.2.tgz
 ```
 
 `freecodego-0.1.7-alpha.2.tgz` is the bundle for Harness `0.1.7-alpha.2`: substitute the version you run, which the settings page shows beside the installed plugin version. The asset name is the naming contract in `packages/freecodego/AGENTS.md`.
@@ -54,15 +54,15 @@ The workflow verifies the family, builds, packs, and creates the GitHub release 
 ## Free Models
 
 <!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
-Every free row below comes from the provider's own directory, read when you open the picker, so this is what those directories returned on 2026-09-23 (sorted, where the picker keeps directory order) — and the picker is the count that is true when you look.
+Every free row below comes from the provider's own directory, read when you open the picker, so this is what those directories returned on 2026-09-24 (sorted, where the picker keeps directory order) — and the picker is the count that is true when you look.
 
 | Provider | Free models | Directory |
 |---|---|---|
 | **OpenCode** | `big-pickle`, `deepseek-v4-flash-free`, `jev-1.13-free`, `ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `mimo-v2.6-flash-free`, `muse-spark-1.2`, `muse-spark-1.2-contributor-free`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, `space-bunny-free` | 13 of 80 rows; public, no sign-in |
-| **Kilo** | `cohere/north-mini-code:free`, `dots-studio/dots-3-note-preview:free`, `inclusionai/ling-3.0-flash-fin:free`, `inclusionai/ling-3.0-flash-sante:free`, `inclusionai/ling-3.0-flash-vl:free`, `kilo-auto/free`, `liquid/lfm-2.5-2.6b:free`, `nex-agi/nex-n2.5-mini:free`, `nex-agi/nex-n2.5-pro:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-content-safety:free`, `nvidia/nemotron-3.5-lightning:free`, `openrouter/free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `qwen/qwen3.8-27b:free`, `stepfun/step-3.7-flash:free`, `thinkingmachines/inkling-small:free`, `z-ai/glm-5.2:free` | 21 of 394 rows; public, 200 requests/hour per egress IP |
+| **Kilo** | `cohere/north-mini-code:free`, `dots-studio/dots-3-note-preview:free`, `inclusionai/ling-3.0-flash-fin:free`, `inclusionai/ling-3.0-flash-sante:free`, `kilo-auto/free`, `liquid/lfm-2.5-2.6b:free`, `nex-agi/nex-n2.5-mini:free`, `nex-agi/nex-n2.5-pro:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-content-safety:free`, `nvidia/nemotron-3.5-lightning:free`, `openrouter/free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `qwen/qwen3.8-27b:free`, `stealth/space-bunny-alpha`, `stepfun/step-3.7-flash:free`, `thinkingmachines/inkling-small:free`, `z-ai/glm-5.2:free` | 21 of 393 rows; public, 200 requests/hour per egress IP |
 | **Logfare** | chat `claude-opus-4.6`, `deepseek-v3.2`, `deepseek-v4-pro-0813`, `gemma-4-26b`, `glm-5`, `glm-5.3`, `glm-5.3-flash`, `grok-4.6`, `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`, `kimi-k3`, `logfare/auto`, `moondream3.1`, `qwen-3.8-27b`, `step-3.7-flash`; images `flux-1-schnell`, `flux-2-dev`, `flux-2-klein-4b`, `flux-2-klein-9b`, `sdxl-lightning`; audio `melotts`, `whisper-large-v3-turbo`; other routes `aura-2-en`, `lucid-origin`, `nova-3`, `phoenix-1.0` | 27 rows; 20 need a training-data opt-in, the other 7 do not |
 | **Qoder** | `Qwen 3.8 Flash` (route `qmodel_38flash`) | the free flash route, plus daily check-in campaigns |
-| **NVIDIA** | `google/gemma-4-31b-it`, `moonshotai/kimi-k3`, `z-ai/glm-5.3`, `z-ai/glm-5.3-flash` — the roster also names `deepseek-ai/deepseek-v4-flash-0731` and `deepseek-ai/deepseek-v4-pro-0813`, which are gone from NVIDIA's live catalogue of 82 rows | an API key is required to call them; cross-checked 2026-09-23 |
+| **NVIDIA** | `google/gemma-4-31b-it`, `moonshotai/kimi-k3`, `z-ai/glm-5.3`, `z-ai/glm-5.3-flash` — the roster also names `deepseek-ai/deepseek-v4-flash-0731` and `deepseek-ai/deepseek-v4-pro-0813`, which are gone from NVIDIA's live catalogue of 82 rows | an API key is required to call them; cross-checked 2026-09-24 |
 | **SenseNova** | `deepseek-v4-flash`, `deepseek-v4-pro`, `glm-5.2`, `kimi-k3`, `sensenova-6.8-flash-lite` — 1M context and 128K output each | roster ships in the bundle; an API key is required |
 | **TRAE** | the rows its directory lists | free credits reset daily, per account |
 | **Cline** | the rows the directory marks `×0 · 官方免费模型` | an account pool |

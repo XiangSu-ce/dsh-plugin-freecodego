@@ -112,6 +112,19 @@ export interface FreeCodeGoRegistrationRequest extends FreeCodeGoLoginRequest {
 }
 
 /**
+ * Password recovery: the address, the code the gateway mailed, and the new secret.
+ *
+ * Both fields are required where registration's code is optional: there is no
+ * second way to prove the address here — the card has no link-borne token — so a
+ * request without a code could only ever be refused by the gateway.
+ */
+export interface FreeCodeGoPasswordResetRequest {
+  readonly email: string
+  readonly verifyCode: string
+  readonly newPassword: string
+}
+
+/**
  * Federated identity providers the account card offers.
  *
  * The Host answers with `OAUTH_NOT_WIRED:<provider>` until its provider

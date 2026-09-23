@@ -859,6 +859,14 @@ interface Injected {
   readonly register?: (input: FreeCodeGoRegistrationRequest) => Promise<RemoteResult<AccountState>>
   readonly sendVerifyCode?: (email: string) => Promise<RemoteResult<{ countdown: number }>>
   /**
+   * Password recovery for an account that already exists.
+   *
+   * Both are optional so a Host that predates them leaves the card's 忘记密码
+   * control hidden rather than offering a flow that can only fail.
+   */
+  readonly forgotPassword?: (email: string) => Promise<RemoteResult<{ sent: true }>>
+  readonly resetPassword?: (input: { email: string; verifyCode: string; newPassword: string }) => Promise<RemoteResult<{ reset: true }>>
+  /**
    * Federated sign-in (Google / GitHub). The remote exists so the buttons are
    * wired end to end; the Host rejects with `OAUTH_NOT_WIRED` until its
    * provider endpoints land, and the card says so in place.
@@ -3079,6 +3087,48 @@ function clineUsageWindowLabel(id: string, language: 'zh' | 'en'): string {
   }
 }
 
+/**
+ * Turn one account-card failure into a sentence the reader can act on.
+ *
+ * The Host reports what the gateway said, which is the right thing to carry and
+ * the wrong thing to show: "FreeCodeGo authentication request failed with HTTP
+ * 400: invalid or expired verification code" is a log line. The shapes this card
+ * can do something about are named; everything else keeps the gateway's wording
+ * with the transport prefix trimmed, so the cause is the first thing read rather
+ * than the fourth.
+ * @param detail - the message the Host forwarded.
+ * @param language - copy locale of the card.
+ * @returns the line the card prints above its submit button.
+ */
+function describeAccountError(detail: string, language: 'zh' | 'en'): string {
+  const zh = language === 'zh'
+  if (/did not become available/i.test(detail)) return zh ? 'Harness Host 没有提供账号接口，请重启 Harness 后重试；若仍如此，请更新插件。' : 'The Harness Host exposes no account endpoint — restart the Harness and try again; update the plugin if it stays missing.'
+  // This plugin's own response reader, not the gateway: a field it insists on
+  // and the gateway did not send. Naming the field is what makes the next report
+  // useful; the English sentence it throws is a log line.
+  const missing = /^FreeCodeGo response (.+?) must be/i.exec(detail)?.[1]
+  if (missing !== undefined) return zh ? `服务返回的账号数据缺少「${missing}」字段，插件无法完成登录。请更新插件后重试。` : `The gateway's account payload is missing \`${missing}\`, so the sign-in cannot complete. Update the plugin and try again.`
+  if (/backend is not configured|backendNotConfigured/i.test(detail)) return zh ? '尚未配置 FreeCodeGo 后端地址，请先在插件设置里填写后再试。' : 'No FreeCodeGo backend is configured; set its address in the plugin settings first.'
+  if (/REG_DISABLED|registration is disabled/i.test(detail)) return zh ? '当前未开放注册，请联系站点管理员或使用已有账号登录。' : 'Registration is currently disabled — ask the site owner, or sign in to an existing account.'
+  if (/Invalid email/i.test(detail)) return zh ? '邮箱格式不正确，请检查后再试。' : 'That email address is not valid.'
+  if (/Invalid request/i.test(detail)) return zh ? '请求被服务拒绝（字段不合法），请检查邮箱、验证码与密码后重试。' : 'The gateway rejected the request as malformed; check the address, code and password.'
+  if (/invalid or expired verification code|INVALID_VERIFY_CODE/i.test(detail)) return zh ? '验证码无效或已过期。请点「发送验证码」重新获取，并确认邮箱与收验证码时填的是同一个。' : 'That verification code is invalid or expired. Send a new one, and check the address matches the one the code was sent to.'
+  if (/VERIFY_CODE_TOO_FREQUENT|too frequent|rate.?limit/i.test(detail)) return zh ? '验证码发送过于频繁，请等冷却结束后再试。' : 'Verification codes are being requested too often; wait out the cooldown.'
+  if (/EMAIL_EXISTS|email.*(?:already )?exists|already registered|email.*has an account/i.test(detail)) return zh ? '该邮箱已经注册过，请直接用「登录」；忘记密码可用找回密码。' : 'That email already has an account — sign in instead, or use password recovery.'
+  if (/INVITATION_CODE|invitation/i.test(detail)) return zh ? '本次注册需要邀请码，请填写后重试。' : 'This registration needs an invitation code.'
+  if (/turnstile/i.test(detail)) return zh ? '人机校验未通过，请稍后重试。' : 'The human-verification check did not pass; try again shortly.'
+  if (/password/i.test(detail) && /(too short|min=|at least|length)/i.test(detail)) return zh ? '密码太短，至少 6 位。' : 'That password is too short — six characters is the minimum.'
+  if (/ACCOUNT_LOGIN_REJECTED|invalid (?:password|credential)|incorrect password|unauthori[sz]ed|401|403/i.test(detail)) return zh ? '邮箱或密码不正确，请检查后重试。' : 'That email and password do not match an account.'
+  if (/Failed to fetch|NetworkError|network|ECONN|timeout|aborted|abort/i.test(detail)) return zh ? '网络请求失败或被中断，请检查网络后重试。' : 'The request failed or was interrupted — check the connection and try again.'
+  const stripped = detail.replace(/^FreeCodeGo (?:\w+ )?request failed with HTTP (\d+):?\s*/i, (_match, status: string) => `${zh ? '服务返回 HTTP' : 'the gateway answered HTTP'} ${status}${zh ? '：' : ': '}`)
+  // An unrecognised failure keeps the gateway's own wording — inventing a
+  // Chinese sentence for a cause we did not identify would hide the one line
+  // that makes the report actionable — but it is framed in the card's language
+  // so a Chinese reader is never shown a bare English error and left to guess
+  // whether the click did anything.
+  return zh && /[A-Za-z]{3}/.test(stripped) ? `操作未成功（${stripped}）` : stripped
+}
+
 function describeAgnesError(detail: string): string {
   if (/AGNES_VERIFICATION_RATE_LIMITED|sending too frequently/i.test(detail)) return '验证码发送过于频繁，请等待约 60 秒后再试；重复点击不会加快发送。'
   if (/AGNES_PASSWORD_RESET_UNSUPPORTED|password reset is not supported for this account/i.test(detail)) return '该 Agnes 账号不支持密码重置，通常是第三方登录或特殊账号类型；请使用原登录方式，或在 Agnes 官网处理账号。'
@@ -3335,7 +3385,7 @@ interface OpenPaymentDialog {
   readonly payCurrency: string | undefined
 }
 
-export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, advisorStatus, advisorUpdate, engineeringStatus, engineeringSetEnabled, language, t }: Props): ReactNode {
+export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, advisorStatus, advisorUpdate, engineeringStatus, engineeringSetEnabled, language, t }: Props): ReactNode {
   const [state, setState] = useState<State>(() => cachedSettings(language, catalog)?.state ?? { ...fallbackSettings(), syncStatus: 'refreshing' })
   // A fresh catalog render must not infer media defaults until the Host has
   // returned the durable values. Otherwise the first available model can race
@@ -3361,6 +3411,31 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
   const [verifySending, setVerifySending] = useState(false)
   const [oauthBusy, setOauthBusy] = useState<FreeCodeGoOAuthProvider | undefined>(undefined)
   const [oauthNotice, setOauthNotice] = useState<string | undefined>(undefined)
+  /**
+   * The account card's own failure line, drawn beside the button that produced it.
+   *
+   * The panel-wide `actionError` renders at the top of this tab, above the page
+   * tabs, and this card sits well below them: a rejected registration therefore
+   * put its reason on a line the reader had already scrolled past, which is
+   * indistinguishable from a button that does nothing. Same reasoning as
+   * `checkoutError` further down, and the same class of defect.
+   */
+  const [authNotice, setAuthNotice] = useState<string | undefined>(undefined)
+  /** Which credential form is in flight, so its own button says so and refuses a second press. */
+  const [authBusy, setAuthBusy] = useState<'login' | 'register' | undefined>(undefined)
+  /**
+   * Password recovery, opened from the login form.
+   *
+   * It is a mode of the card rather than a third tab: recovery is something the
+   * sign-in form offers when it did not work, and putting it beside 登录/注册 as
+   * an equal would invite it from people who know their password.
+   */
+  const [resetOpen, setResetOpen] = useState(false)
+  const [resetCode, setResetCode] = useState('')
+  const [resetSecret, setResetSecret] = useState('')
+  const [resetSending, setResetSending] = useState(false)
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetCooldown, setResetCooldown] = useState(0)
   // Pending federated registration: the browser sign-in ended without an
   // account match, so the user completes it here (bind or create).
   const [oauthPending, setOauthPending] = useState<OAuthPendingRegistration | undefined>(undefined)
@@ -3653,15 +3728,16 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
     return () => { active = false }
   }, [accountRememberedPassword])
   useEffect(() => {
-    if (agnesRegisterCooldown === 0 && agnesResetCooldown === 0 && verifyCooldown === 0 && oauthPendingVerifyCooldown === 0) return
+    if (agnesRegisterCooldown === 0 && agnesResetCooldown === 0 && verifyCooldown === 0 && oauthPendingVerifyCooldown === 0 && resetCooldown === 0) return
     const timer = globalThis.setInterval(() => {
       setAgnesRegisterCooldown(value => Math.max(0, value - 1))
       setAgnesResetCooldown(value => Math.max(0, value - 1))
       setVerifyCooldown(value => Math.max(0, value - 1))
       setOauthPendingVerifyCooldown(value => Math.max(0, value - 1))
+      setResetCooldown(value => Math.max(0, value - 1))
     }, 1000)
     return () => { globalThis.clearInterval(timer) }
-  }, [agnesRegisterCooldown, agnesResetCooldown, verifyCooldown, oauthPendingVerifyCooldown])
+  }, [agnesRegisterCooldown, agnesResetCooldown, verifyCooldown, oauthPendingVerifyCooldown, resetCooldown])
   useEffect(() => {
     if (selectedPaymentType !== '' && paymentType !== selectedPaymentType) setPaymentType(selectedPaymentType)
   }, [paymentType, selectedPaymentType])
@@ -4284,12 +4360,15 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
   }
   const submitLogin = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
+    if (authBusy !== undefined) return
+    setAuthNotice(undefined)
+    setAuthBusy('login')
     void login(email, password, rememberLogin, rememberPassword).then((result) => {
       if (!result.ok) {
         // A rejected credential may have changed, but a transient server
         // error must not erase the remembered email; the network-failure
         // path below keeps it too. Only explicit sign-out clears it (2061).
-        setState(failed(result.error.message)); return
+        setAuthNotice(describeAccountError(result.error.message, language)); return
       }
       try {
         // Browser storage keeps the address and the session intent, never the
@@ -4298,19 +4377,21 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
         if (rememberLogin) globalThis.localStorage?.setItem('freecodego.login.remember', JSON.stringify({ email, keepSignedIn: true }))
         else globalThis.localStorage?.setItem('freecodego.login.remember', JSON.stringify({ email, keepSignedIn: false }))
       } catch (error) {
-        setState(failed(error instanceof Error ? error.message : String(error))); return
+        setAuthNotice(describeAccountError(error instanceof Error ? error.message : String(error), language)); return
       }
       setPassword('')
       load(true)
-    }, (error: unknown) => { setState(failed(error instanceof Error ? error.message : String(error))) })
+    }, (error: unknown) => { setAuthNotice(describeAccountError(error instanceof Error ? error.message : String(error), language)) }).finally(() => { setAuthBusy(undefined) })
   }
   const submitRegister = (): void => {
-    if (register === undefined) return
+    if (register === undefined || authBusy !== undefined) return
+    setAuthNotice(undefined)
+    setAuthBusy('register')
     void register({ email, password, ...(verifyCode === '' ? {} : { verifyCode }) }).then((result) => {
-      if (!result.ok) {  setState(failed(result.error.message)); return }
+      if (!result.ok) { setAuthNotice(describeAccountError(result.error.message, language)); return }
       setPassword('')
       load(true)
-    }, (error: unknown) => { setState(failed(error instanceof Error ? error.message : String(error))) })
+    }, (error: unknown) => { setAuthNotice(describeAccountError(error instanceof Error ? error.message : String(error), language)) }).finally(() => { setAuthBusy(undefined) })
   }
   /** Registration and MFA live in their own forms now, so both need an
    * explicit submit handler — Enter inside those fields used to submit the
@@ -4327,15 +4408,70 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
    * resend button cannot be hammered into the upstream rate limit. */
   const sendAccountVerifyCode = (): void => {
     if (sendVerifyCode === undefined || verifySending || verifyCooldown > 0) return
+    setAuthNotice(undefined)
     setVerifySending(true)
     void sendVerifyCode(email).then((result) => {
       if (!result.ok) {
-        setState(failed(result.error.message))
+        setAuthNotice(describeAccountError(result.error.message, language))
         if (/too frequent|rate.?limit/i.test(result.error.message)) setVerifyCooldown(60)
         return
       }
       setVerifyCooldown(result.value.countdown > 0 ? result.value.countdown : 60)
-    }, (error: unknown) => { setState(failed(error instanceof Error ? error.message : String(error))) }).finally(() => { setVerifySending(false) })
+    }, (error: unknown) => { setAuthNotice(describeAccountError(error instanceof Error ? error.message : String(error), language)) }).finally(() => { setVerifySending(false) })
+  }
+  /**
+   * Ask the gateway to mail the password-reset code.
+   *
+   * This is the code channel an *existing* account has: the registration one
+   * refuses a registered address outright, which is what left a returning user
+   * with no way forward from the 注册 tab.
+   */
+  const sendResetCode = (): void => {
+    if (forgotPassword === undefined || resetSending || resetCooldown > 0) return
+    const target = email.trim()
+    if (target === '') { setAuthNotice(language === 'zh' ? '请先填写邮箱，再获取重置验证码。' : 'Enter the address first, then request the reset code.'); return }
+    setAuthNotice(undefined)
+    setResetSending(true)
+    void forgotPassword(target).then((result) => {
+      if (!result.ok) {
+        setAuthNotice(describeAccountError(result.error.message, language))
+        if (/too frequent|rate.?limit/i.test(result.error.message)) setResetCooldown(60)
+        return
+      }
+      // The gateway answers identically for an unknown address, by design, so the
+      // card states that instead of implying the mailbox was found.
+      setResetCooldown(60)
+      setAuthNotice(language === 'zh'
+        ? '若该邮箱已注册，重置验证码已发送；请查收邮件后填写验证码与新密码。'
+        : 'If that address has an account, a reset code is on its way — enter the code and a new password below.')
+    }, (error: unknown) => { setAuthNotice(describeAccountError(error instanceof Error ? error.message : String(error), language)) }).finally(() => { setResetSending(false) })
+  }
+  /**
+   * Replace the password, then hand the user back to the sign-in form.
+   *
+   * The reset is deliberately not a sign-in: the gateway issues no session for
+   * it, so promising one would leave the card showing an account the Host does
+   * not have. The new password is cleared from state the moment the gateway
+   * accepts it, and the login form keeps the address.
+   */
+  const submitResetPassword = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (resetPassword === undefined || resetBusy) return
+    const target = email.trim()
+    const code = resetCode.trim()
+    if (target === '') { setAuthNotice(language === 'zh' ? '请先填写邮箱。' : 'Enter the email address first.'); return }
+    if (code === '') { setAuthNotice(language === 'zh' ? '请填写邮件里的重置验证码。' : 'Enter the reset code from the email.'); return }
+    setAuthNotice(undefined)
+    setResetBusy(true)
+    void resetPassword({ email: target, verifyCode: code, newPassword: resetSecret }).then((result) => {
+      if (!result.ok) { setAuthNotice(describeAccountError(result.error.message, language)); return }
+      setResetSecret('')
+      setResetCode('')
+      setPassword('')
+      setResetOpen(false)
+      setAuthTab('login')
+      setAuthNotice(language === 'zh' ? '密码已重置，请用新密码登录。' : 'Password reset. Sign in with the new password.')
+    }, (error: unknown) => { setAuthNotice(describeAccountError(error instanceof Error ? error.message : String(error), language)) }).finally(() => { setResetBusy(false) })
   }
   /**
    * Federated sign-in. One code path serves both the placeholder and the real
@@ -5500,8 +5636,8 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
                 <small className={css.authSubtitle}>{language === 'zh' ? '同步余额、模型路由与本机会话，登录后即可调度全部已授权模型。' : 'Sync balance, model routing, and the local session to run every authorized model.'}</small>
               </div>
               {register === undefined || state.account.status === 'mfa-required' ? null : <div className={css.authTabs} role="tablist" aria-label={language === 'zh' ? '登录或注册' : 'Sign in or register'}>
-                <button className={`${css.authTab} ${authTab === 'login' ? css.authTabActive : ''}`} type="button" role="tab" aria-selected={authTab === 'login'} onClick={() => { setAuthTab('login') }}>{t('login')}</button>
-                <button className={`${css.authTab} ${authTab === 'register' ? css.authTabActive : ''}`} type="button" role="tab" aria-selected={authTab === 'register'} onClick={() => { setAuthTab('register') }}>{t('register')}</button>
+                <button className={`${css.authTab} ${authTab === 'login' ? css.authTabActive : ''}`} type="button" role="tab" aria-selected={authTab === 'login'} onClick={() => { setAuthTab('login'); setAuthNotice(undefined) }}>{t('login')}</button>
+                <button className={`${css.authTab} ${authTab === 'register' ? css.authTabActive : ''}`} type="button" role="tab" aria-selected={authTab === 'register'} onClick={() => { setAuthTab('register'); setAuthNotice(undefined) }}>{t('register')}</button>
               </div>}
               <div className={css.authSocialRow}>
                 <button className={css.authSocialButton} type="button" onClick={() => { submitOAuth('google') }} disabled={oauthBusy !== undefined} aria-busy={oauthBusy === 'google'}><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47a5.57 5.57 0 0 1-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82Z"/><path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09A11.99 11.99 0 0 0 12 24Z"/><path fill="#FBBC05" d="M5.27 14.29A7.2 7.2 0 0 1 4.89 12c0-.8.14-1.57.38-2.29V6.62H1.29a12 12 0 0 0 0 10.76l3.98-3.09Z"/><path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.69 1.29 6.62l3.98 3.09C6.22 6.86 8.87 4.75 12 4.75Z"/></svg><span>Google</span></button>
@@ -5528,6 +5664,11 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
               </form>}
               <div className={css.authDivider} aria-hidden="true"><span>{language === 'zh' ? '或使用邮箱' : 'or sign in with email'}</span></div>
               {oauthNotice === undefined ? null : <small className={css.authNotice} role="status">{oauthNotice}</small>}
+              {/* The card's own failure line. It sits between the divider and the
+                  form so it is on screen with the button that produced it; the
+                  panel-wide `actionError` is far above this card by the time the
+                  reader is typing a code. */}
+              {authNotice === undefined ? null : <div className={css.authNoticeAlert} role="alert"><span>{authNotice}</span><button className={css.button} type="button" onClick={() => { setAuthNotice(undefined) }}>{language === 'zh' ? '知道了' : 'Dismiss'}</button></div>}
               {state.account.status === 'mfa-required' ? <form className={css.authStack} onSubmit={submitMfaCode}>
                 <small className={css.authStep}>{t('mfa')}{state.account.emailMasked === undefined ? '' : ` ${state.account.emailMasked}`}</small>
                 <input className={css.input} value={totpCode} onChange={(event) => { setTotpCode(event.target.value) }} placeholder={t('totpCode')} autoComplete="one-time-code" />
@@ -5539,8 +5680,22 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
                   {sendVerifyCode === undefined ? null : <button className={css.authCodeSend} type="button" disabled={verifySending || verifyCooldown > 0} onClick={sendAccountVerifyCode}>{verifyCooldown > 0 ? `${verifyCooldown}s` : verifySending ? (language === 'zh' ? '发送中…' : 'Sending…') : t('sendVerifyCode')}</button>}
                 </div>
                 <input className={`${css.input} ${css.authFull}`} type="password" required value={password} onChange={(event) => { setPassword(event.target.value) }} placeholder={t('password')} autoComplete="new-password" />
-                <button className={`${css.authSubmit} ${css.authFull}`} type="submit">{language === 'zh' ? '注册并登录' : 'Create account'}</button>
+                <button className={`${css.authSubmit} ${css.authFull}`} type="submit" disabled={authBusy !== undefined} aria-busy={authBusy === 'register'}>{authBusy === 'register' ? (language === 'zh' ? '注册中…' : 'Creating account…') : language === 'zh' ? '注册并登录' : 'Create account'}</button>
                 <small className={`${css.authNote} ${css.authFull}`}>{language === 'zh' ? '注册成功后本机自动登录，免费账号即可调度全部免费模型。' : 'A free account signs in automatically and can run every free model.'}</small>
+              </form> : resetOpen && forgotPassword !== undefined && resetPassword !== undefined ? <form className={css.authForm} onSubmit={submitResetPassword}>
+                {/* Recovery is its own form, reached from the sign-in form, because
+                    it exists for the case where signing in could not work. The
+                    address is shared with the card, so it is the one that was just
+                    rejected. */}
+                <input className={css.input} type="email" required value={email} onChange={(event) => { setEmail(event.target.value) }} placeholder={t('email')} autoComplete="email" />
+                <div className={css.authCodeRow}>
+                  <input className={css.input} value={resetCode} onChange={(event) => { setResetCode(event.target.value) }} placeholder={language === 'zh' ? '重置验证码' : 'Reset code'} autoComplete="one-time-code" />
+                  <button className={css.authCodeSend} type="button" disabled={resetSending || resetCooldown > 0} onClick={sendResetCode}>{resetCooldown > 0 ? `${resetCooldown}s` : resetSending ? (language === 'zh' ? '发送中…' : 'Sending…') : (language === 'zh' ? '发送重置码' : 'Send code')}</button>
+                </div>
+                <input className={`${css.input} ${css.authFull}`} type="password" required minLength={6} value={resetSecret} onChange={(event) => { setResetSecret(event.target.value) }} placeholder={language === 'zh' ? '新密码（至少 6 位）' : 'New password (6+ characters)'} autoComplete="new-password" />
+                <button className={`${css.authSubmit} ${css.authFull}`} type="submit" disabled={resetBusy || resetSecret === ''} aria-busy={resetBusy}>{resetBusy ? (language === 'zh' ? '重置中…' : 'Resetting…') : (language === 'zh' ? '重置密码' : 'Reset password')}</button>
+                <button className={`${css.authTab} ${css.authFull}`} type="button" onClick={() => { setResetOpen(false); setAuthNotice(undefined) }}>{language === 'zh' ? '返回登录' : 'Back to sign-in'}</button>
+                <small className={`${css.authNote} ${css.authFull}`}>{language === 'zh' ? '重置验证码与注册验证码不是同一个：注册码只发给未注册的邮箱，已注册的账号请用这里的「发送重置码」。' : 'The reset code is not the registration code: the registration channel refuses an address that already has an account, which is what this one is for.'}</small>
               </form> : <form className={css.authForm} onSubmit={submitLogin}>
                 <input className={css.input} type="email" required value={email} onChange={(event) => { setEmail(event.target.value) }} placeholder={t('email')} autoComplete="email" />
                 {/* The wrapper is the grid item, so the reveal control lives inside
@@ -5553,7 +5708,8 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
                   <label className={css.remember}><input type="checkbox" checked={rememberLogin} onChange={(event) => { setRememberLogin(event.target.checked) }} />{t('rememberLogin')}</label>
                   <label className={css.remember}><input type="checkbox" checked={rememberPassword} onChange={(event) => { setRememberPassword(event.target.checked) }} />{language === 'zh' ? '记住密码（下次自动填写）' : 'Remember the password (fill it in next time)'}</label>
                 </div>
-                <button className={`${css.authSubmit} ${css.authFull}`} type="submit">{t('login')}</button>
+                <button className={`${css.authSubmit} ${css.authFull}`} type="submit" disabled={authBusy !== undefined} aria-busy={authBusy === 'login'}>{authBusy === 'login' ? (language === 'zh' ? '登录中…' : 'Signing in…') : t('login')}</button>
+                {forgotPassword === undefined || resetPassword === undefined ? null : <button className={`${css.authTab} ${css.authFull}`} type="button" onClick={() => { setResetOpen(true); setAuthNotice(undefined) }}>{language === 'zh' ? '忘记密码？' : 'Forgot your password?'}</button>}
                 <small className={`${css.authNote} ${css.authFull}`}>{language === 'zh' ? '勾选「保持登录状态」：登录会话保存在本机，重启后自动恢复；取消则退出程序即登出。勾选「记住密码」：密码存进本机凭据文件（仅当前系统用户可读，不加密），下次自动填写；取消勾选并登录、或退出登录，都会删掉它。' : 'Checked "Keep me signed in" stores the session on this machine and restores it after a restart; unchecked, closing the app signs you out. Checked "Remember the password" stores the password in the local credential file (readable by the current OS user only, not encrypted) and fills it in next time; signing in with it unchecked, or signing out, deletes it.'}</small>
               </form>}
             </div>

@@ -535,6 +535,26 @@ export function apply(ctx: ClientContext): void {
     return service.accountSendVerifyCode(email)
   }
   /**
+   * Ask for the password-reset code.
+   *
+   * A Host that predates this Remote reports its absence like every other
+   * unwired account method, which the card explains in place; recovery has no
+   * fallback that could work without the gateway's cooperation.
+   */
+  const forgotPassword = async (email: string): Promise<RemoteResult<{ sent: true }>> => {
+    await remoteMounted
+    const service = ctx.get('remote.freeCodeGoHarness') as { accountForgotPassword?: (email: string) => Promise<RemoteResult<{ sent: true }>> } | undefined
+    if (typeof service?.accountForgotPassword !== 'function') throw new Error('FreeCodeGo password-reset Remote service did not become available')
+    return service.accountForgotPassword(email)
+  }
+  /** Replace a password with the code the recovery step mailed. */
+  const resetPassword = async (input: { email: string; verifyCode: string; newPassword: string }): Promise<RemoteResult<{ reset: true }>> => {
+    await remoteMounted
+    const service = ctx.get('remote.freeCodeGoHarness') as { accountResetPassword?: (input: { email: string; verifyCode: string; newPassword: string }) => Promise<RemoteResult<{ reset: true }>> } | undefined
+    if (typeof service?.accountResetPassword !== 'function') throw new Error('FreeCodeGo password-reset Remote service did not become available')
+    return service.accountResetPassword(input)
+  }
+  /**
    * Federated sign-in (Google / GitHub). The Host does not expose an OAuth
    * entry point yet, so this reports the missing wire with a stable marker
    * instead of a generic "service did not become available" — the card turns
@@ -931,6 +951,8 @@ export function apply(ctx: ClientContext): void {
       login,
       register,
       sendVerifyCode,
+      forgotPassword,
+      resetPassword,
       oauthLogin,
       oauthPendingStatus,
       oauthPendingSendVerifyCode,

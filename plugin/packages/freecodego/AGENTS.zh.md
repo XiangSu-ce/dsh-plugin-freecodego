@@ -10,7 +10,7 @@ release 资产以「包名 + **bundle 所挂载的 Harness 版本**」命名，�
 
 写成形式：`<包名>-<Harness 版本>.tgz`，作用域按打包 tarball 的写法压平（`@scope/name` 即 `scope-name`）。改动前需要记住三点：
 
-- **tag 记精确版本，资产名记 Harness 线。** release tag 为 `freecodego-v<version>`，其中 version 取自 `packages/freecodego/bundle-latest/package.json`。同一条 Harness 线上的 hotfix 会发布深一个点段的版本（`0.1.7-alpha.2.1`），因此它的 tag 与资产名有意不同：tag 说明具体是哪个版本，资产名说明它属于哪条 Harness 线 —— 后者正是用户从 release 上读到的兼容性答案。
+- **tag 记精确版本，资产名记 Harness 线。** release tag 为 `freecodego-v<version>`，其中 version 取自 `packages/freecodego/bundle-latest/package.json`。同一条 Harness 线上的 hotfix 会发布深一个点段的版本（`0.1.7-alpha.2.2`），因此它的 tag 与资产名有意不同：tag 说明具体是哪个版本，资产名说明它属于哪条 Harness 线 —— 后者正是用户从 release 上读到的兼容性答案。
 - **bundle 通过 `freecodego.harnessBaseline` 决定文件名。** 打包步骤从 bundle manifest 读取它；没有声明的 bundle 直接报错停止，因为说不出自己属于哪条 Harness 线的 bundle 没有发布名。
 - **两种拼法都仍然可达。** 更新检查先找 Harness 名，再找 bundle 版本名，最后接受「该 release 只有一个 tarball」。用旧约定发布的 release 依然能更新；**在上传时改名**是唯一能发出「谁也找不到的 release」的做法。
 
