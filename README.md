@@ -292,7 +292,7 @@ For example, the bundle built for Harness `0.1.7-alpha.2`:
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2/freecodego-0.1.7-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.1/freecodego-0.1.7-alpha.2.tgz
 ```
 
 `--profile web` is the profile `dsh web` runs under; substitute your own profile name if you launched the Harness differently. A Host restart is required before the new bundle is loaded.

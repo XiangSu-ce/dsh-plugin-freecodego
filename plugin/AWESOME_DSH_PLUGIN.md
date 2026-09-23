@@ -57,7 +57,7 @@ category: model
 description:
   en: 'Unofficial FreeCodeGo for DeepSeek Harness: a managed free-model gateway and provider catalogs, image and video generation behind one settings switch, DeepSeek/Codex/Claude engine routing, an independent advisor reviewer, code review, code graphs, project memory, and an engineering team toolchain.'
   zh: '面向 DeepSeek Harness 的非官方 FreeCodeGo：可托管的免费模型网关与供应商目录、由一个设置开关控制的生图与生视频、DeepSeek/Codex/Claude 引擎路由、独立 Advisor 评审、代码审查、代码图谱、工程记忆与工程团队工具链。'
-tarball: https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2/freecodego-0.1.7-alpha.2.tgz
+tarball: https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.1/freecodego-0.1.7-alpha.2.tgz
 ```
 
 Notes on the fields, each of which follows from a rule above:
@@ -67,7 +67,7 @@ Notes on the fields, each of which follows from a rule above:
 - **`description`** is quoted on both lines. English is required and is one line ending in a period; Chinese is optional (a maintainer fills it in if missing), and neither may contain a newline. It names no counts, because every number in it is read as a claim and counted.
 - **`tarball`** must be refreshed whenever the release for the *current* Harness baseline is superseded — see below.
 
-The npm name is claimed as well, for a reason that is not the listing: an unpublished name is released to other accounts, so leaving `freecodego` unpublished would let anyone take the name the Harness CLI resolves on its own. `freecodego@0.1.7-alpha.2` is published, which also makes the bare-name install work — `dsh plugin --profile web add freecodego` — resolved by the CLI through `pnpm view freecodego versions` against each version's `freecodego.harnessBaseline`. The release workflow publishes both halves from one packed file and verifies each against it, so the two cannot name different versions; the contract is in `packages/freecodego/AGENTS.md`.
+The npm name is claimed as well, for a reason that is not the listing: an unpublished name is released to other accounts, so leaving `freecodego` unpublished would let anyone take the name the Harness CLI resolves on its own. `freecodego@0.1.7-alpha.2.1` is published, which also makes the bare-name install work — `dsh plugin --profile web add freecodego` — resolved by the CLI through `pnpm view freecodego versions` against each version's `freecodego.harnessBaseline`. The release workflow publishes both halves from one packed file and verifies each against it, so the two cannot name different versions; the contract is in `packages/freecodego/AGENTS.md`.
 
 ## How the card learns the Harness we need
 

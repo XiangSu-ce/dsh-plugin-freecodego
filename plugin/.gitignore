@@ -200,6 +200,16 @@
 # The generator the gate above compares against. Without it the gate has
 # nothing to compare to, and `build:freecodego`'s verify step cannot run.
 !/scripts/gen-freecodego-test-tsconfig.ts
+# The other two gates `build:freecodego` runs, both added with the
+# 0.1.7-alpha.2 line. Each is named by path in the published `package.json`, so a
+# clone without it dies at the workflow's build step rather than losing a check:
+# the preset-patch generator is the module `--check` runs (`Cannot find module`),
+# and vitest answers a spec path it cannot open with `No test files found,
+# exiting with code 1` — a clone that lacks the spec fails the build, it does not
+# silently skip the assertion. The public repository's 0.1.7-alpha.2 run died on
+# the first of the two.
+!/scripts/gen-preset-patches.mjs
+!/scripts/freecodego-service-facades.spec.ts
 # The free-model tables in the published READMEs are generated, and the markers
 # around them name this script by path. Left out of the repository, the published
 # front page would credit a file a clone does not have, and the two

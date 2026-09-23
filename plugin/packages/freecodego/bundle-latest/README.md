@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.1.7-alpha.2`, targeting Harness baseline `0.1.7-alpha.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.1.7-alpha.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
+Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.1.7-alpha.2.1`, targeting Harness baseline `0.1.7-alpha.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.1.7-alpha.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
 
 ## Table of Contents
 
@@ -32,7 +32,7 @@ Install the release for the Harness baseline you run; each release carries one t
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2/freecodego-0.1.7-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.1/freecodego-0.1.7-alpha.2.tgz
 ```
 
 `freecodego-0.1.7-alpha.2.tgz` is the bundle for Harness `0.1.7-alpha.2`: substitute the version you run, which the settings page shows beside the installed plugin version. The asset name is the naming contract in `packages/freecodego/AGENTS.md`.

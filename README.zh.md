@@ -292,7 +292,7 @@ dsh plugin --profile web add --save-exact <tarball-url>
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2/freecodego-0.1.7-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.1/freecodego-0.1.7-alpha.2.tgz
 ```
 
 `--profile web` 就是 `dsh web` 运行的 profile；如果你用别的方式启动 Harness，请换成你自己的 profile 名。新 bundle 需要重启 Host 才会加载。

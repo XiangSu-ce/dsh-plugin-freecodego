@@ -13,13 +13,22 @@ is this bundle's own version, not the Harness line it mounts on. English only:
 the notes are the release's own text, and a paired translation of a published
 changelog would be a second thing to keep in step without a reader who needs it.
 
-## 0.1.7-alpha.2 — 2026-09-23
+## 0.1.7-alpha.2.1 — 2026-09-23
+
+This is the first version published for Harness `0.1.7-alpha.2`, under a counter
+rather than under the line's own version. The line's first attempt was tagged
+`freecodego-v0.1.7-alpha.2`, and its pack job died on a file the published tree
+never carried (`### Fixed` below); a tag is immutable here, so the correction is
+republished one dotted segment deeper — the hotfix form `packages/freecodego/AGENTS.md`
+documents — which leaves the tag naming the exact version and the asset naming
+the Harness line. Everything below is what that version contains.
 
 ### Changed
 
 - This release targets Harness `0.1.7-alpha.2`, and everything that names the
-  line moves together: the bundle's version, `freecodego.harnessBaseline`,
-  `engines.dsh`, the release tag, and the name of the asset it attaches. The
+  line moves together: this bundle's version is the line with a counter on it,
+  while `freecodego.harnessBaseline`, `engines.dsh`, the release tag and the name
+  of the asset it attaches all state the line itself. The
   checked-in source has been the `0.1.7-alpha.2` tree since that commit was
   recorded as the candidate in `harness.lock.json`; this release is the one that
   promotes it, in that file and in `harness.config.json` and `COMPATIBILITY.md`
@@ -67,6 +76,22 @@ changelog would be a second thing to keep in step without a reader who needs it.
   named row is the same action for touch and keyboard, reports its failure
   through the overlay that outlives the menu, and hides itself under the same
   `sessionDeleteEnabled` switch.
+
+### Fixed
+
+- The published tree now carries the two files `build:freecodego` names and did
+  not have. `scripts/gen-preset-patches.mjs` is the module its
+  `verify-preset-patches` gate runs, and `scripts/freecodego-service-facades.spec.ts`
+  is the spec `verify-service-facades` runs; the published repository ignores
+  `scripts/*` wholesale, so both were present only in the working copy the
+  release was cut from. The pack job reached the first of them and stopped on
+  `Cannot find module`, which is why this version exists under a counter. A
+  release run is the first time anyone asks whether a clone receives every file
+  the release path names, so that question is now a gate:
+  `scripts/published-release-inputs.spec.ts` reads the workflow's own steps,
+  follows them through the published manifests and the files they open, and
+  fails on a fork-owned file that is on a dependency path and would not be in a
+  clone.
 
 ## 0.1.6-alpha.2.4 — 2026-09-23
 

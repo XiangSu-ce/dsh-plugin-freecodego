@@ -149,11 +149,21 @@ listed in `packages/freecodego/bundle-latest/cordis.patch.yml` as
 
 ## NPM Version Selection
 
-The public package is `freecodego@0.1.7-alpha.2`. Its version and
-`freecodego.harnessBaseline` must exactly equal the supported Harness version.
-Do not publish another patch-level plugin version for this Harness line. The
-bundle metadata and release checks reject a package whose declared Harness
-baseline does not match the supported source line.
+The public package is `freecodego@0.1.7-alpha.2.1`. It is published for the
+supported Harness version `0.1.7-alpha.2`, and `freecodego.harnessBaseline`,
+`engines.dsh` and the release's asset name all state that line exactly: the
+baseline is what a Host selects a version by, and the bundle metadata and
+release checks reject a package whose declared baseline is not the supported
+source line.
+
+The version itself is the line, with a counter appended for a later publication
+on the same line (`0.1.7-alpha.2.1`, the hotfix form
+`packages/freecodego/AGENTS.md` documents). Only the first publication on a line
+carries the bare line version, and a version is never reused: a tag is immutable
+in the published repository, so a release that has been tagged is never
+rewritten and a correction is published as the next counter. Do not move to
+another release number — a new minor or patch — for a line already published:
+that claims a Harness version this source does not follow.
 
 Provider routing is identity-preserving: Logfare, B.AI, OpenRouter, OpenCode,
 and any user-defined `llm-pi-ai` provider stay on their own adapter and
