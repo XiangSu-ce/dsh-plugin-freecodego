@@ -7327,6 +7327,9 @@ importers:
       '@deepseek-ai/dsh-experimental-browser-use-runtime':
         specifier: workspace:*
         version: link:../browser-use-runtime
+      '@deepseek-ai/dsh-mcp-client':
+        specifier: workspace:*
+        version: link:../../mcp/mcp-client
       '@deepseek-ai/dsh-subprocess':
         specifier: workspace:*
         version: link:../../subprocess/subprocess
@@ -7373,9 +7376,6 @@ importers:
       '@deepseek-ai/dsh-llm':
         specifier: workspace:*
         version: link:../../llm/llm
-      '@deepseek-ai/dsh-mcp-client':
-        specifier: workspace:*
-        version: link:../../mcp/mcp-client
       '@deepseek-ai/dsh-session':
         specifier: workspace:*
         version: link:../../core/session
@@ -7517,6 +7517,9 @@ importers:
 
   packages/experimental/computer-use-cua-driver-mcp:
     dependencies:
+      '@deepseek-ai/dsh-mcp-client':
+        specifier: workspace:*
+        version: link:../../mcp/mcp-client
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -7545,9 +7548,6 @@ importers:
       '@deepseek-ai/dsh-llm':
         specifier: workspace:*
         version: link:../../llm/llm
-      '@deepseek-ai/dsh-mcp-client':
-        specifier: workspace:*
-        version: link:../../mcp/mcp-client
       '@deepseek-ai/dsh-session':
         specifier: workspace:*
         version: link:../../core/session
@@ -7563,6 +7563,9 @@ importers:
 
   packages/experimental/computer-use-cua-driver-native:
     dependencies:
+      '@deepseek-ai/dsh-mcp-client':
+        specifier: workspace:*
+        version: link:../../mcp/mcp-client
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -7603,9 +7606,6 @@ importers:
       '@deepseek-ai/dsh-llm':
         specifier: workspace:*
         version: link:../../llm/llm
-      '@deepseek-ai/dsh-mcp-client':
-        specifier: workspace:*
-        version: link:../../mcp/mcp-client
       '@deepseek-ai/dsh-session':
         specifier: workspace:*
         version: link:../../core/session

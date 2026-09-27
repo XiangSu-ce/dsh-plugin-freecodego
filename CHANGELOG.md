@@ -18,6 +18,60 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.1.7-rc.2.2 — 2026-09-28
+
+### English
+
+The second counter on the same Harness line, and again nothing in the bundle
+itself changes: a reader who only mounts it can skip it. Three runs have now
+failed before publication — `0.1.7-rc.2` in the workspace sync, `0.1.7-rc.2.1`
+one step later in the workspace install — and this is the first version of that
+content that gets past both, so it carries everything below: the whole
+`0.1.7-rc.2` section, and the sync fix `0.1.7-rc.2.1` describes.
+
+#### Fixed
+
+- **The lockfile now describes the workspace the release builds.** A release run
+  installs with `pnpm install --frozen-lockfile` *after* it has synchronized the
+  upstream tree, so the published `pnpm-lock.yaml` has to describe exactly that
+  tree. It did not: `pnpm run verify-package-dependencies --fix` had been run in
+  the working copy on 2026-09-27, and that command rewrites the manifests it
+  finds violations in *and* regenerates the lockfile from them. Four official
+  manifests were rewritten that way —
+  `experimental/browser-use-stagehand-native`,
+  `experimental/computer-use-cua-driver-mcp`,
+  `experimental/computer-use-cua-driver-native`, `interaction/user-approval` —
+  all four files this repository does not track, because the sync materializes
+  them from upstream, and the lockfile was rebuilt against the rewritten shapes.
+  A working copy agrees with that lockfile; a release run cannot, because the
+  manifests it installs against are the ones the sync has just written. The four
+  are back to the shape the sync produces (the policy gate is satisfied either
+  way — `verify-package-dependencies` reports its measured 73 packages on both),
+  and the lockfile was regenerated in a tree that matches the release. Verified by
+  running the frozen install against a clean checkout of the published tree: it is
+  what failed in CI, and it now passes.
+
+### 中文
+
+同一条 Harness 线上的第二次计数发布，bundle 本身依旧没有任何变化：只挂载它的使用者可以
+跳过它。至此已有三次运行在发布之前失败 —— `0.1.7-rc.2` 停在工作树同步，`0.1.7-rc.2.1`
+晚一步停在依赖安装 —— 而这是那批内容中第一个走过这两步的版本，因此它包含下面的一切：
+整个 `0.1.7-rc.2` 一节，以及 `0.1.7-rc.2.1` 描述的同步修复。
+
+#### 修复
+
+- **lockfile 现在描述的是 release 真正构建的那棵工作树。** 发布运行是在同步完上游树**之后**
+  才执行 `pnpm install --frozen-lockfile` 的，因此发布的 `pnpm-lock.yaml` 必须精确描述那棵树。
+  它当时不是：2026-09-27 在工作副本里跑过 `pnpm run verify-package-dependencies --fix`，而这条
+  命令会改写它发现违规的那些清单**并据此重新生成 lockfile**。它这样改写了四份官方清单 ——
+  `experimental/browser-use-stagehand-native`、`experimental/computer-use-cua-driver-mcp`、
+  `experimental/computer-use-cua-driver-native`、`interaction/user-approval` —— 这四份都不是
+  本仓库跟踪的文件（它们由同步从上游落盘），而 lockfile 是按改写后的形状重建的。工作副本与
+  那份 lockfile 自洽；发布运行不可能自洽，因为它面对的是同步刚写下的清单。这四份已恢复为
+  同步产出的形状（两种形状都能过门禁：`verify-package-dependencies` 在两者上都报出实测的
+  73 个包），lockfile 则在匹配 release 的那棵树里重新生成。验证方式是拿发布树的干净 checkout
+  跑同一条 frozen 安装 —— 那正是 CI 失败的地方，现在通过。
+
 ## 0.1.7-rc.2.1 — 2026-09-28
 
 ### English
@@ -27,8 +81,8 @@ reader who only mounts it can skip this version. `0.1.7-rc.2` was tagged and
 pushed, and its release run stopped in the first step that touches the tree —
 before anything was built, with the GitHub release and the registry version
 skipped behind it — so that version produced and published no artifact at all.
-Everything the `0.1.7-rc.2` section below describes ships here instead, and this
-is the first version of that content anyone can install.
+The fix below went out under this tag, and its own run stopped one step later, at
+the workspace install (see `0.1.7-rc.2.2` above, which carries all of it).
 
 #### Fixed
 
@@ -56,8 +110,8 @@ is the first version of that content anyone can install.
 同一条 Harness 线上的又一次计数发布，bundle 本身没有任何变化：只挂载它的使用者可以跳过
 这个版本。`0.1.7-rc.2` 已经打过 tag 并推上去，而它的发布运行在第一个真正动到工作树的步骤
 就停了 —— 什么都还没构建，GitHub release 与 registry 版本都被跳过 —— 因此那个版本没有产出、
-也没有发布任何产物。下面 `0.1.7-rc.2` 一节描述的全部内容都随本版本交付，这也是那批内容中
-第一个可以安装的版本。
+也没有发布任何产物。下面这条修复以这个 tag 发出，而它自己的运行又晚一步停在工作树安装
+（见上方 `0.1.7-rc.2.2`，它包含全部内容）。
 
 #### 修复
 
@@ -80,7 +134,7 @@ is the first version of that content anyone can install.
 
 The first release prepared for Harness `0.1.7-rc.2`, under the line's own
 version rather than a counter. Its release run never published anything (see
-`0.1.7-rc.2.1` above, which carries all of it). Three surfaces are either new or repaired: the
+`0.1.7-rc.2.2` above, which carries all of it). Three surfaces are either new or repaired: the
 design pack, the companion character, and the speech card in the settings page.
 
 #### Added
