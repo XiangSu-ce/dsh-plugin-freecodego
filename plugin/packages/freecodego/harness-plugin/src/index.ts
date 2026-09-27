@@ -37,7 +37,7 @@ import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoManagedRuntime, FreeCodeGoReceiptDocument } from '@deepseek-ai/dsh-freecodego-api'
-import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
+import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoAnnouncement, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { createUserMessage, type LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import { CodexRuntimeManager, ClaudeRuntimeManager } from '@deepseek-ai/dsh-freecodego-native-runtime-host'
@@ -142,7 +142,7 @@ import type { ReviewFilePort } from './review/reviewer.ts'
 import { DEFAULT_REVIEW_GATE_SETTINGS, FreeCodeGoReviewGate, reviewGateRecord, type ReviewGateSettings } from './review/gate.ts'
 import { narrowTurnScope, turnChangePaths, type TurnScopeEvent, type TurnScopeSummary } from './review/turn-scope.ts'
 import {
-  accountDetail, accountStatus, backendBootstrap, backendCatalog, backendQuota, backendRuntimeHealth, backendUsage, completeMfa, deviceSessions, groqWhisperTranscribe, vyceSetKey, vyceStatus,
+  accountAnnouncements, accountDetail, accountMarkAnnouncementRead, accountStatus, backendBootstrap, backendCatalog, backendQuota, backendRuntimeHealth, backendUsage, completeMfa, deviceSessions, groqWhisperTranscribe, vyceSetKey, vyceStatus,
   revokeAllSessions, revokeDeviceSession,
   forgotPassword, logfareRegister, logfareSetKey, logfareSetTrainingOptIn, logfareStatus, login, logout, refreshAccount, register, resetPassword,
   readRememberedPassword, sendVerifyCode, sensenovaSetKey, sensenovaStatus, nvidiaSetKey, nvidiaStatus, restoreAccount as restoreDurableAccount, accountOAuthLogin,
@@ -6542,6 +6542,29 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   @Remote('accountDeviceSessions')
   async deviceSessions(): Promise<FreeCodeGoDeviceSessions> {
     return deviceSessions(this.accountRemotesHost)
+  }
+
+  /**
+   * Read the announcements the backend published to this account.
+   *
+   * Read by the notice bar on the chat surface, which polls it — the plugin has
+   * no push channel to the backend, so "in time" means the next poll, not a
+   * socket. An empty list is the answer for a signed-out or unreachable backend.
+   * @returns the visible announcements, in the backend's own order.
+   */
+  @Remote('accountAnnouncements')
+  async announcements(): Promise<readonly FreeCodeGoAnnouncement[]> {
+    return accountAnnouncements(this.accountRemotesHost)
+  }
+
+  /**
+   * Mark one announcement read for this account, so closing it holds everywhere.
+   * @param announcementId - the announcement the user closed.
+   * @returns whether the backend recorded the read.
+   */
+  @Remote('accountMarkAnnouncementRead')
+  async markAnnouncementRead(announcementId: number): Promise<boolean> {
+    return accountMarkAnnouncementRead(this.accountRemotesHost, announcementId)
   }
 
     /**

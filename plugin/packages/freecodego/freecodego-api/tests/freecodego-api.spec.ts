@@ -75,6 +75,56 @@ describe('FreeCodeGoApiClient', () => {
     await expect(client.getCurrentUser({ accessToken: 'host-only-token' })).resolves.toMatchObject({ email: '3527566745@qq.com', avatarUrl: 'https://q1.qlogo.cn/g?b=qq&nk=3527566745&s=100' })
   })
 
+  it('reads the account announcements and marks one read on the account', async () => {
+    // The notice bar's two calls. The read route is the account's record rather
+    // than the browser's, which is what makes a dismissal hold on the account's
+    // other machines, so the path and the verb are the whole contract here.
+    const seen: string[] = []
+    const client = new FreeCodeGoApiClient({
+      baseUrl: 'https://freecodego.example',
+      fetch: async (input, init) => {
+        const url = new URL(String(input))
+        seen.push(`${init?.method ?? 'GET'} ${url.pathname}${url.search}`)
+        if (url.pathname === '/api/v1/announcements') {
+          return response({ data: [
+            { id: 12, title: '免费开放 gpt-5.6-terra', content: '本周福利', notify_mode: 'popup', created_at: '2026-09-28T00:00:00Z' },
+            { id: 11, title: '旧公告', content: '已读', notify_mode: 'silent', read_at: '2026-09-27T00:00:00Z', created_at: '2026-09-27T00:00:00Z' },
+            { id: 10, title: '怪模式', content: '', notify_mode: 'surprise', created_at: '2026-09-26T00:00:00Z' },
+          ] })
+        }
+        return response({ data: { message: 'ok' } })
+      },
+    })
+
+    const announcements = await client.getAnnouncements({ accessToken: 'host-only-token' })
+    expect(announcements).toEqual([
+      { id: 12, title: '免费开放 gpt-5.6-terra', content: '本周福利', notifyMode: 'popup', createdAt: '2026-09-28T00:00:00Z' },
+      { id: 11, title: '旧公告', content: '已读', notifyMode: 'silent', readAt: '2026-09-27T00:00:00Z', createdAt: '2026-09-27T00:00:00Z' },
+      // A mode this client does not know reads as silent: the one thing a mode
+      // decides is whether the user is interrupted, and an unknown spelling is
+      // not a reason to interrupt them.
+      { id: 10, title: '怪模式', content: '', notifyMode: 'silent', createdAt: '2026-09-26T00:00:00Z' },
+    ])
+
+    await client.getAnnouncements({ accessToken: 'host-only-token', unreadOnly: true })
+    await client.markAnnouncementRead({ accessToken: 'host-only-token', announcementId: 12 })
+    expect(seen).toEqual([
+      'GET /api/v1/announcements',
+      'GET /api/v1/announcements?unread_only=1',
+      'POST /api/v1/announcements/12/read',
+    ])
+  })
+
+  it('refuses to acknowledge an announcement with no id', async () => {
+    const client = new FreeCodeGoApiClient({
+      baseUrl: 'https://freecodego.example',
+      fetch: async () => response({ data: { message: 'ok' } }),
+    })
+    // A request that would land on `/announcements/0/read` is a client bug; the
+    // backend's answer to it is not what anyone wants to debug.
+    await expect(client.markAnnouncementRead({ accessToken: 'host-only-token', announcementId: 0 })).rejects.toThrow(/announcement id is required/)
+  })
+
   it('projects authenticated channel availability and latency without admin credentials', async () => {
     const client = new FreeCodeGoApiClient({
       baseUrl: 'https://freecodego.example',
@@ -855,6 +905,86 @@ describe('FreeCodeGo account coordination', () => {
     expect(coordinator.snapshot()).toEqual({ status: 'signed-out' })
   })
 
+  it('names this installation once and signs in and rotates under that same name', async () => {
+    // The gateway binds a session to a device and refuses every model to a token
+    // whose device has no session, so a sign-in that states none is a sign-in
+    // that succeeds and then serves nothing. The name has to be minted once and
+    // kept — including across a restart, or each launch adds a device row.
+    const values = new Map<string, string>()
+    const provider = {
+      resolve: async (ref: string) => values.has(ref) ? { value: values.get(ref)!, source: 'file' } : undefined,
+      set: async (ref: string, value: string) => { values.set(ref, value) },
+      unset: async (ref: string) => { values.delete(ref) },
+    } as unknown as CredentialProvider
+    const vault = new HarnessFreeCodeGoCredentialVault(provider, 'https://freecodego.example')
+    const devices: (string | undefined)[] = []
+    const auth = {
+      origin: 'https://freecodego.example',
+      login: async (input: { readonly deviceId?: string }) => {
+        devices.push(input.deviceId)
+        return {
+          kind: 'authenticated' as const,
+          tokens: { accessToken: 'access', refreshToken: 'refresh', expiresIn: 3600, tokenType: 'Bearer' as const },
+          user: { id: 1, username: 'user', email: 'user@example.com', role: 'user', balance: 0, status: 'active' },
+        }
+      },
+      refresh: async (_refreshToken: string, deviceId?: string) => {
+        devices.push(deviceId)
+        return { accessToken: 'access-2', refreshToken: 'refresh-2', expiresIn: 3600, tokenType: 'Bearer' as const }
+      },
+      logout: async () => {},
+    } as unknown as FreeCodeGoMobileAuthClientType
+
+    await new FreeCodeGoAccountCoordinator(auth, vault).login({ email: 'user@example.com', password: 'password' })
+    expect(devices[0]).toMatch(/^fcg-[0-9a-f-]{36}$/)
+
+    // A second process over the same vault is the same device, so the account
+    // keeps one row instead of gaining one per launch.
+    const restarted = new FreeCodeGoAccountCoordinator(auth, vault)
+    expect(await restarted.deviceId()).toBe(devices[0])
+    await restarted.refresh()
+    expect(devices[1]).toBe(devices[0])
+    expect([...values.keys()].filter(key => key.startsWith('FREECODEGO_DEVICE_'))).toHaveLength(1)
+  })
+
+  it('remembers a device the caller stated, so the rotation presents the same one', async () => {
+    // A caller that names a device is asserting where this session belongs; a
+    // rotation that then presented the installation's own id would move the
+    // session to another device, which is exactly what the gateway rejects.
+    const values = new Map<string, string>()
+    const provider = {
+      resolve: async (ref: string) => values.has(ref) ? { value: values.get(ref)!, source: 'file' } : undefined,
+      set: async (ref: string, value: string) => { values.set(ref, value) },
+      unset: async (ref: string) => { values.delete(ref) },
+    } as unknown as CredentialProvider
+    const vault = new HarnessFreeCodeGoCredentialVault(provider, 'https://freecodego.example')
+    const devices: (string | undefined)[] = []
+    const auth = {
+      origin: 'https://freecodego.example',
+      login: async (input: { readonly deviceId?: string }) => {
+        devices.push(input.deviceId)
+        return {
+          kind: 'authenticated' as const,
+          tokens: { accessToken: 'access', refreshToken: 'refresh', expiresIn: 3600, tokenType: 'Bearer' as const },
+          user: { id: 1, username: 'user', email: 'user@example.com', role: 'user', balance: 0, status: 'active' },
+        }
+      },
+      refresh: async (_refreshToken: string, deviceId?: string) => {
+        devices.push(deviceId)
+        return { accessToken: 'access-2', refreshToken: 'refresh-2', expiresIn: 3600, tokenType: 'Bearer' as const }
+      },
+      logout: async () => {},
+    } as unknown as FreeCodeGoMobileAuthClientType
+    const coordinator = new FreeCodeGoAccountCoordinator(auth, vault)
+
+    await coordinator.login({ email: 'user@example.com', password: 'password', deviceId: '  fcg-stated  ' })
+    expect(devices[0]).toBe('fcg-stated')
+    await coordinator.refresh()
+    expect(devices[1]).toBe('fcg-stated')
+    // The stated id is the installation's from then on, not a per-call override.
+    expect(await coordinator.deviceId()).toBe('fcg-stated')
+  })
+
   it('commits the remembered-password intent only with a pair, and never into the snapshot', async () => {
     let password: string | undefined
     const writes: (string | undefined)[] = []
@@ -1141,6 +1271,67 @@ describe('FreeCodeGo account coordination', () => {
       return token
     })).resolves.toBe('fresh-token')
     expect(attempts).toBe(2)
+    expect(refreshCalls).toBe(1)
+  })
+
+  it('rotates a stored pair that states no device before presenting it', async () => {
+    // A pair minted before this installation named a device has no device_id
+    // claim, and the gateway refuses every model to it without ever mentioning
+    // expiry — so the check above never fires and every turn fails identically.
+    // One rotation states the device, and callers must get that replacement.
+    const unbound = (deviceId?: string) => `header.${Buffer.from(JSON.stringify({ user_id: 7, exp: Math.floor(Date.now() / 1000) + 3600, ...(deviceId === undefined ? {} : { device_id: deviceId }) }), 'utf8').toString('base64url')}.signature`
+    let stored: FreeCodeGoTokenPair = { accessToken: unbound(), refreshToken: 'refresh', expiresIn: 3600, tokenType: 'Bearer' }
+    let refreshCalls = 0
+    const devices: (string | undefined)[] = []
+    const vault: FreeCodeGoCredentialVault = {
+      load: async () => stored,
+      save: async (_origin, value) => { stored = value },
+      delete: async () => { stored = undefined as never },
+    }
+    const auth = {
+      origin: 'https://freecodego.example',
+      refresh: async (_refreshToken: string, deviceId?: string) => {
+        refreshCalls += 1
+        devices.push(deviceId)
+        return { accessToken: unbound('fcg-device'), refreshToken: 'bound-refresh', expiresIn: 3600, tokenType: 'Bearer' as const }
+      },
+    } as unknown as FreeCodeGoMobileAuthClientType
+    const coordinator = new FreeCodeGoAccountCoordinator(auth, vault)
+
+    await expect(coordinator.withAccessToken(async token => token)).resolves.toBe(unbound('fcg-device'))
+    expect(refreshCalls).toBe(1)
+    expect(devices[0]).toMatch(/^fcg-[0-9a-f-]{36}$/)
+    // The replacement states a device, so later calls present it untouched.
+    await expect(coordinator.withAccessToken(async token => token)).resolves.toBe(unbound('fcg-device'))
+    expect(refreshCalls).toBe(1)
+  })
+
+  it('presents an unbound pair unchanged once one rotation failed to bind it', async () => {
+    // A gateway that ignores the stated device would otherwise make every
+    // authorized call rotate the session — a refresh storm against a server that
+    // is merely older than the claim. One attempt per process is the bound.
+    const unbound = (refreshToken: string): FreeCodeGoTokenPair => ({
+      accessToken: `header.${Buffer.from(JSON.stringify({ user_id: 7, exp: Math.floor(Date.now() / 1000) + 3600 }), 'utf8').toString('base64url')}.signature`,
+      refreshToken,
+      expiresIn: 3600,
+      tokenType: 'Bearer',
+    })
+    let stored: FreeCodeGoTokenPair = unbound('refresh')
+    let refreshCalls = 0
+    const vault: FreeCodeGoCredentialVault = {
+      load: async () => stored,
+      save: async (_origin, value) => { stored = value },
+      delete: async () => { stored = undefined as never },
+    }
+    const auth = {
+      origin: 'https://freecodego.example',
+      refresh: async () => { refreshCalls += 1; return unbound(`refresh-${refreshCalls + 1}`) },
+    } as unknown as FreeCodeGoMobileAuthClientType
+    const coordinator = new FreeCodeGoAccountCoordinator(auth, vault)
+
+    await expect(coordinator.withAccessToken(async token => token)).resolves.toBe(stored.accessToken)
+    const replacement = stored.accessToken
+    await expect(coordinator.withAccessToken(async token => token)).resolves.toBe(replacement)
     expect(refreshCalls).toBe(1)
   })
 

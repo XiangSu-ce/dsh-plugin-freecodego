@@ -1,7 +1,7 @@
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { FreeCodeGoGatewayProviderHealth } from '@deepseek-ai/dsh-freecodego-api'
 import { readJsonFile, stringArray } from './community-storage.ts'
-import { inferMediaCategory, type MediaCategory } from './media-utils.ts'
+import { inferMediaCategory, mediaCategoryOverrideKey, type MediaCategory } from './media-utils.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 import { asRecord as record } from './untrusted-json.ts'
 import type { FreeCodeGoManagedCatalog, FreeCodeGoManagedCatalogGroup } from './types.ts'
@@ -847,6 +847,32 @@ export function mediaCategoryForManagedModel(model: { readonly id: string; reado
   if (protocol === 'video_generation' || protocol === 'video-generation') return 'video'
   if (protocol === 'audio_speech' || protocol === 'audio-speech' || protocol === 'audio_transcription' || protocol === 'audio-transcription') return 'audio'
   return inferMediaCategory(`${model.id} ${model.displayName}`)
+}
+
+/**
+ * Whether a gateway route belongs in the text model picker.
+ *
+ * The picker is where a conversation's model is chosen, and a media route cannot
+ * serve one: the gateway reads a chat body as a generation prompt and the turn
+ * fails. Those routes are chosen in the settings page's per-category tabs, which
+ * read the catalog itself rather than this directory — so hiding a row here takes
+ * it out of the picker without taking it out of the category it belongs to.
+ *
+ * The rule is the settings page's own (`modelCategoryOf`): whatever an explicit
+ * override says wins, and otherwise the route is text exactly when it declares no
+ * media role. That is what keeps the picker and the 「文本模型」 tab listing the
+ * same routes instead of two answers that drift.
+ * @param model - the managed route whose id, display name, and declared protocol are read.
+ * @param overrides - the explicit categories, keyed as the settings page keys them.
+ * @returns whether the picker should offer the route for a conversation.
+ */
+export function isTextConversationRoute(
+  model: { readonly id: string; readonly displayName: string; readonly protocol: string; readonly provider: string },
+  overrides: Readonly<Record<string, string>> = {},
+): boolean {
+  const configured = overrides[mediaCategoryOverrideKey(model.provider, model.id)]
+  if (configured !== undefined) return configured === 'text'
+  return mediaCategoryForManagedModel(model) === undefined
 }
 
 /**

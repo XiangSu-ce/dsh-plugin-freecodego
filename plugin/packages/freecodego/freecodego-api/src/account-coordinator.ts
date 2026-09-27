@@ -1,6 +1,6 @@
 /** Host-only account coordination over the Harness credential seam. */
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type {
@@ -56,11 +56,21 @@ export class HarnessFreeCodeGoCredentialVault implements FreeCodeGoCredentialVau
    * it — and erasing the session must not erase what the sign-in form prefills.
    */
   private readonly passwordRef
+  /**
+   * The installation's device identity, kept beside the session pair.
+   *
+   * It is a separate value rather than a field of the pair because it outlives
+   * every rotation: the pair is replaced on each refresh and erased on sign-out,
+   * while this is what makes the next sign-out-and-in land on the same device
+   * row instead of adding one.
+   */
+  private readonly deviceRef
 
   constructor(private readonly credentials: CredentialProvider, origin: string) {
     const digest = createHash('sha256').update(origin).digest('hex').slice(0, 24).toUpperCase()
     this.ref = credentialRef(`FREECODEGO_SESSION_${digest}`)
     this.passwordRef = credentialRef(`FREECODEGO_PASSWORD_${digest}`)
+    this.deviceRef = credentialRef(`FREECODEGO_DEVICE_${digest}`)
   }
 
   async load(_origin: string): Promise<FreeCodeGoTokenPair | undefined> {
@@ -93,6 +103,24 @@ export class HarnessFreeCodeGoCredentialVault implements FreeCodeGoCredentialVau
   async deletePassword(_origin: string): Promise<void> {
     await this.credentials.unset(this.passwordRef)
   }
+
+  /**
+   * Read this installation's device identity.
+   * @returns the stored identity, or undefined when this machine never named one.
+   */
+  async loadDeviceId(_origin: string): Promise<string | undefined> {
+    const resolved = await this.credentials.resolve(this.deviceRef)
+    const value = resolved === undefined ? '' : resolved.value.trim()
+    return value === '' ? undefined : value
+  }
+
+  /**
+   * Persist this installation's device identity.
+   * @param deviceId - the identity every later sign-in and rotation presents.
+   */
+  async saveDeviceId(_origin: string, deviceId: string): Promise<void> {
+    await this.credentials.set(this.deviceRef, deviceId)
+  }
 }
 
 /** Coordinates login and token rotation without exposing secret values to callers. */
@@ -100,6 +128,21 @@ export class FreeCodeGoAccountCoordinator {
   private state: FreeCodeGoAccountState = { status: 'signed-out' }
   private pendingMfaToken: string | undefined
   private refreshInFlight: Promise<void> | undefined
+  /**
+   * The settled resolution of this installation's device identity.
+   *
+   * Cached as the promise rather than the value so two concurrent sign-ins
+   * cannot each mint an identity and race the vault write; whichever asks first
+   * decides, and every later caller reads the same answer.
+   */
+  private deviceIdInFlight: Promise<string> | undefined
+  /**
+   * Whether a rotation has already been spent on a pair that states no device.
+   *
+   * Spent at most once per process: a gateway that keeps answering with an
+   * unbound pair must not make every authorized call rotate the session.
+   */
+  private unboundSessionRenewed = false
   /** Set by logout() so an in-flight refresh never writes after the erase. */
   private signingOut = false
   /**
@@ -275,6 +318,72 @@ export class FreeCodeGoAccountCoordinator {
    * @param signal - aborts the request when the caller cancels.
    * @returns the account state after the issued tokens were stored.
    */
+  /**
+   * This installation's device identity, creating and persisting one on first use.
+   *
+   * The gateway binds a session to the device that opened it and will not serve a
+   * model to a token whose device has no live session, so a sign-in that states
+   * no device is a sign-in the gateway later refuses — every model, every turn.
+   * The identity is therefore resolved once and reused for the life of the
+   * installation, in the same vault as the session pair so a restart keeps it.
+   *
+   * `fcg-<uuid>` mirrors the identity the vendor's own desktop client presents,
+   * which keeps a mixed account's device list readable rather than one scheme per
+   * client.
+   * @returns the stable device id this installation signs in with.
+   */
+  async deviceId(): Promise<string> {
+    if (this.deviceIdInFlight === undefined) this.deviceIdInFlight = this.mintDeviceId()
+    return this.deviceIdInFlight
+  }
+
+  /**
+   * The identity to sign in with, honoring a device the caller stated.
+   *
+   * A stated device is an assertion about which device this session belongs to,
+   * so it is remembered rather than merely forwarded: the next rotation resolves
+   * the installation identity, and rotating a session onto a different device is
+   * how a working pair stops being accepted.
+   * @param statedDeviceId - the device the caller named, if any.
+   * @returns the identity to present to the gateway.
+   */
+  private async deviceIdFor(statedDeviceId: string | undefined): Promise<string> {
+    const stated = statedDeviceId?.trim() ?? ''
+    if (stated === '') return this.deviceId()
+    this.deviceIdInFlight = Promise.resolve(stated)
+    try {
+      await this.vault.saveDeviceId?.(this.auth.origin, stated)
+    } catch {
+      // Process-local only; already reported by the vault.
+    }
+    return stated
+  }
+
+  /**
+   * Load the stored identity, or mint one and write it back.
+   *
+   * Both vault failures are recoverable rather than fatal: an unreadable entry is
+   * "no identity yet", and an unwritable one leaves the id live for this process
+   * — the session it binds is still usable, it just will not survive a restart.
+   * @returns the identity to present, stored when the vault accepts it.
+   */
+  private async mintDeviceId(): Promise<string> {
+    try {
+      const stored = await this.vault.loadDeviceId?.(this.auth.origin)
+      if (stored !== undefined) return stored
+    } catch {
+      // An unreadable device entry is a new installation for this purpose: a
+      // throw here would turn a corrupt vault into a client that cannot sign in.
+    }
+    const created = `fcg-${randomUUID()}`
+    try {
+      await this.vault.saveDeviceId?.(this.auth.origin, created)
+    } catch {
+      // Process-local only; already reported by the vault.
+    }
+    return created
+  }
+
   async login(input: FreeCodeGoLoginInput, signal?: AbortSignal): Promise<FreeCodeGoAccountState> {
     // Every entry point states its own persistence intent, so an unremembered
     // login cannot inherit the flag from an earlier remembered one (or the
@@ -284,7 +393,7 @@ export class FreeCodeGoAccountCoordinator {
     else if (input.rememberPassword) this.pendingPassword = { keep: input.password }
     else this.pendingPassword = { forget: true }
     try {
-      return await this.consumeLoginResult(await this.auth.login(input, signal))
+      return await this.consumeLoginResult(await this.auth.login({ ...input, deviceId: await this.deviceIdFor(input.deviceId) }, signal))
     } catch (error) {
       // No pair was issued, so this attempt has no intent left to carry.
       this.pendingRemember = undefined
@@ -301,7 +410,7 @@ export class FreeCodeGoAccountCoordinator {
   async register(input: FreeCodeGoRegisterInput, signal?: AbortSignal): Promise<FreeCodeGoAccountState> {
     this.pendingRemember = input.remember
     try {
-      return await this.consumeLoginResult(await this.auth.register(input, signal))
+      return await this.consumeLoginResult(await this.auth.register({ ...input, deviceId: await this.deviceIdFor(input.deviceId) }, signal))
     } catch (error) {
       this.pendingRemember = undefined
       throw error
@@ -311,12 +420,13 @@ export class FreeCodeGoAccountCoordinator {
   /** Complete MFA and store credentials only after the second factor succeeds. 
    * @param tempToken - the MFA challenge token the first factor issued.
    * @param totpCode - the code the user's authenticator produced.
-   * @param deviceId - device identifier recorded with the session.
+   * @param deviceId - device identifier recorded with the session; defaults to
+   * this installation's own, without which the session is not bound to a device.
    * @param signal - aborts the request when the caller cancels.
    * @returns the account state after the second factor succeeded.
    */
   async login2FA(tempToken: string, totpCode: string, deviceId?: string, signal?: AbortSignal): Promise<FreeCodeGoAccountState> {
-    return this.consumeLoginResult(await this.auth.login2FA(tempToken, totpCode, deviceId, signal))
+    return this.consumeLoginResult(await this.auth.login2FA(tempToken, totpCode, await this.deviceIdFor(deviceId), signal))
   }
 
   /** Complete the pending Host-owned MFA challenge without exposing its temp token. 
@@ -405,7 +515,9 @@ export class FreeCodeGoAccountCoordinator {
   }
 
   /** Rotate the stored session token; callers reauthenticate after any failure. 
-   * @param deviceId - device identifier recorded with the rotated session.
+   * @param deviceId - device identifier recorded with the rotated session;
+   * defaults to this installation's own, so a rotation never drops the binding
+   * the gateway checks.
    * @param signal - bounds this caller's wait; the shared rotation keeps running.
    */
   async refresh(deviceId?: string, signal?: AbortSignal): Promise<void> {
@@ -438,7 +550,7 @@ export class FreeCodeGoAccountCoordinator {
       // Bound the shared refresh independently of whichever caller arrived
       // first: coalesced callers must not inherit that caller's AbortSignal and
       // see the refresh fail (or hang) because they aborted.
-      const exchange = await this.exchangeRefresh(tokens.refreshToken, deviceId)
+      const exchange = await this.exchangeRefresh(tokens.refreshToken, await this.deviceIdFor(deviceId))
       if (!exchange.ok) {
         if (this.signingOut) throw exchange.error
         // One classifier decides what a failure means, and only an invalidation
@@ -544,6 +656,14 @@ export class FreeCodeGoAccountCoordinator {
       await this.refresh(undefined, signal)
       tokens = await this.loadTokens()
       if (tokens === undefined) throw new Error('FreeCodeGo authentication is required after token refresh')
+    } else if (this.shouldRenewUnboundSession(tokens.accessToken)) {
+      // Best effort, unlike the expiry branch above: a pair that states no
+      // device is still accepted by every endpoint that does not check one, so
+      // a rotation that fails here must not turn a working call into an error.
+      // The gateway call that follows reports the real failure if the pair
+      // stays unbound.
+      await this.refresh(undefined, signal).catch(() => undefined)
+      tokens = (await this.loadTokens()) ?? tokens
     }
     try {
       return await operation(tokens.accessToken, signal)
@@ -562,6 +682,25 @@ export class FreeCodeGoAccountCoordinator {
       if (refreshed === undefined) throw new Error('FreeCodeGo authentication is required after unauthorized response')
       return operation(refreshed.accessToken, signal)
     }
+  }
+
+  /**
+   * Whether to spend this process's one rotation on a pair that states no device.
+   *
+   * The gateway serves no model to a token whose device has no live session and
+   * answers a device-less token with `401`. That answer is not about the token's
+   * age, so the expiry check above never fires: every turn fails identically for
+   * the whole life of the pair. One rotation repairs it, because refresh() now
+   * states this installation's identity — and the replacement is bound, so this
+   * answers false from then on.
+   * @param accessToken - the stored access token about to be presented.
+   * @returns whether an unbound pair should be rotated before this call.
+   */
+  private shouldRenewUnboundSession(accessToken: string): boolean {
+    if (this.unboundSessionRenewed) return false
+    if (!tokenStatesNoDevice(accessToken)) return false
+    this.unboundSessionRenewed = true
+    return true
   }
 
   /**
@@ -743,6 +882,17 @@ function tokenNeedsRefresh(accessToken: string): boolean {
   try {
     const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as { exp?: unknown }
     return typeof payload.exp === 'number' && Number.isFinite(payload.exp) && Date.now() >= payload.exp * 1000 - 60_000
+  } catch {
+    return false
+  }
+}
+
+function tokenStatesNoDevice(accessToken: string): boolean {
+  const parts = accessToken.split('.')
+  if (parts.length !== 3) return false
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as { device_id?: unknown }
+    return typeof payload.device_id !== 'string' || payload.device_id.trim() === ''
   } catch {
     return false
   }

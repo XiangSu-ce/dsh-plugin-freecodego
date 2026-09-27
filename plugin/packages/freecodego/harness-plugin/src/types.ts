@@ -586,6 +586,27 @@ export interface FreeCodeGoDeviceSessionRow {
   readonly revoked: boolean
 }
 
+/**
+ * How loudly the backend asked one announcement to be shown.
+ *
+ * `popup` is the administrator's own choice on the create form, so it is the only
+ * statement the client has about emphasis: the announcement schema carries no
+ * colour or priority field, and this decides between the banner and the dialog.
+ */
+export type FreeCodeGoAnnouncementNotifyMode = 'silent' | 'popup'
+
+/** One announcement this account may see, projected for the client bar. */
+export interface FreeCodeGoAnnouncement {
+  readonly id: number
+  readonly title: string
+  /** Markdown, as the administrator wrote it. */
+  readonly content: string
+  readonly notifyMode: FreeCodeGoAnnouncementNotifyMode
+  /** When this account read it; absent while unread. */
+  readonly readAt?: string
+  readonly createdAt: string
+}
+
 /** Browser-safe device-session listing for the Settings page. */
 export interface FreeCodeGoDeviceSessions {
   readonly currentDeviceId?: string

@@ -1420,6 +1420,41 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     await ctx.fiber.dispose()
   })
 
+  it('keeps gateway media routes out of the model picker', async () => {
+    // The picker's rows are what a turn will be run on. An image route there is
+    // a route the gateway reads as a generation prompt and refuses the turn for,
+    // and it is already offered where it belongs: the settings page's image tab,
+    // which lists the catalog rather than this directory.
+    const ctx = new Context()
+    await ctx.plugin(AgentEngineRegistry)
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, { autoSubagentModelSelection: false }) as unknown as {
+      listFreeCodeGoModels: (provider: string) => Promise<readonly { readonly id: string }[]>
+      localFreeCodeGoModels: (provider: string) => Promise<readonly unknown[]>
+      readManagedCatalogCache: () => Promise<unknown>
+      refreshManagedCatalogInBackground: () => void
+      refreshGatewayHealthInBackground: () => void
+      account: { snapshot: () => { status: string } }
+    }
+    const model = (id: string, protocol = 'openai_responses') => ({ id, displayName: id, provider: 'openai', protocol, availability: 'available', compatibleEngines: ['deepseek'], choices: [] })
+    plugin.localFreeCodeGoModels = async () => []
+    plugin.readManagedCatalogCache = async () => ({
+      catalogRevision: 'media-picker-scope-test',
+      models: [
+        model('gpt-5.6-sol'),
+        model('gpt-image-2'),
+        model('gpt-image-2.5-flare'),
+        model('agnes-video-2.5-flash'),
+      ],
+    })
+    plugin.refreshManagedCatalogInBackground = () => undefined
+    plugin.refreshGatewayHealthInBackground = () => undefined
+    plugin.account = { snapshot: () => ({ status: 'authenticated' }) }
+
+    const ids = (await plugin.listFreeCodeGoModels('freecodego')).map(row => row.id)
+    expect(ids).toEqual(['gpt-5.6-sol'])
+    await ctx.fiber.dispose()
+  })
+
   it('lists one dialog row per backend group with that group name and rate', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)

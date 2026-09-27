@@ -120,6 +120,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
  */
 export const zh = {
   tab: 'FreeCodeGo',
+  announcements: '公告',
   'language.switch': '切换中英文',
   engineShort: '引擎',
   engineHint: '选择新会话使用的 Agent 引擎',
@@ -249,6 +250,7 @@ export const zh = {
  */
 export const en = {
   tab: 'FreeCodeGo',
+  announcements: 'Announcements',
   'language.switch': 'Switch language',
   engineShort: 'Engine',
   engineHint: 'Choose the Agent engine for new sessions',
@@ -372,6 +374,8 @@ export const en = {
   searchProviderNeedsPick: 'The search provider points at a local-bridge endpoint from a previous run, and no record of the choice survived to rebuild it. Pick one above.',
   searchProviderRepairFailed: 'The saved local-bridge endpoint is dead and rebuilding it did not succeed. Pick one above.',
 } satisfies Record<keyof typeof zh, string>
+
+import { AnnouncementBar, AnnouncementSettingsSection, type Announcement } from './announcement-bar.tsx'
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => installFreeCodeGoSidebarIcons(), 'freecodego-ui: semantic sidebar icons')
@@ -1277,6 +1281,41 @@ export function apply(ctx: ClientContext): void {
   // Engineering is optional and remains a plugin-owned settings page. Its
   // registration follows only the master switch so it never adds a dormant
   // sidebar item to installations that have not opted in.
+  // The backend's announcements, on the shell's own overlay layer.
+  //
+  // One instance for the whole app rather than one per conversation: an
+  // announcement belongs to the account, and the administrator's 福利 is meant to
+  // be seen wherever the user is working — including the settings page and the
+  // file panels. `shell.overlay` is the root-scope layer that survives panel
+  // switches; the bar positions itself under the shell's chrome from the
+  // measurements the frame publishes (see the module's CSS).
+  const announcementFeed = {
+    // Empty on a failed read rather than throwing: the notice surfaces have
+    // nothing to render, and the conversation underneath must not be covered by
+    // an error the user cannot act on.
+    list: async () => {
+      const result = await backendCall<readonly Announcement[]>('accountAnnouncements')
+      return result.ok ? result.value : []
+    },
+    markRead: async (announcementId: number) => {
+      const result = await backendCall<boolean>('accountMarkAnnouncementRead', announcementId)
+      return result.ok ? result.value : false
+    },
+  }
+  ctx.inject(['slots'], scope => scope.slots.inject('shell.overlay', () => scope.slots.register({
+    name: 'shell.overlay', id: 'freecodego-announcements', order: 5, locale: NS,
+    inject: () => ({ ...announcementFeed, language: settingsLanguage() }),
+  }, AnnouncementBar)))
+
+  // The other half of hiding the bar: a section that lists the same feed and
+  // carries the switch back on. Without it, a user who turned the bar off would
+  // have no surface left that could turn it on again.
+  ctx.inject(['slots'], scope => scope.slots.inject('settings.section', () => scope.slots.register({
+    name: 'settings.section', id: 'freecodego-announcements', order: 36,
+    label: () => t('announcements'), locale: NS,
+    inject: () => ({ ...announcementFeed, language: settingsLanguage() }),
+  }, AnnouncementSettingsSection)))
+
   ctx.inject(['slots', 'sessions'], scope => scope.slots.inject('settings.section', () => {
     let disposeEngineering: (() => void) | undefined
     let registrationEpoch = 0

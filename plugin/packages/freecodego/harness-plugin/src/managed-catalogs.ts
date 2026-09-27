@@ -102,6 +102,7 @@ import {
   logfareHealthDescription, logfareModelKey, logfareResponseError, logfareSelectionId, logfareSupportsChat,
   logfareUsesTrainingData, MANAGED_MODEL_CATALOG_CACHE_TTL_MS, MODEL_CATALOG_TIMEOUT_MS, MODEL_REASON_FREECODEGO_LOGIN,
   MODEL_REASON_OPENCODE_UNAVAILABLE, OPENCODE_AGENT_CORE_TOOLS, OPENCODE_CATALOG_CACHE_TTL_MS, OPENCODE_CATALOG_MAX_AGE_MS, OPENCODE_CATALOG_RETRY_MS, OPENCODE_DIRECT_BASE_URL,
+  isTextConversationRoute,
   OPENCODE_HEALTH_CACHE_TTL_MS, openCodeFreeTierHeaders, openCodeHealthDescription, parseKiloDirectory, parseLogfareModel,
   parseOpenCodeDirectory, parseRouteCapacity, readManagedCatalogCache, sameOpenCodeRoster,
   NVIDIA_API_KEY_REF, NVIDIA_BASE_URL, NVIDIA_DEFAULT_CONTEXT_WINDOW, NVIDIA_MODELS, NVIDIA_MODELS_URL,
@@ -860,11 +861,19 @@ export class FreeCodeGoManagedCatalogs {
         : { availability: 'unavailable' as const, unavailableReason: MODEL_REASON_FREECODEGO_LOGIN }),
       inputModalities: imageInputModalities(model.id, model.displayName),
     })
+    // The picker this directory feeds chooses a conversation's model, so it
+    // lists only the routes that can serve one. A gateway media route cannot —
+    // the chat body is read as a generation prompt and the turn fails — and it
+    // is chosen instead in the settings page's per-category tabs, which read the
+    // catalog rather than this directory. The user's own category override wins
+    // over the inference, so a route they moved into `text` comes back here.
+    const modelCategories = this.deps.settings()?.get()?.modelCategories ?? {}
+    const chatModels = (managed?.models ?? []).filter(model => isTextConversationRoute(model, modelCategories))
     // Expand BEFORE the login gate: a pinned row must name its group even when
     // the account is signed out, so the picker explains "this group needs a
     // login" instead of hiding the whole structure. Options come from the same
     // cache the catalog itself came from.
-    const options = managed?.models.flatMap((model) => {
+    const options = chatModels.flatMap((model) => {
       const groupedChoices = model.choices.filter((choice): choice is typeof choice & { readonly groupId: number } => choice.groupId !== undefined)
       return groupedChoices.length === 0
         ? []
@@ -886,7 +895,7 @@ export class FreeCodeGoManagedCatalogs {
         })),
       }]
     }) ?? []
-    const expanded = expandGroupPinnedModels(managed?.models.map(availabilityRow) ?? [], options)
+    const expanded = expandGroupPinnedModels(chatModels.map(availabilityRow), options)
     const rows = expanded.map((model) => {
       const pinned = model.__groupLabel !== undefined
       // Two rows for one model differ only by their group, so the name must

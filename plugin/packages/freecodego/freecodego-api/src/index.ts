@@ -252,6 +252,30 @@ export interface FreeCodeGoCheckoutRequest extends FreeCodeGoCatalogRequest {
   readonly isMobile?: boolean
 }
 
+/**
+ * How loudly the backend wants one announcement shown.
+ *
+ * `popup` is the administrator's own choice on the create form (弹窗模式会自动弹出
+ * 通知给用户), so it is the one signal the client has about emphasis — there is
+ * no separate colour field, and this is what decides between the banner and the
+ * dialog.
+ */
+export type FreeCodeGoAnnouncementNotifyMode = 'silent' | 'popup'
+
+/** One announcement this account may see, as the backend published it. */
+export interface FreeCodeGoAnnouncement {
+  readonly id: number
+  readonly title: string
+  /** Markdown, as the administrator wrote it in the create form. */
+  readonly content: string
+  readonly notifyMode: FreeCodeGoAnnouncementNotifyMode
+  /** When this account read it, absent while unread. */
+  readonly readAt?: string
+  readonly startsAt?: string
+  readonly endsAt?: string
+  readonly createdAt: string
+}
+
 /** Normalized account profile returned by the existing FreeCodeGo `/auth/me` route. */
 export interface FreeCodeGoCurrentUser {
   readonly id?: number
@@ -815,6 +839,49 @@ export class FreeCodeGoApiClient {
     if (deviceId === '') throw new Error('FreeCodeGo device id is required')
     const payload = object(await this.authorized('/api/v1/freecodego/auth/device-sessions/revoke', request, { method: 'POST', body: { device_id: deviceId } }), 'revoke device session')
     return typeof payload.message === 'string' ? payload.message.trim() : ''
+  }
+
+  /**
+   * Read the announcements this account may see.
+   *
+   * The backend decides the audience: an announcement's targeting rules are
+   * applied server-side against the account's balance and subscriptions, so a
+   * row that comes back is one this account is meant to read. `read_at` is the
+   * account's own record, not the client's, which is what lets a dismissal made
+   * on one machine hold on the next.
+   * @param request - the request this call projects from, and whether read rows may be left out.
+   * @returns the visible announcements, newest first as the backend ordered them.
+   */
+  async getAnnouncements(request: FreeCodeGoCatalogRequest & { readonly unreadOnly?: boolean }): Promise<readonly FreeCodeGoAnnouncement[]> {
+    const query = request.unreadOnly === true ? '?unread_only=1' : ''
+    return array(await this.authorized(`/api/v1/announcements${query}`, request), 'announcements').map((value, index) => {
+      const item = object(value, `announcements[${index}]`)
+      return {
+        id: finiteNumber(item.id, `announcements[${index}].id`),
+        title: string(item.title, `announcements[${index}].title`),
+        content: typeof item.content === 'string' ? item.content : '',
+        notifyMode: announcementNotifyMode(item.notify_mode),
+        ...(typeof item.read_at === 'string' && item.read_at.trim() !== '' ? { readAt: item.read_at.trim() } : {}),
+        ...(typeof item.starts_at === 'string' && item.starts_at.trim() !== '' ? { startsAt: item.starts_at.trim() } : {}),
+        ...(typeof item.ends_at === 'string' && item.ends_at.trim() !== '' ? { endsAt: item.ends_at.trim() } : {}),
+        createdAt: typeof item.created_at === 'string' ? item.created_at : '',
+      }
+    })
+  }
+
+  /**
+   * Record that this account read one announcement.
+   *
+   * The backend owns the record, so closing a notice is an acknowledged fact
+   * rather than a client-side memory: the same announcement stays closed on the
+   * account's other machines, and the administrator's read report counts it.
+   * @param request - the request this call projects from, and the announcement to mark.
+   * @returns nothing; the backend's acknowledgement is not rendered.
+   */
+  async markAnnouncementRead(request: FreeCodeGoCatalogRequest & { readonly announcementId: number }): Promise<void> {
+    const id = request.announcementId
+    if (!Number.isFinite(id) || id <= 0) throw new Error('FreeCodeGo announcement id is required')
+    await this.authorized(`/api/v1/announcements/${encodeURIComponent(String(id))}/read`, request, { method: 'POST' })
   }
 
   /** Revoke every session of the account and return how many the backend revoked. 
@@ -1583,6 +1650,19 @@ function freeAccessFlags(...sources: readonly Record<string, unknown>[]): boolea
 
 function channelMonitorStatus(value: unknown): FreeCodeGoGatewayProviderHealth['status'] {
   return value === 'operational' || value === 'degraded' || value === 'failed' || value === 'error' ? value : 'unknown'
+}
+
+/**
+ * The notify mode an announcement's own field means.
+ *
+ * An unreadable value reads as `silent`: the one thing a mode decides is whether
+ * the client interrupts the user with a dialog, and a backend spelling this
+ * client does not know is not a reason to interrupt them.
+ * @param value - the raw `notify_mode` the backend sent.
+ * @returns the mode to render with.
+ */
+function announcementNotifyMode(value: unknown): FreeCodeGoAnnouncementNotifyMode {
+  return value === 'popup' ? 'popup' : 'silent'
 }
 
 function normalizeBaseUrl(value: string, allowInsecureLocalhost: boolean): URL {

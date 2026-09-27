@@ -13,7 +13,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient } from '@deepseek-ai/dsh-freecodego-api'
 import { randomUUID } from 'node:crypto'
-import type { FreeCodeGoAccountSnapshot, FreeCodeGoBackendSnapshot, FreeCodeGoCheckinReport, FreeCodeGoDeviceSessions, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoLoginRequest, FreeCodeGoManagedCatalog, FreeCodeGoNvidiaStatus, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, WorkBuddyBrowserLogin, WorkBuddyInternationalAccount, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, WorkBuddyLoginPoll } from './types.ts'
+import { hostname } from 'node:os'
+import type { FreeCodeGoAccountSnapshot, FreeCodeGoAnnouncement, FreeCodeGoBackendSnapshot, FreeCodeGoCheckinReport, FreeCodeGoDeviceSessions, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoLoginRequest, FreeCodeGoManagedCatalog, FreeCodeGoNvidiaStatus, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, WorkBuddyBrowserLogin, WorkBuddyInternationalAccount, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, WorkBuddyLoginPoll } from './types.ts'
 import { buildTraeLoginUrl, TRAE_LOGIN_STATE_TTL_MS, traeCallbackUrl } from './trae/endpoints.ts'
 import { startTraeCallbackListener, type TraeCallbackListener } from './trae/callback-server.ts'
 import { exchangeTraeToken, parseTraeCallback, traeAccountFromLogin, traeMachineIdentity } from './trae/login.ts'
@@ -126,6 +127,49 @@ export interface AccountRemotesHost {
   readonly logfareStatus: () => Promise<FreeCodeGoLogfareStatus>
   readonly sensenovaStatus: () => Promise<FreeCodeGoSenseNovaStatus>
   readonly nvidiaStatus: () => Promise<FreeCodeGoNvidiaStatus>
+}
+
+/**
+ * Read the announcements this account may see.
+ *
+ * Empty rather than failing, in both the signed-out and the unreachable case: the
+ * caller is a notice bar on the chat surface, and a client that cannot read the
+ * notices has nothing to render — an error banner over the conversation is a
+ * worse answer than no banner, and it is not the user's to fix. The backend
+ * applies the audience rules, so a row here is one this account is meant to read.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the visible announcements, in the backend's own order.
+ */
+export async function accountAnnouncements(host: AccountRemotesHost): Promise<readonly FreeCodeGoAnnouncement[]> {
+  if (host.account === undefined || host.api === undefined) return []
+  try {
+    await host.restoreAccount()
+    return await host.account.withAccessToken(accessToken => host.api!.getAnnouncements({ accessToken }))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Record that this account read one announcement.
+ *
+ * The record is the backend's, not the client's: closing a notice on one machine
+ * closes it on the account's others, and the administrator's read report counts
+ * it. A failure is reported as `false` rather than thrown — the notice is already
+ * off the user's screen, and a failed acknowledgement is not theirs to fix.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param announcementId - the announcement the user dismissed.
+ * @returns whether the backend recorded the read.
+ */
+export async function accountMarkAnnouncementRead(host: AccountRemotesHost, announcementId: number): Promise<boolean> {
+  if (host.account === undefined || host.api === undefined) return false
+  try {
+    await host.restoreAccount()
+    await host.account.withAccessToken(accessToken => host.api!.markAnnouncementRead({ accessToken, announcementId }))
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -605,6 +649,44 @@ export async function nvidiaSetKey(host: AccountRemotesHost, value: string): Pro
   return host.nvidiaStatus()
 }
 
+/**
+ * The device row this installation should be recorded as.
+ *
+ * The id is the part that matters: the gateway binds the session to it and the
+ * device list is keyed by it, so a client that omits it registers nothing and is
+ * refused on every model. The name is only what the account's device list shows
+ * — without one the row reads as a bare id — so this machine's hostname goes
+ * with it when the platform offers one.
+ *
+ * A host that cannot state an identity is not an error here: the call is still a
+ * valid bootstrap, and the gateway reports what it is missing.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the identity fields to send, empty when none can be resolved.
+ */
+async function bootstrapDeviceIdentity(host: AccountRemotesHost): Promise<{ readonly deviceId?: string; readonly deviceName?: string }> {
+  try {
+    const deviceId = await host.account?.deviceId()
+    if (deviceId === undefined) return {}
+    const name = localDeviceName()
+    return name === undefined ? { deviceId } : { deviceId, deviceName: name }
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * This machine's name, for the account's device list.
+ * @returns the hostname, or undefined when the platform will not give one.
+ */
+function localDeviceName(): string | undefined {
+  try {
+    const name = hostname().trim()
+    return name === '' ? undefined : name
+  } catch {
+    return undefined
+  }
+}
+
 /** Return the existing FreeCodeGo bootstrap snapshot through a redacted Remote. 
  * @param host - the Host surface this remote call reaches its services through.
  * @returns the backend Snapshot.
@@ -613,7 +695,11 @@ export async function backendBootstrap(host: AccountRemotesHost): Promise<FreeCo
   if (host.api === undefined || host.account === undefined) return { status: 'backend-not-configured' }
   try {
     await host.restoreAccount()
-    const data = await host.account.withAccessToken(accessToken => host.api!.getBootstrap({ accessToken }))
+    const identity = await bootstrapDeviceIdentity(host)
+    // Bootstrap is what registers the device session the model gateway later
+    // checks, so it is sent with the identity rather than without it: a
+    // bootstrap that names no device leaves every model refused.
+    const data = await host.account.withAccessToken(accessToken => host.api!.getBootstrap({ accessToken, ...identity }))
     return { status: 'available', data: toJsonValue(data) }
   } catch (error) {
     return { status: 'error', message: upstreamMessage(error instanceof Error ? error.message : String(error), 'bootstrap request failed') }
@@ -711,16 +797,19 @@ async function confirmAccountAuthorization(
 /**
  * List the account's desktop device sessions.
  *
- * The backend marks one row as `current`; without a locally persisted device id
- * it falls back to the most recent active session, which is also what the
- * returned `currentDeviceId` reports.
+ * The backend marks one row as `current`, which it can only do from the device id
+ * the caller states: without one it falls back to the most recent active session,
+ * so the row marked as this machine can be another one, and revoking "this"
+ * device then revokes the wrong row. The id this installation signs in with is
+ * therefore sent with the listing.
  * @param host - the Host surface this remote call reaches its services through.
  * @returns the device Sessions.
  */
 export async function deviceSessions(host: AccountRemotesHost): Promise<FreeCodeGoDeviceSessions> {
   if (host.api === undefined || host.account === undefined) throw backendNotConfigured()
   await host.restoreAccount()
-  return host.account.withAccessToken(accessToken => host.api!.getDeviceSessions({ accessToken }))
+  const identity = await bootstrapDeviceIdentity(host)
+  return host.account.withAccessToken(accessToken => host.api!.getDeviceSessions({ accessToken, ...identity }))
 }
 
 /** Revoke one device session, then return the refreshed listing. 

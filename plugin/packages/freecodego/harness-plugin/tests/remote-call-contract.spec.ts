@@ -327,7 +327,12 @@ describe('the remote call contract', () => {
     // dispatch site, so REMOTES, SITES and the distinct-name count move together and
     // the unreached count below does not — the signature of a remote that arrives with
     // a caller rather than one declared for the Host alone.
-    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(229)
+    // 229 → 231: `accountAnnouncements` and `accountMarkAnnouncementRead` — the
+    // announcement feed the notice bar polls and the acknowledgement its close
+    // button sends. Both have exactly one dispatch site on the client side, so both
+    // counts below moved with this one, which is the check that says the pair was
+    // extended rather than one side drifting.
+    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(231)
     // Re-verified when this moved 182 → 176: the five conditional dispatches
     // (`agnesRefresh`, `agnesCreateApiKey`, `agnesLogout`, `codexRuntimeInstall`,
     // `claudeRuntimeInstall`) that branched into a zero-argument call collapsed
@@ -375,7 +380,9 @@ describe('the remote call contract', () => {
     // `secondModelUpdate`, `secondModelRoutes`), one site each.
     // 205 → 207: the two speech-route dispatch sites, one per name added above.
     // 207 → 208: the connection test's own site (`speechTest` in `client/index.ts`).
-    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(208)
+    // 208 → 210: the two announcement dispatch sites above — one in the bar's
+    // feed, one in its close path — counted here rather than in the settings tab.
+    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(210)
     // 196 → 197: `skillPlacements` is a name no earlier dispatch carried, so this count
     // moves with the two above rather than staying put — the check that a new *name*
     // arrived instead of another call to one already counted.
@@ -396,7 +403,10 @@ describe('the remote call contract', () => {
     // second call to one already counted.
     // 205 → 206: `speechTest` is a name no earlier dispatch carried, so this count
     // moves with the site count above rather than staying put.
-    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(206)
+    // 206 → 208: both announcement names are new, so this count moves with the
+    // site count above rather than staying put — whole names arrived instead of
+    // second calls to names already counted.
+    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(208)
   })
 
   it('reads a known signature correctly, which is what the arity check rests on', () => {

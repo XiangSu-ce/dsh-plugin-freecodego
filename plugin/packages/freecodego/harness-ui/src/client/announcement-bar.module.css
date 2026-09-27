@@ -1,0 +1,241 @@
+/*
+ * The announcement stripe.
+ *
+ * Positioned from the shell's own measurements rather than guessed: the frame
+ * publishes `--dsh-windows-titlebar-height` (40px, the caption row) on Windows
+ * and `--dsh-frame-top-clearance` (48px, the traffic-light strip) on macOS, and
+ * the columns' own header rows occupy the 40px below the Windows caption. The
+ * stripe therefore starts under both, and spans only the centre column on
+ * Windows — where the frame publishes the sidebar's width — so it never covers
+ * the sidebar's brand row.
+ *
+ * The colours are deliberate literals: the whole point of this stripe is to be
+ * noticed, and a theme token would render it as one more quiet surface. Green
+ * is a notice, red is the announcement the backend marked as 弹窗.
+ */
+
+.bar {
+  position: absolute;
+  /* `--dsh-windows-sidebar-width` is published by the frame on Windows only;
+     elsewhere the stripe spans the window. */
+  left: var(--dsh-windows-sidebar-width, 0px);
+  right: 0;
+  top: calc(var(--dsh-windows-titlebar-height, 0px) + 40px);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+  pointer-events: auto;
+  border-bottom: 1px solid transparent;
+  border-bottom-left-radius: 6px;
+}
+
+:global([data-platform='darwin']) .bar {
+  top: var(--dsh-frame-top-clearance, 48px);
+  left: 0;
+}
+
+/* A notice: fluorescent green. */
+.bonus {
+  background: linear-gradient(90deg, #052a0d 0%, #0b3d16 55%, #052a0d 100%);
+  border-bottom-color: #39ff14;
+  color: #d8ffcd;
+  box-shadow: 0 2px 14px rgba(57, 255, 20, 0.35);
+}
+
+.bonus .badge {
+  background: #39ff14;
+  color: #04220a;
+}
+
+/* The announcement the backend published as 弹窗: red, and louder. */
+.urgent {
+  background: linear-gradient(90deg, #380709 0%, #4d0b0f 55%, #380709 100%);
+  border-bottom-color: #ff3b30;
+  color: #ffdcd8;
+  box-shadow: 0 2px 16px rgba(255, 59, 48, 0.45);
+}
+
+.urgent .badge {
+  background: #ff3b30;
+  color: #fdecea;
+}
+
+.badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.track {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+/* The classic marquee: the text starts one track-width to the right, then
+   travels its own length to the left, which lands it fully past the left edge
+   whatever the two widths are. */
+.marquee {
+  display: inline-block;
+  white-space: nowrap;
+  padding-left: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  animation: announcement-marquee linear infinite;
+}
+
+.marquee:hover {
+  text-decoration: underline;
+}
+
+@keyframes announcement-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
+/* A user who asked the system not to animate things still gets the notice, as a
+   single line that truncates instead of travelling. */
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    animation: none;
+    padding-left: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+}
+
+.action {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.action:hover {
+  opacity: 1;
+}
+
+/* Dialog contents. */
+.document {
+  max-height: 52vh;
+  overflow: auto;
+}
+
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 52vh;
+  overflow: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-secondary, rgba(127, 127, 127, 0.2));
+}
+
+.rowTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowTitle:hover {
+  text-decoration: underline;
+}
+
+.rowState {
+  flex: 0 0 auto;
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dotBonus {
+  background: #39ff14;
+}
+
+.dotUrgent {
+  background: #ff3b30;
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.footerButtons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.primary {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-brand, #1f6feb);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.empty {
+  margin: 0;
+  opacity: 0.8;
+}
+
+/* The settings section: the same rows, in the page's own flow. */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sectionHint {
+  opacity: 0.72;
+  font-size: 12px;
+}

@@ -18,123 +18,92 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.1.7-rc.2.3 — 2026-09-28
+
+### English
+
+A counter on the same Harness line: `freecodego.harnessBaseline`, `engines.dsh`
+and the asset name still state `0.1.7-rc.2`, and only this bundle's own version
+moved. Three things changed since `0.1.7-rc.2.2`, and one of them is the reason
+this counter exists: every model answered 401, whether or not anyone had signed
+in.
+
+#### Fixed
+
+- **Signing in no longer leaves every request unauthorized.** A request is
+  authorized against a *device session*, not against the token alone, and this
+  plugin never named its device: the gateway's session stage rejected every
+  model and every route with `API_KEY_NOT_FOUND`, which the client reported as an
+  invalid API key. The plugin now mints a device identity (`fcg-<uuid>`, named
+  after the machine's hostname), keeps it in the credential vault, and sends it
+  on login, registration, 2FA completion and refresh, so the session a token
+  refers to exists from the first request. A session minted before the plugin
+  knew its device is rotated once, best-effort, the first time it is used: an
+  installation older than this version heals itself rather than asking its user
+  to sign in again.
+
+#### Changed
+
+- **The conversation model picker offers conversation models.** Image- and
+  video-generation routes were listed beside the chat models and did nothing
+  when chosen. They are filtered out of the picker and stay where they work,
+  `Settings → 生图模型`. An explicit per-model category override still moves a
+  route into the picker, because that override is the user's decision while this
+  filter is only a default.
+
+#### Added
+
+- **Announcements, published from the backend.** The plugin reads
+  `GET /api/v1/announcements` on a 120-second poll and shows what it finds on a
+  scrolling stripe above the conversation: fluorescent green for an announcement
+  published as 静默, red for 弹窗. Closing one records the read on the *account*
+  rather than in the browser, so the same notice stays closed on the account's
+  other machines, and `Settings → 公告` lists the history with a switch that
+  turns the stripe off and back on. The plugin opens no dialog of its own: a
+  notice nobody asked for does not take the screen, and the full text is one
+  click away.
+
+### 中文
+
+仍是同一条 Harness 线上的计数版本：`freecodego.harnessBaseline`、`engines.dsh`
+与发布资产名都还写着 `0.1.7-rc.2`，只有这个 bundle 自己的版本号前进。自
+`0.1.7-rc.2.2` 以来有三处变化，其中一处正是这次计数存在的理由：无论是否登录过，
+每个模型都返回 401。
+
+#### 修复
+
+- **登录之后不再「所有请求都未授权」。** 一次请求的授权对象是**设备会话**，而不是
+  令牌本身，而本插件此前从不声明自己是哪台设备：网关的会话阶段对**每个模型、每条
+  路由**都以 `API_KEY_NOT_FOUND` 拒绝，客户端把它报成了「API 密钥无效」。插件现在
+  生成一个设备身份（`fcg-<uuid>`，名字取机器的 hostname）、存入凭证库，并在登录、
+  注册、完成两步验证与刷新时一并发送，因此令牌指向的会话从第一个请求起就存在。对于
+  在插件知道自己的设备之前签发的会话，第一次使用时**尽力轮换一次**：早于本版本的
+  安装会自行修复，而不必请用户重新登录。
+
+#### 变更
+
+- **会话模型选择器只列会话模型。** 生图与生视频路由原先混在对话模型里，选中后什么
+  也不做。它们已从选择器里滤掉，留在真正生效的地方：`设置 → 生图模型`。显式的单模型
+  分类覆盖仍能把一条路由放进选择器 —— 那是用户的决定，而这个过滤只是默认值。
+
+#### 新增
+
+- **由后端发布的公告。** 插件每 120 秒轮询一次 `GET /api/v1/announcements`，把读到的
+  内容显示在会话上方的滚动横条里：管理员以「静默」发布的公告是荧光绿，「弹窗」是红
+  色。关闭一条会把已读记在**账号**上而不是浏览器里，因此同一账号在其它设备上也不会
+  再提示；`设置 → 公告` 列出历史，并有一个开关可以关掉或重新打开横条。插件自己不弹
+  任何对话框：没人主动要看的通知不该占据屏幕，正文点一下就能看到。
+
 ## 0.1.7-rc.2.2 — 2026-09-28
 
 ### English
 
-The second counter on the same Harness line, and again nothing in the bundle
-itself changes: a reader who only mounts it can skip it. Three runs have now
-failed before publication — `0.1.7-rc.2` in the workspace sync, `0.1.7-rc.2.1`
-one step later in the workspace install — and this is the first version of that
-content that gets past both, so it carries everything below: the whole
-`0.1.7-rc.2` section, and the sync fix `0.1.7-rc.2.1` describes.
-
-#### Fixed
-
-- **The lockfile now describes the workspace the release builds.** A release run
-  installs with `pnpm install --frozen-lockfile` *after* it has synchronized the
-  upstream tree, so the published `pnpm-lock.yaml` has to describe exactly that
-  tree. It did not: `pnpm run verify-package-dependencies --fix` had been run in
-  the working copy on 2026-09-27, and that command rewrites the manifests it
-  finds violations in *and* regenerates the lockfile from them. Four official
-  manifests were rewritten that way —
-  `experimental/browser-use-stagehand-native`,
-  `experimental/computer-use-cua-driver-mcp`,
-  `experimental/computer-use-cua-driver-native`, `interaction/user-approval` —
-  all four files this repository does not track, because the sync materializes
-  them from upstream, and the lockfile was rebuilt against the rewritten shapes.
-  A working copy agrees with that lockfile; a release run cannot, because the
-  manifests it installs against are the ones the sync has just written. The four
-  are back to the shape the sync produces (the policy gate is satisfied either
-  way — `verify-package-dependencies` reports its measured 73 packages on both),
-  and the lockfile was regenerated in a tree that matches the release. Verified by
-  running the frozen install against a clean checkout of the published tree: it is
-  what failed in CI, and it now passes.
-
-### 中文
-
-同一条 Harness 线上的第二次计数发布，bundle 本身依旧没有任何变化：只挂载它的使用者可以
-跳过它。至此已有三次运行在发布之前失败 —— `0.1.7-rc.2` 停在工作树同步，`0.1.7-rc.2.1`
-晚一步停在依赖安装 —— 而这是那批内容中第一个走过这两步的版本，因此它包含下面的一切：
-整个 `0.1.7-rc.2` 一节，以及 `0.1.7-rc.2.1` 描述的同步修复。
-
-#### 修复
-
-- **lockfile 现在描述的是 release 真正构建的那棵工作树。** 发布运行是在同步完上游树**之后**
-  才执行 `pnpm install --frozen-lockfile` 的，因此发布的 `pnpm-lock.yaml` 必须精确描述那棵树。
-  它当时不是：2026-09-27 在工作副本里跑过 `pnpm run verify-package-dependencies --fix`，而这条
-  命令会改写它发现违规的那些清单**并据此重新生成 lockfile**。它这样改写了四份官方清单 ——
-  `experimental/browser-use-stagehand-native`、`experimental/computer-use-cua-driver-mcp`、
-  `experimental/computer-use-cua-driver-native`、`interaction/user-approval` —— 这四份都不是
-  本仓库跟踪的文件（它们由同步从上游落盘），而 lockfile 是按改写后的形状重建的。工作副本与
-  那份 lockfile 自洽；发布运行不可能自洽，因为它面对的是同步刚写下的清单。这四份已恢复为
-  同步产出的形状（两种形状都能过门禁：`verify-package-dependencies` 在两者上都报出实测的
-  73 个包），lockfile 则在匹配 release 的那棵树里重新生成。验证方式是拿发布树的干净 checkout
-  跑同一条 frozen 安装 —— 那正是 CI 失败的地方，现在通过。
-
-## 0.1.7-rc.2.1 — 2026-09-28
-
-### English
-
-A counter on the same Harness line, and nothing in the bundle itself changes: a
-reader who only mounts it can skip this version. `0.1.7-rc.2` was tagged and
-pushed, and its release run stopped in the first step that touches the tree —
-before anything was built, with the GitHub release and the registry version
-skipped behind it — so that version produced and published no artifact at all.
-The fix below went out under this tag, and its own run stopped one step later, at
-the workspace install (see `0.1.7-rc.2.2` above, which carries all of it).
-
-#### Fixed
-
-- **The workspace sync no longer dies on a fresh clone.** `sync:harness` applies
-  this fork's upstream patches after it has copied the upstream tree, and one of
-  them — `patchGenConfigCatalogTypeParameters`, added in `0.1.7-rc.2` — read its
-  two anchor strings from module constants declared *below* the call that runs it.
-  On a clean checkout that is
-  `Cannot access 'GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR' before initialization`,
-  thrown once the copies had already been made. The two are hoisted declarations
-  now, the shape this file's own `runPluginCommandBefore` already uses for the
-  same reason. Nothing local could see it: the patch only applies to a tree that
-  does not already carry it, and every working copy here does, so the early return
-  that makes the sync idempotent read as “works” everywhere the sync had ever run.
-  The release workflow was the first place a clean checkout met the fork.
-- **The fork phase is watched by a gate.** `scripts/freecodego-sync-overlay.spec.ts`
-  had always run its fixtures with `HARNESS_SYNC_COPY_ONLY=1`, which returns before
-  the first fork, so no test had ever executed the phase that failed. It now reads
-  the fork list out of `applyForks` itself and fails when a fork names a module
-  binding the script declares below its first call — the defect above, stated as
-  the rule it broke.
-
-### 中文
-
-同一条 Harness 线上的又一次计数发布，bundle 本身没有任何变化：只挂载它的使用者可以跳过
-这个版本。`0.1.7-rc.2` 已经打过 tag 并推上去，而它的发布运行在第一个真正动到工作树的步骤
-就停了 —— 什么都还没构建，GitHub release 与 registry 版本都被跳过 —— 因此那个版本没有产出、
-也没有发布任何产物。下面这条修复以这个 tag 发出，而它自己的运行又晚一步停在工作树安装
-（见上方 `0.1.7-rc.2.2`，它包含全部内容）。
-
-#### 修复
-
-- **全新 clone 上的工作树同步不再崩溃。** `sync:harness` 在复制完上游树之后才应用本 fork 的
-  上游补丁，其中 `patchGenConfigCatalogTypeParameters`（`0.1.7-rc.2` 新增）从**调用点之后**
-  声明的模块常量里读它那两段锚点文本，于是在干净的 checkout 上抛出
-  `Cannot access 'GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR' before initialization`，而且是在复制
-  已经完成之后。现在这两段改成提升的函数声明 —— 也正是本文件里 `runPluginCommandBefore`
-  早已为同一原因采用的形态。本地任何一次运行都看不见这个缺陷：补丁只对尚未带上它的树生效，
-  而这里每一个工作副本都已经带上了，于是那条让同步保持幂等的提前返回，在同步跑过的每台机器
-  上都读作「正常」。release 工作流是干净的 checkout 第一次遇到这个 fork 的地方。
-- **这一段 fork 现在有门禁盯着。** `scripts/freecodego-sync-overlay.spec.ts` 一直用
-  `HARNESS_SYNC_COPY_ONLY=1` 跑它的 fixture，那会在第一个 fork 之前就返回，因此整套测试从未
-  执行过出问题的这一段。现在它从 `applyForks` 本身读出 fork 清单，并在某个 fork 引用了脚本
-  声明在首个调用点之后的模块绑定时失败 —— 也就是把上面那个缺陷写成了它违反的那条规则。
-
-## 0.1.7-rc.2 — 2026-09-28
-
-### English
-
-The first release prepared for Harness `0.1.7-rc.2`, under the line's own
-version rather than a counter. Its release run never published anything (see
-`0.1.7-rc.2.2` above, which carries all of it). Three surfaces are either new or repaired: the
+What changed since `0.1.7-alpha.2.2`, the last version that could be installed.
+This release mounts the Harness `0.1.7-rc.2` line — the bundle version and
+`freecodego.harnessBaseline` are both `0.1.7-rc.2`, and the release asset is
+named after it. The `0.1.7-rc.2` and `0.1.7-rc.2.1` tags ahead of this version
+produced no release and no registry version, so nothing was installable under
+them. Three surfaces are either new or repaired since that last version: the
 design pack, the companion character, and the speech card in the settings page.
 
 #### Added
@@ -208,8 +177,11 @@ design pack, the companion character, and the speech card in the settings page.
 
 ### 中文
 
-第一个为 Harness `0.1.7-rc.2` 发布的版本，用这条线自己的版本号而不是计数器。
-三处新做或修好的面：设计包、伴侣角色，以及设置页里的语音卡片。
+相对上一个可以安装的版本 `0.1.7-alpha.2.2` 的变化。本次 release 挂载 Harness
+`0.1.7-rc.2` 这条线 —— bundle 版本与 `freecodego.harnessBaseline` 都写 `0.1.7-rc.2`，
+release 资产名也按这条线命名。排在它前面的 `0.1.7-rc.2` 与 `0.1.7-rc.2.1` 两个 tag 既没有
+产出 release，也没有 registry 版本，因此那两个版本号下没有任何可安装的东西。相对上一个
+版本，三处新做或修好的面：设计包、伴侣角色，以及设置页里的语音卡片。
 
 #### 新增
 

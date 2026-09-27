@@ -46,6 +46,23 @@ export interface FreeCodeGoCredentialVault {
   loadPassword?(origin: string): Promise<string | undefined>
   savePassword?(origin: string, password: string): Promise<void>
   deletePassword?(origin: string): Promise<void>
+  /**
+   * The stable device identity this installation names itself with.
+   *
+   * The gateway binds every session to the device that opened it: the tokens it
+   * issues carry the `device_id` the sign-in was made with, and the model gateway
+   * then refuses a token whose device has no live session. A client that never
+   * states one signs in successfully and is refused by the gateway on every
+   * model afterwards, so the identity belongs beside the session pair rather
+   * than in the caller — it has to survive a restart exactly as the pair does,
+   * or every launch becomes a new device.
+   *
+   * Optional like the password pair: a vault that models only the session is not
+   * obliged to keep an installation identity, and the coordinator then holds one
+   * for the life of the process.
+   */
+  loadDeviceId?(origin: string): Promise<string | undefined>
+  saveDeviceId?(origin: string, deviceId: string): Promise<void>
 }
 
 /** User-entered registration values; handled only by the host/browser authorization surface. */
