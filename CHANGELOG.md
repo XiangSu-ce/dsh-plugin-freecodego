@@ -18,12 +18,69 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.1.7-rc.2.1 — 2026-09-28
+
+### English
+
+A counter on the same Harness line, and nothing in the bundle itself changes: a
+reader who only mounts it can skip this version. `0.1.7-rc.2` was tagged and
+pushed, and its release run stopped in the first step that touches the tree —
+before anything was built, with the GitHub release and the registry version
+skipped behind it — so that version produced and published no artifact at all.
+Everything the `0.1.7-rc.2` section below describes ships here instead, and this
+is the first version of that content anyone can install.
+
+#### Fixed
+
+- **The workspace sync no longer dies on a fresh clone.** `sync:harness` applies
+  this fork's upstream patches after it has copied the upstream tree, and one of
+  them — `patchGenConfigCatalogTypeParameters`, added in `0.1.7-rc.2` — read its
+  two anchor strings from module constants declared *below* the call that runs it.
+  On a clean checkout that is
+  `Cannot access 'GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR' before initialization`,
+  thrown once the copies had already been made. The two are hoisted declarations
+  now, the shape this file's own `runPluginCommandBefore` already uses for the
+  same reason. Nothing local could see it: the patch only applies to a tree that
+  does not already carry it, and every working copy here does, so the early return
+  that makes the sync idempotent read as “works” everywhere the sync had ever run.
+  The release workflow was the first place a clean checkout met the fork.
+- **The fork phase is watched by a gate.** `scripts/freecodego-sync-overlay.spec.ts`
+  had always run its fixtures with `HARNESS_SYNC_COPY_ONLY=1`, which returns before
+  the first fork, so no test had ever executed the phase that failed. It now reads
+  the fork list out of `applyForks` itself and fails when a fork names a module
+  binding the script declares below its first call — the defect above, stated as
+  the rule it broke.
+
+### 中文
+
+同一条 Harness 线上的又一次计数发布，bundle 本身没有任何变化：只挂载它的使用者可以跳过
+这个版本。`0.1.7-rc.2` 已经打过 tag 并推上去，而它的发布运行在第一个真正动到工作树的步骤
+就停了 —— 什么都还没构建，GitHub release 与 registry 版本都被跳过 —— 因此那个版本没有产出、
+也没有发布任何产物。下面 `0.1.7-rc.2` 一节描述的全部内容都随本版本交付，这也是那批内容中
+第一个可以安装的版本。
+
+#### 修复
+
+- **全新 clone 上的工作树同步不再崩溃。** `sync:harness` 在复制完上游树之后才应用本 fork 的
+  上游补丁，其中 `patchGenConfigCatalogTypeParameters`（`0.1.7-rc.2` 新增）从**调用点之后**
+  声明的模块常量里读它那两段锚点文本，于是在干净的 checkout 上抛出
+  `Cannot access 'GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR' before initialization`，而且是在复制
+  已经完成之后。现在这两段改成提升的函数声明 —— 也正是本文件里 `runPluginCommandBefore`
+  早已为同一原因采用的形态。本地任何一次运行都看不见这个缺陷：补丁只对尚未带上它的树生效，
+  而这里每一个工作副本都已经带上了，于是那条让同步保持幂等的提前返回，在同步跑过的每台机器
+  上都读作「正常」。release 工作流是干净的 checkout 第一次遇到这个 fork 的地方。
+- **这一段 fork 现在有门禁盯着。** `scripts/freecodego-sync-overlay.spec.ts` 一直用
+  `HARNESS_SYNC_COPY_ONLY=1` 跑它的 fixture，那会在第一个 fork 之前就返回，因此整套测试从未
+  执行过出问题的这一段。现在它从 `applyForks` 本身读出 fork 清单，并在某个 fork 引用了脚本
+  声明在首个调用点之后的模块绑定时失败 —— 也就是把上面那个缺陷写成了它违反的那条规则。
+
 ## 0.1.7-rc.2 — 2026-09-28
 
 ### English
 
-The first release published for Harness `0.1.7-rc.2`, under the line's own
-version rather than a counter. Three surfaces are either new or repaired: the
+The first release prepared for Harness `0.1.7-rc.2`, under the line's own
+version rather than a counter. Its release run never published anything (see
+`0.1.7-rc.2.1` above, which carries all of it). Three surfaces are either new or repaired: the
 design pack, the companion character, and the speech card in the settings page.
 
 #### Added

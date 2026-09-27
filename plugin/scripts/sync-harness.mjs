@@ -517,8 +517,18 @@ async function applyForks(root) {
  * Kept as lines rather than one template literal so the anchor reads like the
  * source it matches, and so the backtick in the heritage-clause comment needs no
  * escaping.
+ *
+ * A hoisted declaration rather than a `const`, for the reason `runPluginCommandBefore`
+ * records below: `applyForks` is called from the patch-only branch near the top of this
+ * file as well as from the sync at the bottom, so a `const` here is still in its temporal
+ * dead zone at the first of those calls. That first call is also the one that applies the
+ * patch at all, because a tree this fork has already edited returns early on the marker
+ * and never reads these lines -- which is why the crash only ever appeared on a clean
+ * checkout, and only there as
+ * `Cannot access 'GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR' before initialization`.
  */
-const GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR = [
+function genConfigCatalogCollectorAnchor() {
+  return [
   '/** Collect every type NAME referenced in type positions under a node. */',
   'function collectTypeNames(node: ts.Node, out: Set<string>): void {',
   '  const visit = (n: ts.Node): void => {',
@@ -533,14 +543,16 @@ const GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR = [
   '  }',
   '  visit(node)',
   '}',
-].join('\n')
+  ].join('\n')
+}
 
 /**
  * The collector with type parameters treated as bindings, plus the helper that
  * reads them. Identical to the copy in the tree; `\n`-joined lines for the same
- * reason as the anchor.
+ * reason as the anchor, hoisted out of the dead zone for the same reason too.
  */
-const GEN_CONFIG_CATALOG_COLLECTOR_FIXED = [
+function genConfigCatalogCollectorFixed() {
+  return [
   '/**',
   ' * Collect every type NAME referenced in type positions under a node.',
   ' *',
@@ -590,7 +602,8 @@ const GEN_CONFIG_CATALOG_COLLECTOR_FIXED = [
   '  if (ts.isMappedTypeNode(node) || ts.isInferTypeNode(node)) names.push(node.typeParameter.name.text)',
   '  return names',
   '}',
-].join('\n')
+  ].join('\n')
+}
 
 /**
  * Config catalog: a type parameter is a binding, not a reference to resolve.
@@ -618,10 +631,11 @@ const GEN_CONFIG_CATALOG_COLLECTOR_FIXED = [
 async function patchGenConfigCatalogTypeParameters(path) {
   const source = await readFile(path, 'utf8')
   if (source.includes('boundTypeParameterNames')) return
-  if (!source.includes(GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR)) {
+  const anchor = genConfigCatalogCollectorAnchor()
+  if (!source.includes(anchor)) {
     throw new Error('gen-config-catalog no longer matches the type-name collection seam')
   }
-  await writeFile(path, source.replace(GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR, GEN_CONFIG_CATALOG_COLLECTOR_FIXED))
+  await writeFile(path, source.replace(anchor, genConfigCatalogCollectorFixed()))
 }
 
 /**

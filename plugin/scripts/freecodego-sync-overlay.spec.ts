@@ -271,3 +271,59 @@ describe('FreeCodeGo sync symlink repair', () => {
     }
   })
 })
+
+/**
+ * Every fixture above runs the sync with `HARNESS_SYNC_COPY_ONLY=1`, which returns
+ * before the first fork — so nothing in this suite ever executed `applyForks`, and the
+ * one thing a fork can get wrong at module scope went unchecked.
+ *
+ * FreeCodeGo 0.1.7-rc.2 shipped with exactly that defect: `patchGenConfigCatalogTypeParameters`
+ * read two `const` anchor strings declared *below* the top-level `applyForks` call, so the
+ * run died on `Cannot access 'GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR' before initialization`
+ * once the copies had been made. Nothing local could see it. A `const` below the call is
+ * only in its dead zone when the patch actually applies, and a working copy this fork has
+ * already patched returns early on its marker and never reads the anchor; the release
+ * workflow was therefore the first place the two met, and it stopped the release there.
+ *
+ * The rule is mechanical, so it is checked mechanically: a fork reads module state at call
+ * time, and `applyForks` runs from the patch-only branch near the top of the file, so a
+ * module binding declared below that call is uninitialized whenever a fork reads it. Hoisted
+ * `function` declarations are how a helper or an anchor stays beside its fork — the script's
+ * own `runPluginCommandBefore` and `genConfigCatalogCollectorAnchor` are the two that already
+ * do. Only the forks `applyForks` names are judged, because straight-line code below the call
+ * runs long after the module is initialized. Scanned as text because that is what the language
+ * does here: declaration order, not call order, decides what is initialized when the call runs.
+ */
+describe('FreeCodeGo sync fork phase', () => {
+  const lines = readFileSync(SYNC_SCRIPT, 'utf8').split('\n')
+
+  /** The body of a top-level `function name(...)`; this file closes those with `}` in column 0. */
+  function bodyOf(name: string): string {
+    const start = lines.findIndex(line => new RegExp(`^(?:async )?function ${name}\\(`, 'u').test(line))
+    if (start < 0) throw new Error(`sync-harness.mjs no longer declares ${name}`)
+    const end = lines.findIndex((line, index) => index > start && line === '}')
+    return lines.slice(start, end < 0 ? lines.length : end + 1).join('\n')
+  }
+
+  /** The forks `applyForks` calls, read out of `applyForks` so the two cannot disagree. */
+  const forks = [...bodyOf('applyForks').matchAll(/await (\w+)\(/gu)].map(match => match[1]!)
+
+  it('names the forks, so an empty scan cannot pass silently', () => {
+    expect(forks.length).toBeGreaterThanOrEqual(8)
+    expect(forks).toContain('patchGenConfigCatalogTypeParameters')
+  })
+
+  it('initializes every module binding a fork reads before the first fork runs', () => {
+    const firstCall = lines.findIndex(line => /^\s*(?:await )?applyForks\(/u.test(line))
+    // A reshaped script must be re-read by this guard rather than pass it silently.
+    expect(firstCall).toBeGreaterThanOrEqual(0)
+    const forkSource = forks.map(bodyOf).join('\n')
+    const lateBindings = lines
+      .map((line, index) => ({ line, index }))
+      .filter(entry => entry.index > firstCall && /^(?:const|let|var) \w+/u.test(entry.line))
+      .map(entry => ({ entry, name: /^(?:const|let|var) (\w+)/u.exec(entry.line)?.[1] ?? '' }))
+      .filter(({ name }) => name !== '' && new RegExp(`\\b${name}\\b`, 'u').test(forkSource))
+      .map(({ entry }) => `${String(entry.index + 1)}: ${entry.line}`)
+    expect(lateBindings).toStrictEqual([])
+  })
+})
