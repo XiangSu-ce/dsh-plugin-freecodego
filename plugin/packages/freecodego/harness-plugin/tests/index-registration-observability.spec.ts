@@ -136,7 +136,12 @@ async function registrationHarness(options: {
     dispose: async () => {
       vi.restoreAllMocks()
       await ctx.fiber.dispose()
-      rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+      // Ten seconds of retries, not one: Windows releases the handles a child
+      // process and the antivirus held asynchronously, and an under-window retry
+      // fails the whole file with EPERM while every assertion in it passed. The
+      // Harness's own fixture cleanup (`scripts/test-fixture-cleanup.ts`) uses the
+      // same 50 × 200 ms window, and this home is the same shape of fixture.
+      rmSync(home, { recursive: true, force: true, maxRetries: 50, retryDelay: 200 })
       if (previous === undefined) delete process.env.DSH_HOME
       else process.env.DSH_HOME = previous
     },
@@ -230,11 +235,14 @@ describe('a refused tool registration is logged, and the boot continues', () => 
     }
   })
 
-  it('names spill_recall, and says what its absence costs', async () => {
-    harness = await registrationHarness({ failTools: ['spill_recall'] })
-    const lines = naming(harness.warnings, 'spill_recall')
+  it('names headroom_retrieve, and says what its absence costs', async () => {
+    // One tool now serves both retrieval markers, so its absence closes both doors:
+    // a compression marker and a cleared-result marker alike become dead ends with
+    // nothing the model can even ask.
+    harness = await registrationHarness({ failTools: ['headroom_retrieve'] })
+    const lines = naming(harness.warnings, 'headroom_retrieve')
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain('parked results cannot be read back')
+    expect(lines[0]).toContain('compressed originals and parked results cannot be read back')
   })
 
   it('names the context budget tool and the prompt composition tool separately', async () => {

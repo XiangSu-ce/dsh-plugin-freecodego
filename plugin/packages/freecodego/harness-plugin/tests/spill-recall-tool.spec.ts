@@ -1,5 +1,5 @@
 /**
- * `spill_recall` over a real file handle.
+ * The locator form of `headroom_retrieve` over a real file handle.
  *
  * `spill-recall.spec.ts` tests the paging contract with the artifact in memory.
  * The tool pages the same artifact a second way — a window read off disk — and
@@ -92,7 +92,7 @@ async function parked(): Promise<string> {
   return artifact
 }
 
-describe('spill_recall over a file handle', () => {
+describe('the locator form of headroom_retrieve over a file handle', () => {
   it('retreats an offset inside a character and reports the offset it served', async () => {
     // Byte 1 of this artifact is the second byte of the three-byte 中. The
     // in-memory reader retreats to 0 and serves the whole character; the tool

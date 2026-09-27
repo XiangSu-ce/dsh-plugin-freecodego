@@ -539,4 +539,94 @@ describe('CommunityPluginsPage installed plugin actions', () => {
     unmount()
     expect(signals[0]?.aborted).toBe(true)
   })
+
+  it('finds a directory entry the ranked page does not show', async () => {
+    // The directory carries thousands of entries while the page renders a ranked
+    // top-N, so a search that filters the rendered page can only ever return entries
+    // that were already on screen. This one ranks last by popularity: below the cut,
+    // and reachable only by searching the whole directory.
+    const buried = 'buried-memory-plugin'
+    const popular = Array.from({ length: 55 }, (_, index) => ({
+      name: `popular-plugin-${String(index)}`,
+      owner: 'example',
+      url: `https://github.com/example/popular-plugin-${String(index)}`,
+      category: 'tools',
+      npm: `dsh-popular-plugin-${String(index)}`,
+      downloads: 10_000,
+      stars: 500,
+    }))
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [...popular, { name: buried, owner: 'example', url: 'https://github.com/example/buried-memory-plugin', category: 'memory', npm: 'dsh-buried-memory-plugin', downloads: 0, stars: 0 }] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn()}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn()}
+      language="zh"
+    />)
+
+    await screen.findByText('popular-plugin-0')
+    expect(screen.queryByText(buried)).toBeNull()
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'buried-memory' } })
+    expect(await screen.findByText(buried)).toBeTruthy()
+    // The footnote concatenates several text nodes, so it is matched as a substring.
+    expect(screen.getByText(/搜索结果 1 个/)).toBeTruthy()
+  })
+
+  it('reports every match even when only the ranked page fits', async () => {
+    // The display cap must not become the reported answer: a page that says fifty
+    // results for sixty matches sends the user away with a wrong number, and the
+    // entries it withheld are exactly the ones a search was supposed to find.
+    const entries = Array.from({ length: 60 }, (_, index) => ({
+      name: `needle-plugin-${String(index)}`,
+      owner: 'example',
+      url: `https://github.com/example/needle-plugin-${String(index)}`,
+      category: 'tools',
+      npm: `dsh-needle-plugin-${String(index)}`,
+      downloads: 1_000 - index,
+      stars: 10,
+    }))
+    render(<CommunityPluginsPage
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: entries } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn()}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn()}
+      language="zh"
+    />)
+
+    await screen.findByText('needle-plugin-0')
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'needle-plugin' } })
+    expect(await screen.findByText(/搜索结果 60 个/)).toBeTruthy()
+    expect(screen.getByText(/（命中 60 个，此处按下载量排行显示前 50 个）/)).toBeTruthy()
+  })
+
+  it('asks the Host for the published directory when the refresh button is pressed', async () => {
+    // Opening the panel is not the same request as pressing its refresh button: the
+    // first accepts the saved snapshot, the second is a user asking for the newest
+    // directory. A button that re-reads the snapshot it sits next to cannot change
+    // the date it is displayed beside, which is what "refresh does nothing" is.
+    const communityCatalog = vi.fn().mockResolvedValue({ ok: true as const, value: { updated: '2026-09-13', plugins: [{ name: 'community-plugin', owner: 'example', url: 'https://github.com/example/community-plugin', category: 'tools', npm: '@example/community-plugin' }] } })
+    render(<CommunityPluginsPage
+      communityCatalog={communityCatalog}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: true, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {}, restartRequired: false } })}
+      communityInstall={vi.fn()}
+      capabilityMarketplace={vi.fn()}
+      mcpPresetInstall={vi.fn()}
+      skillPresetInstall={vi.fn()}
+      language="zh"
+    />)
+
+    expect(await screen.findByText('community-plugin')).toBeTruthy()
+    expect(communityCatalog).toHaveBeenCalledWith(false)
+    expect(screen.getByText(/目录更新于 2026-09-13/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await waitFor(() => { expect(communityCatalog).toHaveBeenCalledWith(true) })
+  })
 })

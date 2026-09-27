@@ -1,6 +1,67 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/runtime-codex/README.md
-README.md: 479dcfdd1e8c98821047cc12cc04081ec90837fe
-README.zh.md: 9d91ac7e3409a5de8ae28607f966a50e3a0182d0
+/:
+  en: 79a3a0db0ecd8a32
+  zh: d807d4ac22d24d21
+/dsh-freecodego-runtime-codex:
+  en: 608e3d52a74bb894
+  zh: 105b822119fd5ff5
+/dsh-freecodego-runtime-codex/summary:
+  en: fe46e740230c8344
+  zh: 8aa2b2c366e8bcd5
+/dsh-freecodego-runtime-codex/table-of-contents:
+  en: 3f0def991466c2b6
+  zh: 6412893b9321c334
+/dsh-freecodego-runtime-codex/worker-integration:
+  en: 6b1d27eafdd18986
+  zh: 440e87c479222ed5
+/dsh-freecodego-runtime-codex/runtime-binaries:
+  en: c6bb7030bd3f454a
+  zh: 1ec3238830b0746f
+/dsh-freecodego-runtime-codex/model-experience:
+  en: 215e7ba838619b7b
+  zh: 215e7ba838619b7b
+/dsh-freecodego-runtime-codex/model-experience/worker-protocol:
+  en: 1571fe0504d1594e
+  zh: c30b278005c1fc22
+/dsh-freecodego-runtime-codex/model-experience/worker-protocol/what-the-model-sees:
+  en: d909935e0a50ccf1
+  zh: 5a781f887dde00c1
+/dsh-freecodego-runtime-codex/model-experience/worker-protocol/token-effect:
+  en: 5a716fa77e811837
+  zh: ebcfa9b2225000a9
+/dsh-freecodego-runtime-codex/model-experience/worker-protocol/kv-cache-effect:
+  en: 661ace0a9d42a1c8
+  zh: 54635008a412af6f
+/dsh-freecodego-runtime-codex/model-experience/approvals-and-questions:
+  en: d9723b641b2f54d5
+  zh: ef4801b0b728a961
+/dsh-freecodego-runtime-codex/model-experience/approvals-and-questions/what-the-model-sees:
+  en: 78ef7bc2e06a30a8
+  zh: cd6882aa984992de
+/dsh-freecodego-runtime-codex/model-experience/approvals-and-questions/token-effect:
+  en: ed4973903fa3768d
+  zh: 3974f7cdfd6b2426
+/dsh-freecodego-runtime-codex/model-experience/approvals-and-questions/kv-cache-effect:
+  en: 7bc04858eac907a5
+  zh: 26f37cd42b322f0e
+/dsh-freecodego-runtime-codex/model-experience/runtime-binaries:
+  en: 052ca26d854f2086
+  zh: 182e3f73a60a5196
+/dsh-freecodego-runtime-codex/model-experience/runtime-binaries/what-the-model-sees:
+  en: 9f6620f0d7d9af38
+  zh: d9e1aeb40f8b6e39
+/dsh-freecodego-runtime-codex/model-experience/runtime-binaries/token-effect:
+  en: ce6f53006632cd3f
+  zh: 3f0d9c2e66cb7ca4
+/dsh-freecodego-runtime-codex/model-experience/runtime-binaries/kv-cache-effect:
+  en: 3e542699ee9aaa1a
+  zh: 3aa4ce0b8ca547b9
+/dsh-freecodego-runtime-codex/known-limitations-and-deferred-work:
+  en: 5dec13104b7f5a7d
+  zh: 5737e2318aba696e
+/dsh-freecodego-runtime-codex/known-limitations-and-deferred-work/dev-note:
+  en: a2bb7d30ba4ab2af
+  zh: 646fa5fb78b36b23

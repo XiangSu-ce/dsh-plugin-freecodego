@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/p
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { compareVersions, FreeCodeGoPluginUpdateService, releaseAssetNames, windowsShimCommandLine } from '../src/plugin-update.ts'
+import { compareVersions, FreeCodeGoPluginUpdateService, installTreeKillArgv, releaseAssetNames, terminateInstallProcess, windowsShimCommandLine } from '../src/plugin-update.ts'
 
 const HARNESS = '0.1.3-alpha.1'
 const REPOSITORY = 'XiangSu-ce/dsh-plugin-freecodego'
@@ -626,6 +626,30 @@ describe('FreeCodeGo plugin updates from GitHub Releases', () => {
     expect(shim.environment).toEqual({})
     // Quoting still covers the characters cmd.exe would otherwise act on.
     expect(windowsShimCommandLine('dsh', ['plugin', '--profile', 'my profile']).line).toBe('"dsh plugin --profile \"my profile\""')
+  })
+
+  it('kills an install\'s whole process tree on Windows, not just its cmd.exe shim', () => {
+    // Regression: the shim path spawns `cmd.exe /c`, which does not `exec`-replace
+    // itself, so `child.kill()` left the `pnpm` behind it running — still holding
+    // the profile lock after the operation had reported the install stopped. That is
+    // the same defect the Harness's own plugin-manager fixed in rc.2.
+    const launched: unknown[][] = []
+    const launch = ((command: string, args: readonly string[]) => {
+      launched.push([command, [...args]])
+      return { once: () => ({ unref: () => undefined }), unref: () => undefined }
+    }) as unknown as Parameters<typeof terminateInstallProcess>[2]
+    const kills: unknown[] = []
+    const child = { pid: 4242, kill: (signal?: NodeJS.Signals | number) => { kills.push(signal); return true } }
+
+    expect(installTreeKillArgv(4242)).toEqual(['/pid', '4242', '/t', '/f'])
+    terminateInstallProcess(child, 'win32', launch)
+    expect(launched).toEqual([['taskkill', ['/pid', '4242', '/t', '/f']]])
+    // The direct kill is the fallback only; the tree kill is the timeout's action.
+    expect(kills).toEqual([])
+
+    terminateInstallProcess(child, 'linux', launch)
+    expect(launched).toHaveLength(1)
+    expect(kills).toEqual([undefined])
   })
 
   it('names a release asset after the Harness line, and accepts the bundle version too', () => {

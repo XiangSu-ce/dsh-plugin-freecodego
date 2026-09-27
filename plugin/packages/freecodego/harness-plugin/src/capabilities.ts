@@ -23,6 +23,9 @@ import { apply as applySkillFilesystem } from '@deepseek-ai/dsh-skill-filesystem
 import type { FreeCodeGoCapabilitySettings, FreeCodeGoCapabilitySnapshot, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillEntry, FreeCodeGoSkillForward, FreeCodeGoSkillRoot } from './types.ts'
 import { listSkillCompanionFiles, readSkillCompanionFile, skillForwardTargets, skillResourceLocation, type SkillCompanionFs } from './skill-detail.ts'
 import { omitRecordKey } from './record-utils.ts'
+// The same reading the marketplace import boundary applies, so an argv that
+// cannot be a server is judged by one definition rather than two.
+import { mcpCommandLooksLikeInstaller } from './marketplace-utils.ts'
 
 /**
  * The MCP server-name shape the plugin accepts.
@@ -155,13 +158,22 @@ export class FreeCodeGoCapabilityRegistry {
   private readonly mcpFibers = new Map<string, Fiber>()
   private readonly mountErrors = new Map<string, string>()
   /**
-   * Entries refused by the folder-trust gate, keyed like {@link mountErrors}.
+   * Entries refused by a standing decision, keyed like {@link mountErrors}.
+   *
+   * Two reasons reach this map: the folder-trust gate declining a directory, and
+   * an entry whose own argv names an installation step (see {@link reconcile}).
+   * Both are decisions that re-asking cannot change, which is what separates
+   * them from a mount failure.
    *
    * Kept apart from `mountErrors` because the two need opposite retry
    * treatment: a mount failure is worth retrying on the next settings change,
    * while a refusal is a standing decision and must not make the family look
    * permanently incomplete — otherwise every unrelated settings write would tear
    * down and remount providers that are working.
+   *
+   * The field keeps its `trustRefusals` name because that name is the wire
+   * contract: `FreeCodeGoCapabilitySnapshot`, the generated typert schemas, and
+   * the client all read it. Only the reasons it holds have widened.
    */
   private readonly trustRefusals = new Map<string, string>()
   private skillFiber: Fiber | undefined
@@ -717,6 +729,23 @@ export class FreeCodeGoCapabilityRegistry {
       // the same master switch and the same gate: `mcpEnabled` is the user's
       // answer about their machine, and a repository cannot override it.
       for (const server of [...settings.mcpServers, ...project.mcpServers].filter(server => server.enabled)) {
+        // An entry whose argv names an installation step is not a server, and
+        // mounting one costs far more than a wrong entry should. The marketplace
+        // publishes these verbatim — mcp.so's `context7-mcp` ships
+        // `npx ctx7 setup`, which is Context7's OAuth *installer* — and the
+        // stdio transport reports success for it anyway, because `cross-spawn`
+        // wraps the command in `cmd.exe` and only the child's silence follows.
+        // The mount then sits on the client's own 60-second request timeout with
+        // the settings queue behind it, and every later write pays that timeout
+        // again. Refused as a standing decision rather than a mount failure:
+        // re-asking can never make an installer answer JSON-RPC, and the message
+        // has to say which entry to replace, because the entry itself looks
+        // perfectly well-formed.
+        const argv = [server.command, ...server.args]
+        if (server.transport === 'stdio' && mcpCommandLooksLikeInstaller(argv)) {
+          this.trustRefusals.set(`mcp:${server.id}`, `not mounted: this entry launches an installer (${argv.join(' ')}), not an MCP server; replace it with the server's own URL or launch command`)
+          continue
+        }
         // A server with an empty `cwd` runs from wherever the Host runs and is
         // therefore the user's own machine's configuration; one pinned to a
         // directory can be launched from inside somebody else's checkout, so it

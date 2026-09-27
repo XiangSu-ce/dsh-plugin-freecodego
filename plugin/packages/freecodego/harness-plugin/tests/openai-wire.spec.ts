@@ -38,6 +38,36 @@ describe('OpenAI-compatible history serialization', () => {
     }])
   })
 
+  // rc.2 added `ToolSchema.deferLoading` and per-route tool-update projection. A
+  // chat-completions frame has no slot for either a deferred declaration or a
+  // tool-addition notice, and this plugin's routes declare no `toolUpdate` mode,
+  // so the core hands this wire the flattened definitions and no developer
+  // messages. What the wire owes in that arrangement is the plain definition —
+  // sent now, with the harness-only field left out of the body.
+  it('sends a deferred baseline tool immediately without leaking the deferral flag', () => {
+    const body = serializeRequest({
+      provider: 'logfare', model: 'gpt-5.6-sol',
+      messages: [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Search it.' }] })],
+      tools: [{
+        name: 'engineering_search',
+        description: 'Search the codebase.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+        deferLoading: true,
+      }],
+    })
+    expect(body.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'engineering_search',
+        description: 'Search the codebase.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      },
+    }])
+    // A provider that received `deferLoading` would either reject the request or
+    // silently ignore the tool; the flag is the harness's, not the wire's.
+    expect(JSON.stringify(body)).not.toContain('deferLoading')
+  })
+
   it('does not resolve historical tool-result images as new user uploads', async () => {
     const body = await serializeRequestWithInlineImages({
       provider: 'logfare', model: 'gpt-5.6-sol', messages: [

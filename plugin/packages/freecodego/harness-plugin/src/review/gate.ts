@@ -41,6 +41,7 @@ import { REVIEW_SEVERITIES, type ReviewComment, type ReviewSeverity } from './co
 import type { ReviewReport, ReviewRunState } from './report.ts'
 import type { ReviewRunPort } from './runs.ts'
 import { WORKSPACE_MUTATING_TOOLS } from '../verify-on-stop.ts'
+import { deferredToolFetchHint } from '../deferred-tools.ts'
 
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
@@ -352,6 +353,14 @@ export function worstSeverity(comments: readonly ReviewComment[]): ReviewSeverit
  * Names each finding with its location and severity, so the agent can act without
  * asking which one was meant, and states that the review ran on this turn's own
  * change set, so a finding about a file the turn did not touch is not implied.
+ *
+ * The report pointer carries the loading sentence, because this text is injected
+ * unsolicited: nothing about it passed through `tool_search`, so the sentence the
+ * discovery result states for the descriptions it returns does not reach here.
+ * A model that follows a bare `engineering_review_report` name would call a tool
+ * whose schema this session never fetched, and the refusal would name a tool it
+ * had no way to load. `deferredToolFetchHint` returns `''` if the tool ever
+ * becomes always-immediate, so the sentence disappears by itself.
  */
 export function renderGateMessage(report: ReviewReport, blocking: readonly ReviewComment[], sequence: number): string {
   const lines = [`The stop-time review of this turn's change set (review #${sequence}) found ${blocking.length} finding(s) at or above the reporting threshold:`]
@@ -362,6 +371,7 @@ export function renderGateMessage(report: ReviewReport, blocking: readonly Revie
     lines.push(`- [${comment.severity}/${comment.category}] ${at} — ${comment.content.split('\n')[0] ?? ''}`)
   }
   lines.push('')
-  lines.push(`The full report for run \`${report.id}\` is available through engineering_review_report, which also renders it as JSON or SARIF. Address each finding, or state why it is not actionable, before ending the turn.`)
+  const reportLine = `The full report for run \`${report.id}\` is available through engineering_review_report, which also renders it as JSON or SARIF.`
+  lines.push(`${reportLine}${deferredToolFetchHint('engineering_review_report')} Address each finding, or state why it is not actionable, before ending the turn.`)
   return lines.join('\n')
 }

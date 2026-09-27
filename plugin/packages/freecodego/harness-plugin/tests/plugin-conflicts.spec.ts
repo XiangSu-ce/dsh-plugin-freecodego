@@ -88,8 +88,13 @@ describe('FreeCodeGoPluginConflictGuard', () => {
       expect(secondEntry?.disabled).toBe(true)
       expect(secondEntry?.fiber).toBeUndefined()
       // The start path really was intercepted, which is the other half of the
-      // override and the probe the default case below reads in the negative.
-      expect(Object.hasOwn(secondEntry as object, 'init')).toBe(true)
+      // override and the probe the default case below reads in the negative. The
+      // wrapped step is the private `_init` rather than `init`: that is the one
+      // `Entry.init()` publishes as `_initTask`, so wrapping it keeps the panel's
+      // own reconcile — which audits the tree right after `loader.await()` — able
+      // to see that this entry is still starting rather than never started.
+      expect(Object.hasOwn(secondEntry as object, '_init')).toBe(true)
+      expect(Object.hasOwn(secondEntry as object, 'init')).toBe(false)
       expect(stored.pluginConflictRecords).toEqual([expect.objectContaining({
         resource: 'tool',
         resourceName: 'duplicate-tool',
@@ -249,26 +254,34 @@ describe('FreeCodeGoPluginConflictGuard', () => {
   })
 
   it('stops its own stand-in instead of the official module that claims the same tool', async () => {
-    // The vendored team pair exists for a composition that never selected the
-    // official team bundles. When both are mounted — which is what a live bundle
-    // change produces, because the stand-down expression reads the launch-time
-    // bundle list — the official plugin is the one the deployment asked for, so
-    // the fallback is what has to go. Disabling the official one inverts the
+    // Both rows exist for a composition that never selected the official package,
+    // and both can be mounted at once — which is what a live bundle change
+    // produces, because the stand-down expression reads the launch-time bundle
+    // list. The official plugin is the one the deployment asked for, so the
+    // fallback is what has to go; disabling the official one inverts the
     // deployment's intent and reports the Harness as the loser.
+    //
+    // The row pair is the cross-engine provider pair, and the fixture's claimed
+    // resource is a literal tool because that is the only claim shape this guard's
+    // scanner reads: `ctx.subagents.registerProvider(new CodexProvider(…))` — what
+    // the real pair registers — carries no literal `name:`, so the scanner cannot
+    // see it (which is why `stand-in-rows.ts` arbitrates these rows itself, before
+    // they ever reach a start). What this test pins is the rule, and the rule keys
+    // on the *row pair*, not on the resource kind.
     const directory = await mkdtemp(join(tmpdir(), 'freecodego-plugin-conflict-official-'))
     const fallback = join(directory, 'fallback.mjs')
-    const official = join(directory, 'node_modules', '@deepseek-ai', 'dsh-experimental-tool-agent-team')
+    const official = join(directory, 'node_modules', '@deepseek-ai', 'dsh-subagent-codex')
     await mkdir(official, { recursive: true })
     const pluginSource = (label: string): string => [
       'export function apply(ctx) {',
       `  globalThis.${startedKey} = [...(globalThis.${startedKey} ?? []), '${label}']`,
-      "  ctx.tools.register({ name: 'spawn_teammate' })",
+      "  ctx.tools.register({ name: 'codex_run' })",
       '}',
       '',
     ].join('\n')
     await writeFile(fallback, pluginSource('fallback'))
     await writeFile(join(official, 'package.json'), JSON.stringify({
-      name: '@deepseek-ai/dsh-experimental-tool-agent-team', version: '0.0.0', type: 'module', main: 'index.mjs',
+      name: '@deepseek-ai/dsh-subagent-codex', version: '0.0.0', type: 'module', main: 'index.mjs',
     }))
     await writeFile(join(official, 'index.mjs'), pluginSource('official'))
 
@@ -287,21 +300,21 @@ describe('FreeCodeGoPluginConflictGuard', () => {
 
     try {
       await ctx.loader.root.update([
-        { id: 'freecodego-tool-agent-team', name: './fallback.mjs' },
-        { id: 'tool-agent-team', name: '@deepseek-ai/dsh-experimental-tool-agent-team' },
+        { id: 'freecodego-subagent-codex', name: './fallback.mjs' },
+        { id: 'subagent-codex', name: '@deepseek-ai/dsh-subagent-codex' },
       ])
       await ctx.loader.await()
 
       // Both apply calls ran: the fallback had already mounted by the time the
       // official entry started, which is exactly the ordering this rule exists for.
       expect(startedInvocations()?.join(',')).toBe('fallback,official')
-      const fallbackEntry = [...ctx.loader.entries()].find(entry => entry.id === 'freecodego-tool-agent-team')
+      const fallbackEntry = [...ctx.loader.entries()].find(entry => entry.id === 'freecodego-subagent-codex')
       expect(fallbackEntry?.disabled === true).toBe(true)
       // The Loader's enablement path unloads the running fallback without
       // clearing the fiber reference, so `uid: null` is its "no longer serving"
       // signal — the same one `seed()` reads.
       expect(fallbackEntry?.fiber === undefined || fallbackEntry.fiber.uid === null).toBe(true)
-      const officialEntry = [...ctx.loader.entries()].find(entry => entry.id === 'tool-agent-team')
+      const officialEntry = [...ctx.loader.entries()].find(entry => entry.id === 'subagent-codex')
       expect(officialEntry?.fiber !== undefined && officialEntry.fiber.uid !== null).toBe(true)
 
       const snapshot = guard.snapshot()
@@ -310,16 +323,77 @@ describe('FreeCodeGoPluginConflictGuard', () => {
         id: undefined,
         detectedAt: undefined,
         resource: 'tool',
-        resourceName: 'spawn_teammate',
-        disabledEntryId: 'freecodego-tool-agent-team',
+        resourceName: 'codex_run',
+        disabledEntryId: 'freecodego-subagent-codex',
         disabledModuleName: './fallback.mjs',
-        keptEntryId: 'tool-agent-team',
-        keptModuleName: '@deepseek-ai/dsh-experimental-tool-agent-team',
+        keptEntryId: 'subagent-codex',
+        keptModuleName: '@deepseek-ai/dsh-subagent-codex',
         yieldedToOfficial: true,
       }))
       // Stopped fallback plus running official is the state the record describes,
       // so it reports as in effect rather than as history.
       expect(snapshot.pluginConflictActiveRecords).toEqual([snapshot.pluginConflictRecords[0]?.id])
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('seeds past a row whose disabled expression cannot be evaluated', async () => {
+    // The tree can hold a row this install cannot evaluate: `disabled` is a `!!js`
+    // expression to the Loader, so an install missing what it names throws on every
+    // read (on a desktop whose official team rows cannot be imported, that is every
+    // one of them). The seeding walk reads every row in the tree, and an unguarded
+    // read rejected this plugin's whole mount with `fatal load failure` — the entire
+    // Host lost to a warning about three modules.
+    const directory = await mkdtemp(join(tmpdir(), 'freecodego-plugin-conflict-broken-'))
+    const broken = join(directory, 'broken.mjs')
+    const keeper = join(directory, 'keeper.mjs')
+    const second = join(directory, 'second.mjs')
+    const pluginSource = (label: string): string => [
+      'export function apply(ctx) {',
+      `  globalThis.${startedKey} = [...(globalThis.${startedKey} ?? []), '${label}']`,
+      "  ctx.tools.register({ name: 'duplicate-tool' })",
+      '}',
+      '',
+    ].join('\n')
+    await writeFile(broken, pluginSource('broken'))
+    await writeFile(keeper, pluginSource('keeper'))
+    await writeFile(second, pluginSource('second'))
+
+    const ctx = new Context()
+    let stored: { pluginConflictProtectionEnabled: boolean; pluginConflictRecords: readonly unknown[] } = {
+      pluginConflictProtectionEnabled: true,
+      pluginConflictRecords: [],
+    }
+    const settings = {
+      get: () => stored,
+      update: async (patch: Partial<typeof stored>) => { stored = { ...stored, ...patch } },
+    }
+    provideHostService(ctx, 'tools', { register: () => () => undefined })
+    await ctx.plugin(Loader, { baseUrl: pathToFileURL(join(directory, 'loader.mjs')).href })
+
+    try {
+      await ctx.loader.create({ name: './broken.mjs' })
+      await ctx.loader.create({ name: './keeper.mjs' })
+      await ctx.loader.await()
+      const brokenEntry = [...ctx.loader.entries()].find(entry => entry.options.name === './broken.mjs')
+      expect(brokenEntry).toBeDefined()
+      // The compiled form a patch layer's `!!js` leaves on the option, which is what
+      // the Loader's own `disabledOf` evaluates on every read — so the read now throws
+      // the way it does on an install that cannot supply what the expression names.
+      brokenEntry!.options.disabled = { __jsExpr: "(() => { throw new Error('cannot evaluate') })()" } as never
+      expect(() => brokenEntry!.disabled).toThrow()
+
+      installFreeCodeGoPluginConflictGuard(ctx, settings as never)
+      await ctx.loader.create({ name: './second.mjs' })
+      await ctx.loader.await()
+
+      // The unreadable row did not stop the walk: the readable row was still seeded,
+      // so the duplicate that followed it was found and stopped.
+      const secondEntry = [...ctx.loader.entries()].find(entry => entry.options.name === './second.mjs')
+      expect(secondEntry?.disabled).toBe(true)
+      expect(startedInvocations()).toEqual(['broken', 'keeper'])
     } finally {
       await ctx.fiber.dispose()
       await rm(directory, { recursive: true, force: true })

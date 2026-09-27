@@ -39,6 +39,7 @@
     { "path": "../../lsp/tool-lsp" },
     { "path": "../../util/atomic-write" },
     { "path": "../../util/home-paths" },
+    { "path": "../../util/output-retention" },
     { "path": "../../fs/fs-local" },
     { "path": "../../subprocess/subprocess-local" },
     { "path": "../../core/session" },

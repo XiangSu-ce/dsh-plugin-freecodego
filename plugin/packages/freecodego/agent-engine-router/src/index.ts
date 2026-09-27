@@ -275,6 +275,16 @@ export class FreeCodeGoAgentEngineRouter extends Service implements AgentFactory
     // The official AgentRegistry owns a single factory slot. Replace the official
     // AgentLoop target in place so ordinary DeepSeek sessions still delegate
     // to the upstream loop while native routes are handled here.
+    //
+    // This in-place swap *is* the extension point, and it is the only one: no
+    // Harness release declares a root-engine seam, and the official
+    // `@deepseek-ai/dsh-subagent-codex` / `-claude-code` packages are one-shot
+    // unattended subagent providers (`NO_START_CAPABILITIES`, approvals always
+    // declined) that cannot serve a root session. So root engine selection is
+    // this plugin's own capability rather than a second copy of an upstream one —
+    // do not propose deleting this router as a duplicate without first checking
+    // `upstream-seam-contracts.spec.ts`, whose "still absent upstream" case is the
+    // tripwire that would fire the day a root-engine seam does appear.
     const registry = ctx.agents as unknown as { factory?: { target: AgentFactory } }
     const slot = registry.factory
     if (slot === undefined) throw new Error('FreeCodeGo AgentEngineRouter requires the official AgentLoop factory')

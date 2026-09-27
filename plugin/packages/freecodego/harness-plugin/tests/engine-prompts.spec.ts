@@ -164,9 +164,9 @@ describe('codexSystemPrompt', () => {
   })
 
   it('drops the subagent-model pointer when that tool is not in the inventory', () => {
-    const without = codexPromptFor(hostWith({ harnessTools: [tool('advisor_status')] }))
+    const without = codexPromptFor(hostWith({ harnessTools: [tool('engineering_status')] }))
     expect(without).not.toContain('list_subagent_models')
-    const with_ = codexPromptFor(hostWith({ harnessTools: [tool('advisor_status'), tool('list_subagent_models')] }))
+    const with_ = codexPromptFor(hostWith({ harnessTools: [tool('engineering_status'), tool('list_subagent_models')] }))
     expect(with_).toContain('list_subagent_models')
   })
 })
@@ -188,7 +188,7 @@ const TRANSPORT_DEFINED_TOOLS: ReadonlySet<string> = new Set([
 ])
 
 describe('both native prompts stay inside the Agent inventory', () => {
-  const inventory = [tool('read'), tool('advisor_status'), tool('freecodego_generate_image')]
+  const inventory = [tool('read'), tool('engineering_status'), tool('freecodego_generate_image')]
 
   /**
    * Registry names the prompt actually emits, with the Claude mount folded
@@ -197,7 +197,7 @@ describe('both native prompts stay inside the Agent inventory', () => {
    * wrapper to compare against the inventory by its own name.
    */
   const emittedRegistryNames = (prompt: string): readonly string[] =>
-    [...new Set([...prompt.matchAll(/(?:freecodego|engineering|advisor)_[a-z0-9_]+/gu)].map(match => match[0]))]
+    [...new Set([...prompt.matchAll(/(?:freecodego|engineering)_[a-z0-9_]+/gu)].map(match => match[0]))]
       .map(name => name.replace(/^freecodego_harness_/u, ''))
       .filter(name => !TRANSPORT_DEFINED_TOOLS.has(name))
 

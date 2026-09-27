@@ -297,7 +297,37 @@ describe('the remote call contract', () => {
     // beside them, so REMOTES and the unreached count below move together while SITES
     // and the distinct-name count do not — the pair check that says a cast-style pair was
     // added rather than a dispatch site written to a name nothing declares.
-    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(225)
+    // 225 → 227: `engineeringMemorySessionScope` and `engineeringMemorySessionReclaim`, the
+    // memory panel's read of this session's temporary layer and its reclamation gesture.
+    // Both client sides are dispatch sites, so all three counts below move together —
+    // the check that says the pair was extended rather than one side drifting.
+    // 227 → 220: the Advisor supervision runtime was removed, taking its five
+    // remotes (`advisorStatus`, `advisorUpdate`, `advisorModels`, `advisorNotes`,
+    // `advisorReviewNow`) and the two Advisor-council ones (`engineeringCouncilReview`,
+    // `engineeringCouncilReports`) — seven names, one of which was declared twice.
+    // Their client sides went with them, so the counts below move together.
+    // 220 → 223: the design pack's three remotes (`designStatus`,
+    // `designSetEnabled`, `designFeatureSetEnabled`) — the settings page reads the
+    // capability rows, and the master and per-feature switches write through. All
+    // three have exactly one dispatch site on the client side, so REMOTES and both
+    // counts below moved together by three, which is the check that says the pair
+    // was extended rather than one side drifting.
+    // 223 → 226: `secondModelStatus`, `secondModelUpdate` and `secondModelRoutes` —
+    // the settings panel that edits the plugin's shared second-model route (the
+    // pair the review reviewer, the memory selector, the consolidation planner and
+    // the action reviewer all spend on). All three have exactly one dispatch site
+    // on the client side, so REMOTES and both counts below moved together by
+    // three, which is the check that says the pair was extended rather than one
+    // side drifting.
+    // 226 → 228: `speechStatus` and `speechSetRoute`, the recognizer route the
+    // settings card reads and writes (`src/speech-route.ts`). Two names, one dispatch
+    // site each on the client side, so all three counts below moved with this one —
+    // which is the check that says the pair was extended rather than one side drifting.
+    // 228 → 229: `speechTest`, the same card's connection test. One name and one
+    // dispatch site, so REMOTES, SITES and the distinct-name count move together and
+    // the unreached count below does not — the signature of a remote that arrives with
+    // a caller rather than one declared for the Host alone.
+    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(229)
     // Re-verified when this moved 182 → 176: the five conditional dispatches
     // (`agnesRefresh`, `agnesCreateApiKey`, `agnesLogout`, `codexRuntimeInstall`,
     // `claudeRuntimeInstall`) that branched into a zero-argument call collapsed
@@ -334,7 +364,18 @@ describe('the remote call contract', () => {
     // than trusting.
     // 204 → 205: the `webSearchBindingStatus` dispatch, one site, beside the
     // `webSearchBind` one the picker already carried.
-    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(205)
+    // 205 → 207: the two dispatch sites above.
+    // 207 → 206: the `groqWhisperTranscribe` dispatch, which lived in this plugin's own
+    // composer microphone. That control is gone — the harness's voice input is served
+    // from the Host side now (`src/speech-provider.ts` calls the transcriber in
+    // process) — so the dispatch left with it. The Remote stays declared, which is why
+    // its name moves to the unreached list below rather than off the surface.
+    // 206 → 199: the seven Advisor dispatch sites, one per remote removed above.
+    // 199 → 202: the three second-model route dispatches (`secondModelStatus`,
+    // `secondModelUpdate`, `secondModelRoutes`), one site each.
+    // 205 → 207: the two speech-route dispatch sites, one per name added above.
+    // 207 → 208: the connection test's own site (`speechTest` in `client/index.ts`).
+    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(208)
     // 196 → 197: `skillPlacements` is a name no earlier dispatch carried, so this count
     // moves with the two above rather than staying put — the check that a new *name*
     // arrived instead of another call to one already counted.
@@ -343,7 +384,19 @@ describe('the remote call contract', () => {
     // one of them: its second site reuses a name already counted, which is exactly what
     // this count is here to distinguish from a new name.
     // 202 → 203: `webSearchBindingStatus` is likewise a name no earlier dispatch carried.
-    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(203)
+    // 203 → 205: both are names no earlier dispatch carried.
+    // 205 → 204: `groqWhisperTranscribe` went with the microphone dispatch above, and it
+    // was a name of its own — so this count moves with the site count rather than staying
+    // put, which is the check that a whole name left instead of a second call to one
+    // already counted.
+    // 204 → 197: each of those seven was a name of its own.
+    // 197 → 200: the three second-model names above are each a name of their own.
+    // 203 → 205: both are names no earlier dispatch carried, so this count moved with
+    // the site count above rather than staying put — a whole name arrived instead of a
+    // second call to one already counted.
+    // 205 → 206: `speechTest` is a name no earlier dispatch carried, so this count
+    // moves with the site count above rather than staying put.
+    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(206)
   })
 
   it('reads a known signature correctly, which is what the arity check rests on', () => {
@@ -379,7 +432,12 @@ describe('the remote call contract', () => {
     // the same way from the account card's recovery form. They are in this list
     // *and* have a caller, which is the distinction worth keeping straight: this
     // count is about the dispatch mechanism, not about being unused.
-    expect(unused.length, `unreached remotes changed: ${unused.join(', ')}`).toBe(22)
+    // 22 → 23 by `groqWhisperTranscribe`, the dispatch that left with this plugin's
+    // own composer microphone. It is the one entry here with no UI caller at all:
+    // the transcript path is the Host's now, so a browser never reaches it. It stays
+    // declared because the media tool path resolves the same method and it remains
+    // this plugin's transcription entry point.
+    expect(unused.length, `unreached remotes changed: ${unused.join(', ')}`).toBe(23)
   })
 
   it('reports an undeclared name and a wrong argument count, which is the defect this gate exists for', () => {

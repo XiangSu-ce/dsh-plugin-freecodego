@@ -28,6 +28,7 @@ import { installDotFaces } from './dot-row.tsx'
 import { installRunningRow } from './running-row.tsx'
 import { installStepRows } from './step-row.tsx'
 import { en, NS, zh } from './companion-locale.ts'
+import { COMPANION_BODY, COMPANION_EYES, COMPANION_HALO, COMPANION_SURFACE } from './palette.ts'
 import { mainViewSessionId } from './signals.ts'
 import { useCompanionObservation, useCompanionView } from './view.ts'
 
@@ -60,8 +61,14 @@ export function FreeCodeGoCompanion(props: FreeCodeGoCompanionProps) {
       frame={view.frame}
       size={props.size}
       state={view.state}
-      ink="var(--fcg-text-primary, currentColor)"
-      paper="var(--fcg-bg-base, #f9f9f9)"
+      pose={view.pose}
+      expression={view.expression}
+      expressionSource={view.expressionSource}
+      face={view.face}
+      ink={COMPANION_BODY}
+      eye={COMPANION_EYES}
+      paper={COMPANION_SURFACE}
+      halo={COMPANION_HALO}
       className="fcg-companion"
     />
   )

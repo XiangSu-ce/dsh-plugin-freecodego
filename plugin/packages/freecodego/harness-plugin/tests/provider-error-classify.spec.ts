@@ -196,6 +196,20 @@ describe('the machine code, which is the one signal written to be routed on', ()
       .toMatchObject({ kind: 'quota', retryable: false, wireType: 'invalid_request_error' })
   })
 
+  it('reads an account route\'s quota re-code as the same exhausted balance', () => {
+    // rc.2 splits "out of credit" in two: `QUOTA` for an api-key route and
+    // `ACCOUNT_QUOTA` for one signed in with a DeepSeek account, so the first-party
+    // billing page can be offered. Both are terminal, and the status is not what
+    // says so: `llm-pi-ai` attaches `QUOTA` from the *message*, so the number can be
+    // missing entirely — which is the shape below, and the one that used to arrive
+    // as `unknown` (retryable) because only the sentence was left to read.
+    const verdict = classifyProviderError(failure('Account quota exhausted', 'ACCOUNT_QUOTA'))
+    expect(verdict).toMatchObject({ kind: 'quota', retryable: false })
+    // With a status it stays the same reading, so the re-code cannot classify two
+    // ways depending on how much of the original failure survived.
+    expect(classifyProviderError(failure('Account quota exhausted', 'ACCOUNT_QUOTA', 402)).kind).toBe('quota')
+  })
+
   it('reads a route that stopped before the first token as the cancellation it is', () => {
     // This plugin's own abort code. The wording table only knows the spellings
     // `aborted`/`cancelled`, so a route that ended for another reason arrived as

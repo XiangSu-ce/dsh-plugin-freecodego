@@ -30,6 +30,17 @@
  * misquote. Nothing else is normalized — case and backslashes are preserved,
  * because each can change what the quoted text means.
  *
+ * - **A heading is a claim of a retained field.** The summariser is instructed to
+ *   emit a fixed structure — {@link COMPACTION_SUMMARY_SECTIONS}, quoted from the
+ *   Harness's own instruction — and to write `(none)` for an empty section rather
+ *   than drop it. Nothing checks that, and the failure is silent in the worst
+ *   direction: a dropped "Pending Jobs" reads to the resuming model exactly like
+ *   the `(none)` the contract prescribes, so what the summariser lost is read as
+ *   "there was nothing there". The skeleton is therefore reported, and reported
+ *   **separately** from `accepted` (see {@link CompactionFidelityVerdict}): a
+ *   faithful summary that dropped a field is a different defect from a fabricated
+ *   quotation, and one word for both would name neither.
+ *
  * An empty result is `accepted`, deliberately: a summary that quotes nothing and
  * cites nothing makes no fidelity claim, so there is nothing here to falsify.
  * Its accuracy is a different question from its faithfulness, and this module
@@ -38,6 +49,36 @@
  *
  * @module @deepseek-ai/dsh-freecodego/harness-plugin/compaction-fidelity
  */
+
+/**
+ * The checkpoint structure the summariser is required to emit, in order.
+ *
+ * Mirrored from the Harness's compaction instruction rather than invented here,
+ * because this module's only job is to check a summary against the contract it was
+ * written to — and the contract belongs to the engine that wrote the prompt. The
+ * mirror is asserted against that source by `tests/compaction-fidelity.spec.ts`, so
+ * a Harness line that changes the structure fails the probe instead of leaving this
+ * audit checking a structure nothing produces.
+ *
+ * `(none)` is the contract's way of writing an empty section: a section is only
+ * *missing* when its heading is absent, not when its body is empty.
+ */
+export const COMPACTION_SUMMARY_SECTIONS: readonly string[] = [
+  'Primary Request and Intent',
+  'Key Technical Concepts',
+  'Files and Code',
+  'Errors and Fixes',
+  'Pending Jobs',
+  'Current Work',
+  'Next Step',
+  'Critical Context',
+]
+
+/** Which of the contract's fields a summary declares, and which it dropped. */
+export interface CompactionSummarySkeleton {
+  readonly present: readonly string[]
+  readonly missing: readonly string[]
+}
 
 /** The tunables, so a caller can loosen a threshold without editing the rules. */
 export interface CompactionFidelityOptions {
@@ -77,6 +118,17 @@ export interface CompactionFidelityVerdict {
   readonly quotesVerified: number
   readonly referencesChecked: number
   readonly referencesVerified: number
+  /**
+   * The contract fields this summary declares, in contract order.
+   *
+   * Deliberately not folded into `accepted`: a dropped field is a lost fact, a
+   * fabricated quotation is a false one, and a caller that reported them with one
+   * word would be describing neither. The caller logs them apart for the same
+   * reason.
+   */
+  readonly sectionsPresent: readonly string[]
+  /** The contract fields whose headings this summary does not carry at all. */
+  readonly sectionsMissing: readonly string[]
   readonly misses: readonly CompactionFidelityMiss[]
   /** One sentence, so the outcome never has to be inferred from the counts. */
   readonly note: string
@@ -233,6 +285,34 @@ function thresholdsFrom(options: CompactionFidelityOptions): { readonly minQuote
 }
 
 /**
+ * Which of the checkpoint's declared fields a summary actually carries.
+ *
+ * Tolerant about presentation and strict about presence, which is the split the
+ * contract itself makes: a summariser that writes `### Next Step:` in a summary
+ * that is otherwise structured has not dropped a field, while one that writes no
+ * heading at all has. Only the contract's own names are scored — an extra heading
+ * is the model adding a field, not losing one — and a heading is matched
+ * case-insensitively with internal whitespace collapsed, because the instruction
+ * names the structure rather than the casing.
+ *
+ * @param summary - the summary text as it was recorded.
+ * @returns the fields present, in contract order, and the ones it dropped.
+ */
+export function summarySkeleton(summary: string): CompactionSummarySkeleton {
+  const headings = new Set<string>()
+  for (const match of summary.matchAll(/^#{2,4}[ \t]+(.+?)[ \t]*#*[ \t]*$/gmu)) {
+    const heading = match[1]
+    if (heading === undefined) continue
+    headings.add(heading.trim().replace(/[ \t]+/gu, ' ').replace(/:$/u, '').toLowerCase())
+  }
+  const found = (name: string): boolean => headings.has(name.toLowerCase())
+  return {
+    present: COMPACTION_SUMMARY_SECTIONS.filter(found),
+    missing: COMPACTION_SUMMARY_SECTIONS.filter(name => !found(name)),
+  }
+}
+
+/**
  * Audit one compaction summary against the history it replaced.
  *
  * @param input - the summary text and the archived message bodies it replaced.
@@ -294,17 +374,25 @@ export function auditCompactionFidelity(
   const nothingToCheck = quotes.length === 0 && references.size === 0
   const quoteMisses = misses.filter(miss => miss.kind !== 'reference-not-in-archive')
   const accepted = quoteMisses.length === 0 && referenceHitRate >= minReferenceHitRate
+  const skeleton = summarySkeleton(input.summary)
+  const faithful = nothingToCheck
+    ? 'No verbatim claim to check: the summary quotes no span and cites no path, so faithfulness is not the question here.'
+    : accepted
+      ? `Every quoted span appears in the replaced history, and ${referencesVerified} of ${references.size} path reference(s) do.`
+      : `${quoteMisses.length} quotation(s) could not be found in the replaced history${referenceHitRate < minReferenceHitRate ? `, and only ${referencesVerified} of ${references.size} path reference(s) do` : ''}.`
   return {
     accepted,
     quotesChecked: quotes.length,
     quotesVerified,
     referencesChecked: references.size,
     referencesVerified,
+    sectionsPresent: skeleton.present,
+    sectionsMissing: skeleton.missing,
     misses,
-    note: nothingToCheck
-      ? 'No verbatim claim to check: the summary quotes no span and cites no path, so faithfulness is not the question here.'
-      : accepted
-        ? `Every quoted span appears in the replaced history, and ${referencesVerified} of ${references.size} path reference(s) do.`
-        : `${quoteMisses.length} quotation(s) could not be found in the replaced history${referenceHitRate < minReferenceHitRate ? `, and only ${referencesVerified} of ${references.size} path reference(s) do` : ''}.`,
+    // The two findings are stated as two sentences, because they are independent:
+    // a summary can be faithful and incomplete (the common case — every quotation
+    // checks out, one field was dropped), and the reader who is told only the first
+    // half will read the dropped field as `(none)`.
+    note: skeleton.missing.length === 0 ? faithful : `${faithful} It also dropped ${skeleton.missing.length} of the checkpoint's ${COMPACTION_SUMMARY_SECTIONS.length} field(s): ${skeleton.missing.join(', ')}.`,
   }
 }

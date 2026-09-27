@@ -73,7 +73,7 @@ describe('the fence answers for every classified tool', () => {
     // rather than the default — `tests/tool-manifest.spec.ts` reads the registration
     // literals and fails on a tool with no row, so a new unprefixed tool cannot ship
     // as an unclassified one, and the manifest is what makes it the plugin's own.
-    // Relying on this fence for it is what left `inspect`, `spill_recall` and
+    // Relying on this fence for it is what left `inspect`, `headroom_retrieve` and
     // `read_document` callable while planning for as long as nobody read the file.
     expect(planModeRefusal({ mode: 'plan', tool: 'brand_new_tool' })).toBeUndefined()
   })

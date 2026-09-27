@@ -725,7 +725,7 @@ describe('review engine end to end', () => {
     const reviewer = {
       async review() {
         return {
-          comments: [{ path: 'docs/notes.md', content: 'this doc contradicts the code', startLine: 12, endLine: 12, severity: 'medium', category: 'documentation' }],
+          comments: [{ path: 'documentation/notes.md', content: 'this doc contradicts the code', startLine: 12, endLine: 12, severity: 'medium', category: 'documentation' }],
           spent: { inputTokens: 1, outputTokens: 1 },
         }
       },
@@ -742,7 +742,7 @@ describe('review engine end to end', () => {
     )
     expect(result.report.comments).toHaveLength(1)
     expect(result.report.comments[0]?.startLine).toBe(12)
-    expect(result.notes.some(note => note.includes('outside this run\'s change set') && note.includes('docs/notes.md'))).toBe(true)
+    expect(result.notes.some(note => note.includes('outside this run\'s change set') && note.includes('documentation/notes.md'))).toBe(true)
   })
 
   it('says nothing about unattributed findings when every finding is in the change set', async () => {

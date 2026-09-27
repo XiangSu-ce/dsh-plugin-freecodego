@@ -33,12 +33,23 @@ const hostPath = join(pluginRoot, 'src', 'index.ts')
 const hostSourceRoot = join(pluginRoot, 'src')
 const clientPath = join(here, '..', 'src', 'client', 'index.ts')
 const surfacePath = join(here, '..', 'src', 'client', 'settings-tab.tsx')
+/**
+ * Section faces that do not live in `settings-tab.tsx`.
+ *
+ * A section's face is what a slot has to satisfy, and nothing about that rule
+ * cares which file declares it. The sweep read only `settings-tab.tsx` at first,
+ * which was the whole of the surface then; the design page declares its own
+ * `DesignSectionInjected`, so leaving it out would have made the guard look
+ * greener as the surface grew.
+ */
+const extraFacePaths = [join(here, '..', 'src', 'client', 'design-section.tsx')]
 const typertPath = join(pluginRoot, 'lib', 'typert.remote-client.js')
 const engineeringPath = join(pluginRoot, 'src', 'engineering.ts')
 
 const hostSource = await readFile(hostPath, 'utf8')
 const clientSource = await readFile(clientPath, 'utf8')
 const surfaceSource = await readFile(surfacePath, 'utf8')
+const extraFaceSources = await Promise.all(extraFacePaths.map(path => readFile(path, 'utf8')))
 const engineeringSource = await readFile(engineeringPath, 'utf8')
 const typertSource = await readFile(typertPath, 'utf8').catch(() => {
   throw new Error(`${typertPath} is missing; run 'pnpm run build:lib:host' (or scripts/generate-typert.mjs) before the contract test`)
@@ -77,6 +88,12 @@ const UNWIRED_REMOTES: Readonly<Record<string, string>> = {
   backendRuntimeHealth: 'health probe with no user gesture; readiness is derived from the catalog',
   backendUsage: 'usage plumbing; tokenUsage* already render the figures the UI shows',
   workbuddyRefreshToken: 'token plumbing that takes a raw refresh token, which the panel never holds',
+  // Not waiting on a panel: this one lost its gesture when this plugin's own
+  // microphone was removed, and the harness's voice input is served from the Host
+  // side instead (`harness-plugin/src/speech-provider.ts` calls the transcriber in
+  // process, and the media tool path resolves the same method). It stays declared
+  // as this plugin's transcription entry point rather than as a pending control.
+  groqWhisperTranscribe: 'the plugin no longer ships a microphone; transcription is reached in process on the Host side',
   // Redundant with a status the UI already renders.
   lspMountStatus: 'superseded for the UI by guardSettingsStatus.lsp, which the guard panel renders',
   // Waiting on a companion read that does not exist yet, not on a panel.
@@ -497,8 +514,12 @@ describe('FreeCodeGo Remote contract', () => {
 
   it('provides every required settings-section prop from some slot', () => {
     const blocks = injectBlocks(clientSource)
-    const faces = requiredSectionProps(surfaceSource)
+    // Every source that declares a section face, not just the settings tab.
+    const faces = [...surfaceSource, ...extraFaceSources].flatMap(requiredSectionProps)
     expect(faces.length).toBeGreaterThan(0)
+    // A named list, so removing a file from the sweep is a visible edit rather
+    // than a guard that quietly covers less.
+    expect(faces.map(face => face.face).sort()).toContain('DesignSectionInjected')
     const unprovided = faces.flatMap(face => face.props
       .filter(prop => !blocks.some(block => mentions(block, prop)))
       .map(prop => `${face.face}.${prop}`))

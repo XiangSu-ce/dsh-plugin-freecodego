@@ -8,6 +8,7 @@ import {
   CacheColdView,
   HARNESS_PRUNE_MARKER,
   type MessageLike,
+  cacheColdConfigForWindow,
   clearOldToolResults,
   clearedResultMarker,
   describeCacheColdRefusal,
@@ -44,6 +45,44 @@ describe('cache-cold trigger', () => {
     for (const refusal of ['no-assistant-message', 'gap-below-threshold', 'cooldown-active', 'session-cap-reached', 'nothing-clearable', 'below-reclaim-floor'] as const) {
       expect(describeCacheColdRefusal(refusal)).not.toBe('')
     }
+  })
+})
+
+describe('the reclaim floor follows the window', () => {
+  it('keeps the shipped configuration for a model that advertises no window', () => {
+    expect(cacheColdConfigForWindow(undefined)).toEqual(CACHE_COLD_DEFAULTS)
+  })
+
+  it('scales the reclaim floor with the window and nothing else', () => {
+    // Only `minReclaimTokens` answers a question about the window: the gap is a
+    // fact about time and the keep-window is a fact about turns, so neither moves.
+    const small = cacheColdConfigForWindow(32_000)
+    expect(small.minReclaimTokens).toBe(500)
+    expect(small.gapThresholdMs).toBe(CACHE_COLD_DEFAULTS.gapThresholdMs)
+    expect(small.keepRecentResults).toBe(CACHE_COLD_DEFAULTS.keepRecentResults)
+    expect(cacheColdConfigForWindow(128_000).minReclaimTokens).toBe(CACHE_COLD_DEFAULTS.minReclaimTokens)
+    expect(cacheColdConfigForWindow(1_000_000).minReclaimTokens).toBe(15_625)
+  })
+
+  it('turns a below-floor reclaim into a clear on a small window and not on the default', () => {
+    // 800 reclaimable tokens is under the shipped 2,000 and over the 500 a 32k
+    // window asks for: the same conversation, decided differently because the
+    // window says a smaller reclaim is worth the same cache break.
+    // Six results against a keep window of five: exactly one is clearable, so the
+    // reclaim the floor is measured against is that one result's 800 tokens.
+    const candidates = [1, 2, 3, 4, 5, 6].map(seq => result(seq, 'bash', 800))
+    const defaultPolicy = new CacheColdPolicy()
+    const decided = defaultPolicy.plan('s', { lastAssistantAt: 1_000, now: 1_000 + HOUR, candidates })
+    expect(decided.refusal).toBe('below-reclaim-floor')
+    const scaledPolicy = new CacheColdPolicy()
+    const scaled = scaledPolicy.plan('s', {
+      lastAssistantAt: 1_000,
+      now: 1_000 + HOUR,
+      candidates,
+      config: cacheColdConfigForWindow(32_000),
+    })
+    expect(scaled.refusal).toBeUndefined()
+    expect(scaled.fire).toBe(true)
   })
 })
 
@@ -198,6 +237,64 @@ describe('the stable view', () => {
     const second = view.apply('s1', history)
     expect(second.clearedCallIds).toEqual(['c1'])
     expect(second.reclaimedChars).toBe(first.reclaimedChars)
+  })
+
+  it('does not clear more just because the transcript grew', () => {
+    // "Applying it on every step is the same as applying it once" is the property
+    // the shrink rests on, and every other case here checks it against a transcript
+    // that never changes. A real one grows between requests, and the keep window is
+    // positional — so if the transform re-derives the window from the transcript
+    // instead of from the decision, each new turn pushes another old result out of
+    // the window and the second application clears more than the first. That is a
+    // new cache break on every turn: the module's whole argument is that the write
+    // is paid once, at a moment the cache is provably cold, and a break per turn is
+    // the pressure-triggered clearing it exists to refuse.
+    const view = new CacheColdView()
+    expect(view.plan('s1', { lastAssistantAt: 1_000, now: 1_000 + HOUR, messages: history }).fire).toBe(true)
+    expect(view.apply('s1', history).clearedCallIds).toEqual(['c1'])
+
+    // Two more turns, exactly as a conversation produces between two requests.
+    const grown = [...history, call('c7', 'read'), result('c7', 't'.repeat(100)), call('c8', 'read'), result('c8', 's'.repeat(100))]
+    // The gap is short and the cooldown is active, so this pass decides nothing.
+    expect(view.plan('s1', { lastAssistantAt: 1_000, now: 1_000 + HOUR + 1_000, messages: grown }).fire).toBe(false)
+    expect(view.apply('s1', grown).clearedCallIds).toEqual(['c1'])
+    // Nothing new is decided, so nothing new is offered for parking either: a spill
+    // write for a result that survives is bytes nobody was about to lose, plus a
+    // locator that points at a copy of what the model still has in front of it.
+    expect(view.clearTargets('s1', grown).map(target => target.callId)).toEqual(['c1'])
+
+    // The freeze is per decision, not permanent: once the gap is long again the
+    // policy fires, the transcript it saw then is covered, and the results that
+    // decision added are the ones offered for parking.
+    view.recordMarkers('s1', new Map([['c1', '<cleared>']]))
+    expect(view.plan('s1', { lastAssistantAt: 1_000 + HOUR, now: 1_000 + HOUR * 3, messages: grown }).fire).toBe(true)
+    expect(view.clearTargets('s1', grown).map(target => target.callId)).toEqual(['c2', 'c3'])
+    // The report names every result this pass replaced, and that includes `c1`: the
+    // input is the session's *raw* transcript — the caller never feeds the transform's
+    // own output back in — so the transform replaces the whole decided set on every
+    // pass and the field is the set, not the delta. That is exactly why membership
+    // cannot be the window: over a raw transcript the window moves with every turn.
+    expect(view.apply('s1', grown).clearedCallIds).toEqual(['c1', 'c2', 'c3'])
+  })
+
+  it('settles a result it could not park instead of offering it again', () => {
+    // A parking pass is one attempt per result, not a queue. The result a pass could
+    // not park is still replaced by the *plain* marker on that step, so the transcript
+    // the provider receives already carries it: a later success would rewrite text
+    // inside a prefix that has been sent — the cache break this module waits an hour to
+    // avoid paying — and every request in between would retry the same failing write.
+    const view = new CacheColdView()
+    expect(view.plan('s1', { lastAssistantAt: 1_000, now: 1_000 + HOUR, messages: history }).fire).toBe(true)
+    expect(view.clearTargets('s1', history).map(target => target.callId)).toEqual(['c1'])
+    // The backend refused the write: no marker came back for the target.
+    view.settleMarkers('s1', ['c1'], new Map())
+    // The result is still cleared — settling decides what to *park*, never what to
+    // clear — and it is no longer a target for a second attempt.
+    expect(view.apply('s1', history).clearedCallIds).toEqual(['c1'])
+    expect(view.clearTargets('s1', history)).toEqual([])
+    // And the state agrees with the transcript the model got, rather than promising a
+    // locator that was never written.
+    expect(view.apply('s1', history).messages[1]).toMatchObject({ content: [{ text: CLEARED_RESULT_MARKER }] })
   })
 
   it('stops reporting a change once the marker is already in place', () => {

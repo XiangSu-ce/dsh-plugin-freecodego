@@ -206,18 +206,24 @@ const TEST_FILE_PATTERN = /(?:^|\/)(?:__tests__|tests?|specs?)\//u
 /**
  * Infer test coverage from the paths in a change.
  *
- * A proxy, and named as one: this reads *which files moved*, not whether the
- * tests exercise the change. `full` therefore means "the change arrived with a
- * test-file change", which is the strongest claim a path list can support and
- * exactly what the light-tier gate asks for. `partial` is never inferred — a
- * path list cannot tell a half-covered change from a covered one — so a caller
- * that knows real coverage should pass it directly rather than route it here.
+ * A conservative proxy, and named as one: this reads *which files moved*, not
+ * whether the tests exercise the change. A changed test file is evidence that
+ * tests changed, but it does not establish that they cover every changed source
+ * file (or even the source file beside them), so path lists can never infer
+ * `full`. Such a diff is reported as `partial`, which keeps the automatic tier
+ * from skipping tests on the strength of a test edit alone. The automatic tier
+ * deliberately has no source of stronger coverage evidence today; a caller that
+ * knows actual coverage may pass `full` directly instead.
+ *
  * @param changedPaths - the paths the change touched.
  * @returns the inferred coverage level.
  */
 export function testCoverageFromChangedPaths(changedPaths: readonly string[]): 'none' | 'partial' | 'full' {
   if (changedPaths.length === 0) return 'none'
-  return changedPaths.some(path => isTestPath(path)) ? 'full' : 'none'
+  // Presence is not coverage: a change to `tests/unrelated.spec.ts` alongside
+  // `src/changed.ts` says nothing about whether the test reaches that source.
+  // Only callers with stronger, actual coverage evidence may select `full`.
+  return changedPaths.some(path => isTestPath(path)) ? 'partial' : 'none'
 }
 
 /** Whether one path is a test file by the path conventions above.

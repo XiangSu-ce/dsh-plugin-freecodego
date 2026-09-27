@@ -26,7 +26,7 @@ import {
 } from '../src/memory/dream.ts'
 import { forgetObservation, hashEvidence, type ForgetContext } from '../src/memory/forget.ts'
 import { MEMORY_ARCHIVES } from '../src/memory/memory-pipeline.ts'
-import { renderMemoryManifest } from '../src/memory/manifest.ts'
+import { MEMORY_SESSION_SECTION_HEADING, renderMemoryManifest, type MemoryManifestEntry } from '../src/memory/manifest.ts'
 import { memoryStageBehaviour, resolveMemoryRollout } from '../src/memory/rollout.ts'
 import {
   buildMemoryTelemetry,
@@ -57,6 +57,13 @@ function memoryIo(initial: Record<string, string> = {}): { io: DreamIo; files: M
         files.set(to, staged)
       },
       remove: path => void files.delete(path),
+      // The real port is a recursive removal; this one has to delete the keys
+      // themselves, because "the directory is gone" is asserted by listing it.
+      removeTree: (path) => {
+        for (const key of [...files.keys()]) {
+          if (key === path || key.startsWith(`${path}/`)) files.delete(key)
+        }
+      },
     },
   }
 }
@@ -461,6 +468,22 @@ describe('the manifest index', () => {
     expect(manifest.markdown).toContain(`${manifest.omitted} more records`)
   })
 
+  test('carries the loading sentence with the pointer to the search tool', () => {
+    // The index is read from disk, so it reaches its reader — the model included
+    // — with no `tool_search` result behind it, and the sentence that result
+    // states for the descriptions it returns never arrives. A bare name in the
+    // notice is therefore a pointer to a schema the reader may never have
+    // fetched, which is the one thing a list of pointers may not hold.
+    const many = Array.from({ length: 40 }, (_unused, index) => ({
+      name: `topic-${String(index).padStart(2, '0')}`,
+      path: `/home/state/topics/topic-${index}.md`,
+      description: 'a description that must not be cut in half',
+    }))
+    const manifest = renderMemoryManifest(many, { budgetChars: 600 })
+    expect(manifest.truncated).toBe(true)
+    expect(manifest.markdown).toContain('select:engineering_memory_search')
+  })
+
   test('counts the overflow notice inside the budget it promises', () => {
     // The notice is part of the index, and it used to be appended outside the
     // budget — so the one case the budget exists for (more records than fit) was
@@ -482,6 +505,77 @@ describe('the manifest index', () => {
     // It did not fit, so it is absent entirely rather than present and wrong.
     expect(manifest.included).toBe(0)
     expect(manifest.markdown).not.toContain('ddd')
+  })
+})
+
+describe('the index carries each record\'s scope', () => {
+  const durable: MemoryManifestEntry = { name: 'alpha', path: '/home/state/topics/alpha.md', description: 'kept' }
+  const temporary: MemoryManifestEntry = {
+    name: 'beta',
+    path: '/home/state/sessions/session-1/topics/beta.md',
+    description: 'for this task',
+    scope: 'session',
+    sessionId: 'session-1',
+  }
+
+  test('a temporary record is listed under the heading that says it will be reclaimed', () => {
+    // The whole point of rendering the scope: a path in the temporary section is a
+    // promise with an end date, and a reader that cannot see the difference reads
+    // one list rather than two. Mutation: dropping the section puts the row under
+    // `## Project`, where it reads as a durable pointer that will exist tomorrow.
+    const manifest = renderMemoryManifest([durable, temporary])
+    expect(manifest.markdown).toContain('## Project')
+    expect(manifest.markdown).toContain(MEMORY_SESSION_SECTION_HEADING)
+    expect(manifest.markdown.indexOf('## Project')).toBeLessThan(manifest.markdown.indexOf(MEMORY_SESSION_SECTION_HEADING))
+    expect(manifest.included).toBe(2)
+    // The row names its session: the section is a category, and two live sessions
+    // share this one file.
+    expect(manifest.markdown).toContain('(session session-1)')
+  })
+
+  test('a durable row is unchanged by the temporary tier existing', () => {
+    expect(renderMemoryManifest([durable]).markdown).toContain('- alpha — kept — /home/state/topics/alpha.md')
+  })
+
+  test('renders no temporary section at all when there is no temporary record', () => {
+    // A heading over an empty section would announce a scope this workspace does
+    // not use, which is a claim about a tier that does not exist here.
+    const manifest = renderMemoryManifest([durable])
+    expect(manifest.markdown).not.toContain(MEMORY_SESSION_SECTION_HEADING)
+    expect(manifest.markdown).toContain('- alpha — kept — /home/state/topics/alpha.md\n')
+  })
+
+  test('still counts the whole index, temporary headings included', () => {
+    // The promise the renderer already made once and broke once: the rendered
+    // index is not longer than the budget it was given. A second section adds
+    // text that has to be inside the count, not beside it.
+    const many = Array.from({ length: 20 }, (_unused, index): MemoryManifestEntry => ({
+      name: `topic-${String(index).padStart(2, '0')}`,
+      path: `/home/state/topics/topic-${index}.md`,
+      description: 'a description that must not be cut in half',
+    })).concat(Array.from({ length: 20 }, (_unused, index): MemoryManifestEntry => ({
+      name: `session-${String(index).padStart(2, '0')}`,
+      path: `/home/state/sessions/session-1/topics/session-${index}.md`,
+      description: 'a temporary description that must not be cut in half',
+      scope: 'session',
+      sessionId: 'session-1',
+    })))
+    for (const budget of [600, 1_200, 4_000]) {
+      const manifest = renderMemoryManifest(many, { budgetChars: budget })
+      expect(manifest.markdown.length).toBeLessThanOrEqual(budget)
+    }
+  })
+
+  test('drops the temporary heading with the row, rather than leaving it alone', () => {
+    // A section whose one row did not fit would read as "this workspace has no
+    // temporary records", which is a different claim from "they did not fit" —
+    // and the overflow count beside it would be about a section it is not in.
+    const oversized: MemoryManifestEntry = { ...temporary, description: 't'.repeat(400) }
+    const manifest = renderMemoryManifest([oversized], { budgetChars: 300 })
+    expect(manifest.included).toBe(0)
+    expect(manifest.omitted).toBe(1)
+    expect(manifest.markdown).not.toContain(MEMORY_SESSION_SECTION_HEADING)
+    expect(manifest.markdown).toContain('1 more record')
   })
 })
 
@@ -592,6 +686,11 @@ describe('topic commits are all-or-nothing per topic', () => {
         files.delete(from)
       },
       remove: path => void files.delete(path),
+      // The file operation only the session scope uses. A no-op here is honest: this
+      // case is about the temp-then-rename sequence a topic write must keep, and it
+      // asserts the exact operation list below, so a tree removal that this fake
+      // pretended to perform would be a second thing under test.
+      removeTree: path => void files.delete(path),
     }
     commitTopics({ plan, directory: '/t', io })
     // Never the target, which is the whole difference between atomic and not.
@@ -607,6 +706,42 @@ describe('topic commits are all-or-nothing per topic', () => {
       io,
     })
     expect(escaped).toEqual([])
+    expect(files.size).toBe(0)
+  })
+
+  test('writes each topic into the directory its scope names', () => {
+    const { io, files } = memoryIo()
+    const written = commitTopics({
+      plan: {
+        commit: true,
+        topics: [
+          { slug: 'durable', title: 'Durable', markdown: 'Kept.', sources: ['A'] },
+          { slug: 'draft', title: 'Draft', markdown: 'For now.', sources: ['A'], scope: 'session' },
+        ],
+      },
+      directory: '/t',
+      sessionDirectory: '/t/sessions/session-1/topics',
+      io,
+    })
+    expect(written).toEqual(['durable', 'draft'])
+    expect(files.has('/t/durable.md')).toBe(true)
+    expect(files.has('/t/sessions/session-1/topics/draft.md')).toBe(true)
+    // And not in both places: a temporary topic copied into the durable archive is
+    // one the reclamation cannot reach, which is the opposite of temporary.
+    expect(files.has('/t/draft.md')).toBe(false)
+  })
+
+  test('refuses a temporary topic that has no session to write into', () => {
+    // Mutation: falling back to `directory` here writes a record the plan called
+    // temporary into the permanent archive, and the reclamation then never removes
+    // it — the silent disagreement with the plan that the refusal count exists for.
+    const { io, files } = memoryIo()
+    const written = commitTopics({
+      plan: { commit: true, topics: [{ slug: 'draft', title: 'Draft', markdown: 'For now.', sources: [], scope: 'session' }] },
+      directory: '/t',
+      io,
+    })
+    expect(written).toEqual([])
     expect(files.size).toBe(0)
   })
 })

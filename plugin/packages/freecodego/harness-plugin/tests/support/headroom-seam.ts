@@ -16,7 +16,7 @@
 
 import type { CcrStore } from '../../src/headroom/ccr.ts'
 import type { SpillArchive } from '../../src/headroom/ccr-spill.ts'
-import { FreeCodeGoHeadroomRuntime, type HeadroomSettings } from '../../src/headroom/runtime.ts'
+import { FreeCodeGoHeadroomRuntime, type HeadroomQuota, type HeadroomSettings } from '../../src/headroom/runtime.ts'
 import type { SpillWriter } from '../../src/result-spill.ts'
 
 /** Both fixtures sets are past this gate; a fixture below it never compresses. */
@@ -43,6 +43,24 @@ export interface HeadroomSeam {
   readonly status: () => ReturnType<FreeCodeGoHeadroomRuntime['status']>
   readonly run: (text: string, overrides?: HeadroomSeamCall) => Promise<string>
   readonly retrieve: (hash: string) => Promise<unknown>
+  /**
+   * Push a compression quota, the way the caller that measures the conversation
+   * does. Here because the quota's effect is the thing under test: a gate that
+   * could only set it through the real session pipeline could not separate
+   * "the bar moved" from "the conversation was measured differently".
+   */
+  readonly quota: (quota: HeadroomQuota | undefined) => void
+  /**
+   * Push the routed model's window, the way the caller that measures the
+   * conversation does on every settled turn.
+   *
+   * Separate from {@link quota} because the two travel separately and a case has to
+   * be able to say which of them it is varying: the window is what the payload
+   * threshold scales with, the quota is what relaxes the accept bar, and a seam
+   * that could only push them together could not tell "the bar was scaled" from
+   * "the conversation came under pressure".
+   */
+  readonly window: (contextWindow: number | undefined) => void
 }
 
 /**
@@ -116,5 +134,7 @@ export function headroomSeam(settings: HeadroomSettings = HEADROOM_SEAM_SETTINGS
       if (tool === undefined) throw new Error('headroom_retrieve was never registered')
       return await tool.execute({ hash })
     },
+    quota: quota => { runtime.setCompressionQuota(quota) },
+    window: contextWindow => { runtime.setContextWindow(contextWindow) },
   }
 }

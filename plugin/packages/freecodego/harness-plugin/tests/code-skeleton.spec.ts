@@ -110,7 +110,7 @@ describe('code skeleton — safety envelope', () => {
   })
 
   it('declines prose even when the file is large', () => {
-    const text = readEnvelope('docs/guide.md', proseDocument())
+    const text = readEnvelope('documentation/guide.md', proseDocument())
     const result = skeletonizeReadOutput(text, computeKey(text))
     expect(result.applied).toBe(false)
     expect(result.output).toBe(text)

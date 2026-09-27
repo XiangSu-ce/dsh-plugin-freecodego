@@ -197,7 +197,7 @@ const PROBES: readonly GuardProbe[] = [
     specs: ['packages/freecodego/harness-plugin/tests/hook-seams.spec.ts'],
   },
   {
-    // The hole this names is `inspect`, `spill_recall` and `read_document`: three
+    // The hole this names is `inspect`, `headroom_retrieve` and `read_document`: three
     // tools registered with no plugin prefix, so the fence's prefix branch never
     // reached them and the "unclassified is refused" default never applied. It was
     // closed by *declaring* them, and the probe deleted one of the declarations.
@@ -289,13 +289,6 @@ const PROBES: readonly GuardProbe[] = [
     from: "  if (containsSecret(content)) findings.push({ rule: 'ENG_EXTERNAL_SECRET_PATTERN', severity: 'critical', message: 'Potential credential shape detected.', location: id })",
     to: "  if (KEYWORD_SECRET_PATTERN.test(content)) findings.push({ rule: 'ENG_EXTERNAL_SECRET_PATTERN', severity: 'critical', message: 'Potential credential shape detected.', location: id })",
     specs: ['packages/freecodego/harness-plugin/tests/secret-scan.spec.ts'],
-  },
-  {
-    name: 'the Advisor evidence cache keys on the workspace, so one checkout is not another’s evidence',
-    file: 'src/advisor.ts',
-    from: "    return `${cwd ?? ''}\\u0000${call.name}\\u0000${call.arguments}`",
-    to: '    return `${call.name}\\u0000${call.arguments}`',
-    specs: ['packages/freecodego/harness-plugin/tests/advisor.spec.ts'],
   },
   {
     name: 'a chain a handler dispatches is counted, so the depth cap is not inert in production',
@@ -456,8 +449,15 @@ const PROBES: readonly GuardProbe[] = [
   {
     name: 'the credential shield reads a shell command under every shell name, not `bash` alone',
     file: 'src/tool-guards.ts',
-    from: "  if (toolName !== 'bash' && toolName !== 'shell' && toolName !== 'exec_command' && toolName !== 'pwsh') return undefined",
+    from: '  if (!SHELL_TOOL_NAMES.has(toolName)) return undefined',
     to: "  if (toolName !== 'bash') return undefined",
+    specs: ['packages/freecodego/harness-plugin/tests/tool-guards.spec.ts'],
+  },
+  {
+    name: 'the shell vocabulary holds every name headroom compresses by, not `bash` alone',
+    file: 'src/tool-guards.ts',
+    from: "export const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set(['bash', 'shell', 'exec_command', 'local_shell', 'pwsh'])",
+    to: "export const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set(['bash'])",
     specs: ['packages/freecodego/harness-plugin/tests/tool-guards.spec.ts'],
   },
   {
@@ -1060,6 +1060,33 @@ const PROBES: readonly GuardProbe[] = [
     specs: ['packages/freecodego/harness-plugin/tests/headroom-extra.spec.ts'],
   },
   {
+    // The same file, the same omission, one name-type further on. `BASH_TOOL_NAMES`
+    // decides *which shell* a line arrived under; this set decides *whether the line
+    // is a search*, and it was POSIX-only too — on win32 the platform's own search
+    // program was the one missing. `findstr` ships with Windows and is the program
+    // this subsystem's compressor names ("grep/rg/findstr output"), `Select-String`
+    // is PowerShell's grep. Neither probe above catches it, because they mutate the
+    // shell name while the command stays `rg`: what the shell spelling cannot
+    // express is the program.
+    name: 'a read-only search folds when the program is the one the platform spells',
+    file: 'src/headroom/runtime.ts',
+    from: "const BASH_SEARCH_PROGRAMS: ReadonlySet<string> = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep', 'ag', 'ack', 'findstr', 'select-string'])",
+    to: "const BASH_SEARCH_PROGRAMS: ReadonlySet<string> = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep', 'ag', 'ack'])",
+    specs: ['packages/freecodego/harness-plugin/tests/headroom-extra.spec.ts'],
+  },
+  {
+    // The case decision, pinned separately from the vocabulary. PowerShell resolves
+    // a cmdlet name case-insensitively, so a `pwsh` line writes `Select-String` as
+    // often as `select-string`; dropping the fold leaves the first unmatched while
+    // the second still matches. A probe that only removed the name would not reach
+    // this, which is why the two decisions are separate probes.
+    name: 'a PowerShell cmdlet is recognised in whatever case the line spells it',
+    file: 'src/headroom/runtime.ts',
+    from: "const tokens = command.split(/[\\s|;&]+/u).map(token => token.replace(/^[\"']|[\"']$/gu, '').toLowerCase())",
+    to: "const tokens = command.split(/[\\s|;&]+/u).map(token => token.replace(/^[\"']|[\"']$/gu, ''))",
+    specs: ['packages/freecodego/harness-plugin/tests/headroom-extra.spec.ts'],
+  },
+  {
     // Same omission as the headroom set, one list further on: `CLEARABLE_TOOL_KINDS`
     // is what makes a result a candidate at all, so a tool missing from it is not
     // merely ranked lower — it is invisible to the whole policy. On win32 the base
@@ -1178,14 +1205,15 @@ const PROBES: readonly GuardProbe[] = [
   },
   {
     // The third exit of the same root cause: Plan Mode judges a shell call by the
-    // declarative command policy rather than by a keyword list, and that branch is
-    // gated on the tool's spelling. With only the POSIX spelling in the gate the
-    // fence did not exist on Windows — the command refused as `bash` merely
-    // prompted as `pwsh`, which is the weaker answer the mode exists to avoid.
+    // gated on the tool's spelling. Plan Mode now reads that spelling from
+    // `SHELL_TOOL_NAMES` in `tool-guards.ts` instead of a local copy, so the probe
+    // mutates the call that reads it: replacing the vocabulary check with a bare
+    // `return undefined` lets every shell spelling (including `local_shell`) through
+    // un-refused, which the plan-mode spec pins directly.
     name: 'Plan Mode judges the shell this platform registers, not only the POSIX spelling',
     file: 'src/plan-mode.ts',
-    from: "  if (tool !== 'bash' && tool !== 'shell' && tool !== 'pwsh' && tool !== 'exec_command') return undefined",
-    to: "  if (tool !== 'bash' && tool !== 'shell' && tool !== 'exec_command') return undefined",
+    from: "  if (!SHELL_TOOL_NAMES.has(tool)) return undefined",
+    to: "  return undefined",
     specs: ['packages/freecodego/harness-plugin/tests/plan-mode.spec.ts'],
   },
   {
@@ -1554,9 +1582,9 @@ describe('guard probe anchors', () => {
   })
 
   it('reads an anchor in the file’s own line endings, so CRLF cannot disarm a probe', () => {
-    const crlf = "  'inspect',\r\n  'spill_recall',\r\n"
+    const crlf = "  'inspect',\r\n  'headroom_retrieve',\r\n"
     const space = anchorSpace(crlf)
-    expect(space.body).toBe("  'inspect',\n  'spill_recall',\n")
+    expect(space.body).toBe("  'inspect',\n  'headroom_retrieve',\n")
     // `restore` is the exact inverse, which is what the probe-run half asserts
     // after its revert: the file must come back byte for byte.
     expect(space.restore(space.body)).toBe(crlf)

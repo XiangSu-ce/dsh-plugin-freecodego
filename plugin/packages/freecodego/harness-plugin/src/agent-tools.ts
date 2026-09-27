@@ -1,7 +1,6 @@
 /**
- * Agent-facing Harness tools for the FreeCodeGo plugin: the independent
- * Advisor review loop, the multi-engine engineering council workflow, and the
- * legacy Agnes media tool names.
+ * Agent-facing Harness tools for the FreeCodeGo plugin: the multi-engine
+ * engineering council workflow and the legacy Agnes media tool names.
  *
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/agent-tools
  */
@@ -10,7 +9,6 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AgnesClient } from './agnes.ts'
 import { AGNES_VIDEO_SECONDS } from './agnes.ts'
-import type { FreeCodeGoAdvisorRuntime } from './advisor.ts'
 import type { FreeCodeGoEngineCouncil } from './engine-council.ts'
 import type { FreeCodeGoEngineeringRegistry } from './engineering.ts'
 import { COUNCIL_ENGINES, VERIFICATION_STAGES, normalizeEngineeringCouncilRequest, validateEngineeringVerificationStages, workspaceForAgent } from './engineering-remote-utils.ts'
@@ -29,7 +27,6 @@ import { VERIFICATION_TOOL_NAME } from './verify-on-stop.ts'
  */
 export interface AgentToolsDeps {
   readonly ctx: Context
-  readonly advisor: FreeCodeGoAdvisorRuntime
   readonly engineering: FreeCodeGoEngineeringRegistry
   readonly engineCouncil: FreeCodeGoEngineCouncil
   readonly agnes: AgnesClient | undefined
@@ -58,10 +55,10 @@ export interface AgentToolsDeps {
   readonly probeCommandPolicy?: (agent: unknown) => CompiledCommandPolicy | undefined
 }
 
-/** Expose the independent review loop to every Agent through Harness tools.
- * @param deps - the services and providers the advisor tools are built from.
+/** Expose the engineering council workflow to every Agent through Harness tools.
+ * @param deps - the services and providers the engineering tools are built from.
  */
-export function registerAdvisorTools(deps: AgentToolsDeps): void {
+export function registerEngineeringTools(deps: AgentToolsDeps): void {
   const tools = deps.ctx.get('tools') as { register: (tool: ToolDefinitionShape) => () => void } | undefined
   if (tools === undefined) return
   const output = {
@@ -69,54 +66,9 @@ export function registerAdvisorTools(deps: AgentToolsDeps): void {
     render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }],
   }
   const requireAgent = (exec: { readonly agent?: Agent }): Agent => {
-    if (exec.agent === undefined) throw new Error('Advisor tools require a calling Agent')
+    if (exec.agent === undefined) throw new Error('Engineering tools require a calling Agent')
     return exec.agent
   }
-  const disposeStatus = tools.register(rawAgnesTool({
-    name: 'advisor_status',
-    description: 'Inspect the independent FreeCodeGo Advisor review loop and recent findings for this conversation. Use this before requesting a review.',
-    parameters: { type: 'object', properties: {}, additionalProperties: false },
-    output,
-    execute: (_args: unknown, exec: { readonly agent?: Agent }) => {
-      const agent = requireAgent(exec)
-      return { ...deps.advisor.status(), recentNotes: deps.advisor.notes(agent, 3) }
-    },
-    presentCall: () => ({ card: 'generic', title: 'Inspect Advisor status' }),
-  }))
-  const disposeReview = tools.register(rawAgnesTool({
-    name: 'advisor_review',
-    description: 'Ask the independent Advisor model to review the latest durable conversation and workspace evidence now. Use when a second opinion can catch a regression, missed requirement, or verification gap.',
-    parameters: { type: 'object', properties: {}, additionalProperties: false },
-    output,
-    execute: async (_args: unknown, exec: { readonly agent?: Agent }) => {
-      const agent = requireAgent(exec)
-      const status = deps.advisor.status()
-      if (!status.enabled || !status.routeReady) throw new Error('Advisor is not enabled with a valid model route')
-      if (!status.allowAgentControl) throw new Error('Advisor Agent control is disabled in FreeCodeGo settings')
-      const note = await deps.advisor.reviewNow(agent)
-      return { reviewed: true, note: note ?? null }
-    },
-    presentCall: () => ({ card: 'generic', title: 'Request Advisor review' }),
-  }))
-  const disposeNotes = tools.register(rawAgnesTool({
-    name: 'advisor_notes',
-    description: 'Read recent durable Advisor findings for this conversation, including whether each finding was recorded, injected, or used to steer the Agent.',
-    parameters: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 40, description: 'Maximum findings to return.' } }, additionalProperties: false },
-    output,
-    execute: (args: { readonly limit?: number }, exec: { readonly agent?: Agent }) => ({ notes: deps.advisor.notes(requireAgent(exec), args.limit ?? 10) }),
-    presentCall: () => ({ card: 'generic', title: 'Read Advisor findings' }),
-  }))
-  const disposeCouncil = tools.register(rawAgnesTool({
-    name: 'engineering_council_review',
-    description: 'Run independent architecture, security, and testing Advisor perspectives over the latest completed turn. Findings remain separate and read-only; this tool never steers the primary Agent.',
-    parameters: { type: 'object', properties: {}, additionalProperties: false },
-    output,
-    execute: async (_args: unknown, exec: { readonly agent?: Agent }) => {
-      if (!deps.engineering.councilEnabled()) throw new Error('Advisor Council is disabled in engineering settings')
-      return deps.advisor.councilReviewNow(requireAgent(exec))
-    },
-    presentCall: () => ({ card: 'generic', title: 'Run Advisor Council review' }),
-  }))
   const disposeTeamStart = tools.register(rawAgnesTool({
     name: 'engineering_team_start',
     description: 'Start a bounded engineering council. The parent Agent remains the active engine while DeepSeek, Codex, and Claude child Agents independently review the supplied plan in read-only mode.',
@@ -284,9 +236,8 @@ export function registerAdvisorTools(deps: AgentToolsDeps): void {
     presentCall: () => ({ card: 'generic', title: 'Mark engineering council implemented' }),
   }))
   deps.ctx.effect(() => () => {
-    disposeStatus(); disposeReview(); disposeNotes(); disposeCouncil()
     disposeTeamStart(); disposeTeamStatus(); disposeTeamReport(); disposeTeamCancel(); disposeTeamApproval(); disposeTeamVerify(); disposeTeamImplementation()
-  }, 'freecodego: Advisor and engineering council tools')
+  }, 'freecodego: engineering council tools')
 }
 
 /**

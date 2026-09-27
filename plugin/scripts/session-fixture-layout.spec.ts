@@ -130,7 +130,13 @@ describe('canonicalSessionFixture', () => {
     ].join('\n')
     const canonical = canonicalSessionFixture(source)
     expect(canonical).toBe(source)
-    expect(() => decodedBody(canonical!)).toThrow(/session snapshot line 3:.*empty optional header fields must be omitted/)
+    // Which reader refuses it moved with the format: a current (v4) snapshot is
+    // validated by the surface projection, which rejects the empty `tools` array
+    // on the seed `request/header` it synthesizes, before the v3 payload reader
+    // this case was written against ever sees the row. The decision is the one
+    // the case is about — an empty `tools` array is not a placeholder, and replay
+    // refuses it — so the expectation follows the reader that now answers.
+    expect(() => decodedBody(canonical!)).toThrow(/seed request\/header at index \d+ must omit empty tools/)
   })
 
   it.each([0, 1, 2])('preserves physically valid v%i bytes without requiring migration to current', (version) => {

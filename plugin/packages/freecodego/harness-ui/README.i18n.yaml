@@ -1,6 +1,52 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/harness-ui/README.md
-README.md: 6d42ff3ccdb51569c4decc693f8dcca583f57b73
-README.zh.md: 7c57882ca3baa6f422204f0c93093765c886fbde
+/:
+  en: 91fa4e971be93452
+  zh: 06332c6030c4540e
+/freecodego-harness-ui:
+  en: 9653e775c183ce57
+  zh: c8f732724f57479e
+/freecodego-harness-ui/summary:
+  en: 838ccd1157907ebf
+  zh: e649f304602bddcb
+/freecodego-harness-ui/table-of-contents:
+  en: 17f22341ecae84f5
+  zh: 8ffaad43d53c6067
+/freecodego-harness-ui/settings-surface:
+  en: ef3a8e08406ce69d
+  zh: dc6f4150c23f3d0d
+/freecodego-harness-ui/model-menu-and-provider-cards:
+  en: fcf6f95c759e3fc4
+  zh: 37604610a781a777
+/freecodego-harness-ui/code-review-panel:
+  en: d067c9b06ce25e98
+  zh: 808908c124efc70b
+/freecodego-harness-ui/usage-media-and-session-overlays:
+  en: 03607114e30ff48b
+  zh: cd97950e9ed42503
+/freecodego-harness-ui/mcp-and-skills:
+  en: 201e05cace607a9c
+  zh: 6ab34b9c547e0ed0
+/freecodego-harness-ui/plugin-conflict-protection:
+  en: 9ff906e1718607c7
+  zh: 47daebbe76bfe3bc
+/freecodego-harness-ui/embedded-community-plugins:
+  en: 046e0fbe0dd10b69
+  zh: 702cf60e5f9ed78b
+/freecodego-harness-ui/companion-in-the-rail-above-the-composer-and-in-the-transcript:
+  en: c681b55c247a2b76
+  zh: e359c7f8bd518efe
+/freecodego-harness-ui/model-experience:
+  en: 2f1f033cacc34eac
+  zh: 51f657541a43f3cb
+/freecodego-harness-ui/model-experience/kv-cache-effect:
+  en: df00487f0b1711d1
+  zh: 7d0893aa4c172f60
+/freecodego-harness-ui/known-limitations-and-deferred-work:
+  en: 4e67d0cfc170faad
+  zh: fb203b8c6310b29b
+/freecodego-harness-ui/known-limitations-and-deferred-work/dev-note:
+  en: 6345bb1245ba49cc
+  zh: 0c02ff12639480bd

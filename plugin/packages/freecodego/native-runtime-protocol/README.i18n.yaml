@@ -1,6 +1,34 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/native-runtime-protocol/README.md
-README.md: 69a754d8c2711d7aac3183cd6620880c892cee44
-README.zh.md: 1d6ec2b5d3235a705f7a39c6949d23506b1127ee
+/:
+  en: 5a6531a715d6d1ec
+  zh: 12f48468d758a45e
+/dsh-freecodego-native-runtime-protocol:
+  en: 900ca00f0ab2786e
+  zh: 25c807e75c3cf089
+/dsh-freecodego-native-runtime-protocol/summary:
+  en: 2bf28fed4dd55018
+  zh: 76deae9c956da29d
+/dsh-freecodego-native-runtime-protocol/table-of-contents:
+  en: ee4553cba43eeae7
+  zh: f6dd207df189aa52
+/dsh-freecodego-native-runtime-protocol/request-and-event-vocabulary:
+  en: dd7ed83fb597f06d
+  zh: 5d697878ffe74c01
+/dsh-freecodego-native-runtime-protocol/provenance:
+  en: fa023a1103edd002
+  zh: 644a5a959b80f686
+/dsh-freecodego-native-runtime-protocol/model-experience:
+  en: 71271d8fb2420aab
+  zh: 691e6b2666592c3a
+/dsh-freecodego-native-runtime-protocol/model-experience/kv-cache-effect:
+  en: 884be6d7c2ade7ed
+  zh: b5bcfd4dbbebb82e
+/dsh-freecodego-native-runtime-protocol/known-limitations-and-deferred-work:
+  en: 53d97010cf720c32
+  zh: f630c9c00123830b
+/dsh-freecodego-native-runtime-protocol/known-limitations-and-deferred-work/dev-note:
+  en: 896c34519b9eb661
+  zh: 566ca9fd58ff7975

@@ -62,8 +62,8 @@ describe('SessionDeleteMenuItem', () => {
       />,
     )
 
-    // Same rule as the hover control, so the two surfaces cannot disagree about
-    // which row is deletable.
+    // The Host refuses to delete the session it holds open, so the row is absent
+    // rather than offering an action that can only fail.
     expect(container.querySelectorAll('[role="menuitem"]')).toHaveLength(0)
     expect(deleteSession).not.toHaveBeenCalled()
   })

@@ -1,6 +1,64 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/root-agent/README.md
-README.md: c70870221564929ea5df056284721d369ad2acc3
-README.zh.md: 6d37b3990559296060d12cf9c8edb7dab85bfdea
+/:
+  en: e11053244aa66cb8
+  zh: 5928993d05fc2424
+/dsh-freecodego-root-agent:
+  en: c3c7619861941383
+  zh: ab3c7ab5e962ba64
+/dsh-freecodego-root-agent/summary:
+  en: a165a8be03031add
+  zh: ee83fcca896281ef
+/dsh-freecodego-root-agent/table-of-contents:
+  en: 44e20f0dda189a35
+  zh: 1998abbc987a187f
+/dsh-freecodego-root-agent/session-bridge:
+  en: 16e788f17c898a7d
+  zh: 0aa35868d6a4109d
+/dsh-freecodego-root-agent/model-experience:
+  en: 215e7ba838619b7b
+  zh: 215e7ba838619b7b
+/dsh-freecodego-root-agent/model-experience/native-session-bridging:
+  en: 595ca2f1cb27ad45
+  zh: 21e59333bf0c0e9b
+/dsh-freecodego-root-agent/model-experience/native-session-bridging/what-the-model-sees:
+  en: 7625c9e8e1fed122
+  zh: a856705b89960916
+/dsh-freecodego-root-agent/model-experience/native-session-bridging/token-effect:
+  en: 1842b2408f72999d
+  zh: ed8ca30a2e47e60d
+/dsh-freecodego-root-agent/model-experience/native-session-bridging/kv-cache-effect:
+  en: 843c948f4e8b0934
+  zh: 81bf4262e7291a8d
+/dsh-freecodego-root-agent/model-experience/tool-approval-and-question-delegation:
+  en: 47941f3ee6707fa9
+  zh: 5631b0824718660f
+/dsh-freecodego-root-agent/model-experience/tool-approval-and-question-delegation/what-the-model-sees:
+  en: 0611de43efeac5e5
+  zh: 5ba2b14f01878228
+/dsh-freecodego-root-agent/model-experience/tool-approval-and-question-delegation/token-effect:
+  en: 2e9343ce0c32a652
+  zh: d71335c7a2dd29be
+/dsh-freecodego-root-agent/model-experience/tool-approval-and-question-delegation/kv-cache-effect:
+  en: e1810dcd338fce7f
+  zh: 7e3f59da994d4fbb
+/dsh-freecodego-root-agent/model-experience/resume-and-disposal:
+  en: 3cfa4baf1be59744
+  zh: 3f901d4195d8e67a
+/dsh-freecodego-root-agent/model-experience/resume-and-disposal/what-the-model-sees:
+  en: e02a45d917ca845c
+  zh: a0b8c0d4817ccd2c
+/dsh-freecodego-root-agent/model-experience/resume-and-disposal/token-effect:
+  en: 77aba742b61fcb8b
+  zh: b1f948cb033b6493
+/dsh-freecodego-root-agent/model-experience/resume-and-disposal/kv-cache-effect:
+  en: 5718d64a0abaf8f2
+  zh: ce2d5412c227fb27
+/dsh-freecodego-root-agent/known-limitations-and-deferred-work:
+  en: 3eae1779b8840d79
+  zh: e9fc180ab3c8276f
+/dsh-freecodego-root-agent/known-limitations-and-deferred-work/dev-note:
+  en: cee1ae0ae1b6e3cc
+  zh: 23915190a472e0ea

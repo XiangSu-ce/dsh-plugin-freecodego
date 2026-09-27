@@ -225,45 +225,11 @@ img.communityPluginIcon { display: block; width: 34px; height: 34px; flex: 0 0 a
 .capabilityStats div { display: grid; gap: 2px; padding: 12px 14px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); }
 .capabilityStats strong { font-size: var(--fcg-font-section); line-height: 21px; }
 .capabilityStats small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
-.advisorStandalone { padding-top: 2px; }
 .engineeringSection .capabilityStats { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
-.advisorStats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
-.advisorStats div { display: grid; min-width: 0; gap: 3px; padding: 12px 14px; border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); }
-.advisorStats strong { overflow: hidden; font-size: var(--fcg-font-body-lg); line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
-.advisorStats small, .advisorEvidence small { overflow-wrap: anywhere; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
-.advisorWarning { margin-top: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--fcg-warn) 35%, var(--fcg-line)); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-warn) 6%, var(--fcg-bg-layer-2)); color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; overflow-wrap: anywhere; }
-.advisorEvidence { display: grid; gap: 3px; margin-top: 12px; padding: 10px 11px; border-left: 2px solid var(--fcg-text-primary); background: var(--fcg-bg-layer-1); }
-.advisorEvidence strong { font-size: var(--fcg-font-caption); }
-.advisorEvidence span { color: var(--fcg-text-secondary); font: var(--fcg-font-caption)/16px var(--fcg-font-mono); }
-.advisorModelField { display: grid; gap: 5px; min-width: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
-.advisorModelTrigger { display: grid; width: 100%; min-height: 42px; gap: 2px; padding: 8px 9px; overflow: hidden; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); color: var(--fcg-text-primary); cursor: pointer; font: inherit; text-align: left; }
-.advisorModelTrigger:hover { border-color: var(--fcg-line-strong); }
-.advisorModelTrigger:disabled { cursor: not-allowed; opacity: .55; }
-.advisorModelTrigger small { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
-.advisorPickerBackdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 38%); }
-.advisorPicker { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; width: min(680px, 100%); height: min(720px, 92vh); gap: 11px; padding: 17px; overflow: hidden; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-lg); background: var(--fcg-bg-layer-2); box-shadow: var(--fcg-shadow-pop); }
-.advisorPickerHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.advisorPickerHeader > div { display: grid; gap: 3px; }
-.advisorPickerHeader strong { font-size: 16px; }
-.advisorPickerHeader small, .advisorManual > small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
-.advisorModelList { display: grid; min-height: 0; gap: 7px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: 6px; }
-.advisorModelOption { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 11px 12px; border: 1px solid var(--fcg-line); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-1); color: var(--fcg-text-primary); cursor: pointer; font: inherit; text-align: left; }
-.advisorModelOption:hover { border-color: var(--fcg-line-strong); background: var(--fcg-bg-layer-2); }
-.advisorModelSelected { border-color: var(--fcg-brand); background: var(--fcg-bg-layer-2); box-shadow: inset 0 0 0 1px var(--fcg-brand); }
-.advisorModelOption > span { display: grid; min-width: 0; gap: 2px; }
-.advisorModelOption small { overflow: hidden; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); text-overflow: ellipsis; white-space: nowrap; }
-.advisorModelOption code { max-width: 45%; overflow: hidden; color: var(--fcg-text-secondary); font: var(--fcg-font-caption)/16px var(--fcg-font-mono); text-overflow: ellipsis; white-space: nowrap; }
-.advisorManual { display: grid; gap: 6px; border-top: 1px solid var(--fcg-line); padding-top: 10px; }
-.advisorManual summary { cursor: pointer; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
-.advisorNotes { display: grid; gap: 8px; margin-top: 12px; }
-.advisorNote { display: grid; gap: 7px; padding: 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
-.advisorNoteHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.advisorNoteHeader small, .advisorNote footer { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
-.advisorNote p { margin: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; overflow-wrap: anywhere; }
-.advisorSeverity { display: inline-flex; width: fit-content; border-radius: var(--fcg-radius-full); padding: 2px 7px; font-size: var(--fcg-font-caption); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.advisorSeverityNit { background: var(--fcg-bg-hover); color: var(--fcg-text-secondary); }
-.advisorSeverityConcern { background: color-mix(in srgb, var(--fcg-warn) 13%, var(--fcg-bg-layer-2)); color: var(--fcg-warn-label); }
-.advisorSeverityBlocker { background: color-mix(in srgb, var(--fcg-danger) 11%, var(--fcg-bg-layer-2)); color: var(--fcg-danger); }
+/* The collapsed "enter an existing credential" disclosure on the provider cards. */
+.manualEntry { display: grid; gap: 6px; border-top: 1px solid var(--fcg-line); padding-top: 10px; }
+.manualEntry > small { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.manualEntry summary { cursor: pointer; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
 .memoryPanel { display: grid; gap: 12px; margin-top: 16px; padding: 14px; border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
 .memoryHeader, .memoryDetailHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .memoryHeader > div:first-child, .memoryDetailHeader > div { display: grid; min-width: 0; gap: 3px; }
@@ -909,8 +875,8 @@ body[data-ds-dark-theme] .tokenChartWrap {
 
 @media (max-width: 520px) { .poolAccountHead { align-items: flex-start; flex-wrap: wrap; } .poolIdentity { flex-basis: 100%; } .poolActions { justify-content: flex-start; } }
 
-@media (max-width: 520px) { .authForm, .capabilityForm { grid-template-columns: 1fr; } .authFull, .capabilityFull { grid-column: auto; } .capabilityStats, .advisorStats { grid-template-columns: 1fr; } .mcpServerCard { align-items: flex-start; flex-direction: column; } .mcpServerActions { justify-content: flex-start; } .skillPanelHeader, .pricingHeader { align-items: flex-start; flex-direction: column; gap: 7px; } .pricingSearch { width: 100%; } .marketplaceControls, .mcpMarketplaceGrid { grid-template-columns: 1fr; } .marketplaceGrid { grid-template-columns: 1fr; } .accountRow { align-items: flex-start; flex-direction: column; } .accountActions { justify-content: flex-start; } .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .communityGrid { grid-template-columns: 1fr; } .capabilityCommunityGrid { grid-template-columns: 1fr; } .capabilityCommunityHeader { align-items: flex-start; flex-direction: column; } .communityFilterBar { gap: 8px; } .communityInstalledEntry { padding-inline: 8px; } .communityRestart, .advisorPickerHeader { align-items: flex-start; flex-direction: column; } .communityModalBackdrop, .advisorPickerBackdrop { padding: 10px; } .communityModal { max-height: 95vh; padding: 14px; } .advisorPicker { height: 95vh; padding: 14px; } .communityModalStats { align-items: flex-start; flex-direction: column; gap: 4px; } .advisorModelOption { align-items: flex-start; flex-direction: column; gap: 4px; } .advisorModelOption code { max-width: 100%; } }
-@media (max-width: 520px) { .routingCell { grid-template-columns: 1fr; gap: 8px; } .routingCell:not(.selectCell) .routingCopy { grid-template-columns: 1fr; gap: 2px; } .authForm, .capabilityForm { grid-template-columns: 1fr; } .authFull, .capabilityFull { grid-column: auto; } .capabilityStats, .advisorStats { grid-template-columns: 1fr; } .accountRow { align-items: flex-start; flex-direction: column; } .accountActions { justify-content: flex-start; } .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .communityGrid { grid-template-columns: 1fr; } .capabilityCommunityGrid { grid-template-columns: 1fr; } .communityRestart { align-items: flex-start; flex-direction: column; } .communityModalBackdrop { padding: 10px; } .communityModal { max-height: 95vh; padding: 14px; } .communityModalStats { align-items: flex-start; flex-direction: column; gap: 4px; } }
+@media (max-width: 520px) { .authForm, .capabilityForm { grid-template-columns: 1fr; } .authFull, .capabilityFull { grid-column: auto; } .capabilityStats { grid-template-columns: 1fr; } .mcpServerCard { align-items: flex-start; flex-direction: column; } .mcpServerActions { justify-content: flex-start; } .skillPanelHeader, .pricingHeader { align-items: flex-start; flex-direction: column; gap: 7px; } .pricingSearch { width: 100%; } .marketplaceControls, .mcpMarketplaceGrid { grid-template-columns: 1fr; } .marketplaceGrid { grid-template-columns: 1fr; } .accountRow { align-items: flex-start; flex-direction: column; } .accountActions { justify-content: flex-start; } .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .communityGrid { grid-template-columns: 1fr; } .capabilityCommunityGrid { grid-template-columns: 1fr; } .capabilityCommunityHeader { align-items: flex-start; flex-direction: column; } .communityFilterBar { gap: 8px; } .communityInstalledEntry { padding-inline: 8px; } .communityRestart { align-items: flex-start; flex-direction: column; } .communityModalBackdrop { padding: 10px; } .communityModal { max-height: 95vh; padding: 14px; } .communityModalStats { align-items: flex-start; flex-direction: column; gap: 4px; }   }
+@media (max-width: 520px) { .routingCell { grid-template-columns: 1fr; gap: 8px; } .routingCell:not(.selectCell) .routingCopy { grid-template-columns: 1fr; gap: 2px; } .authForm, .capabilityForm { grid-template-columns: 1fr; } .authFull, .capabilityFull { grid-column: auto; } .capabilityStats { grid-template-columns: 1fr; } .accountRow { align-items: flex-start; flex-direction: column; } .accountActions { justify-content: flex-start; } .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .communityGrid { grid-template-columns: 1fr; } .capabilityCommunityGrid { grid-template-columns: 1fr; } .communityRestart { align-items: flex-start; flex-direction: column; } .communityModalBackdrop { padding: 10px; } .communityModal { max-height: 95vh; padding: 14px; } .communityModalStats { align-items: flex-start; flex-direction: column; gap: 4px; } }
 @media (max-width: 360px) { .plans { grid-template-columns: 1fr; } }
 
 /* ─── Headroom statistics ──────────────────────────────────────────────
@@ -983,8 +949,6 @@ body[data-ds-dark-theme] .tokenChartWrap {
 .councilJob { display: grid; gap: var(--fcg-space-3); }
 .councilJobHead { display: flex; align-items: baseline; gap: var(--fcg-space-2); min-width: 0; flex-wrap: wrap; }
 .councilJobId { overflow: hidden; color: var(--fcg-text-tertiary); font-family: var(--fcg-font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.councilReport { display: grid; gap: var(--fcg-space-2); min-width: 0; }
-.councilReportTurn { font-size: var(--fcg-font-body); }
 
 .councilState {
   padding: 2px 8px;
@@ -1010,42 +974,13 @@ body[data-ds-dark-theme] .tokenChartWrap {
 .findingBody { display: grid; min-width: 0; gap: 2px; }
 .findingTitle { color: var(--fcg-text-primary); font-size: var(--fcg-font-caption); font-weight: 600; line-height: 18px; }
 .findingEvidence { margin: 0; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 17px; overflow-wrap: anywhere; }
-.findingEngine { flex: 0 0 auto; color: var(--fcg-text-tertiary); font-size: 11px; line-height: 18px; white-space: nowrap; }
-.findingSeverity { flex: 0 0 auto; padding: 1px 7px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-tip); color: var(--fcg-text-secondary); font-size: 10px; font-weight: 600; line-height: 16px; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
-.findingSeverity_blocker { background: var(--fcg-danger-subtle); color: var(--fcg-danger); }
-.findingSeverity_warning { background: var(--fcg-warn-subtle); color: var(--fcg-warn-label); }
+.findingEngine { flex: 0 0 auto; color: var(--fcg-text-tertiary); font-size: 11px; line-height: 18px; white-space: nowrap; }.findingSeverity { flex: 0 0 auto; padding: 1px 7px; border-radius: var(--fcg-radius-full); background: var(--fcg-bg-tip); color: var(--fcg-text-secondary); font-size: 10px; font-weight: 600; line-height: 16px; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
 
-.findingSeverity_info { background: var(--fcg-bg-hover); color: var(--fcg-text-tertiary); }
-.findingSeverity_unknown { background: var(--fcg-bg-tip); color: var(--fcg-text-tertiary); }
 
 @media (max-width: 520px) {
   .toggleGrid, .tuningGrid { grid-template-columns: 1fr; }
   .findingRow { grid-template-columns: auto minmax(0, 1fr); }
   .findingEngine { grid-column: 2; }
-}
-
-/* ─── Advisor settings form ────────────────────────────────────────────
-   The standalone Advisor page stacked four full-width form rows and a
-   right-floated save button, so configuration read as a tall form rather
-   than a settings surface. Mode/model/cooldown are one logical group —
-   "how the review runs" — and share a grid; the save action sits beside
-   the evidence note it finalises. */
-.advisorFormGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--fcg-space-3); margin-top: var(--fcg-space-3); }
-.advisorField { display: grid; min-width: 0; gap: 5px; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); }
-.advisorField > span { color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 16px; }
-.advisorField .advisorModelTrigger { height: 100%; }
-.advisorModelTrigger { display: grid; align-content: center; gap: 2px; }
-.advisorModelTrigger strong { overflow: hidden; color: var(--fcg-text-primary); font-size: var(--fcg-font-body); font-weight: 600; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
-
-/* Footer: evidence note left, save action right — one row, one decision. */
-.advisorFoot { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--fcg-space-3); margin-top: var(--fcg-space-4); flex-wrap: wrap; }
-.advisorFoot .advisorEvidence { flex: 1 1 320px; margin-top: 0; }
-.advisorFoot .buttonPrimary { flex: 0 0 auto; }
-
-@media (max-width: 520px) {
-  .advisorFormGrid { grid-template-columns: 1fr; }
-  .advisorFoot { align-items: stretch; flex-direction: column; }
-  .advisorFoot .buttonPrimary { width: 100%; }
 }
 
 /* ─── Engineering surfaces ─────────────────────────────────────────────

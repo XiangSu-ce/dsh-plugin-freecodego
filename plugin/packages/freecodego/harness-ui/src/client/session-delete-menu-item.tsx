@@ -1,28 +1,26 @@
 /**
  * The session row menu's destructive entry: delete this conversation.
  *
- * The hover control beside a row already deletes directly (see
- * {@link ./session-delete-overlay}), but that control only exists while a
- * pointer is over the row — it is invisible on touch, awkward on a trackpad, and
- * a user who opened the "..." menu has no way to reach it. So the same action
- * gets a named row, placed after Archive (`order` 500, where the shipped rows
- * step by 100), and it is the row this plugin's delete capability governs.
+ * This row is the plugin's only control for the action. A trash button used to
+ * float over whichever session row the pointer was on, and this row replaced it:
+ * same action, named, reachable without hovering, and placed after Archive
+ * (`order` 500, where the shipped rows step by 100).
  *
- * Two behaviours are shared with the overlay rather than restated:
+ * Two of its rules cannot be stated from inside a menu:
  *
- * - **The failure is reported once.** Deleting from the menu closes the menu
- *   first, so the row that would say "it failed" is gone. The row therefore
- *   publishes its failure as an event and the overlay — which lives in the
- *   frame-wide layer and outlives any menu — draws it. One surface, two callers.
+ * - **The failure is reported elsewhere.** Selecting this row dismisses the menu
+ *   it lives in, so the row that would say "it failed" is gone before the Host
+ *   answers. The refusal is published as an event instead, and
+ *   {@link ./session-delete-notice} — registered in the frame-wide layer, which
+ *   outlives any menu — draws it.
  * - **The capability gate is the same switch.** `sessionDeleteEnabled` decides
  *   whether the control exists at all; the row hides itself instead of offering
  *   an action the Host will refuse.
  *
- * It also follows the overlay's rule about *which* row may be deleted: the
- * session on screen is not one of them, because the Host refuses to delete the
- * session it is holding open. The overlay states that as "its row never shows the
- * control"; a named row that stayed visible would offer an action that always
- * fails, so this one is absent for the same session too.
+ * Which row may be deleted is the Host's rule, not this row's choice: the session
+ * on screen is not one of them, because the Host refuses to delete the session it
+ * is holding open. A named row that stayed visible would offer an action that
+ * always fails, so this one is absent for that session too.
  *
  * @module client/session-delete-menu-item
  */
@@ -35,8 +33,8 @@ import { CAPABILITY_CHANGE_EVENT } from './settings-tab.tsx'
  * Carries one failed deletion from the menu row to the overlay that reports it.
  *
  * `detail` is the Host's own message: it is the only copy that can name the
- * refusal (`SESSION_DELETE_REQUIRES_CLOSED_SESSION`, and so on), and the overlay
- * appends its localized lead-in around it.
+ * refusal (`SESSION_DELETE_REQUIRES_CLOSED_SESSION`, and so on), and the notice
+ * that draws it appends its localized lead-in around it.
  */
 export const SESSION_DELETE_FAILED_EVENT = 'freecodego:session-delete-failed'
 
@@ -62,7 +60,7 @@ export interface SessionDeleteMenuItemProps {
 /**
  * Publish one failed deletion to whichever surface reports it.
  *
- * Dispatched on `globalThis` rather than passed down: the overlay is a sibling
+ * Dispatched on `globalThis` rather than passed down: the notice is a sibling
  * registration in another slot and has no prop path from here.
  * @param message - the Host's refusal text.
  */

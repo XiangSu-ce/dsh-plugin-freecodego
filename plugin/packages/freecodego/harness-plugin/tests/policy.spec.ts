@@ -71,6 +71,43 @@ describe('FreeCodeGoPolicy', () => {
     expect(patches).toStrictEqual([{ memoryRollout: 'active' }])
   })
 
+  it('tells a listener once the speech switch actually moved', async () => {
+    // The one consumer is the recognizer registration, which exists or does not
+    // exist in a service roster and therefore cannot wait for the next read. The
+    // writer merges into the record the config resolves from, which is what the
+    // settings service does — so this asserts the ordering too: a listener that
+    // ran before the write would re-read the previous answer.
+    const stored: Record<string, unknown> = { voiceInputEnabled: true }
+    const patches: object[] = []
+    const writer: FreeCodeGoSettingsWriter = { update: async (patch) => { patches.push(patch); Object.assign(stored, patch) } }
+    let heard = 0
+    const policy = new FreeCodeGoPolicy(pluginConfig(stored), writer, () => { heard += 1 })
+    await policy.update({ voiceInputEnabled: false })
+    expect(patches).toStrictEqual([{ voiceInputEnabled: false }])
+    expect(stored.voiceInputEnabled).toBe(false)
+    expect(heard).toBe(1)
+  })
+
+  it('stays quiet when a whole-document write left the speech switch where it was', async () => {
+    // Every capability write carries the entire document, so an MCP save or a Skill
+    // root edit names this field without moving it. Firing on the key's presence
+    // would have each of those resolve the user's speech credential.
+    const stored: Record<string, unknown> = { voiceInputEnabled: true }
+    const writer: FreeCodeGoSettingsWriter = { update: async (patch) => { Object.assign(stored, patch) } }
+    let heard = 0
+    const policy = new FreeCodeGoPolicy(pluginConfig(stored), writer, () => { heard += 1 })
+    await policy.update({ ...stored, mcpEnabled: true, skillEnabled: false })
+    expect(heard).toBe(0)
+  })
+
+  it('does not turn a listener that throws into a failed user gesture', async () => {
+    const stored: Record<string, unknown> = { voiceInputEnabled: false }
+    const writer: FreeCodeGoSettingsWriter = { update: async (patch) => { Object.assign(stored, patch) } }
+    const policy = new FreeCodeGoPolicy(pluginConfig(stored), writer, () => { throw new Error('listener exploded') })
+    await expect(policy.update({ voiceInputEnabled: true })).resolves.toBeUndefined()
+    expect(stored.voiceInputEnabled).toBe(true)
+  })
+
   it('accepts a user gesture with no writer instead of throwing', async () => {
     await expect(new FreeCodeGoPolicy(pluginConfig(), undefined).update({ memoryRollout: 'active' })).resolves.toBeUndefined()
   })

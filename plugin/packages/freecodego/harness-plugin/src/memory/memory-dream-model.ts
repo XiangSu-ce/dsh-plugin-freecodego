@@ -34,6 +34,7 @@ import { BlockAssembler, createUserMessage, type ContentBlock, type GenerateOpti
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { jsonArraysIn } from '../json-text.ts'
 import type { ConsolidationRequest, TopicProposal } from './dream.ts'
+import type { MemoryScope } from './manifest.ts'
 
 /** Output ceiling for one consolidation plan. Topics are prose, so this is generous. */
 export const MEMORY_DREAM_MAX_TOKENS = 2_000
@@ -139,6 +140,13 @@ function textOf(blocks: readonly ContentBlock[]): string {
  * half-read plan would write some of what the model proposed while silently
  * discarding the rest, which is the one outcome a shadow stage cannot recover
  * from: the operator would read a plan that is not the plan.
+ *
+ * The optional `scope` is read under the same rule, and it is the field where
+ * guessing costs the most: an unrecognised value silently read as one scope or
+ * the other either keeps a record the pass called temporary or reclaims one it
+ * called durable. The instructions name both legal values, so a third one is a
+ * malformed answer and is reported as one — at the price of a single pass, with
+ * the lease still released in a `finally`.
  */
 function parseTopics(blocks: readonly ContentBlock[]): readonly TopicProposal[] {
   const [topics] = jsonArraysIn(textOf(blocks))
@@ -151,14 +159,30 @@ function readTopic(entry: unknown, index: number): TopicProposal {
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new Error(`consolidation topic ${index} is not an object`)
   }
-  const candidate = entry as { readonly slug?: unknown; readonly title?: unknown; readonly markdown?: unknown; readonly sources?: unknown }
+  const candidate = entry as { readonly slug?: unknown; readonly title?: unknown; readonly markdown?: unknown; readonly sources?: unknown; readonly scope?: unknown }
   const slug = requireText(candidate.slug, index, 'slug')
   const title = requireText(candidate.title, index, 'title')
   const markdown = requireText(candidate.markdown, index, 'markdown')
   if (!Array.isArray(candidate.sources) || candidate.sources.some(source => typeof source !== 'string')) {
     throw new Error(`consolidation topic ${index} has no sources array of observation ids`)
   }
-  return { slug, title, markdown, sources: candidate.sources as readonly string[] }
+  const scope = readScope(candidate.scope, index)
+  return { slug, title, markdown, sources: candidate.sources as readonly string[], ...(scope === undefined ? {} : { scope }) }
+}
+
+/**
+ * Read a topic's optional scope.
+ *
+ * Absent is a decision — the durable default — and is not the same answer as a
+ * value this build does not know, which is why only `undefined` takes the default.
+ * @param value - the raw field from the model's answer.
+ * @param index - the topic's position, so the error names which one.
+ * @returns the declared scope, or `undefined` when the plan said nothing.
+ */
+function readScope(value: unknown, index: number): MemoryScope | undefined {
+  if (value === undefined) return undefined
+  if (value === 'project' || value === 'session') return value
+  throw new Error(`consolidation topic ${index} declares a scope that is neither "project" nor "session"`)
 }
 
 /** One required non-empty string field of a topic. */

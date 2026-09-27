@@ -157,9 +157,9 @@ describe('FreeCodeGoCapabilityRegistry Skill roots', () => {
       ? [
         { name: 'subagent', description: 'delegate', parameters: {} },
         { name: 'list_subagent_models', description: 'discover', parameters: {} },
-        { name: 'advisor_status', description: 'advisor status', parameters: {} },
-        { name: 'advisor_review', description: 'advisor review', parameters: {} },
-        { name: 'advisor_notes', description: 'advisor notes', parameters: {} },
+        { name: 'engineering_status', description: 'engineering status', parameters: {} },
+        { name: 'engineering_repo_map', description: 'repository map', parameters: {} },
+        { name: 'freecodego_recovery_status', description: 'recovery status', parameters: {} },
         { name: 'canvas_render', description: 'render a third-party canvas', parameters: {} },
         { name: 'mcp__filesystem', description: 'separate MCP bridge', parameters: {} },
         { name: 'skill', description: 'separate Skill bridge', parameters: {} },
@@ -170,9 +170,9 @@ describe('FreeCodeGoCapabilityRegistry Skill roots', () => {
     expect(b.registry.nativeConfiguration(agent as never).harnessTools.map(tool => tool.name)).toEqual([
       'subagent',
       'list_subagent_models',
-      'advisor_status',
-      'advisor_review',
-      'advisor_notes',
+      'engineering_status',
+      'engineering_repo_map',
+      'freecodego_recovery_status',
       'canvas_render',
       'mcp__filesystem',
       'skill',
@@ -323,6 +323,43 @@ describe('FreeCodeGoCapabilityRegistry Skill roots', () => {
     await b.registry.setEnabled({ mcpEnabled: true })
     await vi.waitFor(() => { expect(b.plugin).toHaveBeenCalledTimes(4) })
     expect((await b.registry.snapshot()).mountErrors).toBeUndefined()
+    await b.registry.dispose()
+  })
+
+  it('refuses to mount an entry that launches an installer, and never retries it', async () => {
+    // The shape mcp.so's `context7-mcp` imports: `ctx7 setup` is Context7's OAuth
+    // installer, so this entry can never answer a handshake. Mounting it parks
+    // the settings queue on the MCP client's own 60-second request timeout, and
+    // — because a recorded mount failure makes the family look incomplete —
+    // makes every later write pay that timeout again. The refusal has to be a
+    // standing decision, not a failure.
+    const settings = {
+      ...emptySettings(),
+      mcpEnabled: true,
+      mcpServers: [
+        { id: 'ctx7', enabled: true, transport: 'stdio' as const, serverName: 'mcpso-context7-mcp', command: 'npx', args: ['ctx7', 'setup'], env: {}, cwd: '', url: '', headers: {} },
+        // A working stdio server whose argv merely *contains* one of the verbs.
+        // It has to mount, or the gate is wider than the thing it guards.
+        { id: 'files', enabled: true, transport: 'stdio' as const, serverName: 'files', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/srv/install'], env: {}, cwd: '', url: '', headers: {} },
+      ],
+    }
+    const b = bench(settings)
+    await b.registry.setEnabled({})
+    await vi.waitFor(() => { expect(b.plugin).toHaveBeenCalledTimes(1) })
+
+    expect(b.plugin).toHaveBeenCalledWith(expect.objectContaining({ name: 'freecodego-mcp-files' }), expect.anything())
+    const snapshot = await b.registry.snapshot()
+    expect(snapshot.mountErrors).toBeUndefined()
+    expect(snapshot.trustRefusals).toEqual([{ id: 'mcp:ctx7', message: expect.stringContaining('installer') }])
+    // The message has to name the argv: the entry itself looks well-formed, so
+    // nothing else on the settings page would tell the user what to replace.
+    expect(snapshot.trustRefusals?.[0]?.message).toContain('npx ctx7 setup')
+
+    // The load-bearing half. A refusal is a standing decision, so an unrelated
+    // write must not tear the family down and remount it; a mount failure here
+    // would, and the user would watch the surface hang instead of settle.
+    await b.registry.setEnabled({ mcpEnabled: true })
+    expect(b.plugin).toHaveBeenCalledTimes(1)
     await b.registry.dispose()
   })
 

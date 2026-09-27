@@ -1,6 +1,64 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/runtime-claude/README.md
-README.md: e4a0062f4eb25218790aea73f93de09b1b3baf4e
-README.zh.md: 6eae836111599782a5d700029eaa124e9370f332
+/:
+  en: f85c20cec6d1280a
+  zh: e373bd71b55f8764
+/dsh-freecodego-runtime-claude:
+  en: bca301ffae2cb3c7
+  zh: f2a56b7fcaca5506
+/dsh-freecodego-runtime-claude/summary:
+  en: 21bce457d938f55b
+  zh: cea08f864ccb16f3
+/dsh-freecodego-runtime-claude/table-of-contents:
+  en: 1fb1a1bd994a0f7e
+  zh: 07b0af3945176b9e
+/dsh-freecodego-runtime-claude/host-process-integration:
+  en: 417e5c69671d8040
+  zh: ea86dabb00d991d4
+/dsh-freecodego-runtime-claude/model-experience:
+  en: 215e7ba838619b7b
+  zh: 215e7ba838619b7b
+/dsh-freecodego-runtime-claude/model-experience/host-owned-sdk-session:
+  en: 7c04dc7d6b2ca6f5
+  zh: 8b62c5dcd73915be
+/dsh-freecodego-runtime-claude/model-experience/host-owned-sdk-session/what-the-model-sees:
+  en: 0af548d382448741
+  zh: bb8857493e837dac
+/dsh-freecodego-runtime-claude/model-experience/host-owned-sdk-session/token-effect:
+  en: a3dd1bbd49db13fa
+  zh: b2df57176094c7bc
+/dsh-freecodego-runtime-claude/model-experience/host-owned-sdk-session/kv-cache-effect:
+  en: 25f45dd359f39513
+  zh: 3eebff5a299f1373
+/dsh-freecodego-runtime-claude/model-experience/approvals-questions-and-tools:
+  en: 8da431ee364a0c98
+  zh: 13f6a4b695800aa8
+/dsh-freecodego-runtime-claude/model-experience/approvals-questions-and-tools/what-the-model-sees:
+  en: c500c69d170c9863
+  zh: d6386ef0781b635c
+/dsh-freecodego-runtime-claude/model-experience/approvals-questions-and-tools/token-effect:
+  en: abda83bf5794c998
+  zh: 2a59341b29714f3a
+/dsh-freecodego-runtime-claude/model-experience/approvals-questions-and-tools/kv-cache-effect:
+  en: 7ac0b337b5539cb3
+  zh: ccb7b8f58ace52ae
+/dsh-freecodego-runtime-claude/model-experience/credentials-and-redaction:
+  en: 3a9cb87544e85759
+  zh: c085e96da60e5382
+/dsh-freecodego-runtime-claude/model-experience/credentials-and-redaction/what-the-model-sees:
+  en: 7776a70d4432932d
+  zh: 88d1dbfa37c83bce
+/dsh-freecodego-runtime-claude/model-experience/credentials-and-redaction/token-effect:
+  en: 356a43c5fef371ff
+  zh: c3eb7cf25fcf73cb
+/dsh-freecodego-runtime-claude/model-experience/credentials-and-redaction/kv-cache-effect:
+  en: f17b7d422f1e20c8
+  zh: e2009fe4186abc9e
+/dsh-freecodego-runtime-claude/known-limitations-and-deferred-work:
+  en: 5c7cf11f592f55f9
+  zh: 096cd966d180d34f
+/dsh-freecodego-runtime-claude/known-limitations-and-deferred-work/dev-note:
+  en: bfdb5a5bb6ac49b2
+  zh: 4be9d423bb755cdc

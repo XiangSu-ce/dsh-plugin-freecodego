@@ -29,6 +29,8 @@ import { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type { Entry, EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import type { FreeCodeGoSettingsPort } from './policy.ts'
+import { disabledState } from './loader-entry-state.ts'
+import { STAND_IN_MODULES, standDownStandIn } from './stand-in-rows.ts'
 import type {
   FreeCodeGoPluginConflictRecord,
   FreeCodeGoPluginConflictResource,
@@ -71,16 +73,20 @@ type OwnedClaim = ResourceClaim & {
 
 /**
  * Modules and entry ids this plugin's own bundle patch mounts as stand-ins for a
- * Harness capability that official bundles can also supply: `freecodego/agent-team`
- * and `freecodego/tool-agent-team`, next to the official
- * `@deepseek-ai/dsh-experimental-agent-team` / `-tool-agent-team` pair.
+ * Harness capability that official bundles can also supply: `freecodego/auto-review`
+ * next to `@deepseek-ai/dsh-experimental-auto-review`, and the two cross-engine
+ * subagent providers next to `@deepseek-ai/dsh-subagent-codex` / `-claude-code`.
  *
- * They exist for a composition that never selected the official team bundles, and
- * they are the only mounts whose loss cannot cost the deployment a capability:
- * when both are present the official pair is the one it asked for.
+ * They are the only mounts whose loss cannot cost the deployment a capability: when
+ * both are present the official one is the one it asked for. The team pair used to
+ * be listed here too and is gone (see `stand-in-rows.ts`): it was a copy of a
+ * capability the official bundle mounts by name, not a stand-in for a gap.
  */
-const OWN_STAND_IN_MODULES: ReadonlySet<string> = new Set(['freecodego/agent-team', 'freecodego/tool-agent-team'])
-const OWN_STAND_IN_ENTRY_IDS: ReadonlySet<string> = new Set(['freecodego-agent-team', 'freecodego-tool-agent-team'])
+const OWN_STAND_IN_MODULES: ReadonlySet<string> = new Set(STAND_IN_MODULES.keys())
+// The patch derives each row's id from its module name (`freecodego/auto-review` →
+// `freecodego-auto-review`), so the id set is derived from the same declaration
+// rather than restated: a stand-in added to the map is recognised here too.
+const OWN_STAND_IN_ENTRY_IDS: ReadonlySet<string> = new Set([...STAND_IN_MODULES.keys()].map(name => name.replace('/', '-')))
 
 /** Official Harness packages are published under this scope. */
 function isOfficialModuleName(moduleName: string): boolean {
@@ -203,7 +209,9 @@ export class FreeCodeGoPluginConflictGuard {
       }, { global: true })
       const disposePartial = this.ctx.on('loader/partial-dispose', (entry) => {
         this.forget(entry.id)
-        if (entry.options.group || entry.disabled || entry.fiber === undefined || entry.fiber.uid === null) return
+        // A row whose expression cannot be evaluated is one this guard may not act on,
+        // and reading it here would throw out of the Loader's event emit.
+        if (entry.options.group || disabledState(entry) !== false || entry.fiber === undefined || entry.fiber.uid === null) return
         // Re-claim inside the preflight queue: a synchronous remember would
         // race a concurrent entry's init and let it steal these resource
         // names while the async claims scan is still in flight.
@@ -268,7 +276,7 @@ export class FreeCodeGoPluginConflictGuard {
       const kept = entries.get(record.keptEntryId)
       // Both halves have to hold, and the disabled one has to be stopped by its
       // own effective options: that is the state the record describes.
-      const stopped = disabled !== undefined && disabled.disabled
+      const stopped = disabled !== undefined && disabledState(disabled) !== false
       const running = kept !== undefined && kept.fiber !== undefined && kept.fiber.uid !== null
       return stopped && running ? [record.id] : []
     })
@@ -311,45 +319,75 @@ export class FreeCodeGoPluginConflictGuard {
     if (loader === undefined) return
     for (const entry of loader.entries()) {
       this.wrapEntry(entry)
-      if (entry.options.group || entry.disabled || entry.fiber === undefined || entry.fiber.uid === null) continue
+      // The seeding walk sees every row in the tree, including ones this install
+      // cannot evaluate. Reading one of those unguarded rejected this whole mount
+      // with `fatal load failure` on a desktop whose official team rows cannot run.
+      if (entry.options.group || disabledState(entry) !== false || entry.fiber === undefined || entry.fiber.uid === null) continue
       await this.remember(entry, entry.options)
     }
   }
 
   /**
    * The Loader exposes no pre-start policy event, so intercept each entry's
-   * lifecycle instead: `init()` is the only start path on Harness 0.1.6, which
-   * inlined the private `_start` seam into `_init`. Older loader builds still
-   * expose `_start`, so the wrapper keeps covering it when it is there. The
-   * wrapper lives in this plugin and leaves the Harness Loader implementation
-   * untouched.
+   * lifecycle instead.
+   *
+   * Which seam gets wrapped is a correctness question rather than a style one. An
+   * entry's start is *published* as `_initTask` by `Entry.init()`, and the panel's
+   * own reconcile audits the tree — and the rows it just enabled — the moment
+   * `loader.await()` resolves. A wrapper installed on `init` is invisible to that
+   * read; measured on the real reconcile, the audit ran while this guard's
+   * preflight was still scanning sources and reported the rows the user had just
+   * switched on as `failed to import`, even though they started a moment later.
+   * Wrapping the private `_init` keeps that bookkeeping intact. The wrapper lives
+   * in this plugin and leaves the Harness Loader implementation untouched.
    */
   private wrapEntry(entry: Entry): void {
     if (this.wrappedEntries.has(entry)) return
     this.wrappedEntries.add(entry)
     const target = entry as unknown as {
       init: () => Promise<void>
+      _init?: () => Promise<void>
       _start?: (plugin: unknown) => Promise<void>
       options: EntryOptions
       disabled: boolean
     }
+    // The preflight runs first, and a candidate the guard stopped does not start
+    // at all: the row it just stood down is the one the Loader would otherwise
+    // import and register.
+    const gate = async (): Promise<boolean> => {
+      await this.preflightBeforeStart(entry, target.options)
+      return disabledState(target) === false
+    }
+    // `_init` first: it is the import-and-register step, and the step the Loader's
+    // own `init` publishes as `_initTask` — the field the panel's reconcile audits
+    // right after `loader.await()`. A wrapper on `init` hides the entry from that
+    // read, which reported the rows the user had just switched on as
+    // `failed to import` while this preflight was still scanning sources.
+    if (typeof target._init === 'function') {
+      const step = target._init.bind(entry)
+      target._init = async (): Promise<void> => {
+        if (!await gate()) return
+        await step()
+      }
+      return
+    }
+    // Harness 0.1.6 inlined the older private `_start` seam into `_init`; a build
+    // still exposing only `_start` is wrapped there, and its `init` already
+    // publishes the start. Binding a missing method used to throw inside
+    // `loader/entry-init`, which stopped every entry from starting on the newer
+    // loader.
+    if (typeof target._start === 'function') {
+      const start = target._start.bind(entry)
+      target._start = async (plugin: unknown): Promise<void> => {
+        if (!await gate()) return
+        await start(plugin)
+      }
+      return
+    }
     const init = target.init.bind(entry)
     target.init = async (): Promise<void> => {
-      await this.preflightBeforeStart(entry, target.options)
-      if (target.disabled) return
+      if (!await gate()) return
       await init()
-    }
-    // Harness 0.1.6 inlined the private `_start` seam into `_init`, so `init()`
-    // is the only start path left to intercept; older loader builds still expose
-    // `_start`, and wrapping it there keeps replacement updates covered. Binding
-    // a missing method used to throw inside `loader/entry-init`, which stopped
-    // every entry from starting on the newer loader.
-    if (typeof target._start !== 'function') return
-    const start = target._start.bind(entry)
-    target._start = async (plugin: unknown): Promise<void> => {
-      await this.preflightBeforeStart(entry, target.options)
-      if (target.disabled) return
-      await start(plugin)
     }
   }
 
@@ -425,9 +463,16 @@ export class FreeCodeGoPluginConflictGuard {
    * Stop this plugin's own stand-in and hand its resource to the official entry
    * that is starting.
    *
-   * `update` is the Loader's own enablement path: it merges the option and unloads
-   * the running fiber, so the fallback neither serves the resource nor restarts
-   * behind the official mount. Its remaining claims are released with it — a
+   * The stop is shared with the team handover (`standDownStandIn`) because it is
+   * the same act, and the part that has to be right is the same: the row is keyed
+   * on its live fiber rather than on its `disabled` option — that option is the
+   * patch layer's launch-time `!!js` expression, so a serving stand-in reads
+   * either way — and its disposal is **awaited** before this returns. The official
+   * entry registers the very names the stand-in just released immediately after,
+   * and `Entry.update` starts the disposal rather than finishing it; not awaiting
+   * it left the official module failing on `service "agentTeams" has been
+   * registered` / a duplicate tool while this plugin reported the collision as
+   * repaired. The stopped entry's remaining claims are released with it — a
    * stopped entry holds nothing, and a claim left behind would disable the next
    * third-party plugin that names a resource nothing is serving.
    * @param entry - the Loader entry being started.
@@ -441,11 +486,9 @@ export class FreeCodeGoPluginConflictGuard {
     candidateEntryId: string,
     conflict: { claim: ResourceClaim; existing: OwnedClaim },
   ): Promise<void> {
-    if (!conflict.existing.entry.disabled) {
-      // A Loader that refuses the update still has an official entry on the same
-      // name: this is a best effort, and the recorded repair is what the user reads.
-      await conflict.existing.entry.update({ disabled: true }).catch(() => undefined)
-    }
+    // A Loader that refuses the update still has an official entry on the same
+    // name: this is a best effort, and the recorded repair is what the user reads.
+    await standDownStandIn(conflict.existing.entry)
     this.forget(conflict.existing.ownerId)
     this.claims.set(resourceKey(conflict.claim), {
       ...conflict.claim,

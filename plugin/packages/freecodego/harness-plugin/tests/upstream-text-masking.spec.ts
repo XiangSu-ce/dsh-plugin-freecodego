@@ -134,11 +134,6 @@ const BOUNDARIES: readonly Boundary[] = [
     reason: 'A nested upstream failure is reported by its already-masked detail rather than by its message, which repeated the same frame and pushed the upstream text to the end.',
   },
   {
-    file: 'src/advisor.ts',
-    contains: 'return redactCredentialShapes(value)',
-    reason: 'A read file reaches the review transcript through this helper; a GitHub PAT or an AWS key in one was the case that found it.',
-  },
-  {
     file: 'src/agnes.ts',
     contains: 'function redact(value: string): string { return redactCredentialShapes(value)',
     reason: 'Provider errors from this vendor go through it, and the vendor rule set knows no prefixed key.',
@@ -187,11 +182,6 @@ const BOUNDARIES: readonly Boundary[] = [
     file: 'src/skills/lockfile.ts',
     contains: 'redactCredentialShapes(error instanceof Error ? error.message : String(error))',
     reason: 'The lockfile arrives with a community install and this reason is thrown by the installer, one step from a user-visible message.',
-  },
-  {
-    file: 'src/advisor.ts',
-    contains: 'redactCredentialShapes(error instanceof Error ? error.message : String(error))',
-    reason: 'The parse here is the model\'s own tool arguments, and its failure is fed back into the review loop and its transcript.',
   },
   {
     file: 'src/engineering.ts',
@@ -264,11 +254,6 @@ const EXEMPTIONS: readonly Exemption[] = [
     reason: 'The runtime\'s failure message is built by the provider adapters and the shared wire layer, which are the two places upstream text enters an `LlmError`. Each one now has a test that drives a failure quoting a credential and asserts the surfaced message is masked: the wire specs, and the Agnes, Cline and OpenAI-compatible adapter specs.',
   },
   {
-    file: 'src/advisor.ts',
-    contains: 'finish.failure.message',
-    reason: 'The same trust boundary as the action reviewer: the message is the runtime\'s, and both wire layers and every adapter mask the upstream text before an `LlmError` carries it — asserted per adapter in the specs named on the action-reviewer entry.',
-  },
-  {
     file: 'src/memory/memory-selector.ts',
     contains: 'finish.failure.message',
     reason: 'The same boundary again, in the selector: nothing here quotes upstream text itself.',
@@ -294,6 +279,26 @@ const EXEMPTIONS: readonly Exemption[] = [
     file: 'src/skills/installer.ts',
     contains: '${parsed.issue.reason}',
     reason: 'A parse issue raised by this module\'s own lockfile reader about the shape of a file it read; the text is written here, not taken from an upstream response.',
+  },
+  // The design tools quote the `fs` service, this plugin's own browser resolver,
+  // and the attachment store. None of the three is an upstream body: the same
+  // category as the `fs.cp`/`fs.rename` exemptions that used to sit above — an
+  // errno plus a path this package chose — and the reason no masking is missing
+  // here is that no text from outside the process passes through any of them.
+  {
+    file: 'src/design/tools.ts',
+    contains: 'Could not read the composition at',
+    reason: 'The text is the `fs` service\'s own refusal for a path the model supplied. It is this host\'s reader answering about a file inside the session workspace, not a provider or registry response, so the credential-shaped text this rule exists for has no path into it.',
+  },
+  {
+    file: 'src/design/tools.ts',
+    contains: 'The design renderer cannot run',
+    reason: 'The detail is written by `resolveDesignBrowser` in this package: a known install path, or the fact that a configured one is not a file. The resolver reads the filesystem and the environment, never a network body.',
+  },
+  {
+    file: 'src/design/tools.ts',
+    contains: 'cannot keep a verbatim file',
+    reason: 'The attachment store\'s refusal, produced by this host\'s own store while writing a rendered MP4 into the data home. The composition that rendered is the user\'s own file, and the failure it reports is a disk one.',
   },
   // Three exemptions lived here: the staging, "moved aside" and promotion failures of
   // `community-catalog-utils.ts`'s `promoteSkillDirectory`, whose messages interpolated

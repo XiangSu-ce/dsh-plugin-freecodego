@@ -12,6 +12,7 @@ import {
   parseWorkBuddyLoginAccount,
   parseWorkBuddyLoginPoll,
   workBuddyReasoningOptions,
+  workBuddyContextWindow,
   prepareWorkBuddyChatBody,
   type WorkBuddyIntlRoute,
 } from '../src/workbuddy-intl.ts'
@@ -487,6 +488,61 @@ describe('WorkBuddyIntlClient', () => {
     // was advertising a level that does nothing.
     expect(resolved.reasoning?.efforts.map(effort => String(effort.id))).toEqual(['low', 'high'])
     expect(String(resolved.reasoning?.defaultEffort)).toBe('high')
+  })
+
+  it('sizes every route against the window this product serves, keeping a smaller published one', async () => {
+    // The catalog's largest claim is 1,000,000 (`maxInputTokens` and `maxAllowedSize`)
+    // with `contextWindow.defaultLength` 300,000 beside it, and the product serves
+    // 264,000 — so the number the connector declares is the smaller of the route's
+    // own ceiling and the product's. Declaring the catalog's largest value is the
+    // direction that breaks: compaction is sized against it, so the conversation is
+    // allowed to grow past what the service serves and the route starts refusing
+    // mid-session with nothing local to warn anyone.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      code: 0,
+      data: {
+        agents: [{ name: 'cli', models: ['deepseek-v4.1-flash', 'hy3', 'auto'] }],
+        models: [
+          {
+            id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', credits: 'x0.00',
+            maxInputTokens: 1_000_000, maxAllowedSize: 1_000_000, maxOutputTokens: 128_000,
+            contextWindow: { defaultLength: 300_000, supportedLengths: [300_000, 1_000_000] },
+          },
+          // A route whose own ceiling is smaller than the product's: kept as its own.
+          { id: 'hy3', name: 'Hy3', credits: 'x0.00', maxInputTokens: 192_000, maxOutputTokens: 64_000 },
+          // A route that publishes no window at all: the product's ceiling stands.
+          { id: 'auto', name: 'Auto', credits: 'x0.00' },
+        ],
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    const adapter = new WorkBuddyIntlAdapter(new WorkBuddyIntlClient(store([account('a')])))
+
+    expect((await adapter.resolveModel('workbuddy', 'deepseek-v4.1-flash')).context?.contextWindow).toBe(264_000)
+    expect((await adapter.resolveModel('workbuddy', 'hy3')).context?.contextWindow).toBe(192_000)
+    expect((await adapter.resolveModel('workbuddy', 'auto')).context?.contextWindow).toBe(264_000)
+
+    // And the row the picker renders carries the same number the adapter compacts
+    // against, so the card cannot promise a window the turn will not get.
+    // `LlmModelInfo` does not declare these fields, which is why the adapter reads
+    // them through a widening assertion of its own; the cast here is the same read.
+    const rows = await adapter.listModels('workbuddy')
+    const rowWindow = (id: string): number | undefined =>
+      (rows.find(row => row.id === id) as { readonly contextWindow?: number } | undefined)?.contextWindow
+    expect(rowWindow('deepseek-v4.1-flash')).toBe(264_000)
+    expect(rowWindow('hy3')).toBe(192_000)
+  })
+
+  it('answers one window for every combination a catalog row can present', () => {
+    // The rule itself, away from any document: the two facts are combined, never
+    // chosen between.
+    expect(workBuddyContextWindow(undefined)).toBe(264_000)
+    expect(workBuddyContextWindow(1_000_000)).toBe(264_000)
+    expect(workBuddyContextWindow(300_000)).toBe(264_000)
+    expect(workBuddyContextWindow(264_000)).toBe(264_000)
+    // A route that really is smaller keeps its own number rather than being
+    // raised to the ceiling.
+    expect(workBuddyContextWindow(192_000)).toBe(192_000)
+    expect(workBuddyContextWindow(176_000)).toBe(176_000)
   })
 
   it('advertises the documented route before a sign-in, marked unavailable', async () => {

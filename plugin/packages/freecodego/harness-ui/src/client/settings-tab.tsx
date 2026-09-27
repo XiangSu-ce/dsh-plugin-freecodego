@@ -2,13 +2,13 @@ import { Component, useEffect, useRef, useState, type FormEvent, type ReactNode 
 import { decideMediaDefault } from './media-default-preference.ts'
 import { formatAmountInCurrency, formatMoney, roundUpCurrency } from './money-format.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, InjectFace, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import css from './settings-tab.module.css'
 import { CapabilityDetailModal, SkillDetailModal } from './capability-detail.tsx'
-import { capabilityText, hasLocalizedSkillDescription, localizedSkillDescription, skillPageText, type SkillPageText } from './capability-locale.ts'
+import { PROMPT_CATEGORY_ZH, capabilityText, hasLocalizedSkillDescription, localizedSkillDescription, skillPageText, type SkillPageText } from './capability-locale.ts'
 import { CommunityPluginsPage } from './community-plugins.tsx'
 import { PaymentDialog, orderStateLabel, safeCheckoutUrl, type PaymentDialogOrder } from './payment-dialog.tsx'
 import { ProviderCard, ProviderGlyph } from './provider-card.tsx'
@@ -413,52 +413,9 @@ export interface CapabilitySkillFile { readonly path: string; readonly bytes: nu
 /** Body and companion files for the Skill detail dialog, loaded on demand. */
 export interface CapabilitySkillDetail extends CapabilitySkillEntry { readonly content: string; readonly files: readonly CapabilitySkillFile[]; readonly file?: { readonly path: string; readonly bytes: number; readonly content: string } }
 
-export interface CapabilitySnapshot { readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean; readonly modelCategories?: Readonly<Record<string, ModelCategory>>; readonly mcpServers: readonly CapabilityMcpServer[]; readonly skillRoots: readonly CapabilitySkillRoot[];  readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly CapabilitySkillEntry[]; readonly skillInvocationOverrides?: Readonly<Record<string, boolean>> | undefined; readonly mountErrors?: readonly { readonly id: string; readonly message: string }[] }
+export interface CapabilitySnapshot { readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean; readonly modelCategories?: Readonly<Record<string, ModelCategory>>; readonly mcpServers: readonly CapabilityMcpServer[]; readonly skillRoots: readonly CapabilitySkillRoot[];  readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly CapabilitySkillEntry[]; readonly skillInvocationOverrides?: Readonly<Record<string, boolean>> | undefined; readonly mountErrors?: readonly { readonly id: string; readonly message: string }[]; readonly trustRefusals?: readonly { readonly id: string; readonly message: string }[] }
 interface MarketplaceMcpItem { readonly id: string; readonly kind: 'mcp'; readonly title: string; readonly description: string; readonly category: string; readonly sourceUrl: string; readonly iconUrl?: string; readonly author?: string; readonly popularity: number; readonly installed: boolean; readonly installable: boolean; readonly requiresConfiguration?: boolean }
 interface MarketplaceMcpPage { readonly kind: 'mcp'; readonly total: number; readonly offset: number; readonly limit: number; readonly items: readonly MarketplaceMcpItem[] }
-export interface AdvisorSnapshot {
-  readonly enabled: boolean
-  readonly mode: 'async' | 'catchup' | 'blocker-only'
-  readonly provider?: string
-  readonly model?: string
-  readonly routeReady: boolean
-  readonly reviewTools: readonly ('read' | 'glob' | 'grep')[]
-  readonly allowAgentControl: boolean
-  readonly interruptCooldownTurns: number
-  readonly activeSessions: number
-  readonly queuedReviews: number
-  readonly noteCount: number
-  readonly inputTokens: number
-  readonly outputTokens: number
-  readonly lastError?: string
-  readonly backoffRemainingTurns?: number
-  readonly watchdogFiles: readonly string[]
-  readonly sideChannelWarnings?: readonly string[]
-}
-export interface AdvisorUpdate {
-  readonly advisorEnabled?: boolean
-  readonly advisorMode?: 'async' | 'catchup' | 'blocker-only'
-  readonly advisorProvider?: string
-  readonly advisorModel?: string
-  readonly advisorAllowAgentControl?: boolean
-  readonly advisorInterruptCooldownTurns?: number
-}
-export interface AdvisorModelChoice {
-  readonly id: string
-  readonly displayName: string
-  readonly provider: string
-  readonly description: string
-}
-export interface AdvisorNote {
-  readonly id: string
-  readonly sessionId: string
-  readonly turn: number
-  readonly severity: 'nit' | 'concern' | 'blocker'
-  readonly note: string
-  readonly delivery: 'record' | 'inject' | 'steer'
-  readonly time: number
-}
-
 /** Durable phase of a goal, mirrored from the Host boundary type. */
 export type EngineeringLoopPhase = 'active' | 'paused' | 'blocked' | 'complete'
 
@@ -604,7 +561,6 @@ interface EngineeringCodeGraphProjectStatus {
   readonly reason?: string
 }
 interface EngineeringCanvasGraph { readonly projectId: string; readonly generatedAt: number; readonly nodes: readonly { readonly id: string; readonly label: string; readonly kind?: string }[]; readonly edges: readonly { readonly from: string; readonly to: string; readonly kind?: string }[]; readonly truncated: boolean }
-interface EngineeringCouncilReport { readonly id: string; readonly sessionId: string; readonly turn: number; readonly provider: string; readonly model: string; readonly createdAt: number; readonly findings: readonly { readonly role: 'architecture' | 'security' | 'testing'; readonly severity: 'nit' | 'concern' | 'blocker'; readonly note: string }[] }
 export interface EngineeringTeamDecision { readonly id: string; readonly state: 'approved' | 'rejected'; readonly decidedAt: number; readonly expiresAt?: number }
 export interface EngineeringTeamVerificationProbe { readonly id: string; readonly state: string; readonly expectation: 'pass' | 'fail'; readonly rationale: string; readonly held: boolean; readonly summary: string }
 export interface EngineeringTeamVerification { readonly id: string; readonly checkedAt: number; readonly stages: readonly { readonly id: string; readonly state: string; readonly durationMs: number; readonly summary: string }[]; readonly probes?: readonly EngineeringTeamVerificationProbe[]; /** Absent on runs recorded before the verdict existed. */ readonly verdict?: 'verified' | 'unverified' | 'failed'; readonly unmet?: readonly string[] }
@@ -984,7 +940,7 @@ interface Injected {
   readonly claudeRuntimePackages?: () => Promise<RemoteResult<readonly RuntimePackage[]>>
   readonly claudeRuntimeInstall?: (packageID?: string) => Promise<RemoteResult<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>>
   readonly claudeRuntimeRemove?: () => Promise<RemoteResult<{ readonly installed: boolean; readonly platform: string; readonly runtimeVersion?: string; readonly artifactDigest?: string; readonly reason?: string }>>
-  readonly communityCatalog: () => Promise<RemoteResult<{ readonly updated?: string; readonly plugins: readonly { readonly name: string; readonly owner: string; readonly url: string; readonly category: string | readonly string[]; readonly iconUrl?: string; readonly screenshots?: readonly string[]; readonly description?: { readonly zh?: string; readonly en?: string }; readonly npm?: string; readonly stars?: number; readonly downloads?: number; readonly added?: string }[] }>>
+  readonly communityCatalog: (refresh?: boolean) => Promise<RemoteResult<{ readonly updated?: string; readonly plugins: readonly { readonly name: string; readonly owner: string; readonly url: string; readonly category: string | readonly string[]; readonly iconUrl?: string; readonly screenshots?: readonly string[]; readonly description?: { readonly zh?: string; readonly en?: string }; readonly npm?: string; readonly stars?: number; readonly downloads?: number; readonly added?: string }[] }>>
   readonly communityCatalogIcons?: ((urls: readonly string[]) => Promise<RemoteResult<Readonly<Record<string, string>>>>) | undefined
   readonly communityEnvironment: () => Promise<RemoteResult<{ readonly ready: boolean; readonly platform: string; readonly node: string; readonly profile: string }>>
   readonly communityInstalled: () => Promise<RemoteResult<{ readonly installed: Record<string, string>; readonly activation: Record<string, { readonly state: string }>; readonly sources?: Record<string, readonly string[]>; readonly restartRequired?: boolean }>>
@@ -1001,6 +957,24 @@ interface Injected {
   readonly capabilities?: () => Promise<RemoteResult<CapabilitySnapshot>>
   readonly readLocalCapabilities?: () => Promise<{ readonly voiceInputEnabled: boolean; readonly sessionDeleteEnabled: boolean }>
   readonly capabilitiesSetEnabled?: (input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }) => Promise<RemoteResult<CapabilitySnapshot>>
+  /**
+   * The microphone's route: which recognizer, at which address, with which model.
+   *
+   * Read here rather than at boot because this card is the only reader and it
+   * describes the route *now* — a snapshot captured at mount would keep showing the
+   * endpoint the user just replaced.
+   */
+  readonly speechStatus?: () => Promise<RemoteResult<FreeCodeGoSpeechStatus>>
+  /** Store the route; omitted fields are unchanged, an empty string restores the default. */
+  readonly speechSetRoute?: (input: FreeCodeGoSpeechRouteInput) => Promise<RemoteResult<FreeCodeGoSpeechStatus>>
+  /**
+   * Post one silent probe recording through the stored route and report the outcome.
+   *
+   * A statement about the *network* rather than about the vault: every configuration
+   * fact this card shows can be true while the host still reaches nothing at the
+   * endpoint, so this is the only reader that can tell the two apart.
+   */
+  readonly speechTest?: () => Promise<RemoteResult<FreeCodeGoSpeechTest>>
   /** Direct native Settings write used for local UI switches when older Remote descriptors are present. */
   readonly setLocalCapability?: (key: 'voiceInputEnabled' | 'sessionDeleteEnabled', value: boolean) => Promise<void>
   readonly setModelCategoryDirect?: (key: string, category: ModelCategory) => Promise<void>
@@ -1026,6 +1000,18 @@ interface Injected {
   readonly reviewStatus?: (sessionId: string) => Promise<RemoteResult<FreeCodeGoReviewStatus>>
   readonly reviewStart?: (sessionId: string, request: FreeCodeGoReviewStartRequest) => Promise<RemoteResult<FreeCodeGoReviewStatus>>
   readonly reviewUpdate?: (sessionId: string, patch: FreeCodeGoReviewUpdate) => Promise<RemoteResult<FreeCodeGoReviewStatus>>
+  /**
+   * The plugin's second-model route: the one model this plugin calls on its own
+   * behalf (the review reviewer, the memory selector, the consolidation planner,
+   * and the action reviewer all spend on it).
+   *
+   * Status is read with no argument because the route belongs to the
+   * installation, not to a workspace; the routes call lists what this install
+   * can actually reach, so a picker never offers a row that fails on use.
+   */
+  readonly secondModelStatus?: () => Promise<RemoteResult<FreeCodeGoSecondModelStatus>>
+  readonly secondModelUpdate?: (patch: FreeCodeGoSecondModelUpdate) => Promise<RemoteResult<FreeCodeGoSecondModelStatus>>
+  readonly secondModelRoutes?: () => Promise<RemoteResult<readonly FreeCodeGoSecondModelRoute[]>>
   readonly guardSettingsStatus?: () => Promise<RemoteResult<FreeCodeGoGuardSettingsStatus>>
   readonly guardSettingsUpdate?: (patch: FreeCodeGoGuardSettingsUpdate) => Promise<RemoteResult<FreeCodeGoGuardSettingsStatus>>
   readonly automationSettingsStatus?: () => Promise<RemoteResult<FreeCodeGoAutomationSettings>>
@@ -1063,9 +1049,6 @@ interface Injected {
    * card explains itself instead of failing when it is absent).
    */
   readonly skillDetail?: (input: { readonly name: string; readonly file?: string }) => Promise<RemoteResult<CapabilitySkillDetail>>
-  readonly advisorStatus?: () => Promise<RemoteResult<AdvisorSnapshot>>
-  readonly advisorUpdate?: (input: AdvisorUpdate) => Promise<RemoteResult<AdvisorSnapshot>>
-  readonly advisorReviewNow?: (sessionId: string) => Promise<RemoteResult<AdvisorSnapshot>>
   readonly engineeringEval?: () => Promise<RemoteResult<FreeCodeGoEngineeringEvalReport>>
   readonly engineeringMemorySearch?: (sessionId: string, searchText?: string, limit?: number) => Promise<RemoteResult<readonly EngineeringMemoryIndex[]>>
   readonly engineeringMemoryRecall?: (sessionId: string) => Promise<RemoteResult<FreeCodeGoEngineeringMemoryRecall>>
@@ -1074,16 +1057,12 @@ interface Injected {
   readonly logfareSetKey?: (value: string) => Promise<RemoteResult<FreeCodeGoLogfareStatus>>
   readonly accountDetail?: () => Promise<RemoteResult<FreeCodeGoBackendSnapshot>>
   readonly clineAddAccount?: (refreshToken: string) => Promise<RemoteResult<ClineStatus>>
-  readonly advisorModels?: () => Promise<RemoteResult<readonly AdvisorModelChoice[]>>
-  readonly advisorNotes?: () => Promise<RemoteResult<readonly AdvisorNote[]>>
   readonly engineeringStatus?: () => Promise<RemoteResult<EngineeringStatus>>
   readonly engineeringSetEnabled?: (enabled: boolean) => Promise<RemoteResult<EngineeringStatus>>
   readonly engineeringSettingsUpdate?: (input: Partial<EngineeringSettings>) => Promise<RemoteResult<EngineeringStatus>>
   readonly engineeringLoopStatus?: (sessionId: string) => Promise<RemoteResult<EngineeringLoopStatus>>
   readonly engineeringLoopArm?: (sessionId: string) => Promise<RemoteResult<EngineeringLoopStatus>>
   readonly engineeringLoopStop?: (sessionId: string) => Promise<RemoteResult<EngineeringLoopStatus>>
-  readonly engineeringCouncilReview?: (sessionId: string) => Promise<RemoteResult<{ readonly id: string; readonly findings: readonly { readonly role: string; readonly severity: string; readonly note: string }[] }>>
-  readonly engineeringCouncilReports?: (sessionId: string) => Promise<RemoteResult<readonly EngineeringCouncilReport[]>>
   readonly engineeringTeamStart?: (sessionId: string, request: { readonly objective: string; readonly plan: string; readonly constraints?: readonly string[]; readonly engines?: readonly ('deepseek' | 'codex' | 'claude')[]; readonly maxRounds?: number; readonly run_in_background?: boolean }) => Promise<RemoteResult<EngineeringTeamJob>>
   readonly engineeringTeamJob?: (id: string) => Promise<RemoteResult<EngineeringTeamJob>>
   readonly engineeringTeamCancel?: (id: string) => Promise<RemoteResult<EngineeringTeamJob>>
@@ -1102,6 +1081,16 @@ interface Injected {
   readonly engineeringMemoryRetentionSweep?: (sessionId: string, retentionDays?: number) => Promise<RemoteResult<{ readonly retentionDays: number; readonly deletedMemories: number; readonly deletedOutboxEntries: number }>>
   readonly engineeringMemoryConsolidate?: (sessionId: string) => Promise<RemoteResult<MemoryConsolidation>>
   readonly engineeringMemoryManifest?: (sessionId: string) => Promise<RemoteResult<MemoryManifest>>
+  /**
+   * The current session's *temporary* memory layer, and the gesture that ends it.
+   *
+   * The curated archive has two layers and the record list reads the other one:
+   * these topics live as files under the session's own directory and are taken away
+   * when the session is disposed. Without this pair the panel cannot tell a session
+   * that remembered nothing from one whose notes were already reclaimed.
+   */
+  readonly engineeringMemorySessionScope?: (sessionId: string) => Promise<RemoteResult<MemorySessionScope>>
+  readonly engineeringMemorySessionReclaim?: (sessionId: string) => Promise<RemoteResult<SessionReclaim>>
   readonly engineeringGraphRuntimeStatus?: () => Promise<RemoteResult<EngineeringGraphRuntimeStatus>>
   readonly engineeringGraphRuntimePackages?: () => Promise<RemoteResult<readonly EngineeringGraphRuntimePackage[]>>
   readonly engineeringGraphRuntimeInstall?: (input: { readonly packageId: 'managed-uv-python' | 'existing-python'; readonly pythonPath?: string }) => Promise<RemoteResult<EngineeringGraphRuntimeStatus>>
@@ -1182,16 +1171,11 @@ export function FreeCodeGoSettingsSection(props: Props): ReactNode {
 }
 
 export const CAPABILITY_CHANGE_EVENT = 'freecodego:capability-change'
-export const ADVISOR_CHANGE_EVENT = 'freecodego:advisor-change'
 export const ENGINEERING_CHANGE_EVENT = 'freecodego:engineering-change'
 const CONFLICT_NOTICE_MAX_AGE_MS = 10 * 60_000
 
 function publishCapabilitySnapshot(snapshot: CapabilitySnapshot): void {
   globalThis.dispatchEvent(new CustomEvent<CapabilitySnapshot>(CAPABILITY_CHANGE_EVENT, { detail: snapshot }))
-}
-
-function publishAdvisorSnapshot(snapshot: AdvisorSnapshot): void {
-  globalThis.dispatchEvent(new CustomEvent<AdvisorSnapshot>(ADVISOR_CHANGE_EVENT, { detail: snapshot }))
 }
 
 function publishEngineeringSnapshot(snapshot: EngineeringStatus): void {
@@ -1219,15 +1203,6 @@ export interface CapabilitySectionInjected {
   readonly language: 'zh' | 'en'
 }
 
-export interface AdvisorSectionInjected {
-  readonly advisorStatus: NonNullable<Injected['advisorStatus']>
-  readonly advisorUpdate: NonNullable<Injected['advisorUpdate']>
-  readonly advisorModels: NonNullable<Injected['advisorModels']>
-  readonly advisorNotes: NonNullable<Injected['advisorNotes']>
-  readonly advisorReviewNow: NonNullable<Injected['advisorReviewNow']>
-  readonly currentSessionId: NonNullable<Injected['currentSessionId']>
-}
-
 export interface EngineeringSectionInjected {
   readonly engineeringStatus: NonNullable<Injected['engineeringStatus']>
   readonly engineeringSetEnabled: NonNullable<Injected['engineeringSetEnabled']>
@@ -1235,8 +1210,6 @@ export interface EngineeringSectionInjected {
   readonly engineeringLoopStatus?: NonNullable<Injected['engineeringLoopStatus']>
   readonly engineeringLoopArm?: NonNullable<Injected['engineeringLoopArm']>
   readonly engineeringLoopStop?: NonNullable<Injected['engineeringLoopStop']>
-  readonly engineeringCouncilReview: NonNullable<Injected['engineeringCouncilReview']>
-  readonly engineeringCouncilReports: NonNullable<Injected['engineeringCouncilReports']>
   readonly engineeringTeamStart?: NonNullable<Injected['engineeringTeamStart']>
   readonly engineeringTeamJob?: NonNullable<Injected['engineeringTeamJob']>
   readonly engineeringTeamCancel?: NonNullable<Injected['engineeringTeamCancel']>
@@ -1259,6 +1232,8 @@ export interface EngineeringSectionInjected {
   readonly engineeringMemoryRetentionSweep: NonNullable<Injected['engineeringMemoryRetentionSweep']>
   readonly engineeringMemoryConsolidate: NonNullable<Injected['engineeringMemoryConsolidate']>
   readonly engineeringMemoryManifest: NonNullable<Injected['engineeringMemoryManifest']>
+  readonly engineeringMemorySessionScope?: NonNullable<Injected['engineeringMemorySessionScope']>
+  readonly engineeringMemorySessionReclaim?: NonNullable<Injected['engineeringMemorySessionReclaim']>
   readonly engineeringGraphRuntimeStatus: NonNullable<Injected['engineeringGraphRuntimeStatus']>
   readonly engineeringGraphRuntimePackages: NonNullable<Injected['engineeringGraphRuntimePackages']>
   readonly engineeringGraphRuntimeInstall: NonNullable<Injected['engineeringGraphRuntimeInstall']>
@@ -1292,7 +1267,6 @@ export interface EngineeringSectionInjected {
 }
 
 type CapabilitySectionProps = PropsRuntime<'settings.section'> & InjectFace<CapabilitySectionInjected>
-type AdvisorSectionProps = PropsRuntime<'settings.section'> & InjectFace<AdvisorSectionInjected>
 type EngineeringSectionProps = PropsRuntime<'settings.section'> & InjectFace<EngineeringSectionInjected>
 
 function PluginUpdateSettings(input: {
@@ -1485,46 +1459,6 @@ export function SkillSettingsSection({ capabilities, skillRootSave, skillRootRem
   </section>}</>
 }
 
-/** Dedicated settings-sidebar page for the optional Host-owned Advisor. */
-export function AdvisorSettingsSection({ advisorStatus, advisorUpdate, advisorModels, advisorNotes, advisorReviewNow, currentSessionId }: AdvisorSectionProps): ReactNode {
-  const [snapshot, setSnapshot] = useState<AdvisorSnapshot | undefined>(undefined)
-  const [error, setError] = useState<string | undefined>(undefined)
-  const [reviewBusy, setReviewBusy] = useState(false)
-  const [reviewNote, setReviewNote] = useState<string | undefined>(undefined)
-  useEffect(() => {
-    let active = true
-    void advisorStatus().then((result) => {
-      if (!active) return
-      if (result.ok) setSnapshot(result.value)
-      else setError(result.error.message)
-    }, (reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)) })
-    return () => { active = false }
-  }, [advisorStatus])
-  /**
-   * Review the current session on demand.
-   *
-   * The panel has always shown the backoff line as "manual review is unaffected",
-   * and nothing could trigger one: after a run of failures the automatic path
-   * sits out several turns, so the only way to check whether the route recovered
-   * was to wait for it. This is that missing action.
-   */
-  const reviewNow = (): void => {
-    const sessionId = currentSessionId()
-    if (reviewBusy) return
-    if (sessionId === undefined) { setReviewNote('先在左侧打开一个会话，再手动复核。'); return }
-    setReviewBusy(true)
-    setReviewNote(undefined)
-    void advisorReviewNow(sessionId).then((result) => {
-      if (result.ok) {
-        setSnapshot(result.value)
-        publishAdvisorSnapshot(result.value)
-        setReviewNote('已触发；建议会在复核完成后出现在下方「最近建议」。')
-      } else setError(result.error.message)
-    }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setReviewBusy(false) })
-  }
-  return <>{error === undefined ? null : <div className={css.alert} role="alert">Advisor 状态读取失败：{error}</div>}<AdvisorSettingsPage snapshot={snapshot} update={advisorUpdate} models={advisorModels} onSnapshot={(next) => { setSnapshot(next); publishAdvisorSnapshot(next) }} onError={setError} onReview={reviewNow} reviewBusy={reviewBusy} reviewNote={reviewNote} standalone /><AdvisorNotesPanel load={advisorNotes} /></>
-}
-
 function engineeringMemoryDate(value: number): string {
   try { return new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' }).format(value) } catch { return new Date(value).toLocaleString() }
 }
@@ -1563,6 +1497,15 @@ export function EngineeringMemoryPanel(input: {
    */
   readonly consolidate: EngineeringSectionInjected['engineeringMemoryConsolidate']
   readonly manifest: EngineeringSectionInjected['engineeringMemoryManifest']
+  /**
+   * The current session's temporary layer, when the Host exposes it.
+   *
+   * Optional on the same rule as `search` and `recall`: a Host from before these
+   * Remotes exist still renders the panel, and the block is left out rather than
+   * shown with a button whose call would fail.
+   */
+  readonly sessionScope?: EngineeringSectionInjected['engineeringMemorySessionScope'] | undefined
+  readonly reclaimSession?: EngineeringSectionInjected['engineeringMemorySessionReclaim'] | undefined
 }): ReactNode {
   const [records, setRecords] = useState<readonly EngineeringMemoryIndex[]>([])
   const [query, setQuery] = useState('')
@@ -1581,6 +1524,25 @@ export function EngineeringMemoryPanel(input: {
    * because it is content, not a status line, and it survives the next action.
    */
   const [manifestIndex, setManifestIndex] = useState<string | undefined>(undefined)
+  /**
+   * The session's temporary layer, which the record list above cannot show.
+   *
+   * It is a different archive: those topics are files under the session's own
+   * directory rather than rows in the store, which is why they need their own read
+   * rather than a filter on the page the list already fetches.
+   */
+  const [sessionScope, setSessionScope] = useState<MemorySessionScope | undefined>(undefined)
+  /**
+   * The last reclamation's report, with the session it was about.
+   *
+   * The sentence names the current session ("reclaimed 2 temporary notes of this
+   * session"), so it is held with the id it describes rather than as a bare
+   * string: this panel is rendered under whichever conversation is active and that
+   * id changes in place, so a bare string would go on claiming the reclamation
+   * happened to the session now on screen — a status line asserting something
+   * false about the layer it sits under.
+   */
+  const [reclaimOutcome, setReclaimOutcome] = useState<{ readonly sessionId: string; readonly text: string } | undefined>(undefined)
   const beginRequest = useLatestRequestGuard()
   const load = (): void => {
     const isCurrent = beginRequest()
@@ -1620,6 +1582,27 @@ export function EngineeringMemoryPanel(input: {
     }, () => { if (active) setBlurb(undefined) })
     return () => { active = false }
   }, [input.enabled, input.recall, input.currentSessionId, records])
+  /**
+   * Read the session's temporary layer.
+   *
+   * Refreshed with `records` and after a reclamation, because both are the moments
+   * the answer can have changed: a consolidation pass writes session topics, and a
+   * reclamation removes them. A Host without the Remote leaves the block out
+   * entirely rather than showing a stale count.
+   */
+  useEffect(() => {
+    if (!input.enabled || input.sessionScope === undefined) { setSessionScope(undefined); return }
+    const sessionId = input.currentSessionId()
+    if (sessionId === undefined) { setSessionScope(undefined); return }
+    let active = true
+    void input.sessionScope(sessionId).then((result) => {
+      if (!active) return
+      // A workspace-context failure is already reported by the list above, so the
+      // block stays absent rather than repeating the same error twice.
+      setSessionScope(result.ok ? result.value : undefined)
+    }, () => { if (active) setSessionScope(undefined) })
+    return () => { active = false }
+  }, [input.enabled, input.sessionScope, input.currentSessionId, records, reclaimOutcome])
   const runSearch = (): void => {
     const sessionId = input.currentSessionId()
     const text = query.trim()
@@ -1739,6 +1722,25 @@ export function EngineeringMemoryPanel(input: {
     }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setBusy(false) })
   }
   /**
+   * End the current session's temporary layer now.
+   *
+   * Confirmed at the click because it deletes files, and reported verbatim because
+   * the outcomes that matter are the ones that are *not* a success: `absent` (there
+   * was nothing to reclaim), `lease-held` (a consolidation pass is writing) and
+   * `unnamed` are answers, and a panel that collapsed them into "done" would leave
+   * a user with notes still on disk and no way to find out why.
+   */
+  const reclaim = (): void => {
+    const sessionId = input.currentSessionId()
+    if (sessionId === undefined || busy || input.reclaimSession === undefined) return
+    if (typeof globalThis.confirm === 'function' && !globalThis.confirm('回收当前会话的临时记忆？这些临时笔记会被删除，长期项目记忆不受影响。')) return
+    setBusy(true); setError(undefined); setMaintenance(undefined)
+    void input.reclaimSession(sessionId).then((result) => {
+      if (!result.ok) { setError(result.error.message); return }
+      setReclaimOutcome({ sessionId, text: reclaimOutcomeLabel(result.value) })
+    }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setBusy(false) })
+  }
+  /**
    * Rebuild the curated `MEMORY.md` index from the topics on disk.
    *
    * `omitted` and `truncated` are surfaced because a silent omission would read
@@ -1765,6 +1767,15 @@ export function EngineeringMemoryPanel(input: {
       <div className={css.memoryRecallHead}><strong>长期记忆索引（MEMORY.md）</strong><small>会话开始时注入的指针列表；每条内容仍留在它自己的文件里。</small><button className={css.button} type="button" onClick={() => { setManifestIndex(undefined) }}>收起</button></div>
       <pre className={css.diagnosticsDump}>{manifestIndex}</pre>
     </div>}
+    {sessionScope === undefined || !input.enabled || workspaceUnavailable || input.sessionScope === undefined ? null : <div className={css.memoryRecall}>
+      <div className={css.memoryRecallHead}>
+        <strong>当前会话临时记忆</strong>
+        <small>{sessionScope.addressable ? `${sessionScope.topics.length} 条；会话结束时自动回收，长期项目记忆不受影响。` : '这个会话的 id 不能作为目录名，因此无法保存临时记忆。'}</small>
+        {input.reclaimSession === undefined || sessionScope.topics.length === 0 ? null : <button className={css.button} type="button" onClick={reclaim} disabled={busy}>立即回收</button>}
+      </div>
+      {sessionScope.topics.length === 0 ? null : <div className={css.memoryRecallList}>{sessionScope.topics.map(topic => <span key={topic}>{topic}</span>)}</div>}
+      {reclaimOutcome === undefined || reclaimOutcome.sessionId !== input.currentSessionId() ? null : <small className={css.sectionMeta} role="status">{reclaimOutcome.text}</small>}
+    </div>}
     {input.enabled && !workspaceUnavailable && records.length > 0 ? <div className={css.engineeringSummary}><span><b>{records.length}</b> 条项目记忆</span><span><b>{records.filter(record => record.trust === 'draft' || record.trust === 'captured').length}</b> 条待审核</span><span>最近 {engineeringMemoryDate(records[0]!.createdAt)}</span></div> : null}
     {!input.enabled || input.search === undefined || workspaceUnavailable || input.currentSessionId() === undefined ? null : <div className={css.memorySearchRow}>
       <input className={css.input} value={query} aria-label="搜索项目记忆" placeholder="按关键词搜索项目记忆" onChange={(event) => { setQuery(event.target.value) }} onKeyDown={(event) => { if (event.key === 'Enter') runSearch() }} disabled={busy} />
@@ -1779,6 +1790,23 @@ export function EngineeringMemoryPanel(input: {
     {!input.enabled ? <div className={css.emptyCapability}><strong>项目长期记忆未启用</strong><small>开启后 AI 会在本地保存并复用项目知识。</small></div> : workspaceUnavailable || input.currentSessionId() === undefined ? <div className={css.emptyCapability}><strong>打开工作区对话后查看长期记忆</strong><small>长期记忆按项目隔离；打开一个绑定工作区的对话后，AI 才能继续记录和读取。</small></div> : visible.length === 0 ? <div className={css.emptyCapability}><strong>{searchResults === undefined ? 'AI 还没有记录项目记忆' : '没有匹配的项目记忆'}</strong><small>{searchResults === undefined ? '完成一次有实际变更的对话后，系统会自动整理并保存可复用的项目知识。' : '换一个关键词，或清除搜索回到全部记录。'}</small></div> : <div className={css.memoryList}>{visible.map(record => <article key={record.id} className={`${css.memoryRecord} ${selected?.id === record.id ? css.memoryRecordSelected : ''}`}><button className={css.memoryRecordSelect} type="button" onClick={() => { inspect(record.id) }} disabled={busy}><span><strong>{record.title}</strong><small>{record.kind} · {engineeringMemoryDate(record.createdAt)} · 约 {record.detailTokens} tokens</small></span><span className={`${css.memoryTrust} ${record.trust === 'reviewed' ? css.memoryTrustReviewed : record.trust === 'draft' ? css.memoryTrustDraft : ''}`}>{record.trust === 'reviewed' ? '已审核' : record.trust === 'draft' ? '待审核' : '已捕获'}</span></button><div className={css.memoryRecordActions}><button className={css.button} type="button" onClick={() => { remove(record.id) }} disabled={busy}>删除</button></div></article>)}</div>}
     {selected === undefined ? null : <article className={css.memoryDetail}><div className={css.memoryDetailHeader}><div><strong>{selected.title}</strong><small>{selected.kind}{selected.sourceEngine === undefined ? '' : ` · ${selected.sourceEngine}`}</small></div><div>{selected.trust === 'draft' || selected.trust === 'captured' ? <><button className={css.button} type="button" onClick={() => { review(selected.id, 'reviewed') }} disabled={busy}>通过并纳入长期记忆</button><button className={css.button} type="button" onClick={() => { review(selected.id, 'rejected') }} disabled={busy}>拒绝</button></> : null}<button className={css.button} type="button" onClick={() => { remove(selected.id) }} disabled={busy}>删除</button></div></div><p>{selected.body}</p>{selected.tags.length === 0 ? null : <div className={css.memoryTags}>{selected.tags.map(tag => <span key={tag}>{tag}</span>)}</div>}{timeline === undefined ? null : <div className={css.memoryTimeline}><strong>相关时间线</strong>{[...timeline.before, timeline.anchor, ...timeline.after].map(item => <button key={item.id} className={item.id === selected.id ? css.memoryTimelineCurrent : ''} type="button" onClick={() => { inspect(item.id) }} disabled={busy}>{engineeringMemoryDate(item.createdAt)} · {item.title}</button>)}</div>}</article>}
   </section>
+}
+
+/**
+ * Why one reclamation ended the way it did, in the panel's words.
+ *
+ * Every non-success is spelled out rather than folded into "完成": `absent` means the
+ * session had nothing temporary, `lease-held` means a consolidation pass holds the
+ * workspace lease and the layer is still there, and `unnamed` means the session id
+ * cannot be a directory name at all. Those are the three a user has to act on — or
+ * be able to stop acting on.
+ */
+function reclaimOutcomeLabel(result: SessionReclaim): string {
+  if (result.outcome === 'reclaimed') return `已回收当前会话的 ${result.topics} 条临时记忆`
+  if (result.outcome === 'absent') return '当前会话没有临时记忆可回收'
+  if (result.outcome === 'lease-held') return `暂不能回收：${result.problem}`
+  if (result.outcome === 'unnamed') return `无法回收：${result.problem}`
+  return `回收失败：${result.problem}`
 }
 
 /**
@@ -2445,11 +2473,10 @@ const ENGINEERING_LOOP_PHASE_LABELS: Record<EngineeringLoopPhase, string> = {
   complete: '已完成',
 }
 
-export function EngineeringSettingsSection({ engineeringStatus, engineeringSetEnabled, engineeringSettingsUpdate, engineeringLoopStatus, engineeringLoopArm, engineeringLoopStop, engineeringCouncilReports, engineeringTeamJob, engineeringTeamCancel, engineeringTeamReports, engineeringTeamDecision, engineeringTeamVerify, engineeringTeamImplementation, engineeringMemoryList, engineeringMemorySearch, engineeringMemoryRecall, engineeringMemoryTimeline, engineeringMemoryGet, engineeringMemoryReview, engineeringMemoryDelete, engineeringMemoryPurgeProject, engineeringMemoryExport, engineeringMemoryBackup, engineeringMemoryRetentionSweep, engineeringMemoryConsolidate, engineeringMemoryManifest, engineeringSpecExport, engineeringEval, engineeringGraphRuntimeStatus, engineeringGraphRuntimePackages, engineeringGraphRuntimeInstall, engineeringGraphRuntimeRemove, engineeringGraphProjectStatus, engineeringGraphBuild, engineeringGraphUpdate, engineeringGraphCancel, engineeringGraphCanvas, engineeringGraphClearProject, engineeringCodeGraphRuntimeStatus, engineeringCodeGraphRuntimePackages, engineeringCodeGraphRuntimeInstall, engineeringCodeGraphRuntimeRemove, engineeringCodeGraphProjectStatus, engineeringCodeGraphBuild, engineeringCodeGraphSync, engineeringCodeGraphCancel, engineeringCodeGraphClearProject, engineeringCheckpointList, engineeringCheckpointCapture, engineeringCheckpointDiff, engineeringCheckpointRestore, engineeringCheckpointRemove, engineeringCheckpointSetPinned, inspectReport, planReviewOpen, planReviewCompose, currentSessionId }: EngineeringSectionProps): ReactNode {
+export function EngineeringSettingsSection({ engineeringStatus, engineeringSetEnabled, engineeringSettingsUpdate, engineeringLoopStatus, engineeringLoopArm, engineeringLoopStop, engineeringTeamJob, engineeringTeamCancel, engineeringTeamReports, engineeringTeamDecision, engineeringTeamVerify, engineeringTeamImplementation, engineeringMemoryList, engineeringMemorySearch, engineeringMemoryRecall, engineeringMemoryTimeline, engineeringMemoryGet, engineeringMemoryReview, engineeringMemoryDelete, engineeringMemoryPurgeProject, engineeringMemoryExport, engineeringMemoryBackup, engineeringMemoryRetentionSweep, engineeringMemoryConsolidate, engineeringMemoryManifest, engineeringMemorySessionScope, engineeringMemorySessionReclaim, engineeringSpecExport, engineeringEval, engineeringGraphRuntimeStatus, engineeringGraphRuntimePackages, engineeringGraphRuntimeInstall, engineeringGraphRuntimeRemove, engineeringGraphProjectStatus, engineeringGraphBuild, engineeringGraphUpdate, engineeringGraphCancel, engineeringGraphCanvas, engineeringGraphClearProject, engineeringCodeGraphRuntimeStatus, engineeringCodeGraphRuntimePackages, engineeringCodeGraphRuntimeInstall, engineeringCodeGraphRuntimeRemove, engineeringCodeGraphProjectStatus, engineeringCodeGraphBuild, engineeringCodeGraphSync, engineeringCodeGraphCancel, engineeringCodeGraphClearProject, engineeringCheckpointList, engineeringCheckpointCapture, engineeringCheckpointDiff, engineeringCheckpointRestore, engineeringCheckpointRemove, engineeringCheckpointSetPinned, inspectReport, planReviewOpen, planReviewCompose, currentSessionId }: EngineeringSectionProps): ReactNode {
   const [status, setStatus] = useState<EngineeringStatus | undefined>(undefined)
   const [loop, setLoop] = useState<EngineeringLoopStatus | undefined>(undefined)
   const [loopError, setLoopError] = useState<string | undefined>(undefined)
-  const [councilReports, setCouncilReports] = useState<readonly EngineeringCouncilReport[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [specResult, setSpecResult] = useState<FreeCodeGoEngineeringSpecBundle | undefined>(undefined)
@@ -2587,11 +2614,6 @@ export function EngineeringSettingsSection({ engineeringStatus, engineeringSetEn
       setLoop(result.value)
     }, (reason: unknown) => { setLoopError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setBusy(false) })
   }
-  useEffect(() => {
-    const sessionId = currentSessionId()
-    if (sessionId === undefined) { setCouncilReports([]); return }
-    void engineeringCouncilReports(sessionId).then((result) => { if (result.ok) setCouncilReports(result.value) }).catch(() => undefined)
-  }, [currentSessionId, engineeringCouncilReports])
   /**
    * Render the approved council plan into `<workspace>/specs/<id>`.
    *
@@ -2666,16 +2688,7 @@ export function EngineeringSettingsSection({ engineeringStatus, engineeringSetEn
     </section> : null}
     {teamJob?.report === undefined ? null : <section className={css.graphPanel}><div className={css.memoryHeader}><div><strong>协作决策与验证</strong><small>协作报告只提供证据。必须由用户明确批准后，主 Agent 才能实施；实施完成后运行项目声明的验证脚本。</small></div></div><div className={css.accountActions}>{teamDecision === undefined && (teamJob.state === 'completed' || teamJob.state === 'partial' || teamJob.state === 'awaiting_approval') ? <><button className={css.button} type="button" onClick={() => { decideTeam('approved') }} disabled={busy || engineeringTeamDecision === undefined}>批准实施</button><button className={css.button} type="button" onClick={() => { decideTeam('rejected') }} disabled={busy || engineeringTeamDecision === undefined}>拒绝方案</button></> : teamDecision?.state === 'approved' && teamVerification === undefined && teamJob.state === 'implementing' && teamJob.report.implementation === undefined ? <button className={css.button} type="button" onClick={markTeamImplemented} disabled={busy || engineeringTeamImplementation === undefined}>标记已实施</button> : teamDecision?.state === 'approved' && teamVerification === undefined && (teamJob.state === 'awaiting_verification' || teamJob.report.implementation !== undefined) ? <button className={css.button} type="button" onClick={verifyTeam} disabled={busy || engineeringTeamVerify === undefined}>运行实施后验证</button> : null}<button className={css.button} type="button" onClick={exportTeamReport} disabled={busy}>导出报告</button>{teamDecision?.state === 'approved' ? <button className={css.button} type="button" onClick={exportSpecPlan} disabled={busy}>{busy ? '导出中…' : '写出规格包'}</button> : null}</div>{specResult === undefined ? null : <small className={css.sectionMeta} role="status">{specResult.written ? `已写出 ${specResult.files.length} 个文件（${specResult.files.map(file => file.file).join(' · ')}）· ${specResult.tasks} 项任务 · ${specResult.directory}` : `未写出规格包：${specResult.reason}`}</small>}{teamDecision === undefined ? <small className={css.sectionMeta}>{teamJob.state === 'stale' ? '该方案或批准已过期，请重新运行协作审查。' : '尚未确认，主 Agent 不得实施。'}</small> : <div className={css.graphState}><strong>{teamDecision.state === 'approved' ? teamJob.state === 'stale' ? '批准已过期' : '用户已批准实施' : '用户已拒绝方案'}</strong>{teamJob.report.implementation === undefined ? null : <small>实施摘要：{teamJob.report.implementation.summary}</small>}{teamVerification === undefined ? null : <small>{engineeringVerificationLine(teamVerification, true)}</small>}</div>}</section>}
     {status?.engineeringCouncilEnabled && !hasSession ? <small className={css.sectionMeta}>打开一个绑定工作区的会话后，AI 才能读取项目并运行方案审查。</small> : null}
-    {councilReports.length === 0 ? null : <section className={css.graphPanel}><div className={css.memoryHeader}><div><strong>Advisor Council 历史</strong><small>报告在会话事件中持久化保存，角色结论不会自动改变 Agent 行为。</small></div></div><div className={css.memoryList}>{councilReports.map(report => <article className={css.memoryRecord} key={report.id}><div className={css.councilReport}>
-      <div className={css.councilJobHead}>
-        <strong className={css.councilReportTurn}>回合 {report.turn}</strong>
-        <small className={css.councilJobId}>{report.provider}/{report.model} · {engineeringMemoryDate(report.createdAt)}</small>
-      </div>
-      {report.findings.length === 0
-        ? <small className={css.sectionMeta}>本次没有可报告的具体风险。</small>
-        : <ul className={css.findingList}>{report.findings.map((finding, findingIndex) => <CouncilFindingRow engine={finding.role} severity={finding.severity} title={finding.role} evidence={finding.note} key={`${report.id}-${finding.role}-${findingIndex}`} />)}</ul>}
-    </div></article>)}</div></section>}
-    <EngineeringMemoryPanel enabled={status?.engineeringEnabled === true && status.engineeringMemoryEnabled && status.modules.some(module => module.id === 'memory' && module.state === 'available')} currentSessionId={currentSessionId} list={engineeringMemoryList} timeline={engineeringMemoryTimeline} get={engineeringMemoryGet} review={engineeringMemoryReview} remove={engineeringMemoryDelete} purge={engineeringMemoryPurgeProject} exportReviewed={engineeringMemoryExport} backup={engineeringMemoryBackup} retentionSweep={engineeringMemoryRetentionSweep} search={engineeringMemorySearch} recall={engineeringMemoryRecall} consolidate={engineeringMemoryConsolidate} manifest={engineeringMemoryManifest} />
+    <EngineeringMemoryPanel enabled={status?.engineeringEnabled === true && status.engineeringMemoryEnabled && status.modules.some(module => module.id === 'memory' && module.state === 'available')} currentSessionId={currentSessionId} list={engineeringMemoryList} timeline={engineeringMemoryTimeline} get={engineeringMemoryGet} review={engineeringMemoryReview} remove={engineeringMemoryDelete} purge={engineeringMemoryPurgeProject} exportReviewed={engineeringMemoryExport} backup={engineeringMemoryBackup} retentionSweep={engineeringMemoryRetentionSweep} search={engineeringMemorySearch} recall={engineeringMemoryRecall}  consolidate={engineeringMemoryConsolidate} manifest={engineeringMemoryManifest} sessionScope={engineeringMemorySessionScope} reclaimSession={engineeringMemorySessionReclaim} />
     <EngineeringCheckpointPanel enabled={status?.engineeringEnabled === true && status.modules.some(module => module.id === 'checkpoints' && module.state === 'available')} detail={status?.modules.find(module => module.id === 'checkpoints')?.detail} currentSessionId={currentSessionId} list={engineeringCheckpointList} capture={engineeringCheckpointCapture} diff={engineeringCheckpointDiff} restore={engineeringCheckpointRestore} remove={engineeringCheckpointRemove} setPinned={engineeringCheckpointSetPinned} />
 
     <EngineeringGraphPanel enabled={status?.engineeringEnabled === true && status.engineeringCodeGraphEnabled} currentSessionId={currentSessionId} runtimeStatus={engineeringGraphRuntimeStatus} runtimePackages={engineeringGraphRuntimePackages} install={engineeringGraphRuntimeInstall} remove={engineeringGraphRuntimeRemove} projectStatus={engineeringGraphProjectStatus} build={engineeringGraphBuild} update={engineeringGraphUpdate} cancel={engineeringGraphCancel} canvas={engineeringGraphCanvas} clear={engineeringGraphClearProject} />
@@ -3385,7 +3398,7 @@ interface OpenPaymentDialog {
   readonly payCurrency: string | undefined
 }
 
-export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, advisorStatus, advisorUpdate, engineeringStatus, engineeringSetEnabled, language, t }: Props): ReactNode {
+export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, secondModelStatus, secondModelUpdate, secondModelRoutes, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, engineeringStatus, engineeringSetEnabled, speechStatus, speechSetRoute, speechTest, language, t }: Props): ReactNode {
   const [state, setState] = useState<State>(() => cachedSettings(language, catalog)?.state ?? { ...fallbackSettings(), syncStatus: 'refreshing' })
   // A fresh catalog render must not infer media defaults until the Host has
   // returned the durable values. Otherwise the first available model can race
@@ -3509,8 +3522,6 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
   const [nativeModels, setNativeModels] = useState<readonly NativeCatalogModel[]>([])
   const [nativeCatalogEpoch, setNativeCatalogEpoch] = useState(0)
   const [pickerRows, setPickerRows] = useState<readonly { readonly provider: string; readonly id: string; readonly label: string; readonly description?: string }[]>([])
-  const [advisorSnapshot, setAdvisorSnapshot] = useState<AdvisorSnapshot | undefined>(undefined)
-  const [advisorToggleBusy, setAdvisorToggleBusy] = useState(false)
   const [engineeringSnapshot, setEngineeringSnapshot] = useState<EngineeringStatus | undefined>(undefined)
   const [engineeringToggleBusy, setEngineeringToggleBusy] = useState(false)
   const loadGeneration = useRef(0)
@@ -3671,25 +3682,12 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
     return () => { globalThis.removeEventListener(CAPABILITY_CHANGE_EVENT, onCapabilitiesChanged) }
   }, [])
   useEffect(() => {
-    const onAdvisorChanged = (event: Event): void => {
-      if (event instanceof CustomEvent) setAdvisorSnapshot(event.detail as AdvisorSnapshot)
-    }
-    globalThis.addEventListener(ADVISOR_CHANGE_EVENT, onAdvisorChanged)
-    return () => { globalThis.removeEventListener(ADVISOR_CHANGE_EVENT, onAdvisorChanged) }
-  }, [])
-  useEffect(() => {
     const onEngineeringChanged = (event: Event): void => {
       if (event instanceof CustomEvent) setEngineeringSnapshot(event.detail as EngineeringStatus)
     }
     globalThis.addEventListener(ENGINEERING_CHANGE_EVENT, onEngineeringChanged)
     return () => { globalThis.removeEventListener(ENGINEERING_CHANGE_EVENT, onEngineeringChanged) }
   }, [])
-  useEffect(() => {
-    if (advisorStatus === undefined) return
-    let active = true
-    void advisorStatus().then((result) => { if (active && result.ok) setAdvisorSnapshot(result.value) }, ignoreRejection)
-    return () => { active = false }
-  }, [advisorStatus, connectionEpoch])
   useEffect(() => {
     if (engineeringStatus === undefined) return
     let active = true
@@ -4092,14 +4090,6 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
       if (!result.ok) {  setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous); return }
       setState(previous => previous.status === 'ready' ? { ...previous, catalog: { ...previous.catalog, defaultEngine: result.value.engine } } : previous)
     }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) })
-  }
-  const toggleAdvisor = (enabled: boolean): void => {
-    if (advisorUpdate === undefined || advisorToggleBusy) return
-    setAdvisorToggleBusy(true)
-    void advisorUpdate({ advisorEnabled: enabled }).then((result) => {
-      if (result.ok) { setAdvisorSnapshot(result.value); publishAdvisorSnapshot(result.value) }
-      else setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
-    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setAdvisorToggleBusy(false) })
   }
   const toggleEngineering = (enabled: boolean): void => {
     if (engineeringSetEnabled === undefined || engineeringToggleBusy) return
@@ -5201,7 +5191,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
         </nav>
         {settingsPage === 'community' && capabilityMarketplace !== undefined && mcpPresetInstall !== undefined && skillPresetInstall !== undefined ? <CommunityPluginsPage communityCatalog={communityCatalog} communityCatalogIcons={communityCatalogIcons} communityEnvironment={communityEnvironment} communityInstalled={communityInstalled} communityInstall={communityInstall} communityUninstall={communityUninstall} capabilityMarketplace={capabilityMarketplace} mcpPresetInstall={mcpPresetInstall} skillPresetInstall={skillPresetInstall} skillPresetRemove={skillPresetRemove} skillPlacements={skillPlacements} skillPlacementPrefer={skillPlacementPrefer} language={language} /> : null}
         {settingsPage === 'settings' ? <ModelCategorySettingsPage models={nativeModels} categories={capabilitySnapshot?.modelCategories ?? {}} setCategory={modelCategorySet} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: message } : previous) }} /> : null}
-        {settingsPage === 'settings' ? <><PluginConflictProtection status={pluginConflictStatus} setEnabled={pluginConflictSetEnabled} /><HeadroomPanel status={headroomStatus} setEnabled={headroomSetEnabled} update={headroomUpdate} language={language} /><MediaGenerationPanel status={mediaGenerationStatus} setEnabled={mediaGenerationSetEnabled} language={language} /><DeferredToolsPanel status={deferredToolsStatus} setEnabled={deferredToolsSetEnabled} language={language} /><ReviewPanel sessionId={currentSessionId?.()} status={reviewStatus} start={reviewStart} update={reviewUpdate} language={language} /><GuardSettingsPanel status={guardSettingsStatus} update={guardSettingsUpdate} language={language} /><SandboxModePanel sessionId={currentSessionId?.()} status={sandboxModeStatus} setMode={sandboxModeSet} language={language} /><TrustPanel status={trustFolderStatus} grant={trustFolderGrant} revoke={trustFolderRevoke} projectConfig={projectConfigReport} language={language} /><AutomationSettingsPanel status={automationSettingsStatus} update={automationSettingsUpdate} language={language} /><PluginUpdateSettings status={pluginUpdateSnapshot} check={pluginUpdateCheck} setEnabled={pluginUpdateSetEnabled} install={pluginUpdateInstall} rollback={pluginUpdateRollback} language={language} /><CapabilitySettingsPage snapshot={capabilitySnapshot} setEnabled={capabilitiesSetEnabled} setLocalCapability={setLocalCapability} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? message === undefined ? previous : { ...previous, actionError: message } : previous) }} /><section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>Advisor</div><strong className={css.sectionName}>Advisor 监督</strong></div><span className={`${css.badge} ${advisorSnapshot?.enabled ? css.badgeLive : ''}`}>{advisorSnapshot?.enabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>仅在这里控制 Advisor 总开关。模型、审查模式和介入策略请从左侧 Advisor 页面配置。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用 Advisor</strong><small>开启后，Host 会在主 Agent 回合完成后执行独立复核。</small></span><input className={css.switch} aria-label="启用 Advisor" type="checkbox" checked={advisorSnapshot?.enabled === true} onChange={(event) => { toggleAdvisor(event.target.checked) }} disabled={advisorUpdate === undefined || advisorToggleBusy} /></label>{advisorSnapshot?.sideChannelWarnings?.map(warning => <div className={css.accountRow} key={warning}><div className={css.accountIdentity}><strong className={css.accountName}>{language === 'zh' ? '侧信道预算' : 'Side-channel budget'}</strong><small>{warning}</small></div></div>)}</div></section></> : null}
+        {settingsPage === 'settings' ? <><PluginConflictProtection status={pluginConflictStatus} setEnabled={pluginConflictSetEnabled} /><HeadroomPanel status={headroomStatus} setEnabled={headroomSetEnabled} update={headroomUpdate} language={language} /><MediaGenerationPanel status={mediaGenerationStatus} setEnabled={mediaGenerationSetEnabled} language={language} /><DeferredToolsPanel status={deferredToolsStatus} setEnabled={deferredToolsSetEnabled} language={language} /><SecondModelPanel status={secondModelStatus} update={secondModelUpdate} routes={secondModelRoutes} language={language} /><ReviewPanel sessionId={currentSessionId?.()} status={reviewStatus} start={reviewStart} update={reviewUpdate} language={language} /><GuardSettingsPanel status={guardSettingsStatus} update={guardSettingsUpdate} language={language} /><SandboxModePanel sessionId={currentSessionId?.()} status={sandboxModeStatus} setMode={sandboxModeSet} language={language} /><TrustPanel status={trustFolderStatus} grant={trustFolderGrant} revoke={trustFolderRevoke} projectConfig={projectConfigReport} language={language} /><AutomationSettingsPanel status={automationSettingsStatus} update={automationSettingsUpdate} language={language} /><PluginUpdateSettings status={pluginUpdateSnapshot} check={pluginUpdateCheck} setEnabled={pluginUpdateSetEnabled} install={pluginUpdateInstall} rollback={pluginUpdateRollback} language={language} /><CapabilitySettingsPage snapshot={capabilitySnapshot} setEnabled={capabilitiesSetEnabled} setLocalCapability={setLocalCapability} speechStatus={speechStatus} speechSetRoute={speechSetRoute} speechTest={speechTest} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? message === undefined ? previous : { ...previous, actionError: message } : previous) }} /></> : null}
         {settingsPage === 'settings' ? <section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>ENGINEERING</div><strong className={css.sectionName}>工程增强包</strong></div><span className={`${css.badge} ${engineeringSnapshot?.engineeringEnabled ? css.badgeLive : ''}`}>{engineeringSnapshot?.engineeringEnabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>这里只控制总开关。开启后，工程 Skills、项目长期记忆和代码结构图会在左侧工程页面中管理。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用工程增强包</strong><small>开启后 AI 会持续理解当前项目，并在不同 Agent 之间共享上下文。</small></span><input className={css.switch} aria-label="启用工程增强包" type="checkbox" checked={engineeringSnapshot?.engineeringEnabled === true} onChange={(event) => { toggleEngineering(event.target.checked) }} disabled={engineeringSetEnabled === undefined || engineeringToggleBusy} /></label></div></section> : null}
         {settingsPage === 'overview' ? <section className={css.section}>
           <div className={css.sectionHeader}><div><div className={css.kicker}>{t('runtime')}</div><strong className={css.sectionName}>{t('modelRouting')}</strong></div><span className={`${css.badge} ${css.badgeLive}`}>{t('live')}</span></div>
@@ -5291,7 +5281,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
             <small className={css.sectionMeta}>{state.logfare?.configured !== true
               ? (language === 'zh' ? '尚未连接。可以申请资格，或者用下面的输入框填一个已在别处拿到的 Key。' : 'Not connected yet. Apply, or enter a key you already have below.')
               : state.logfare.premiumUnlocked ? (language === 'zh' ? '基础与高级模型均可从模型列表选择。' : 'Standard and premium models are selectable from the model list.') : state.logfare.sessionConfigured ? (language === 'zh' ? '同意训练数据后即可解锁高级模型。' : 'Agree to training data to unlock premium models.') : (language === 'zh' ? '申请资格后会自动保存凭证。' : 'Applying saves the credential automatically.')}</small>
-            {logfareSetKey === undefined ? null : <details className={css.advisorManual}><summary>{language === 'zh' ? '手动填入手上的 Logfare Key' : 'Enter an existing Logfare key'}</summary><small>{language === 'zh' ? '凭证只保存在 Harness Host，不会回显。' : 'The credential is stored in the Harness Host only and is never echoed back.'}</small><div className={css.capabilityForm}><label><span>{language === 'zh' ? 'Logfare Key' : 'Logfare key'}</span><input className={css.input} type="password" autoComplete="off" aria-label={language === 'zh' ? 'Logfare Key' : 'Logfare key'} value={logfareKey} onChange={(event) => { setLogfareKey(event.target.value) }} /></label><button className={css.button} type="button" onClick={saveLogfareKey} disabled={logfareKeyBusy || logfareKey.trim() === ''}>{logfareKeyBusy ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存 Key' : 'Save key')}</button></div></details>}
+            {logfareSetKey === undefined ? null : <details className={css.manualEntry}><summary>{language === 'zh' ? '手动填入手上的 Logfare Key' : 'Enter an existing Logfare key'}</summary><small>{language === 'zh' ? '凭证只保存在 Harness Host，不会回显。' : 'The credential is stored in the Harness Host only and is never echoed back.'}</small><div className={css.capabilityForm}><label><span>{language === 'zh' ? 'Logfare Key' : 'Logfare key'}</span><input className={css.input} type="password" autoComplete="off" aria-label={language === 'zh' ? 'Logfare Key' : 'Logfare key'} value={logfareKey} onChange={(event) => { setLogfareKey(event.target.value) }} /></label><button className={css.button} type="button" onClick={saveLogfareKey} disabled={logfareKeyBusy || logfareKey.trim() === ''}>{logfareKeyBusy ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存 Key' : 'Save key')}</button></div></details>}
           </>}
         /> : null}
         {settingsPage === 'providers' && sensenovaStatus !== undefined ? <ProviderCard
@@ -5409,7 +5399,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
               <strong className={`${css.accountName} ${css.authFull}`}>{clineTicket.userCode}</strong>
               <button className={css.button} type="button" onClick={() => { setClineTicket(undefined) }}>{language === 'zh' ? '取消' : 'Cancel'}</button>
             </div>}
-            {clineAddAccount === undefined ? null : <details className={css.advisorManual}><summary>{language === 'zh' ? '用手上的 Cline refresh token 添加账号' : 'Add an account from a Cline refresh token'}</summary><small>{language === 'zh' ? '同一个账号重复添加会替换原有凭证；密码与令牌只保存在 Harness Host。' : 'Adding the same account again replaces its credential. The token stays in the Harness Host.'}</small><div className={css.capabilityForm}><label><span>Refresh token</span><input className={css.input} type="password" autoComplete="off" aria-label="Cline refresh token" value={clineToken} onChange={(event) => { setClineToken(event.target.value) }} /></label><button className={css.button} type="button" onClick={addClineAccount} disabled={clineBusy || clineToken.trim() === ''}>{clineBusy ? (language === 'zh' ? '添加中…' : 'Adding…') : (language === 'zh' ? '添加账号' : 'Add account')}</button></div></details>}
+            {clineAddAccount === undefined ? null : <details className={css.manualEntry}><summary>{language === 'zh' ? '用手上的 Cline refresh token 添加账号' : 'Add an account from a Cline refresh token'}</summary><small>{language === 'zh' ? '同一个账号重复添加会替换原有凭证；密码与令牌只保存在 Harness Host。' : 'Adding the same account again replaces its credential. The token stays in the Harness Host.'}</small><div className={css.capabilityForm}><label><span>Refresh token</span><input className={css.input} type="password" autoComplete="off" aria-label="Cline refresh token" value={clineToken} onChange={(event) => { setClineToken(event.target.value) }} /></label><button className={css.button} type="button" onClick={addClineAccount} disabled={clineBusy || clineToken.trim() === ''}>{clineBusy ? (language === 'zh' ? '添加中…' : 'Adding…') : (language === 'zh' ? '添加账号' : 'Add account')}</button></div></details>}
           </div> : null}
         </ProviderCard> : null}
         {settingsPage === 'providers' && workbuddyStatus !== undefined ? <ProviderCard
@@ -5905,46 +5895,6 @@ function formatBytes(bytes: number): string {
  * and the plain-language explanation of how the compression works, with the
  * upstream Apache-2.0 attribution.
  */
-/** Severity → tone for a review finding.
- *
- * Two vocabularies reach this UI and both must land on a real tone:
- * council findings use `info | warning | blocker` (see `SEVERITY_RANK` in
- * `engine-council.ts`), advisor notes use `nit | concern | blocker` (see
- * `AdvisorSeverity`). An earlier version knew neither and mapped every value
- * to `unknown`, so severity colouring never applied to anything. */
-export function severityTone(severity: string): 'blocker' | 'warning' | 'info' | 'unknown' {
-  switch (severity.trim().toLowerCase()) {
-    case 'blocker': case 'critical': case 'fatal':
-      return 'blocker'
-    // `concern` is the advisor's middle tier; `warning` is the council's.
-    case 'warning': case 'concern': case 'major': case 'error': case 'high':
-      return 'warning'
-    // `nit` is the advisor's lowest tier; `info` is the council's.
-    case 'info': case 'nit': case 'minor': case 'note': case 'low': case 'medium': case 'moderate': case 'warn':
-      return 'info'
-    default:
-      return 'unknown'
-  }
-}
-
-/** One review finding, rendered the same way in the live job and in history. */
-function CouncilFindingRow(input: {
-  readonly engine: string
-  readonly severity: string
-  readonly title: string
-  readonly evidence?: string
-}): ReactNode {
-  const tone = severityTone(input.severity)
-  return <li className={css.findingRow}>
-    <span className={`${css.findingSeverity} ${css[`findingSeverity_${tone}`] ?? ''}`}>{input.severity}</span>
-    <div className={css.findingBody}>
-      <strong className={css.findingTitle}>{input.title}</strong>
-      {input.evidence === undefined || input.evidence === '' ? null : <p className={css.findingEvidence}>{input.evidence}</p>}
-    </div>
-    <span className={css.findingEngine}>{input.engine}</span>
-  </li>
-}
-
 function HeadroomPanel(input: {
   readonly status?: (() => Promise<RemoteResult<HeadroomStats>>) | undefined
   readonly setEnabled?: ((enabled: boolean) => Promise<RemoteResult<HeadroomStats>>) | undefined
@@ -6048,6 +5998,26 @@ function HeadroomPanel(input: {
         <span className={css.statChip}>{isZh ? '可取回条目' : 'Recoverable'}<b>{snapshot.ccrEntries}</b></span>
         <span className={css.statChip}>{isZh ? '取回失败' : 'Retrieve misses'}<b>{snapshot.retrieveMisses}</b></span>
         <span className={snapshot.ccrWriteRefusals > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '仓储拒写' : 'Writes refused'}<b>{snapshot.ccrWriteRefusals}</b></span>
+        <span className={snapshot.quotaTokens > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '会话压缩配额' : 'Session quota'}<b>{snapshot.quotaTokens > 0 ? snapshot.quotaTokens.toLocaleString('en-US') : (isZh ? '未测量' : 'not measured')}</b></span>
+        <span className={snapshot.quotaOverTokens > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '超出配额' : 'Over quota'}<b>{snapshot.quotaOverTokens.toLocaleString('en-US')}</b></span>
+        {/* Lit only while a quota is loosening the bar, which is the one thing this
+            chip is here to show. Measured against the *configured* ratio rather than
+            a number of our own: the quota can only raise this bar (`acceptMaxRatio`
+            relaxes it, never tightens it), so comparing against the shipped default
+            from this side is a comparison one way round that never fires — with
+            `headroomMinSavingsRatio` at its default the two figures are equal until
+            pressure acts, and the chip stayed grey in exactly the case it exists
+            for. */}
+        <span className={snapshot.acceptRatio > snapshot.configuredAcceptRatio ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '当前接受门槛' : 'Accept ratio'}<b>{snapshot.acceptRatio.toFixed(2)}</b></span>
+        {/* The fixed side of the same subtraction the quota came from. A bare
+            overage reads as "compression is behind", which is the wrong next
+            step when the room went to a tool block or a Skill pack — so the
+            rows that a settings change moves are named one by one, largest
+            first, and the total is stated with them. */}
+        <span className={snapshot.quotaFixedTokens > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '固定开销（压缩动不了）' : 'Fixed, unshrinkable'}<b>{snapshot.quotaFixedTokens > 0 ? snapshot.quotaFixedTokens.toLocaleString('en-US') : (isZh ? '未测量' : 'not measured')}</b></span>
+        {snapshot.quotaFixedCategories.map(category => <span className={css.statChip} key={category.id}>
+          {isZh ? (PROMPT_CATEGORY_ZH[category.id] ?? category.label) : category.label}<b>{category.tokens.toLocaleString('en-US')}</b>
+        </span>)}
         <span className={snapshot.foldDeferred > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '折叠/拼接/指针进入竞争' : 'Folds/splices/pointers contested'}<b>{snapshot.foldDeferred}</b></span>
         <span className={snapshot.foldSuperseded > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '折叠/拼接/指针被取代' : 'Folds/splices/pointers superseded'}<b>{snapshot.foldSuperseded}</b></span>
         <span className={snapshot.foldSettled > 0 ? css.statChip : `${css.statChip} ${css.statChipIdle}`}>{isZh ? '折叠/拼接/指针兜底交付' : 'Folds/splices/pointers settled'}<b>{snapshot.foldSettled}</b></span>
@@ -6079,6 +6049,114 @@ function HeadroomPanel(input: {
   </section>
 }
 
+
+/**
+ * The second-model route panel: which model the plugin spends its own calls on.
+ *
+ * Why this exists at all
+ * ----------------------
+ * Four features spend model requests on one shared route — the stop-time review's
+ * reviewer, the memory recall selector, the memory-consolidation planner, and the
+ * action reviewer. The route's settings keys are the historical `advisorProvider` /
+ * `advisorModel` pair (renaming them would silently drop the route of every profile
+ * that set one), and the only surface that edited them was the Advisor page, which
+ * was removed with that feature. Without this panel the route is still editable
+ * only by hand in the profile file, which is a settings regression, not a cleanup.
+ *
+ * Why a list rather than two free-text fields
+ * ------------------------------------------
+ * A route this install cannot reach fails on first use — the panel would have
+ * recorded a selection that cannot work. So the picker renders `secondModelRoutes`
+ * (the Host's live registry plus the managed catalogs, filtered to text-capable
+ * rows) instead of trusting typed input, and a manual pair is still available
+ * behind the disclosure for a provider the directory has not learned yet.
+ */
+export function SecondModelPanel(input: {
+  readonly status?: (() => Promise<RemoteResult<FreeCodeGoSecondModelStatus>>) | undefined
+  readonly update?: ((patch: FreeCodeGoSecondModelUpdate) => Promise<RemoteResult<FreeCodeGoSecondModelStatus>>) | undefined
+  readonly routes?: (() => Promise<RemoteResult<readonly FreeCodeGoSecondModelRoute[]>>) | undefined
+  readonly language: 'zh' | 'en'
+}): ReactNode {
+  const isZh = input.language === 'zh'
+  const [snapshot, setSnapshot] = useState<FreeCodeGoSecondModelStatus | undefined>(undefined)
+  const [options, setOptions] = useState<readonly FreeCodeGoSecondModelRoute[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | undefined>(undefined)
+  /** The manual pair, seeded from the stored route and kept editable. */
+  const [manualProvider, setManualProvider] = useState('')
+  const [manualModel, setManualModel] = useState('')
+  const refresh = (): void => {
+    if (input.status === undefined) return
+    void input.status().then((result) => {
+      if (result.ok) {
+        setSnapshot(result.value)
+        setManualProvider(result.value.provider)
+        setManualModel(result.value.model)
+      }
+    }).catch(() => undefined)
+  }
+  useEffect(() => { refresh() }, [input.status])
+  const loadRoutes = (): void => {
+    if (input.routes === undefined) return
+    void input.routes().then((result) => { if (result.ok) setOptions(result.value) }).catch(() => undefined)
+  }
+  useEffect(() => { loadRoutes() }, [input.routes])
+  const apply = (patch: FreeCodeGoSecondModelUpdate): void => {
+    if (input.update === undefined) return
+    setBusy(true)
+    setError(undefined)
+    void input.update(patch).then((result) => {
+      if (result.ok) {
+        setSnapshot(result.value)
+        setManualProvider(result.value.provider)
+        setManualModel(result.value.model)
+      }
+      // A refused write leaves the old route in force, so the control must not be
+      // left showing the new one: report it and re-read the authoritative state.
+      else { setError(result.error.message); refresh() }
+    }).catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)); refresh() })
+      .finally(() => { setBusy(false) })
+  }
+  // The picker's value is the `provider:model` pair the directory keys routes by;
+  // a stored pair the directory does not list (a hand-edited profile, a retired
+  // route) must render as itself rather than fall back to the first row, or the
+  // panel would show a selection the Host is not using.
+  const currentPair = snapshot === undefined ? '' : `${snapshot.provider}:${snapshot.model}`
+  const known = options.some(option => `${option.provider}:${option.id}` === currentPair)
+  const routeLine = snapshot === undefined ? (isZh ? '读取中…' : 'Reading…')
+    : snapshot.routeReady ? `${snapshot.provider} · ${snapshot.model}`
+    : (isZh ? '未配置（使用内置默认 opencode · auto）' : 'Not set (built-in default opencode · auto)')
+  return <section className={css.section}>
+    <div className={css.sectionHeader}><div><div className={css.kicker}>SECOND MODEL</div><strong className={css.sectionName}>{isZh ? '第二模型路由' : 'Second-model route'}</strong></div><span className={`${css.badge} ${snapshot?.routeReady ? css.badgeLive : ''}`}>{snapshot?.routeReady ? (isZh ? '已就绪' : 'Ready') : (isZh ? '默认' : 'Default')}</span></div>
+    <small className={css.sectionMeta}>{isZh
+      ? '本插件自己发起的模型调用共用这一条路由：代码审查的逐文件评审、语义记忆召回、记忆整合规划与待执行操作复核。它独立于主 Agent 的模型，也不改变会话内任何回答由谁生成。'
+      : 'The model calls this plugin initiates itself all share this route: the per-file review reviewer, the semantic memory recall selector, the memory-consolidation planner, and the pending-action reviewer. It is independent of the main Agent\'s model and never changes who generates a session\'s answers.'}</small>
+    {error === undefined ? null : <div className={css.alert} role="alert">{isZh ? `设置未保存：${error}` : `The setting was not saved: ${error}`}</div>}
+    <div className={css.extensionList}>
+      <label className={css.extensionRow}><span><strong>{isZh ? '路由模型' : 'Route model'}</strong><small>{isZh ? `当前：${routeLine}。选择后，上面列出的功能都会改用这条路由。` : `Current: ${routeLine}. Every feature listed above switches to this route.`}</small></span>
+        <select className={css.select} aria-label={isZh ? '第二模型路由' : 'Second-model route'} value={known ? currentPair : ''} disabled={busy || input.update === undefined}
+          onChange={(event) => {
+            const pair = event.target.value
+            const separator = pair.indexOf(':')
+            if (separator === -1) return
+            apply({ advisorProvider: pair.slice(0, separator), advisorModel: pair.slice(separator + 1) })
+          }}>
+          <option value="" disabled>{known ? (isZh ? '目录外路由' : 'Off-directory route') : (isZh ? snapshot === undefined ? '…' : routeLine : snapshot === undefined ? '…' : routeLine)}</option>
+          {options.map(option => <option key={`${option.provider}:${option.id}`} value={`${option.provider}:${option.id}`}>{option.displayName} · {option.provider}</option>)}
+        </select></label>
+      <details>
+        <summary className={css.extensionRow}>{isZh ? '手动配置目录外路由' : 'Configure an off-directory route'}</summary>
+        <div className={css.capabilityForm}>
+          <label><span>Provider</span><input className={css.input} value={manualProvider} onChange={(event) => { setManualProvider(event.target.value) }} placeholder="opencode" /></label>
+          <label><span>Model ID</span><input className={css.input} value={manualModel} onChange={(event) => { setManualModel(event.target.value) }} placeholder="auto" /></label>
+          <button className={css.button} type="button" disabled={busy || input.update === undefined}
+            onClick={() => { apply({ advisorProvider: manualProvider.trim(), advisorModel: manualModel.trim() }) }}>{isZh ? '保存路由' : 'Save route'}</button>
+          <small>{isZh ? '清空两栏并保存即恢复内置默认（opencode · auto）。目录里没有的第三方 provider 在这里手动填。' : 'Save with both fields empty to restore the built-in default (opencode · auto). Use this for a third-party provider the directory does not list.'}</small>
+        </div>
+      </details>
+    </div>
+  </section>
+}
 
 /**
  * The code review surface.
@@ -6467,8 +6545,8 @@ function DeferredToolsPanel(input: {
           ? 'Harness 按 Agent 作用域推导发给模型的定义，而被拒绝的工具名在调用时会直接报 UNKNOWN_TOOL。也就是说，隐藏与可调用性是同一份数据决定的，不可能出现「模型看得见但调不了」或「调得到但没被告知」的情况。取回一批工具，就是把这个作用域里的拒绝列表收窄一次；全部取回后拒绝列表被完整撤销。'
           : 'The Harness derives the wire schema from each agent\'s tool scope, and a denied name fails a direct call with UNKNOWN_TOOL. Visibility and callability therefore come from one source of truth — the model can never see a tool it cannot call, nor call one it was not shown. Fetching a batch re-applies a narrower deny list for that agent; once every deferred tool has been fetched the restriction is dropped entirely.'}</p>
         <p><strong>{isZh ? '3. 始终常驻的那几个' : '3. The handful that never defer'}</strong><br />{isZh
-          ? 'tool_search 本身必须常驻（否则就是把自己锁在门外）；工程状态、仓库地图是「什么都不对时用户第一个点的东西」；advisor_review 和 headroom_retrieve 是模型已经被提示过要去用的工具（一条建议、一个压缩标记里的 hash），让它们再多走一次发现流程只是纯延迟。'
-          : 'tool_search itself must stay (deferring it would be a lockout); engineering status and the repo map are what a user reaches for when nothing else works; advisor_review and headroom_retrieve answer something the model has already been shown (a hint to consult the advisor, a hash inside a compression marker), so a discovery round-trip there is pure latency.'}</p>
+          ? 'tool_search 本身必须常驻（否则就是把自己锁在门外）；工程状态、仓库地图是「什么都不对时用户第一个点的东西」；headroom_retrieve 是模型已经被提示过去用的工具（一个压缩标记里的 hash），让它再多走一次发现流程只是纯延迟。'
+          : 'tool_search itself must stay (deferring it would be a lockout); engineering status and the repo map are what a user reaches for when nothing else works; headroom_retrieve answers something the model has already been shown (a hash inside a compression marker), so a discovery round-trip there is pure latency.'}</p>
       </div>
     </details>
   </section>
@@ -6510,7 +6588,6 @@ export function GuardSettingsPanel(input: {
       {row('lspEnabled', isZh ? 'LSP 语言服务' : 'LSP language services', isZh ? '探测到 TypeScript/Python/Go 语言服务器时自动挂载精准跳转/引用工具。' : 'Mounts precise definition/reference tools when TypeScript/Python/Go language servers are detected on PATH.')}
       {row('rehydrationEnabled', isZh ? '压缩后再水化' : 'Post-compaction rehydration', isZh ? '上下文压缩完成后自动重新注入任务计划与长期记忆，会话不“失忆”。' : 'After compaction, re-injects the task plan and durable memory so the session keeps its plan.')}
       {row('rehydrationArcEnabled', isZh ? '会话弧段（目标与决策）' : 'Conversation arc (goals and decisions)', isZh ? '压缩后再水化时，先从会话日志与项目记忆中折叠出这段对话的目标与已定决策并置于最前，让复活后的上下文先回到「要做什么、已经定了什么」，而不是先看到待办清单。可选增强，默认关闭：折叠需要读整段会话事件。' : 'On post-compaction rehydration, first fold this conversation\'s goals and decisions out of the session log and project memory and put them at the front, so the revived context returns to what this is for and what was already decided before it sees the todo list. An opt-in enhancement, off by default: folding reads the whole session event log.')}
-      {row('advisorMemoryDraftsEnabled', isZh ? 'Advisor 发现存入记忆' : 'Advisor findings to memory', isZh ? 'Advisor 复核发现自动存为项目记忆草稿，供你在记忆面板审阅。' : 'Advisor review findings are saved as pending project-memory drafts for your review.')}
       {row('commandPolicyEnabled', isZh ? '命令策略（拒绝性规则）' : 'Command policy (refusals)', isZh ? '规则写在插件里、自带正反例，加载时逐条自测：规则谎报自己能匹配什么就会被丢弃。只有“forbidden”会在此处直接阻断；需要询问的命令交给审批层，因为守卫无法把它变回一次询问。' : 'Rules live in the plugin as data with their own positive and negative examples, validated at load time: a rule that misstates what it matches is dropped. Only `forbidden` blocks here; commands that warrant a question are left to the approval layer, because a monotonic guard cannot turn a denial back into a prompt.')}
       {row('planModeEnabled', isZh ? '计划模式（结构性禁止写入）' : 'Plan Mode (structural write refusal)', isZh ? '开启后模型可进入计划模式：改文件的工具与策略未放行的命令都会被拒绝，而读取、搜索、跑测试仍然可用。模式属于这段对话，不会因为一句祈使句而结束，退出必须显式调用工具。' : 'Lets the model enter Plan Mode: file-mutating tools and any command the policy does not clear are refused, while reading, searching, and running checks stay available. The mode belongs to the conversation, does not end because a sentence asked for execution, and only ends through an explicit tool call.')}
       {row('cacheColdClearEnabled', isZh ? '冷缓存清理' : 'Cache-cold clearing', isZh ? '当距上一条主循环消息的间隔超过 1 小时（供应商的 prompt 缓存必然已过期）时，在发起下一次请求之前清掉较早的工具结果。理由不是“内容变旧”，而是这部分前缀横竖都要被重写，提前清掉正好减小那次必然发生的重算；判断阈值取 1 小时，所以它不会制造一次本来不会发生的缓存未命中。清除标记只在本次会话内维护，同一段内容不会被重复处理。' : 'When more than an hour has passed since the last main-loop message (so the provider\'s prompt cache has certainly expired), older tool results are cleared **before** the next request is made. The reason is not that the content is old: that prefix is going to be rewritten anyway, so shrinking it beforehand reduces a re-billing that is already certain. The one-hour threshold is deliberately past every published TTL, so this can never cause a cache miss that would not have happened. Clear markers are tracked per session, so the same content is never processed twice.')}
@@ -6814,10 +6891,181 @@ export function PluginConflictNotice(input: {
   </Modal>
 }
 
+/**
+ * The microphone's route: one endpoint, one model, one key.
+ *
+ * This card exists because the switch above it was the only control of its kind and
+ * it could not be made to work: the plugin's cloud recognizer refused to register
+ * without a key, and no surface in this settings page could store one. The result was
+ * the one failure a user cannot debug — the switch read as "on", the microphone still
+ * asked to download a local model, and nothing said why.
+ *
+ * So the card states the three things that decide it ({@link FreeCodeGoSpeechStatus}:
+ * whether a key resolves, which route it serves, and whether the Harness is actually
+ * using us) and writes them in one call (`speechSetRoute`), which re-decides the
+ * registration as a side effect. The key is only ever shown as *configured or not*:
+ * the field is write-only by construction, so a browser cannot read back a secret
+ * that was pasted into it.
+ *
+ * One field is write-only, and the write has to say the difference between "leave it"
+ * and "clear it": the route reads an *absent* field as unchanged and an empty string as
+ * a clear, so the save button omits the key while its field is empty and the clear button
+ * is the only thing that sends one. Sending the field on every save would wipe a stored
+ * key the first time someone edited the endpoint — with the placeholder inviting them to
+ * leave the field alone, which is exactly what they would do.
+ *
+ * And because all three of those can be true while dictation still fails — a
+ * complete configuration says nothing about whether the machine can *reach* the
+ * endpoint, which is how a proxy-less host fails against a provider its browser
+ * reaches fine — the card also offers the one question that is about the route
+ * rather than about the vault: {@link SpeechTestLine}, one real round trip.
+ * @param input - the three remotes, and the surface language.
+ * @returns the route card.
+ */
+function SpeechRouteCard(input: {
+  readonly status: Injected['speechStatus']
+  readonly update: Injected['speechSetRoute']
+  readonly probe: Injected['speechTest']
+  readonly language: 'zh' | 'en'
+}): ReactNode {
+  const isZh = input.language === 'zh'
+  const [snapshot, setSnapshot] = useState<FreeCodeGoSpeechStatus | undefined>(undefined)
+  const [baseUrl, setBaseUrl] = useState('')
+  const [model, setModel] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | undefined>(undefined)
+  const [saved, setSaved] = useState(false)
+  // A re-read must not overwrite a half-typed field: the route is filled in from the
+  // Host only while the user has not touched it, and any save re-arms that.
+  const edited = useRef(false)
+  useEffect(() => {
+    if (input.status === undefined) return
+    void input.status().then((result) => {
+      if (!result.ok) return
+      setSnapshot(result.value)
+      if (edited.current) return
+      setBaseUrl(result.value.baseUrl)
+      setModel(result.value.model)
+    }).catch(() => undefined)
+  }, [input.status])
+  const send = (patch: FreeCodeGoSpeechRouteInput): void => {
+    if (input.update === undefined) return
+    setBusy(true)
+    setError(undefined)
+    setSaved(false)
+    void input.update(patch).then((result) => {
+      if (!result.ok) { setError(result.error.message); return }
+      edited.current = false
+      setSnapshot(result.value)
+      setBaseUrl(result.value.baseUrl)
+      setModel(result.value.model)
+      setApiKey('')
+      setSaved(true)
+    }).catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setBusy(false) })
+  }
+  const routed = snapshot?.selected === 'freecodego'
+  const statusText = snapshot === undefined
+    ? (isZh ? '正在读取识别路由…' : 'Reading the recognizer route…')
+    : !snapshot.hasKey
+      ? (isZh ? '未配置密钥：语音输入现在走本机识别模型（需要下载）。粘贴一个 API Key 即可改为云端识别，不再下载。' : 'No key configured: dictation falls back to the bundled local model and its download. Paste an API key to dictate through the cloud instead.')
+      : !snapshot.enabled
+        ? (isZh ? '密钥已配置，但上面的「语音输入」开关是关的；打开后插件会接管麦克风，不会再要求下载本机模型。' : 'A key is configured, but the 语音输入 switch above is off. Turn it on and this plugin takes the microphone over — no local model download.')
+        : !snapshot.registered
+          ? (isZh ? '密钥已配置，但当前宿主没有挂载语音插件（语音注册表不可用），所以识别服务里不会出现 FreeCodeGo。' : 'A key is configured, but this Host has no speech bundle mounted, so no recognition service can be offered.')
+          : routed
+            ? (isZh ? `已接管麦克风：录音会发给 ${snapshot.baseUrl}（模型 ${snapshot.model}）。` : `Dictation is live on ${snapshot.baseUrl} (model ${snapshot.model}).`)
+            : (isZh ? `已注册为可用识别服务，但 Harness 当前用的是「${snapshot.selected}」；在语音设置 → 识别服务里选 FreeCodeGo 才会走云端。` : `Registered and ready, but the Harness is using “${snapshot.selected}”. Pick FreeCodeGo under 识别服务 to dictate through the cloud.`)
+  const badge = routed ? (isZh ? '已接管' : 'Live') : snapshot?.hasKey === true ? (isZh ? '可接管' : 'Ready') : (isZh ? '未配置密钥' : 'No key')
+  return <div className={css.extensionList}>
+    <div className={css.extensionRow}><span><strong>{isZh ? '语音识别路由' : 'Speech recognizer route'}</strong><small>{statusText}</small></span><span className={`${css.badge} ${routed ? css.badgeLive : ''}`}>{badge}</span></div>
+    {input.status === undefined ? null : <>
+      <label className={css.extensionRow}><span><strong>{isZh ? '接口地址' : 'Endpoint'}</strong><small>{isZh ? 'OpenAI 兼容根地址；留空则用内置的 Groq 地址。' : 'OpenAI-compatible root; empty restores the built-in Groq address.'}</small></span><input className={css.input} aria-label={isZh ? '语音识别接口地址' : 'Speech endpoint'} value={baseUrl} onChange={(event) => { edited.current = true; setSaved(false); setBaseUrl(event.target.value) }} placeholder="https://api.groq.com/openai/v1" autoComplete="off" spellCheck={false} /></label>
+      <label className={css.extensionRow}><span><strong>{isZh ? '模型' : 'Model'}</strong><small>{isZh ? '识别模型 id；留空则用内置的 whisper-large-v3-turbo。' : 'Recognizer model id; empty restores the built-in whisper-large-v3-turbo.'}</small></span><input className={css.input} aria-label={isZh ? '语音识别模型' : 'Speech model id'} value={model} onChange={(event) => { edited.current = true; setSaved(false); setModel(event.target.value) }} placeholder="whisper-large-v3-turbo" autoComplete="off" spellCheck={false} /></label>
+      <label className={css.extensionRow}><span><strong>API Key</strong><small>{isZh ? '保存在本机凭证库，不会回显；留空表示不改动。' : 'Kept in the local credential vault and never echoed; empty leaves it unchanged.'}</small></span><input className={css.input} aria-label={isZh ? '语音识别 API Key' : 'Speech API key'} type="password" value={apiKey} onChange={(event) => { edited.current = true; setSaved(false); setApiKey(event.target.value) }} placeholder={snapshot?.hasKey === true ? (isZh ? '已配置，粘贴新值可替换' : 'Configured — paste a new key to replace it') : 'gsk_…'} autoComplete="off" /></label>
+      <div className={css.authForm}>
+        <button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={() => { send(apiKey === '' ? { baseUrl, model } : { baseUrl, model, apiKey }) }} disabled={busy || input.update === undefined}>{busy ? (isZh ? '保存中…' : 'Saving…') : (isZh ? '保存' : 'Save')}</button>
+        <button className={css.button} type="button" onClick={() => { send({ baseUrl: '', model: '' }) }} disabled={busy || input.update === undefined}>{isZh ? '恢复默认端点' : 'Reset endpoint'}</button>
+        <button className={css.button} type="button" onClick={() => { setApiKey(''); send({ apiKey: '' }) }} disabled={busy || input.update === undefined || snapshot?.hasKey !== true}>{isZh ? '清除密钥' : 'Clear key'}</button>
+        {saved ? <small className={css.sectionMeta}>{isZh ? '已保存' : 'Saved'}</small> : null}
+      </div>
+      <SpeechTestLine probe={input.probe} hasKey={snapshot?.hasKey === true} dirty={edited.current} language={input.language} />
+    </>}
+    {error === undefined ? null : <div className={css.alert} role="alert">{isZh ? `识别路由未能保存：${error}` : `The recognizer route was not saved: ${error}`}</div>}
+  </div>
+}
+
+/**
+ * The one line of this card that is about the network.
+ *
+ * Every other fact on the card is a statement about configuration, and every one of
+ * them can be true on a machine where dictation still does nothing: this deployment's
+ * recognizer is `api.groq.com`, and a host behind a proxy that the process does not
+ * know about reaches nothing there — the browser loads the page, the key is present,
+ * the switch is on, and the recording dies at the socket. That arrived as a download
+ * prompt and no explanation, so the card asks the route itself, once, on demand.
+ *
+ * On demand rather than on render, because the probe is a real request to a paid
+ * provider: a settings page that spent a transcription every time it was opened would
+ * be a cost the user never agreed to and a rate limit they never asked for.
+ *
+ * The button is disabled while the fields are dirty, and says why. A probe tests the
+ * route as *stored*, so testing before saving would answer about the previous
+ * endpoint while the user read it as an answer about the one they just typed.
+ * @param input - the probe remote, whether a key resolves, whether the fields are dirty, and the language.
+ * @returns the probe row.
+ */
+function SpeechTestLine(input: {
+  readonly probe: Injected['speechTest']
+  readonly hasKey: boolean
+  readonly dirty: boolean
+  readonly language: 'zh' | 'en'
+}): ReactNode {
+  const isZh = input.language === 'zh'
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<FreeCodeGoSpeechTest | undefined>(undefined)
+  const [failed, setFailed] = useState<string | undefined>(undefined)
+  const run = (): void => {
+    if (input.probe === undefined) return
+    setBusy(true)
+    setFailed(undefined)
+    void input.probe().then((value) => {
+      if (!value.ok) { setFailed(value.error.message); return }
+      setResult(value.value)
+    }).catch((reason: unknown) => { setFailed(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setBusy(false) })
+  }
+  const text = (value: FreeCodeGoSpeechTest): string => {
+    const route = `${value.baseUrl} · ${value.model}`
+    switch (value.reason) {
+      case 'ok': return isZh ? `连通：${route} 接受了这次试录。` : `Reachable: ${route} accepted the probe recording.`
+      // The one refusal that can arrive with no status at all: the Host answers
+      // `unauthorized` when no key resolves, which it can only do *before* a request —
+      // so the sentence has to be about the vault rather than about an endpoint that
+      // replied, and `HTTP undefined` is not a thing a user can act on.
+      case 'unauthorized': return value.status === undefined
+        ? (isZh ? `没有可用的识别密钥：${value.detail === '' ? '请在上方粘贴一个 API Key。' : value.detail}` : `No usable recognizer key: ${value.detail === '' ? 'paste an API key above.' : value.detail}`)
+        : (isZh ? `端点拒绝了密钥（HTTP ${String(value.status)}）：接口地址通，但这一对密钥/模型不被接受，请核对 API Key。` : `The endpoint refused the key (HTTP ${String(value.status)}): the address answers, but this key and model are not accepted — check the API key.`)
+      case 'forbidden': return isZh ? `被拒绝（HTTP 403）：密钥无效，或本机网络无法直连该地址。若浏览器能打开而这里不能，通常是本机需要代理 —— 在 Harness 主目录的 .env 里写 HTTPS_PROXY（例如 http://127.0.0.1:7890）后重启。` : `Refused (HTTP 403): the key is invalid, or this machine cannot reach the address directly. If the browser reaches it and this does not, the process is missing a proxy — set HTTPS_PROXY (for example http://127.0.0.1:7890) in the Harness home .env and restart.`
+      case 'not-found': return isZh ? `地址或模型不存在（HTTP 404）：${route}，请核对接口地址与模型 id。` : `Address or model not found (HTTP 404): ${route} — check the endpoint and the model id.`
+      case 'unreachable': return isZh ? `连不上（未收到任何应答）：${value.baseUrl}。若该地址需要代理，请在本机配置 HTTPS_PROXY 后重启。${value.detail === '' ? '' : `（${value.detail}）`}` : `No reply from ${value.baseUrl}: the request never completed. If the address needs a proxy, configure HTTPS_PROXY and restart.${value.detail === '' ? '' : ` (${value.detail})`}`
+      default: return isZh ? `端点返回 HTTP ${String(value.status)}：${value.detail === '' ? '未提供原因' : value.detail}` : `The endpoint answered HTTP ${String(value.status)}: ${value.detail === '' ? 'no reason given' : value.detail}`
+    }
+  }
+  return <div className={css.extensionRow}>
+    <span><strong>{isZh ? '连通性' : 'Reachability'}</strong><small>{result === undefined ? (isZh ? '发一次半秒静音试录，确认这条路由真的能用（会消耗一次识别请求）。' : 'Post a half-second silent probe to confirm this route really works (costs one recognition request).') : text(result)}</small></span>
+    <button className={css.button} type="button" onClick={run} disabled={busy || input.dirty || !input.hasKey || input.probe === undefined} title={input.dirty ? (isZh ? '先保存再测试' : 'Save first, then test') : undefined}>{busy ? (isZh ? '测试中…' : 'Testing…') : (isZh ? '测试' : 'Test')}</button>
+    {failed === undefined ? null : <div className={css.alert} role="alert">{isZh ? `测试未能完成：${failed}` : `The test could not run: ${failed}`}</div>}
+  </div>
+}
+
 function CapabilitySettingsPage(input: {
   readonly snapshot: CapabilitySnapshot | undefined
   readonly setEnabled: Injected['capabilitiesSetEnabled']
   readonly setLocalCapability: Injected['setLocalCapability']
+  readonly speechStatus: Injected['speechStatus']
+  readonly speechSetRoute: Injected['speechSetRoute']
+  readonly speechTest: Injected['speechTest']
+  readonly language: 'zh' | 'en'
   readonly onSnapshot: (value: CapabilitySnapshot) => void
   readonly onError: (message: string) => void
 }): ReactNode {
@@ -6853,9 +7101,10 @@ function CapabilitySettingsPage(input: {
     <div className={css.extensionList}>
       <label className={css.extensionRow}><span><strong>MCP</strong><small>连接第三方 stdio 或 Streamable HTTP MCP 服务。</small></span><input className={css.switch} aria-label="MCP" type="checkbox" checked={snapshot?.mcpEnabled === true} onChange={(event) => { update({ mcpEnabled: event.target.checked }) }} disabled={input.setEnabled === undefined} /></label>
       <label className={css.extensionRow}><span><strong>Skill</strong><small>向三个 Agent 引擎提供统一的 Skill 目录和按需加载能力。</small></span><input className={css.switch} aria-label="Skill" type="checkbox" checked={snapshot?.skillEnabled === true} onChange={(event) => { update({ skillEnabled: event.target.checked }) }} disabled={input.setEnabled === undefined} /></label>
-      <label className={css.extensionRow}><span><strong>语音输入</strong><small>在输入框显示话筒，录音完成后转写为草稿文字。</small></span><input className={css.switch} aria-label="语音输入" type="checkbox" checked={snapshot?.voiceInputEnabled !== false} onChange={(event) => { update({ voiceInputEnabled: event.target.checked }) }} disabled={input.setEnabled === undefined && input.setLocalCapability === undefined} /></label>
-      <label className={css.extensionRow}><span><strong>会话删除</strong><small>在会话悬停时显示删除按钮。</small></span><input className={css.switch} aria-label="会话删除" type="checkbox" checked={snapshot?.sessionDeleteEnabled !== false} onChange={(event) => { update({ sessionDeleteEnabled: event.target.checked }) }} disabled={input.setEnabled === undefined && input.setLocalCapability === undefined} /></label>
+      <label className={css.extensionRow}><span><strong>语音输入</strong><small>把插件自带的云端识别服务接进本体的语音输入（识别服务里选 FreeCodeGo，免下载本地模型）。</small></span><input className={css.switch} aria-label="语音输入" type="checkbox" checked={snapshot?.voiceInputEnabled !== false} onChange={(event) => { update({ voiceInputEnabled: event.target.checked }) }} disabled={input.setEnabled === undefined && input.setLocalCapability === undefined} /></label>
+      <label className={css.extensionRow}><span><strong>会话删除</strong><small>在会话的「⋯」菜单里显示「删除会话」；当前打开的会话不提供。</small></span><input className={css.switch} aria-label="会话删除" type="checkbox" checked={snapshot?.sessionDeleteEnabled !== false} onChange={(event) => { update({ sessionDeleteEnabled: event.target.checked }) }} disabled={input.setEnabled === undefined && input.setLocalCapability === undefined} /></label>
     </div>
+    <SpeechRouteCard status={input.speechStatus} update={input.speechSetRoute} probe={input.speechTest} language={input.language} />
   </section>
 }
 
@@ -6997,132 +7246,6 @@ export function categoryLabel(category: ModelCategory, language: 'zh' | 'en' = '
   return category === 'text' ? '文本模型' : category === 'image' ? '生图模型' : category === 'video' ? '视频模型' : '语音模型'
 }
 
-function AdvisorSettingsPage(input: {
-  readonly snapshot: AdvisorSnapshot | undefined
-  readonly update: Injected['advisorUpdate']
-  readonly models: Injected['advisorModels']
-  readonly onSnapshot: (value: AdvisorSnapshot) => void
-  readonly onError: (message: string | undefined) => void
-  /** Manual review action; absent leaves the button out entirely. */
-  readonly onReview?: (() => void) | undefined
-  readonly reviewBusy?: boolean
-  readonly reviewNote?: string | undefined
-  readonly standalone?: boolean
-}): ReactNode {
-  const snapshot = input.snapshot
-  const [provider, setProvider] = useState(snapshot?.provider ?? '')
-  const [model, setModel] = useState(snapshot?.model ?? '')
-  const [allowControl, setAllowControl] = useState(false)
-  const [cooldown, setCooldown] = useState('3')
-  const [busy, setBusy] = useState(false)
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [models, setModels] = useState<readonly AdvisorModelChoice[]>([])
-  const [modelQuery, setModelQuery] = useState('')
-  const [modelError, setModelError] = useState<string | undefined>(undefined)
-  const [modelLoading, setModelLoading] = useState(false)
-  useEffect(() => {
-    setProvider(snapshot?.provider ?? '')
-    setModel(snapshot?.model ?? '')
-    setAllowControl(snapshot?.allowAgentControl ?? false)
-    setCooldown(String(snapshot?.interruptCooldownTurns ?? 3))
-  }, [snapshot?.provider, snapshot?.model, snapshot?.allowAgentControl, snapshot?.interruptCooldownTurns])
-  const update = (patch: AdvisorUpdate): void => {
-    if (input.update === undefined || busy) return
-    setBusy(true)
-    void input.update(patch).then((result) => {
-      if (result.ok) { input.onError(undefined); input.onSnapshot(result.value) }
-      else input.onError(result.error.message)
-    }, (error: unknown) => { input.onError(error instanceof Error ? error.message : String(error)) }).finally(() => { setBusy(false) })
-  }
-  const saveRoute = (): void => { update({
-    advisorProvider: provider.trim(),
-    advisorModel: model.trim(),
-    advisorAllowAgentControl: allowControl,
-    advisorInterruptCooldownTurns: Math.max(0, Math.min(20, Number.parseInt(cooldown, 10) || 0)),
-  }) }
-  const openPicker = (): void => {
-    setPickerOpen(true)
-    setModelQuery('')
-    if (input.models === undefined || modelLoading) return
-    setModelLoading(true)
-    setModelError(undefined)
-    void input.models().then((result) => {
-      if (result.ok) setModels(result.value)
-      else setModelError(result.error.message)
-    }, (error: unknown) => { setModelError(error instanceof Error ? error.message : String(error)) }).finally(() => { setModelLoading(false) })
-  }
-  const chooseManagedModel = (choice: AdvisorModelChoice): void => {
-    setProvider(choice.provider)
-    setModel(choice.id)
-    setPickerOpen(false)
-    update({ advisorProvider: choice.provider, advisorModel: choice.id })
-  }
-  const filteredModels = models.filter(choice => `${choice.displayName} ${choice.id} ${choice.description}`.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase()))
-  const status = snapshot === undefined ? '正在读取…' : !snapshot.enabled ? '未启用' : snapshot.routeReady ? '可运行' : '待配置'
-  const statusDescription = snapshot === undefined ? '正在读取独立审查路由' : !snapshot.enabled ? '打开开关后才会开始审查' : snapshot.routeReady ? '独立 LLM 路由已就绪' : '请选择审查模型后才会开始工作'
-  return <section className={`${css.section} ${input.standalone ? css.advisorStandalone : ''}`}>
-    <div className={css.sectionHeader}><div><div className={css.kicker}>ADVISOR SUPERVISION</div><strong className={css.sectionName}>Advisor 监督</strong></div><div className={css.accountActions}><span className={`${css.badge} ${snapshot?.enabled && snapshot.routeReady ? css.badgeLive : ''}`}>{snapshot?.enabled && snapshot.routeReady ? '可运行' : snapshot?.enabled ? '待配置' : '未启用'}</span>{input.onReview === undefined ? null : <button className={css.button} type="button" onClick={input.onReview} disabled={input.reviewBusy === true}>{input.reviewBusy === true ? '触发中…' : '立即复核当前会话'}</button>}</div></div>
-    {input.reviewNote === undefined ? null : <small className={css.sectionMeta} role="status">{input.reviewNote}</small>}
-    <small className={css.sectionMeta}>Host 在每轮结束后以独立模型复核 DeepSeek、Claude 与 Codex 会话。它只能读取当前工作目录，不会共享主 Agent 的写入、终端或网络工具。</small>
-    {input.standalone ? null : <div className={css.extensionList}>
-      <label className={css.extensionRow}><span><strong>启用 Advisor</strong><small>开启后显示左侧入口，并按所选模式开始异步复核已完成的主 Agent 回合。</small></span><input className={css.switch} aria-label="启用 Advisor" type="checkbox" checked={snapshot?.enabled === true} onChange={(event) => { update({ advisorEnabled: event.target.checked }) }} disabled={input.update === undefined || busy} /></label>
-    </div>}
-    <div className={css.advisorStats}>
-      <div><strong>{status}</strong><small>{statusDescription}</small></div><div><strong>{snapshot?.activeSessions ?? 0}</strong><small title="Advisor 已经处理过回合的会话数。刚启动的 Host 在第一个回合结束前必然是 0。">本次已审查会话</small></div><div><strong>{snapshot?.queuedReviews ?? 0}</strong><small title="正在后台复核的回合数，不是积压队列。">进行中审查</small></div><div><strong>{snapshot?.noteCount ?? 0}</strong><small title="已完成并写入会话记录的审查建议数。">已产出建议</small></div><div><strong>{snapshot === undefined ? 0 : snapshot.inputTokens + snapshot.outputTokens}</strong><small>累计 tokens</small></div>
-    </div>
-    {snapshot === undefined || snapshot.activeSessions > 0 ? null : <small className={css.sectionMeta}>
-      {snapshot.enabled && snapshot.routeReady
-        ? '尚未审查任何回合。Advisor 在每次主 Agent 回合结束时自动触发；完成一个回合后这里会开始计数。'
-        : 'Advisor 尚未开始工作。启用并选好审查模型后，Host 会在每个回合结束时自动复核。'}
-    </small>}
-    {snapshot?.lastError === undefined ? null : <div className={css.advisorWarning} role="status">最近错误：{snapshot.lastError}{snapshot.backoffRemainingTurns === undefined ? '' : `（连续失败退避中，还有约 ${snapshot.backoffRemainingTurns} 个回合后重试；手动审查不受影响）`}</div>}
-    {/* Review behaviour: mode and model are one logical pair (how hard it
-        reviews and with what), so they share a two-column row instead of each
-        owning a full-width form row. */}
-    <div className={css.advisorFormGrid}>
-      <label className={css.advisorField}><span>审查模式</span><select className={css.select} value={snapshot?.mode ?? 'async'} onChange={(event) => { update({ advisorMode: event.target.value as AdvisorSnapshot['mode'] }) }} disabled={input.update === undefined || busy}><option value="async">异步，不阻塞主回合</option><option value="catchup">最多等待 30 秒后继续</option><option value="blocker-only">只记录 blocker</option></select></label>
-      <div className={css.advisorField}><span>审查模型</span><button className={css.advisorModelTrigger} type="button" onClick={openPicker} disabled={input.models === undefined || busy}><strong>{model === '' ? '选择一个可用模型' : model}</strong><small>{provider === '' ? '点击从可用模型中选择' : `Provider: ${provider}`}</small></button></div>
-      <label className={css.advisorField}><span>介入冷却回合</span><input className={css.input} type="number" min="0" max="20" value={cooldown} onChange={(event) => { setCooldown(event.target.value) }} /></label>
-    </div>
-    <label className={css.toggleCard}>
-      <span className={css.toggleCardText}><strong>允许 Advisor 主动投递建议给 Agent</strong><small>关闭时仍会持久化审查建议，但不会影响主 Agent 后续回合</small></span>
-      <input className={css.switch} aria-label="允许 Advisor 主动投递建议给 Agent" type="checkbox" checked={allowControl} onChange={(event) => { setAllowControl(event.target.checked) }} disabled={busy} />
-    </label>
-    {pickerOpen ? <div className={css.advisorPickerBackdrop} role="presentation" onMouseDown={() => { setPickerOpen(false) }}><section className={css.advisorPicker} role="dialog" aria-modal="true" aria-label="选择 Advisor 审查模型" onMouseDown={(event) => { event.stopPropagation() }}><div className={css.advisorPickerHeader}><div><strong>选择审查模型</strong><small>仅显示当前账户可用的文本模型。选择后会自动配置独立路由。</small></div><button className={css.button} type="button" onClick={() => { setPickerOpen(false) }}>关闭</button></div><input className={css.input} autoFocus value={modelQuery} onChange={(event) => { setModelQuery(event.target.value) }} placeholder="搜索模型名称或 ID" />{modelLoading ? <div className={css.emptyCapability}>正在加载模型目录…</div> : modelError === undefined ? <div className={css.advisorModelList}>{filteredModels.map(choice => <button className={`${css.advisorModelOption} ${choice.id === model && choice.provider === provider ? css.advisorModelSelected : ''}`} type="button" key={`${choice.provider}:${choice.id}`} onClick={() => { chooseManagedModel(choice) }}><span><strong>{choice.displayName}</strong><small>{choice.description}</small></span><code>{visibleModelId(choice.provider, choice.id)}</code></button>)}{filteredModels.length === 0 ? <div className={css.emptyCapability}>没有匹配的可用文本模型。</div> : null}</div> : <div className={css.alert} role="alert">模型目录读取失败：{modelError}</div>}<details className={css.advisorManual}><summary>手动配置第三方路由</summary><small>仅在第三方 provider 未出现在目录时使用。手动输入后点击保存配置。</small><div className={css.capabilityForm}><label><span>Provider</span><input className={css.input} value={provider} onChange={(event) => { setProvider(event.target.value) }} placeholder="provider" /></label><label><span>Model ID</span><input className={css.input} value={model} onChange={(event) => { setModel(event.target.value) }} placeholder="model-id" /></label></div></details></section></div> : null}
-    <div className={css.advisorFoot}>
-      <div className={css.advisorEvidence}>
-        <strong>只读证据工具</strong>
-        <span>{snapshot?.reviewTools.join(' · ') ?? 'read · glob · grep'}</span>
-        <small>规则文件：{snapshot === undefined || snapshot.watchdogFiles.length === 0 ? '未发现 WATCHDOG.md / WATCHDOG.yml' : snapshot.watchdogFiles.join('；')}</small>
-      </div>
-      <button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={saveRoute} disabled={input.update === undefined || busy}>{busy ? '保存中…' : '保存 Advisor 配置'}</button>
-    </div>
-  </section>
-}
-
-/** Surface durable record-mode notes without granting the Advisor control of the main Agent. */
-function AdvisorNotesPanel(input: { readonly load: NonNullable<Injected['advisorNotes']> }): ReactNode {
-  const [notes, setNotes] = useState<readonly AdvisorNote[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | undefined>(undefined)
-  const refresh = (): void => {
-    setLoading(true)
-    void input.load().then((result) => {
-      if (result.ok) { setNotes(result.value); setError(undefined) }
-      else setError(result.error.message)
-    }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setLoading(false) })
-  }
-  useEffect(() => {
-    refresh()
-  }, [input.load])
-  return <section className={css.section}>
-    <div className={css.sectionHeader}><div><div className={css.kicker}>DURABLE REVIEW NOTES</div><strong className={css.sectionName}>最近建议</strong></div><button className={css.button} type="button" onClick={refresh} disabled={loading}>{loading ? '读取中…' : '刷新'}</button></div>
-    <small className={css.sectionMeta}>即使未允许 Advisor 介入主 Agent，审查建议也会保存在会话中并在此显示。当前仅列出仍在运行的会话。</small>
-    {error === undefined ? null : <div className={css.alert} role="alert">建议读取失败：{error}</div>}
-    {loading ? <div className={css.emptyCapability}>正在读取当前会话的审查建议…</div> : notes.length === 0 ? <div className={css.emptyCapability}>尚未产生 Advisor 建议。完成一个 Agent 回合后会自动审查。</div> : <div className={css.advisorNotes}>{notes.map(note => <article className={css.advisorNote} key={note.id}><div className={css.advisorNoteHeader}><span className={`${css.advisorSeverity} ${note.severity === 'blocker' ? css.advisorSeverityBlocker : note.severity === 'concern' ? css.advisorSeverityConcern : css.advisorSeverityNit}`}>{note.severity}</span><small>{note.delivery === 'record' ? '仅记录' : note.delivery === 'inject' ? '已注入下一步' : '已请求纠偏'}</small></div><p>{note.note}</p><footer>会话 {note.sessionId} · 回合 {note.turn} · {new Date(note.time).toLocaleString()}</footer></article>)}</div>}
-  </section>
-}
-
 function MarketplaceMcpIcon({ item }: { readonly item: MarketplaceMcpItem }): ReactNode {
   const [failed, setFailed] = useState(false)
   if (item.iconUrl !== undefined && !failed) return <img className={css.mcpMarketplaceIcon} src={item.iconUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => { setFailed(true) }} />
@@ -7134,6 +7257,86 @@ function ConfiguredMcpIcon({ server, recommended }: { readonly server: Capabilit
   const item = recommended?.items.find(candidate => candidate.title.toLocaleLowerCase().includes(name))
   return item === undefined ? <div className={css.mcpServerIcon}><McpIcon size={18} /></div> : <MarketplaceMcpIcon item={item} />
 }
+
+/**
+ * Parse one Claude/Codex-shaped MCP document into server definitions.
+ *
+ * The standalone import panel and the edit form's JSON editor read the same
+ * document shape, so the accepted vocabulary (`mcpServers`, `mcp_servers`, or a
+ * bare single-server object) and every validation message live here once. A
+ * definition whose name already exists carries that server's `id`, which is what
+ * makes the caller's save an update rather than a second copy.
+ *
+ * @param sourceText - the pasted document; a surrounding ```json fence is stripped.
+ * @param existing - the configured servers, matched by name for the carried id.
+ * @returns one definition per entry, in document order.
+ * @throws Error naming the offending entry when the document is malformed.
+ */
+function parseMcpServerDefinitions(
+  sourceText: string,
+  existing: readonly CapabilityMcpServer[],
+): Array<Omit<CapabilityMcpServer, 'id'> & { id?: string }> {
+  const stripped = sourceText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/u, '')
+  let parsed: unknown
+  try { parsed = JSON.parse(stripped) } catch (error) { throw new Error(`MCP JSON 格式无效：${error instanceof Error ? error.message : String(error)}`) }
+  const root = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined
+  const source = root?.mcpServers ?? root?.mcp_servers ?? (root !== undefined && (typeof root.command === 'string' || typeof root.url === 'string') ? { [typeof root.name === 'string' && root.name.trim() !== '' ? root.name : 'mcp-server']: root } : parsed)
+  if (source === null || typeof source !== 'object' || Array.isArray(source)) throw new Error('MCP JSON 必须是对象，或包含 mcpServers 对象。')
+  const definitions: Array<Omit<CapabilityMcpServer, 'id'> & { id?: string }> = []
+  for (const [name, raw] of Object.entries(source as Record<string, unknown>)) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`MCP 服务器 ${name} 配置必须是对象。`)
+    const value = raw as Record<string, unknown>
+    const commandValue = typeof value.command === 'string' ? value.command.trim() : ''
+    const urlValue = typeof value.url === 'string' ? value.url.trim() : ''
+    const transportValue = value.transport === 'stdio' || value.transport === 'streamable-http' ? value.transport : commandValue !== '' ? 'stdio' : 'streamable-http'
+    const argsValue = value.args === undefined ? [] : value.args
+    const envValue = value.env === undefined ? {} : value.env
+    const headersValue = value.headers === undefined ? {} : value.headers
+    if (!Array.isArray(argsValue) || argsValue.some(item => typeof item !== 'string')) throw new Error(`MCP 服务器 ${name} 的 args 必须是字符串数组。`)
+    const asStringRecord = (candidate: unknown, label: string): Record<string, string> => {
+      if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate) || Object.values(candidate as Record<string, unknown>).some(item => typeof item !== 'string')) throw new Error(`MCP 服务器 ${name} 的 ${label} 必须是字符串键值对象。`)
+      return candidate as Record<string, string>
+    }
+    const envRecord = asStringRecord(envValue, 'env')
+    const headersRecord = asStringRecord(headersValue, 'headers')
+    const existingServer = existing.find(server => server.serverName === name)
+    definitions.push({ ...(existingServer === undefined ? {} : { id: existingServer.id }), enabled: value.enabled !== false, transport: transportValue, serverName: name, command: commandValue, args: argsValue as string[], cwd: typeof value.cwd === 'string' ? value.cwd : '', url: urlValue, headers: headersRecord, env: envRecord })
+  }
+  if (definitions.length === 0) throw new Error('MCP JSON 中没有可导入的服务器。')
+  return definitions
+}
+
+/**
+ * Render one configured server as the document its JSON editor shows.
+ *
+ * The output is the shape {@link parseMcpServerDefinitions} accepts, so the round
+ * trip is lossless: `transport` is written only when inference from
+ * `command`/`url` would disagree, and `enabled` is always written because an
+ * omitted flag parses as enabled.
+ *
+ * @param server - the configured server to project.
+ * @returns the pretty-printed `mcpServers` document holding exactly this server.
+ */
+function mcpServerJson(server: CapabilityMcpServer): string {
+  const body: Record<string, unknown> = server.transport === 'stdio'
+    ? { command: server.command }
+    : { url: server.url }
+  if (server.args.length > 0) body.args = server.args
+  // Only a server whose fields infer the OTHER transport needs the explicit
+  // discriminator; writing it unconditionally would put a key in every pasted
+  // Claude config that a reader has to explain away.
+  if (server.transport !== (server.command !== '' ? 'stdio' : 'streamable-http')) body.transport = server.transport
+  if (server.cwd !== '') body.cwd = server.cwd
+  if (Object.keys(server.env).length > 0) body.env = server.env
+  if (Object.keys(server.headers).length > 0) body.headers = server.headers
+  body.enabled = server.enabled
+  return JSON.stringify({ mcpServers: { [server.serverName]: body } }, null, 2)
+}
+
+/** The starter document the JSON editor opens on when adding rather than editing. */
+const MCP_JSON_TEMPLATE = JSON.stringify({
+  mcpServers: { 'my-server': { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'], env: {} } },
+}, null, 2)
 
 function McpCapabilityPage(input: {
   readonly snapshot: CapabilitySnapshot | undefined
@@ -7155,6 +7358,8 @@ function McpCapabilityPage(input: {
   const [env, setEnv] = useState('{}')
   const [editingId, setEditingId] = useState<string | undefined>(undefined)
   const [formOpen, setFormOpen] = useState(false)
+  /** The JSON editor's draft; undefined while the field editor is showing. */
+  const [formJson, setFormJson] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [jsonDraft, setJsonDraft] = useState('')
   const [jsonOpen, setJsonOpen] = useState(false)
@@ -7163,6 +7368,23 @@ function McpCapabilityPage(input: {
   const [recommendedLoading, setRecommendedLoading] = useState(true)
   const [recommendedError, setRecommendedError] = useState<string | undefined>(undefined)
   const toolsFor = (server: CapabilityMcpServer): number => input.snapshot?.mcpTools.filter(tool => tool.name.startsWith(`mcp__${server.serverName}__`)).length ?? 0
+  /**
+   * The standing refusal the Host recorded for this MCP server, if any.
+   *
+   * A refusal is a deliberate, non-retried decision (the server's command looks
+   * like an installer, or the folder is not trusted) — distinct from a mount error,
+   * which is a transient failure the user can retry. Folding them together would
+   * turn "replace this entry with a real URL" into an unexplained retry, which is
+   * exactly the silent skip the capability gate must not produce. The lookup key
+   * mirrors what `capabilities.ts` records (`mcp:${server.id}`), and the reader
+   * lives alongside `mountErrorFor` so the two cannot drift again: an earlier pass
+   * left this list reading only `mountErrors`, which let a refused installer render
+   * as "正在连接" forever.
+   * @param server - the MCP server row to inspect.
+   * @returns the refusal reason, or undefined when the server was not refused.
+   */
+  const refusalFor = (server: CapabilityMcpServer): string | undefined =>
+    input.snapshot?.trustRefusals?.find(entry => entry.id === `mcp:${server.id}`)?.message
   const mountErrorFor = (server: CapabilityMcpServer): string | undefined =>
     input.snapshot?.mountErrors?.find(entry => entry.id === server.id)?.message
   useEffect(() => {
@@ -7180,10 +7402,24 @@ function McpCapabilityPage(input: {
     return () => { active = false }
   }, [input.marketplace])
   const resetForm = (): void => {
-    setEditingId(undefined); setTransport('streamable-http'); setServerName(''); setCommand(''); setArgs('[]'); setCwd(''); setUrl(''); setHeaders('{}'); setEnv('{}')
+    setEditingId(undefined); setTransport('streamable-http'); setServerName(''); setCommand(''); setArgs('[]'); setCwd(''); setUrl(''); setHeaders('{}'); setEnv('{}'); setFormJson(undefined)
   }
   const edit = (server: CapabilityMcpServer): void => {
-    setEditingId(server.id); setTransport(server.transport); setServerName(server.serverName); setCommand(server.command); setArgs(JSON.stringify(server.args)); setCwd(server.cwd); setUrl(server.url); setHeaders(JSON.stringify(server.headers)); setEnv(JSON.stringify(server.env)); setFormOpen(true)
+    setEditingId(server.id); setTransport(server.transport); setServerName(server.serverName); setCommand(server.command); setArgs(JSON.stringify(server.args)); setCwd(server.cwd); setUrl(server.url); setHeaders(JSON.stringify(server.headers)); setEnv(JSON.stringify(server.env)); setFormJson(undefined); setFormOpen(true)
+  }
+  /**
+   * Switch the add/edit form between its field editor and its JSON editor.
+   *
+   * Opening the JSON editor seeds it from the server being edited, so the draft
+   * is always a complete document rather than an empty box the user has to
+   * reconstruct; adding has no server to seed from and gets the template.
+   */
+  const toggleFormJson = (): void => {
+    setFormJson((current) => {
+      if (current !== undefined) return undefined
+      const server = editingId === undefined ? undefined : input.snapshot?.mcpServers.find(entry => entry.id === editingId)
+      return server === undefined ? MCP_JSON_TEMPLATE : mcpServerJson(server)
+    })
   }
   const applyTemplate = (template: 'filesystem' | 'http'): void => {
     if (template === 'filesystem') {
@@ -7205,34 +7441,8 @@ function McpCapabilityPage(input: {
   }
   const importJson = (): void => {
     if (input.save === undefined || busy) return
-    const sourceText = jsonDraft.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/u, '')
-    let parsed: unknown
-    try { parsed = JSON.parse(sourceText) } catch (error) { input.onError(`MCP JSON 格式无效：${error instanceof Error ? error.message : String(error)}`); return }
-    const root = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined
-    const source = root?.mcpServers ?? root?.mcp_servers ?? (root !== undefined && (typeof root.command === 'string' || typeof root.url === 'string') ? { [typeof root.name === 'string' && root.name.trim() !== '' ? root.name : 'mcp-server']: root } : parsed)
-    if (source === null || typeof source !== 'object' || Array.isArray(source)) { input.onError('MCP JSON 必须是对象，或包含 mcpServers 对象。'); return }
-    const definitions: Array<Omit<CapabilityMcpServer, 'id'> & { id?: string }> = []
-    for (const [name, raw] of Object.entries(source as Record<string, unknown>)) {
-      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) { input.onError(`MCP 服务器 ${name} 配置必须是对象。`); return }
-      const value = raw as Record<string, unknown>
-      const commandValue = typeof value.command === 'string' ? value.command.trim() : ''
-      const urlValue = typeof value.url === 'string' ? value.url.trim() : ''
-      const transportValue = value.transport === 'stdio' || value.transport === 'streamable-http' ? value.transport : commandValue !== '' ? 'stdio' : 'streamable-http'
-      const argsValue = value.args === undefined ? [] : value.args
-      const envValue = value.env === undefined ? {} : value.env
-      const headersValue = value.headers === undefined ? {} : value.headers
-      if (!Array.isArray(argsValue) || argsValue.some(item => typeof item !== 'string')) { input.onError(`MCP 服务器 ${name} 的 args 必须是字符串数组。`); return }
-      const asStringRecord = (candidate: unknown, label: string): Record<string, string> | undefined => {
-        if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate) || Object.values(candidate as Record<string, unknown>).some(item => typeof item !== 'string')) { input.onError(`MCP 服务器 ${name} 的 ${label} 必须是字符串键值对象。`); return undefined }
-        return candidate as Record<string, string>
-      }
-      const envRecord = asStringRecord(envValue, 'env')
-      const headersRecord = asStringRecord(headersValue, 'headers')
-      if (envRecord === undefined || headersRecord === undefined) return
-      const existing = input.snapshot?.mcpServers.find(server => server.serverName === name)
-      definitions.push({ ...(existing === undefined ? {} : { id: existing.id }), enabled: value.enabled !== false, transport: transportValue, serverName: name, command: commandValue, args: argsValue as string[], cwd: typeof value.cwd === 'string' ? value.cwd : '', url: urlValue, headers: headersRecord, env: envRecord })
-    }
-    if (definitions.length === 0) { input.onError('MCP JSON 中没有可导入的服务器。'); return }
+    let definitions: Array<Omit<CapabilityMcpServer, 'id'> & { id?: string }>
+    try { definitions = parseMcpServerDefinitions(jsonDraft, input.snapshot?.mcpServers ?? []) } catch (error) { input.onError(error instanceof Error ? error.message : String(error)); return }
     setBusy(true)
     void (async () => {
       for (const definition of definitions) {
@@ -7246,6 +7456,23 @@ function McpCapabilityPage(input: {
   const submit = (event: FormEvent): void => {
     event.preventDefault()
     if (input.save === undefined || busy) return
+    // The JSON editor writes through the same save path as the field editor;
+    // the parser already carried each existing server's id, so a document
+    // naming a configured server updates it instead of adding a duplicate.
+    if (formJson !== undefined) {
+      let definitions: Array<Omit<CapabilityMcpServer, 'id'> & { id?: string }>
+      try { definitions = parseMcpServerDefinitions(formJson, input.snapshot?.mcpServers ?? []) } catch (error) { input.onError(error instanceof Error ? error.message : String(error)); return }
+      setBusy(true)
+      void (async () => {
+        for (const definition of definitions) {
+          const result = await input.save!(definition)
+          if (!result.ok) throw new Error(result.error.message)
+          input.onSnapshot(result.value)
+        }
+        resetForm(); setFormOpen(false)
+      })().catch((error: unknown) => { input.onError(error instanceof Error ? error.message : String(error)) }).finally(() => { setBusy(false) })
+      return
+    }
     let parsedArgs: string[]
     let parsedHeaders: Record<string, string>
     let parsedEnv: Record<string, string>
@@ -7275,20 +7502,22 @@ function McpCapabilityPage(input: {
     <div className={css.capabilityStats}><div><strong>{input.snapshot?.mcpServers.length ?? 0}</strong><small>已配置服务</small></div><div><strong>{input.snapshot?.mcpServers.filter(server => server.enabled).length ?? 0}</strong><small>已启用</small></div><div><strong>{input.snapshot?.mcpTools.length ?? 0}</strong><small>已发现工具</small></div></div>
     <div className={css.mcpTemplateBar}><span>快速配置</span><button className={css.templateButton} type="button" onClick={() => { applyTemplate('filesystem') }}><McpIcon size={13} />本地文件</button><button className={css.templateButton} type="button" onClick={() => { applyTemplate('http') }}><McpIcon size={13} />Streamable HTTP</button><button className={css.templateButton} type="button" onClick={() => { setJsonOpen(open => !open) }}><McpIcon size={13} />粘贴 JSON</button></div>
     {jsonOpen ? <div className={css.mcpJsonPanel}><div className={css.capabilityFormHead}><strong>从 JSON 导入 MCP</strong><small>支持 Claude/Codex 常见的 `mcpServers` 配置格式，可一次导入多个服务。</small></div><textarea className={css.mcpJsonInput} value={jsonDraft} onChange={(event) => { setJsonDraft(event.target.value) }} placeholder={'{\n  "mcpServers": {\n    "context7": {\n      "url": "https://mcp.context7.com/mcp"\n    }\n  }\n}'} spellCheck={false} /><div className={css.accountActions}><button className={`${css.button} ${css.buttonPrimary}`} type="button" disabled={busy || input.save === undefined || jsonDraft.trim() === ''} onClick={importJson}>{busy ? '导入中…' : '导入并连接'}</button><button className={css.button} type="button" onClick={() => { setJsonDraft(''); setJsonOpen(false) }}>取消</button></div></div> : null}
-    <div className={css.mcpServerList}>{input.snapshot?.mcpServers.length ? input.snapshot.mcpServers.map(server => <article className={css.mcpServerCard} key={server.id}><ConfiguredMcpIcon server={server} recommended={recommended} /><div className={css.mcpServerMain}><div className={css.mcpServerTitle}><strong>{server.serverName}</strong><span className={`${css.badge} ${server.enabled && toolsFor(server) > 0 ? css.badgeLive : ''}`}>{!server.enabled ? '已暂停' : mountErrorFor(server) !== undefined ? '挂载失败' : toolsFor(server) > 0 ? `已连接 · ${toolsFor(server)} tools` : '正在连接'}</span></div><small>{server.transport === 'stdio' ? `${server.command} ${server.args.join(' ')}` : server.url}{mountErrorFor(server) === undefined ? '' : ` · 挂载失败：${mountErrorFor(server)}`}</small></div><div className={css.mcpServerActions}><label className={css.inlineSwitch}><input aria-label={`${server.serverName} enabled`} type="checkbox" checked={server.enabled} onChange={() => { toggle(server) }} /><span>启用</span></label><button className={css.button} type="button" onClick={() => { edit(server) }}>编辑</button><button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={() => { remove(server.id) }}>移除</button></div></article>) : <div className={css.emptyCapability}><strong>还没有 MCP 服务</strong><small>从上方预设、JSON 导入或社区精选开始添加。</small></div>}</div>
+    <div className={css.mcpServerList}>{input.snapshot?.mcpServers.length ? input.snapshot.mcpServers.map(server => <article className={css.mcpServerCard} key={server.id}><ConfiguredMcpIcon server={server} recommended={recommended} /><div className={css.mcpServerMain}><div className={css.mcpServerTitle}><strong>{server.serverName}</strong><span className={`${css.badge} ${server.enabled && toolsFor(server) > 0 ? css.badgeLive : ''}`}>{!server.enabled ? '已暂停' : refusalFor(server) !== undefined ? '已拒绝' : mountErrorFor(server) !== undefined ? '挂载失败' : toolsFor(server) > 0 ? `已连接 · ${toolsFor(server)} tools` : '正在连接'}</span></div><small>{server.transport === 'stdio' ? `${server.command} ${server.args.join(' ')}` : server.url}{(() => { const m = mountErrorFor(server); const r = refusalFor(server); if (m === undefined && r === undefined) return ''; if (m !== undefined) return ` · 挂载失败：${m}`; return ` · ${r}` })()}</small></div><div className={css.mcpServerActions}><label className={css.inlineSwitch}><input aria-label={`${server.serverName} enabled`} type="checkbox" checked={server.enabled} onChange={() => { toggle(server) }} /><span>启用</span></label><button className={css.button} type="button" onClick={() => { edit(server) }}>编辑</button><button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={() => { remove(server.id) }}>移除</button></div></article>) : <div className={css.emptyCapability}><strong>还没有 MCP 服务</strong><small>从上方预设、JSON 导入或社区精选开始添加。</small></div>}</div>
+    {formOpen ? <form className={css.capabilityForm} onSubmit={submit}>
+      <div className={css.capabilityFormHead}><strong>{editingId === undefined ? '添加 MCP 服务器' : '编辑 MCP 服务器'}</strong><div className={css.accountActions}><button className={css.button} type="button" onClick={toggleFormJson}>{formJson === undefined ? 'JSON 编辑' : '表单编辑'}</button><button className={css.button} type="button" onClick={() => { resetForm(); setFormOpen(false) }}>取消</button></div></div>
+      {formJson === undefined ? <>
+      <label><span>传输</span><select className={css.select} value={transport} onChange={(event) => { setTransport(event.target.value as 'stdio' | 'streamable-http') }}><option value="streamable-http">Streamable HTTP</option><option value="stdio">stdio</option></select></label>
+      <label><span>服务名称</span><input className={css.input} required value={serverName} onChange={(event) => { setServerName(event.target.value) }} placeholder="github" /></label>
+      {transport === 'stdio' ? <><label><span>命令</span><input className={css.input} required value={command} onChange={(event) => { setCommand(event.target.value) }} placeholder="npx" /></label><label><span>参数 JSON</span><input className={css.input} value={args} onChange={(event) => { setArgs(event.target.value) }} placeholder='["-y", "@modelcontextprotocol/server-github"]' /></label><label><span>工作目录</span><input className={css.input} value={cwd} onChange={(event) => { setCwd(event.target.value) }} placeholder="可选" /></label><label><span>环境变量 JSON</span><input className={css.input} value={env} onChange={(event) => { setEnv(event.target.value) }} placeholder='{"GITHUB_TOKEN":"..."}' /></label></> : <label className={css.capabilityFull}><span>MCP URL</span><input className={css.input} required type="url" value={url} onChange={(event) => { setUrl(event.target.value) }} placeholder="https://example.com/mcp" /></label>}
+      {transport === 'streamable-http' ? <label className={css.capabilityFull}><span>HTTP Headers JSON</span><input className={css.input} value={headers} onChange={(event) => { setHeaders(event.target.value) }} placeholder='{"Authorization":"Bearer ..."}' /></label> : null}
+      </> : <label className={css.capabilityFull}><span>服务器 JSON</span><textarea className={css.mcpJsonInput} value={formJson} onChange={(event) => { setFormJson(event.target.value) }} spellCheck={false} /><small className={css.sectionMeta}>与「粘贴 JSON」同一种格式（`mcpServers`、`mcp_servers`，或直接一个服务对象）。按服务名匹配：名字已存在就更新该服务，否则新增。可以一次写多个服务。</small></label>}
+      <div className={`${css.accountActions} ${css.capabilityFull}`}><button className={`${css.button} ${css.buttonPrimary}`} type="submit" disabled={busy || input.save === undefined}>{busy ? '保存中…' : editingId === undefined ? '添加并连接' : '保存变更'}</button></div>
+    </form> : null}
     <div className={css.mcpPresetHeading}><strong>社区 MCP 推荐</strong><small>{recommended === undefined ? '正在读取与社区精选同步的 MCP 目录…' : `${recommended.total.toLocaleString()} 个条目，按热度推荐可自动安装项。`}</small></div>
     {recommendedLoading ? <p className={css.loading}>正在读取社区 MCP 推荐…</p> : null}
     {recommendedError === undefined ? null : <div className={css.alert} role="alert">社区 MCP 推荐读取失败：{recommendedError}</div>}
     {recommended === undefined || recommendedLoading ? null : <div className={css.mcpMarketplaceGrid}>{recommended.items.map((item, index) => <article className={css.mcpMarketplaceCard} key={item.id}><MarketplaceMcpIcon item={item} /><div className={css.mcpMarketplaceCopy}><div><strong>{item.title}</strong><span>{item.installed ? '已添加' : `#${(recommended.offset + index + 1).toLocaleString()}`}</span></div><small>{item.description}</small><em>{item.author ?? item.category} · ★ {item.popularity.toLocaleString()}</em></div><div className={css.mcpMarketplaceActions}><button className={css.marketplaceLink} type="button" onClick={() => { setSelectedRecommended(item) }}>{capabilityText(input.language).details}</button><button className={`${css.button} ${css.buttonPrimary}`} type="button" disabled={busy || item.installed || !item.installable} onClick={() => { installRecommended(item) }}>{busy ? '添加中…' : item.installed ? '已添加' : item.installable ? '一键添加' : '需手动配置'}</button></div></article>)}</div>}
     {selectedRecommended === undefined ? null : <CapabilityDetailModal item={selectedRecommended} language={input.language} busy={busy} onClose={() => { setSelectedRecommended(undefined) }} onInstall={selectedRecommended.installable && !selectedRecommended.installed ? () => { installRecommended(selectedRecommended) } : undefined} />}
-    {formOpen ? <form className={css.capabilityForm} onSubmit={submit}>
-      <div className={css.capabilityFormHead}><strong>{editingId === undefined ? '添加 MCP 服务器' : '编辑 MCP 服务器'}</strong><button className={css.button} type="button" onClick={() => { resetForm(); setFormOpen(false) }}>取消</button></div>
-      <label><span>传输</span><select className={css.select} value={transport} onChange={(event) => { setTransport(event.target.value as 'stdio' | 'streamable-http') }}><option value="streamable-http">Streamable HTTP</option><option value="stdio">stdio</option></select></label>
-      <label><span>服务名称</span><input className={css.input} required value={serverName} onChange={(event) => { setServerName(event.target.value) }} placeholder="github" /></label>
-      {transport === 'stdio' ? <><label><span>命令</span><input className={css.input} required value={command} onChange={(event) => { setCommand(event.target.value) }} placeholder="npx" /></label><label><span>参数 JSON</span><input className={css.input} value={args} onChange={(event) => { setArgs(event.target.value) }} placeholder='["-y", "@modelcontextprotocol/server-github"]' /></label><label><span>工作目录</span><input className={css.input} value={cwd} onChange={(event) => { setCwd(event.target.value) }} placeholder="可选" /></label><label><span>环境变量 JSON</span><input className={css.input} value={env} onChange={(event) => { setEnv(event.target.value) }} placeholder='{"GITHUB_TOKEN":"..."}' /></label></> : <label className={css.capabilityFull}><span>MCP URL</span><input className={css.input} required type="url" value={url} onChange={(event) => { setUrl(event.target.value) }} placeholder="https://example.com/mcp" /></label>}
-      {transport === 'streamable-http' ? <label className={css.capabilityFull}><span>HTTP Headers JSON</span><input className={css.input} value={headers} onChange={(event) => { setHeaders(event.target.value) }} placeholder='{"Authorization":"Bearer ..."}' /></label> : null}
-      <div className={`${css.accountActions} ${css.capabilityFull}`}><button className={`${css.button} ${css.buttonPrimary}`} type="submit" disabled={busy || input.save === undefined}>{busy ? '保存中…' : editingId === undefined ? '添加并连接' : '保存变更'}</button></div>
-    </form> : null}
   </section>
 }
 

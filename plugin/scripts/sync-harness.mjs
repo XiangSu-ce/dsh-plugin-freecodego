@@ -41,9 +41,9 @@
  *                           copy contract on its own
  */
 
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { existsSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const root = resolve(process.env.HARNESS_SYNC_ROOT ?? resolve(import.meta.dirname, '..'))
@@ -246,6 +246,115 @@ async function mirrorDirectory(from, to) {
 }
 
 /**
+ * The upstream paths `git` records as symlinks, read from the source's own index.
+ *
+ * Asked of git rather than guessed from file contents. A file whose whole body
+ * happens to name a path beside it looks exactly like a materialized link, and
+ * this pass overwrites what it finds, so shape is not a safe test. The index is
+ * the authority, and it also carries the count, which is what lets a run report
+ * how many it restored instead of leaving the number implicit.
+ * @param sourceRoot - the upstream checkout the sync copied from.
+ * @param commit - the locked upstream commit.
+ * @returns repository-relative paths whose recorded mode is `120000`, or
+ *   undefined when the source is not a checkout and the set cannot be known.
+ */
+function upstreamSymlinkPaths(sourceRoot, commit) {
+  // `HARNESS_SYNC_SOURCE` may legitimately name a plain directory -- the fixture
+  // suite drives the copy rules from exactly such a source -- and git cannot say
+  // which paths are links there. Probed first so "cannot know" is reported as
+  // such, instead of surfacing as an `ls-tree` failure on a source that is fine.
+  if (spawnSync('git', ['-C', sourceRoot, 'rev-parse', '--git-dir'], { encoding: 'utf8', windowsHide: true }).status !== 0) {
+    return undefined
+  }
+  // `-z`: a path may contain anything, and the record is
+  // `<mode> SP <type> SP <object> TAB <path>`.
+  // `maxBuffer` is load-bearing: this listing is every path in the repository --
+  // 1,566,458 bytes at 0.1.7-rc.2 -- and `spawnSync` caps stdout at 1 MiB by default.
+  // Exceeding the cap returns `status === null` with `error.code === 'ENOBUFS'` and an
+  // *empty* stderr, which is why the sync once died here reporting a bare "git ls-tree
+  // failed": the reason existed, nothing carried it. The cap is raised well past any
+  // repository this script could be pointed at, and the spawn error is named when the
+  // call fails for a reason git never got to speak about.
+  const result = spawnSync('git', ['-C', sourceRoot, 'ls-tree', '-r', '-z', commit], { encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024 * 1024 })
+  if (result.status !== 0) {
+    throw new Error(`sync-harness: cannot read symlink modes from ${sourceRoot}: ${(result.stderr ?? '').trim() || result.error?.message || 'git ls-tree failed'}`)
+  }
+  return result.stdout.split('\0').flatMap((record) => {
+    if (!record.startsWith('120000 ')) return []
+    const tab = record.indexOf('\t')
+    return tab === -1 ? [] : [record.slice(tab + 1)]
+  })
+}
+
+/**
+ * Resolve one upstream symlink to the bytes its destination has to hold.
+ *
+ * Two hosts, two shapes. A checkout that kept the link is read through it; one
+ * that materialized it (`core.symlinks=false`, the Windows default) leaves the
+ * target text in a regular file, so this reads the file and resolves what it
+ * says. Both answers are the same bytes, which is what makes the repair
+ * idempotent on a host that never needed it.
+ * @param sourceRoot - the upstream checkout the sync copied from.
+ * @param path - a path {@link upstreamSymlinkPaths} named.
+ * @returns the target's bytes, or undefined when the link resolves to no file.
+ */
+async function resolveUpstreamLink(sourceRoot, path) {
+  const link = join(sourceRoot, path)
+  const info = await lstat(link).catch(() => undefined)
+  if (info === undefined) return undefined
+  const target = info.isSymbolicLink()
+    ? await realpath(link).catch(() => undefined)
+    : resolve(dirname(link), (await readFile(link, 'utf8').catch(() => '')).trim())
+  if (target === undefined || target === '') return undefined
+  const resolved = await lstat(target).catch(() => undefined)
+  if (resolved === undefined || !resolved.isFile()) return undefined
+  return await readFile(target)
+}
+
+/**
+ * Write each upstream symlink's target bytes into the mirrored destination.
+ *
+ * `mirrorDirectory` copies with `dereference: true`, which resolves a link on a
+ * host that holds one. The source is a `git clone` of the pinned commit, so on a
+ * Windows host there is nothing to resolve: the clone wrote each symlink as a
+ * plain file containing its target, the dereference had nothing to do, and the
+ * link *text* was copied into the tree. Upstream keeps twelve, and two of them
+ * are load-bearing rather than cosmetic:
+ *
+ *   - `packages/CLAUDE.md` and `vendor/CLAUDE.md` are the agent instructions, and
+ *     what sat there was the nine bytes `AGENTS.md`;
+ *   - `apps/cli/tests/profiles/acp/cordis.yml` is read as a Loader config by
+ *     `verify-cordis-config`, where the link text parses as a YAML string and the
+ *     gate fails with "root must be a Loader entry array";
+ *   - the rest are `system-prompt.expected.md` and `tool-schemas.expected.json`
+ *     fixtures, which a test compares against a run's real output.
+ *
+ * @param root - the plugin root, repaired in place.
+ * @param sourceRoot - the upstream checkout the sync copied from.
+ * @param commit - the locked upstream commit.
+ * @returns the repository-relative paths whose content changed.
+ */
+async function repairMaterializedSymlinks(root, sourceRoot, commit) {
+  const paths = upstreamSymlinkPaths(sourceRoot, commit)
+  if (paths === undefined) {
+    console.log(`sync-harness: ${sourceRoot} is not a git checkout, so the symlink set is unknown and was not restored`)
+    return []
+  }
+  const repaired = []
+  for (const path of paths) {
+    const destination = join(root, path)
+    const bytes = await resolveUpstreamLink(sourceRoot, path)
+    if (bytes === undefined) continue
+    const current = await readFile(destination).catch(() => undefined)
+    if (current !== undefined && current.equals(bytes)) continue
+    await mkdir(dirname(destination), { recursive: true })
+    await writeFile(destination, bytes)
+    repaired.push(path)
+  }
+  return repaired
+}
+
+/**
  * Add the upstream files under `scripts/` that this tree does not have.
  *
  * This is the third way one of upstream's trees can be materialized, and it exists
@@ -259,7 +368,7 @@ async function mirrorDirectory(from, to) {
  *
  * What makes the synced workspace need them is that it typechecks and builds as a
  * whole: upstream's own specs and build configs import helpers that live under
- * `scripts/` (`gen-tool-catalog`, `project-doc-site`, `libreoffice-engine`, the
+ * `scripts/` (`gen-tool-catalog`, `project-doc-site`, `libreoffice-packages`, the
  * coverage partitions `vitest.config.ts` names). A published clone starts with
  * none of them -- `scripts/*` is gitignored except for the fork's own entries --
  * so the release run reached `build:official` and died there on unresolved imports
@@ -320,6 +429,17 @@ for (const entry of await readdir(sourcePackages, { withFileTypes: true })) {
 
 // Upstream's own files under `scripts/`, added where the destination has none.
 if (!dryRun) summary.mirrored += await addMissingScriptFiles(join(sourceRoot, 'scripts'), join(root, 'scripts'))
+
+// The source is a checkout, and a checkout on this host writes a symlink as a
+// file holding its target, so `mirrorDirectory`'s dereference had nothing to
+// resolve and copied that text. Restore the targets before anything reads them
+// as content — `verify-cordis-config` reads one of them as a Loader config.
+if (!dryRun) {
+  const relinked = await repairMaterializedSymlinks(root, sourceRoot, commit)
+  if (relinked.length > 0) {
+    console.log(`sync-harness: restored ${String(relinked.length)} symlink target(s) the source materialized: ${relinked.join(', ')}`)
+  }
+}
 
 if (process.env.HARNESS_SYNC_COPY_ONLY === '1') {
   console.log(`sync-harness: copied ${String(summary.mirrored)} entries from ${sourceRoot} (copy-only; the forks were not applied)`)
@@ -384,6 +504,317 @@ async function applyForks(root) {
   await patchTimeoutSuspensionSeam(root)
   await patchReadBinaryDocumentGuard(root)
   await patchSessionRowIdentitySeam(root)
+  await patchDesktopPackageSetFreecodegoTarball(join(root, 'apps/desktop/scripts/prepare-package-set.ts'))
+  await patchDesktopProfileBundles(join(root, 'apps/desktop/src/project-manager.ts'))
+  await patchDesktopHostInstallAnchor(join(root, 'apps/desktop-host/src/index.ts'))
+  await patchDesktopElectronVersionPin(root)
+  await patchGenConfigCatalogTypeParameters(join(root, 'scripts/gen-config-catalog.ts'))
+}
+
+/**
+ * Upstream's type-name collector, verbatim, as the substitution's left side.
+ *
+ * Kept as lines rather than one template literal so the anchor reads like the
+ * source it matches, and so the backtick in the heritage-clause comment needs no
+ * escaping.
+ */
+const GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR = [
+  '/** Collect every type NAME referenced in type positions under a node. */',
+  'function collectTypeNames(node: ts.Node, out: Set<string>): void {',
+  '  const visit = (n: ts.Node): void => {',
+  '    if (ts.isTypeReferenceNode(n)) {',
+  '      let head: ts.EntityName = n.typeName',
+  '      while (ts.isQualifiedName(head)) head = head.left',
+  '      out.add(head.text)',
+  '    } else if (ts.isExpressionWithTypeArguments(n) && ts.isIdentifier(n.expression)) {',
+  '      out.add(n.expression.text) // heritage clause: `extends X`',
+  '    }',
+  '    ts.forEachChild(n, visit)',
+  '  }',
+  '  visit(node)',
+  '}',
+].join('\n')
+
+/**
+ * The collector with type parameters treated as bindings, plus the helper that
+ * reads them. Identical to the copy in the tree; `\n`-joined lines for the same
+ * reason as the anchor.
+ */
+const GEN_CONFIG_CATALOG_COLLECTOR_FIXED = [
+  '/**',
+  ' * Collect every type NAME referenced in type positions under a node.',
+  ' *',
+  ' * A name bound by an enclosing type-parameter list is not a reference. The walker',
+  ' * resolves every collected name against three namespaces — package-local',
+  ' * declarations, imports, and known globals — so a bound parameter has nothing to',
+  ' * resolve to and is reported as a violation of a declaration that is well typed:',
+  ' * `Live<T>` referring to its own `T`, or a mapped type referring to its own `K`.',
+  ' * In this tree that report was reachable only by deleting a generic config type',
+  ' * the plugin needs, which is the wrong way round. Bound names are therefore not',
+  ' * collected, exactly as a local variable is not an unresolved identifier.',
+  ' *',
+  ' * Fork-local patch: re-applied after every upstream sync by',
+  ' * `scripts/sync-harness.mjs` (`patchGenConfigCatalogTypeParameters`).',
+  ' */',
+  'function collectTypeNames(node: ts.Node, out: Set<string>): void {',
+  '  const visit = (n: ts.Node, bound: ReadonlySet<string>): void => {',
+  '    const declared = boundTypeParameterNames(n)',
+  '    const scope = declared.length === 0 ? bound : new Set([...bound, ...declared])',
+  '    if (ts.isTypeReferenceNode(n)) {',
+  '      let head: ts.EntityName = n.typeName',
+  '      while (ts.isQualifiedName(head)) head = head.left',
+  '      if (!scope.has(head.text)) out.add(head.text)',
+  '    } else if (ts.isExpressionWithTypeArguments(n) && ts.isIdentifier(n.expression)) {',
+  '      // heritage clause: `extends X`',
+  '      if (!scope.has(n.expression.text)) out.add(n.expression.text)',
+  '    }',
+  '    ts.forEachChild(n, child => { visit(child, scope) })',
+  '  }',
+  '  visit(node, new Set())',
+  '}',
+  '',
+  '/**',
+  ' * The type-variable names a node introduces for its own subtree.',
+  ' *',
+  " * Three shapes bind one: a declaration's type parameters (`Live<T>`), a mapped",
+  " * type's parameter (`{ [K in keyof T]: … }`), and an `infer` binding. Read",
+  ' * structurally rather than per node kind, so a shape this list has not met yet',
+  ' * still contributes its parameters instead of being skipped silently.',
+  ' */',
+  'function boundTypeParameterNames(node: ts.Node): string[] {',
+  '  const names: string[] = []',
+  '  const declaring = node as ts.Node & { readonly typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration> }',
+  '  if (declaring.typeParameters !== undefined) {',
+  '    for (const parameter of declaring.typeParameters) names.push(parameter.name.text)',
+  '  }',
+  '  if (ts.isMappedTypeNode(node) || ts.isInferTypeNode(node)) names.push(node.typeParameter.name.text)',
+  '  return names',
+  '}',
+].join('\n')
+
+/**
+ * Config catalog: a type parameter is a binding, not a reference to resolve.
+ *
+ * `verify-config-catalog` resolves every type name reachable from a config
+ * declaration against three namespaces — package-local declarations, imports, and
+ * known globals — and its collector takes every `TypeReferenceNode` name without
+ * asking whether an enclosing type parameter list already bound it. A config type
+ * written with a generic wrapper (`Live<T>` wrapping a settings document, so every
+ * field is a live reference) therefore reports `T` and `K` as violations, and the
+ * only edit that satisfies the report is to delete the generic.
+ *
+ * Upstream's own configs state `field: Volatile<X>` per field, so it never met
+ * this. This fork does, and the fix belongs in the tool rather than in a copy of
+ * the document: a hand-written per-field twin is a second answer to what the
+ * settings are, and the catalog requires JSDoc on every pasted property, so the
+ * twin would have to restate the settings documentation as well.
+ *
+ * `scripts/` is the one directory the sync shares file by file and never
+ * overwrites, so this patch normally finds the fix already in place and returns;
+ * it matters on a fresh clone, where `scripts/*` is absent from git and upstream's
+ * copy arrives unpatched. The anchor is upstream's text, and a miss throws rather
+ * than leaving a tree that looks synced and fails the gate.
+ */
+async function patchGenConfigCatalogTypeParameters(path) {
+  const source = await readFile(path, 'utf8')
+  if (source.includes('boundTypeParameterNames')) return
+  if (!source.includes(GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR)) {
+    throw new Error('gen-config-catalog no longer matches the type-name collection seam')
+  }
+  await writeFile(path, source.replace(GEN_CONFIG_CATALOG_COLLECTOR_ANCHOR, GEN_CONFIG_CATALOG_COLLECTOR_FIXED))
+}
+
+/**
+ * Desktop Host: the installation the runtime resolution reads is the runtime project root.
+ *
+ * `runProfile` turns `installAnchor` into the installation-scope table by walking the anchor
+ * manifest's dependency edges, so a package the manifest does not declare is invisible to the
+ * Loader no matter where it sits on disk. The Host anchored on the `dsh` package nested inside
+ * the runtime, which mirrors the CLI's own anchor and therefore covers exactly the CLI's
+ * dependency closure -- while the Desktop packaging adds the built-in FreeCodeGo bundle to the
+ * runtime *project* (the `FREECODEGO_DESKTOP_TARBALL` record becomes one of its dependencies).
+ * The bundle then resolves far enough to contribute its patch layer and its rows reach the
+ * profile, but every row fails at import: `freecodego` is missing from the resolution table and
+ * the profile has no copy of its own to fall back on.
+ *
+ * Anchoring on the runtime project makes the table a strict superset of the old one -- measured
+ * against a win-x64 runtime: 496 entries, all with an unchanged packageDir, plus the runtime
+ * project itself, `@deepseek-ai/dsh-desktop-host`, and the injected bundle. Bundle lookup for
+ * the profile moves to the same anchor, which only widens the search to a directory the old one
+ * already reached through its parents.
+ */
+async function patchDesktopHostInstallAnchor(path) {
+  let source = await readFile(path, 'utf8')
+  if (source.includes("const installAnchor = join(runtimeDir, 'package.json')")) return
+  const anchor = "  const installAnchor = join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')\n"
+  if (!source.includes(anchor)) {
+    throw new Error('desktop host source no longer matches the install anchor seam')
+  }
+  source = source.replace(anchor, [
+    "  // The installation is the runtime project the packaging pipeline packed, not the `dsh` package",
+    '  // nested inside it: the project manifest declares the shipped core set and every bundle the',
+    '  // pipeline adds to it. The nested package keeps a package that only the runtime project',
+    "  // declares out of the resolution table, so that bundle's loader rows could never import.",
+    "  const installAnchor = join(runtimeDir, 'package.json')",
+    '',
+  ].join('\n'))
+  await writeFile(path, source)
+}
+
+/**
+ * Desktop shell: the caller may pin the Electron release the packaging pipeline downloads.
+ *
+ * `apps/desktop` declares `electron: ^44.0.0`, so a plain install resolves the newest matching
+ * patch. The shipped `node-addon-require-builtin` prebuild recognizes Electron runtimes by an
+ * exact V8 fingerprint table (43.0.0 | 44.0.0 | 45.0.0-alpha.6) and refuses every other shell,
+ * including later 44.x patches whose V8 build number differs -- the Desktop payload smoke fails
+ * on `require('internal/modules/esm/loader')` and, more importantly, the same lookup is what the
+ * packaged application needs at run time. Setting FREECODEGO_DESKTOP_ELECTRON_VERSION builds
+ * against a shell the loader supports; the runtime download, the runtime descriptor, and the
+ * electron-builder metadata all follow that one value. Without the variable both files stay
+ * byte-for-byte upstream.
+ */
+async function patchDesktopElectronVersionPin(root) {
+  const runtime = join(root, 'apps/desktop/scripts/prepare-runtime.ts')
+  let source = await readFile(runtime, 'utf8')
+  if (!source.includes('FREECODEGO_DESKTOP_ELECTRON_VERSION')) {
+    const anchor = "  const { version } = require('electron/package.json') as { version: string }\n"
+    if (!source.includes(anchor)) {
+      throw new Error('desktop prepare-runtime source no longer matches the Electron version seam')
+    }
+    source = source.replace(anchor, [
+      "  const { version: installedElectronVersion } = require('electron/package.json') as { version: string }",
+      '  // The pinned shell wins over the resolved range so every downstream stage -- the',
+      '  // download, the runtime descriptor, and electron-builder -- agrees on one release.',
+      "  const version = process.env.FREECODEGO_DESKTOP_ELECTRON_VERSION?.trim() || installedElectronVersion",
+      '',
+    ].join('\n'))
+    await writeFile(runtime, source)
+  }
+
+  const builder = join(root, 'apps/desktop/scripts/electron-builder-config.mjs')
+  source = await readFile(builder, 'utf8')
+  if (!source.includes('FREECODEGO_DESKTOP_ELECTRON_VERSION')) {
+    const anchor = '    electronDist: buildPaths.electron,\n'
+    if (!source.includes(anchor)) {
+      throw new Error('desktop electron-builder config no longer matches the electronDist seam')
+    }
+    source = source.replace(anchor, [
+      '    electronDist: buildPaths.electron,',
+      '    // Reported version metadata follows a pinned shell; electron-builder copies `electronDist`',
+      '    // as-is either way, so this only keeps the packaged metadata honest.',
+      "    ...(process.env.FREECODEGO_DESKTOP_ELECTRON_VERSION?.trim()",
+      "      ? { electronVersion: process.env.FREECODEGO_DESKTOP_ELECTRON_VERSION.trim() } : {}),",
+      '',
+    ].join('\n'))
+    await writeFile(builder, source)
+  }
+}
+
+/**
+ * Desktop packaging: the caller may add the freshly built FreeCodeGo bundle tarball to the
+ * local package set through FREECODEGO_DESKTOP_TARBALL.
+ *
+ * The Desktop runtime's production closure is selected from packed tarballs rooted at dsh and
+ * its private Host; the closure walk can never reach an out-of-family package, so the bundle
+ * joins after selection, in name order like every other record. Setting the variable is the
+ * whole behavioural change: without it this file is byte-for-byte upstream, and the desktop
+ * packaging tests (which never set it) exercise the upstream path unchanged.
+ */
+async function patchDesktopPackageSetFreecodegoTarball(path) {
+  let source = await readFile(path, 'utf8')
+  if (source.includes('FREECODEGO_DESKTOP_TARBALL')) return
+  const anchor = [
+    '/** Prepare a package set from release tarball directories. */',
+    'export function prepareDesktopPackageSet(inputs: readonly string[], output: string): void {',
+    '  const selected = selectDesktopPackageClosure(packedPackages(inputs))',
+  ].join('\n')
+  const replacement = [
+    '/** Prepare a package set from release tarball directories. */',
+    'export function prepareDesktopPackageSet(inputs: readonly string[], output: string): void {',
+    '  const selected = [...selectDesktopPackageClosure(packedPackages(inputs))]',
+    '  // Out-of-closure additions arrive as an absolute tarball path; the closure walk above',
+    '  // cannot reach them because it starts from the dsh-family roots.',
+    '  const freecodegoTarball = process.env.FREECODEGO_DESKTOP_TARBALL?.trim()',
+    "  if (freecodegoTarball !== undefined && freecodegoTarball !== '') {",
+    '    const tarball = resolve(REPOSITORY_ROOT, freecodegoTarball)',
+    '    const manifest = packedManifest(tarball)',
+    "    if (manifest.name !== 'freecodego') {",
+    "      throw new Error(`desktop package set: FREECODEGO_DESKTOP_TARBALL names ${String(manifest.name)}, expected freecodego`)",
+    '    }',
+    "    if (selected.some(packed => packed.manifest.name === 'freecodego')) {",
+    "      throw new Error('desktop package set: duplicate packed package freecodego')",
+    '    }',
+    '    selected.push({ tarball, manifest })',
+    '    selected.sort((left, right) => String(left.manifest.name).localeCompare(String(right.manifest.name)))',
+    '  }',
+  ].join('\n')
+  if (!source.includes(anchor)) {
+    throw new Error('desktop package-set source no longer matches the FreeCodeGo tarball injection anchor')
+  }
+  source = source.replace(anchor, replacement)
+  await writeFile(path, source)
+}
+
+/**
+ * Desktop profiles: the built-in FreeCodeGo bundle ships inside the signed runtime and every
+ * Desktop profile activates it -- on first creation and on every release application after.
+ *
+ * `createPluginProfile` covers fresh profiles; `applyRelease` covers profiles that predate this
+ * fork, because initProfile never rewrites an existing manifest. Native recovery keeps the
+ * bundle on purpose: it is app-owned, the same trust domain as dsh-base, and a bundle the next
+ * start would re-add anyway must not be silently dropped by the recovery action. The bundle's
+ * bytes are never copied into the profile -- resolution prefers the installation anchor -- so
+ * replacing the application replaces the bundle, which is how updates stay automatic.
+ */
+async function patchDesktopProfileBundles(path) {
+  let source = await readFile(path, 'utf8')
+  if (source.includes('ensureFreecodegoBundle')) return
+  source = source.replace(
+    [
+      'import {',
+      '  initProfile, PROFILE_TEMPLATES, removeLinkProjections, sanitizeProfile, type ProfileTemplate,',
+      "} from '@deepseek-ai/dsh-app-boot'",
+    ].join('\n'),
+    [
+      'import {',
+      '  initProfile, PROFILE_TEMPLATES, readProfileManifest, removeLinkProjections, sanitizeProfile,',
+      '  writeProfileBundles, type ProfileTemplate,',
+      "} from '@deepseek-ai/dsh-app-boot'",
+    ].join('\n'),
+  )
+  source = source.replace(
+    'const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate',
+    [
+      'const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate',
+      '/** The FreeCodeGo bundle shipped inside the Desktop runtime: app-owned, activated with the template. */',
+      "const FREECODEGO_BUNDLE = 'freecodego'",
+      '/** Bundles a Desktop profile activates: the web template plus the built-in FreeCodeGo bundle. */',
+      'const DESKTOP_PROFILE_BUNDLES: readonly string[] = [...WEB_PROFILE.bundles, FREECODEGO_BUNDLE]',
+    ].join('\n'),
+  )
+  source = source.replace(
+    '      createPluginProfile(this.paths.profile)\n',
+    '      createPluginProfile(this.paths.profile)\n      ensureFreecodegoBundle(this.paths.profile)\n',
+  )
+  source = source.replace(
+    "return this.withLock(() => sanitizeProfile('dsh', this.paths.profile, WEB_PROFILE.bundles))",
+    "return this.withLock(() => sanitizeProfile('dsh', this.paths.profile, DESKTOP_PROFILE_BUNDLES))",
+  )
+  source = source.replace(
+    'export function createPluginProfile(projectDir: string): void {\n  initProfile(projectDir, WEB_PROFILE.bundles)\n}',
+    'export function createPluginProfile(projectDir: string): void {\n  initProfile(projectDir, DESKTOP_PROFILE_BUNDLES)\n}',
+  )
+  source += `\n/** Activate the built-in FreeCodeGo bundle on an existing profile without touching the user's own bundles. */\nfunction ensureFreecodegoBundle(profileDir: string): void {\n  if (!existsSync(join(profileDir, 'package.json'))) return\n  const manifest = readProfileManifest('dsh', profileDir)\n  const bundles = manifest.dsh?.profile?.bundles ?? []\n  if (bundles.includes(FREECODEGO_BUNDLE)) return\n  writeProfileBundles(profileDir, manifest, [...bundles, FREECODEGO_BUNDLE])\n}\n`
+  if (
+    !source.includes('const FREECODEGO_BUNDLE')
+    || !source.includes('ensureFreecodegoBundle(this.paths.profile)')
+    || !source.includes("sanitizeProfile('dsh', this.paths.profile, DESKTOP_PROFILE_BUNDLES)")
+    || !source.includes('initProfile(projectDir, DESKTOP_PROFILE_BUNDLES)')
+  ) {
+    throw new Error('desktop project-manager source no longer matches the FreeCodeGo profile bundle patch')
+  }
+  await writeFile(path, source)
 }
 
 function run(command, args) {
@@ -427,7 +858,24 @@ async function patchFreeCodeGoProfileInstaller(path) {
     if (updated !== source) await writeFile(path, updated)
     return
   }
-  source = source.replace("import { existsSync } from 'node:fs'", "import { existsSync, readFileSync, writeFileSync } from 'node:fs'")
+  // The import line's *contents* are upstream's to change -- 0.1.7-rc.2 added
+  // `readFileSync` to it -- and an exact-string anchor goes silent when they do, which
+  // is precisely how this patch shipped a tree that used `writeFileSync` without
+  // importing it: the profile migration below compiled as one `TS2552` under
+  // `tsconfig.host.json` while the sync still reported success. Match the line's shape
+  // and add only the names the injected body needs; the postcondition below asserts the
+  // result, so a future reshaping fails the sync instead of the typecheck.
+  source = source.replace(
+    /^import \{([^}]*)\} from 'node:fs'$/mu,
+    (_match, names) => {
+      const present = new Set(String(names).split(',').map((name) => name.trim()).filter((name) => name !== ''))
+      for (const name of ['readFileSync', 'writeFileSync']) present.add(name)
+      return `import { ${[...present].sort().join(', ')} } from 'node:fs'`
+    },
+  )
+  if (!/^import \{[^}]*\bwriteFileSync\b[^}]*\} from 'node:fs'$/mu.test(source)) {
+    throw new Error('official plugin manager source no longer imports the node:fs names this patch injects')
+  }
   source = source.replace("import { join, resolve } from 'node:path'", "import { dirname, join, resolve } from 'node:path'")
   source = source.replace("import { execa } from 'execa'", "import { spawnSync } from 'node:child_process'\nimport { execa } from 'execa'")
   // The constants ride in on this module's type-only import from `./types.ts`, the one
@@ -915,6 +1363,7 @@ async function patchTimeoutSuspensionSeam(root) {
     ['timeout/tests/pause-resume.spec.ts.tpl', 'packages/util/timeout/tests/pause-resume.spec.ts'],
     ['user-approval/tests/approval-suspension.spec.ts.tpl', 'packages/interaction/user-approval/tests/approval-suspension.spec.ts'],
     ['tool-fs/tests/read-binary-document.spec.ts.tpl', 'packages/fs/tool-fs/tests/read-binary-document.spec.ts'],
+    ['desktop/tests/freecodego-desktop-bundle.spec.ts.tpl', 'apps/desktop/tests/freecodego-desktop-bundle.spec.ts'],
   ]) {
     const source = join(overlay, from)
     if (!existsSync(source)) throw new Error(`harness overlay spec template missing: ${from}`)
@@ -989,17 +1438,16 @@ async function patchHarnessV013Compatibility(root) {
     await writeFile(usage, source)
   }
 
-  const lease = join(root, 'packages/session/session-persistence-jsonl/src/lease.ts')
-  source = await readFile(lease, 'utf8')
-  if (source.includes("import { flock } from 'fs-ext'")) {
-    source = source.replace("import { flock } from 'fs-ext'", "type Flock = typeof import('fs-ext').flock")
-    source = source.replace('function flockAsync(fd: number, flags: \'exnb\' | \'un\'): Promise<void> {\n', "function flockAsync(fd: number, flags: 'exnb' | 'un'): Promise<void> {\n  const flock = posixFlock\n  if (flock === undefined) return Promise.reject(new Error('POSIX flock implementation is unavailable'))\n")
-    source = source.replace("/** Whether a flock failure means another descriptor holds the lock. */", "let posixFlock: Flock | undefined\n\n/** Whether a flock failure means another descriptor holds the lock. */")
-    source = source.replace("    // Bounded retry: locking an inode", "    // Windows uses the named semaphore above. Load fs-ext only on POSIX.\n    posixFlock ??= (await import('fs-ext')).flock\n    // Bounded retry: locking an inode")
-    source = source.replace('    flock(fd, flags, (error) => {', '    flock(fd, flags, (error: unknown) => {')
-    source = source.replace('let posixFlock: typeof Flock | undefined', 'let posixFlock: Flock | undefined')
-    await writeFile(lease, source)
-  }
+  // No `lease.ts` patch.
+  //
+  // Upstream moved this file onto `@deepseek-ai/node-addon-system/flock` -- POSIX
+  // `flock(2)` and a Win32 named semaphore -- before 0.1.7-alpha.2, so the `fs-ext`
+  // shape this block rewrote is not in any line this workspace can check out:
+  // 0.1.6-alpha.1, 0.1.6-alpha.2, 0.1.7-alpha.2 and 0.1.7-rc.2 all import
+  // `tryLockExclusive` instead. The guard made the block silent rather than wrong,
+  // which is why it outlived its anchor by more than a line; the fork has nothing
+  // left to fix here, because the native lock is upstream's own implementation and
+  // no longer a dependency this repository has to soften.
 
   const fileUploadConfig = join(root, 'packages/client/file-upload/tsdown.config.ts')
   source = await readFile(fileUploadConfig, 'utf8')
@@ -1040,7 +1488,7 @@ async function patchHarnessV013Compatibility(root) {
       "  '@deepseek-ai/dsh-api-workspace-controller',",
       '  // The published FreeCodeGo bundle. Its Host-facing subpaths are esbuild',
       '  // artifacts of other workspace packages: tsconfig.base.json maps',
-      '  // `freecodego/agent-team` and its siblings to their sources, not to anything',
+      '  // `freecodego/auto-review` and its siblings to their sources, not to anything',
       '  // under this package, so the Client/Host model (every Host export is a',
       '  // lib-built module with a source entry here) cannot hold for a bundle. Its',
       '  // manifest is a distribution manifest, whose peers mirror what the bundle',
@@ -1076,15 +1524,17 @@ async function patchHarnessV013Compatibility(root) {
   // `verify-package-dependencies` reporting the mismatch. Upstream's manifest
   // is already the shape the policy wants, so there is nothing to patch.
 
-  const fixture = join(root, 'scripts/session-fixture-layout.ts')
-  source = await readFile(fixture, 'utf8')
-  source = source.replace("import { packChunkRuns, type SessionEvent } from '@deepseek-ai/dsh-session'", "import type { SessionEvent } from '@deepseek-ai/dsh-session'")
-  source = source.replace('    ...packChunkRuns(events).map((stored) => {', '    ...events.map((stored) => {')
-  await writeFile(fixture, source)
-
-  const fixtureSpec = join(root, 'scripts/session-fixture-layout.spec.ts')
-  source = await readFile(fixtureSpec, 'utf8')
-  source = source.replace('  }))\n}\n\nfunction unpackedFixture', '  })) as unknown as SessionEvent[]\n}\n\nfunction unpackedFixture')
-  source = source.replace('{"type":"turn/start","data":{"turn":1,"seq":99,"time":100}}', '{"type":"turn/start","data":{"turn":1}}')
-  await writeFile(fixtureSpec, source)
+  // No `session-fixture-layout` patches.
+  //
+  // Both anchors are gone upstream: `packChunkRuns` became `decodeSeqRanges`, and the
+  // `turn/start` fixture row no longer carries `seq`/`time`. Verified absent in every
+  // line this workspace can check out (0.1.6-alpha.1, 0.1.6-alpha.2, 0.1.7-alpha.2,
+  // 0.1.7-rc.2), and both replaces were unconditional with no postcondition behind
+  // them, so they had been silently doing nothing for at least two lines.
+  //
+  // Worth stating rather than deleting quietly: these two files are *tracked* in this
+  // repository while `scripts/` is add-only in the sync, so upstream's later revisions
+  // of them never arrive and whatever is checked in is what `tsconfig.host.json`
+  // typechecks. Refreshing them is a deliberate act -- copy the upstream file, then
+  // re-apply what this repository needs on top -- not something a sync performs.
 }

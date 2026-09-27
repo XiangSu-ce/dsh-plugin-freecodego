@@ -1007,6 +1007,107 @@ export interface FreeCodeGoNvidiaStatus {
   readonly baseUrl: string
 }
 
+/**
+ * Browser-safe speech-route projection; the API key stays in the Host vault.
+ *
+ * The endpoint and the model travel with it because the card shows the route the
+ * microphone would actually use — a card that described the defaults while a stored
+ * override was in effect would be describing a request nobody makes. The key itself
+ * never crosses: `hasKey` is the whole of what the browser is told about it.
+ *
+ * `registered` and `selected` are the Harness's own state rather than this plugin's,
+ * read through the speech registry. They are what separates "this plugin is ready"
+ * from "this plugin is what the microphone is using" — the two the switch used to
+ * leave indistinguishable, and so the two a user reporting a download prompt needs
+ * to tell apart.
+ */
+export interface FreeCodeGoSpeechStatus {
+  /** Whether this plugin's recognizer switch is on (`voiceInputEnabled`). */
+  readonly enabled: boolean
+  /** Whether a key resolves, i.e. whether this plugin can transcribe at all. */
+  readonly hasKey: boolean
+  /** The endpoint root a request would use. */
+  readonly baseUrl: string
+  /** The model id a request would name. */
+  readonly model: string
+  /** True when the endpoint or model is not the built-in Groq one. */
+  readonly custom: boolean
+  /** Whether the Harness speech registry currently holds this plugin's recognizer. */
+  readonly registered: boolean
+  /** The recognizer the Harness has selected, or `''` when no registry is mounted. */
+  readonly selected: string
+}
+
+/**
+ * One speech-route write from the settings card.
+ *
+ * Every field is optional and an empty string clears it, which is what lets one
+ * card save all three inputs and one "clear" button restore the defaults without a
+ * second verb per field.
+ */
+export interface FreeCodeGoSpeechRouteInput {
+  /** Endpoint root to store; `''` restores the built-in Groq address. */
+  readonly baseUrl?: string
+  /** Model id to store; `''` restores the built-in Groq model. */
+  readonly model?: string
+  /** API key to store; `''` clears it, which disables this plugin's recognizer. */
+  readonly apiKey?: string
+}
+
+/**
+ * Why one connection test ended the way it did, as a value rather than a sentence.
+ *
+ * The distinction this carries is the one a user cannot make from the outside: a
+ * route that is *refused* (something answered, and said no) and a route that is
+ * *unreachable* (nothing answered at all) look identical on the microphone, which
+ * simply does not work in both cases. They have different fixes — a key, a model id,
+ * or a proxy the machine needs to reach the endpoint — so the answer has to say which
+ * one happened before the card can say what to do about it.
+ */
+export type FreeCodeGoSpeechTestReason =
+  /** The recognizer accepted the probe recording and answered with JSON. */
+  | 'ok'
+  /** No reply arrived: DNS, a refused connection, a timeout, or a proxy that is not in the path. */
+  | 'unreachable'
+  /** The endpoint answered 401: it is reachable, and the key it received was not accepted. */
+  | 'unauthorized'
+  /** The endpoint answered 403: the key was refused, or the machine's own network is blocked from it. */
+  | 'forbidden'
+  /** The endpoint answered 404: the base address is wrong, or it serves no such model. */
+  | 'not-found'
+  /** Anything else the endpoint answered, including a 5xx and a non-JSON body. */
+  | 'provider-error'
+
+/**
+ * What one click of the card's connection test found.
+ *
+ * Deliberately not a boolean. "It does not work" was already the user's report; what
+ * the card needs to add is *which* of the five ways it did not works, and the two
+ * facts that make the answer checkable — the status the endpoint returned, and the
+ * route the probe actually used. The reason is a code rather than a sentence because
+ * the card is the only place that knows the page's language (the plugin answers in
+ * facts, the surface writes the sentence).
+ */
+export interface FreeCodeGoSpeechTest {
+  /** Whether the recognizer accepted the probe recording. */
+  readonly ok: boolean
+  /** Which outcome this was, as a code the card turns into a sentence. */
+  readonly reason: FreeCodeGoSpeechTestReason
+  /** The HTTP status the endpoint returned, or `undefined` when nothing answered. */
+  readonly status?: number
+  /** The endpoint the probe posted to, as resolved from the stored route. */
+  readonly baseUrl: string
+  /** The model id the probe named. */
+  readonly model: string
+  /**
+   * Upstream text on its way into an error message, redacted and bounded — `''`
+   * when the route answered. Bounded here rather than in the card because it is
+   * upstream input reaching a browser, and a provider that echoed a request would
+   * otherwise decide how much text the settings page renders.
+   */
+  readonly detail: string
+}
+
 /** Browser-safe VyceAI projection; the API key stays in the Host vault.
  *
  * The model names travel with the status so the settings card may only
@@ -1183,7 +1284,12 @@ export interface FreeCodeGoCapabilitySettings {
   readonly mcpEnabled: boolean
   /** Master switch for the shared Skill registry. */
   readonly skillEnabled: boolean
-  /** Dictation in the composer, transcribed through the Host's own key. */
+  /**
+   * Serve the Harness's voice input with this plugin's own cloud recognizer
+   * instead of a locally downloaded model. On, the composer microphone raises no
+   * install prompt and needs no preparation; off, whatever the composition
+   * mounted (the bundled local model) serves it, download included.
+   */
   readonly voiceInputEnabled: boolean
   /** The session-delete affordance in the sidebar. */
   readonly sessionDeleteEnabled: boolean
@@ -1478,6 +1584,26 @@ export interface FreeCodeGoSkillInstallReport {
    */
   readonly placement?: { readonly root: string; readonly provenance: string }
 }
+
+/**
+ * Persisted controls for the design pack: a plugin-owned page holding several
+ * independent design capabilities.
+ *
+ * The page is a container, so the settings are one master switch plus a list of
+ * enabled feature ids. Spelling the capabilities out as booleans here would mean
+ * a settings migration every time one is added — the list keeps the shape stable
+ * and leaves the catalogue in `design/features.ts`, where the page and the mount
+ * both read it.
+ */
+export interface FreeCodeGoDesignSettings {
+  /** Master switch. Off leaves every design capability unmounted. */
+  readonly designEnabled: boolean
+  /** Ids of the design capabilities the user switched on. Ids that are no longer
+   *  shipped are dropped on read rather than kept as dead entries. */
+  readonly designFeaturesEnabled: readonly string[]
+}
+
+export type { FreeCodeGoDesignFeature, FreeCodeGoDesignFeatureState, FreeCodeGoDesignStatus } from './design/types.ts'
 
 /** Persisted controls for the optional, plugin-owned engineering enhancement pack. */
 export interface FreeCodeGoEngineeringSettings {
@@ -2289,12 +2415,12 @@ export interface FreeCodeGoPluginUpdateStatus {
 /**
  * Stop-time review settings persisted with the FreeCodeGo profile.
  *
- * Declared as its own interface rather than folded into the Advisor's because the
- * two answer different questions: the Advisor reviews an *answer* after it was
- * written, while this reviews a *change* before the turn is allowed to end. The
- * one thing they share is the model route, which is why there is no review route
- * here — a second pair of provider/model fields would be a second place for the
- * same intent to be set and disagree.
+ * Its questions are about a *change* before the turn is allowed to end: which
+ * findings are severe enough to deliver, how long to wait before delivering
+ * again, and how deep a pass to buy. It carries no model route of its own, because
+ * every self-initiated call this plugin makes shares the one second-model route —
+ * a second pair of provider/model fields would be a second place for the same
+ * intent to be set and disagree.
  */
 export interface FreeCodeGoReviewSettings {
   /**
@@ -2383,53 +2509,31 @@ export interface FreeCodeGoReviewStartRequest {
   readonly exclude?: readonly string[]
 }
 
-/** Cross-engine Advisor settings persisted with the FreeCodeGo profile. */
-export interface FreeCodeGoAdvisorSettings {
-  /** Prefix avoids collisions with the bundle's default-engine settings. */
-  readonly advisorEnabled: boolean
-  /** When a review runs: alongside the turn, after it, or only for a blocker. */
-  readonly advisorMode: 'async' | 'catchup' | 'blocker-only'
-  /** Route the reviewer model is reached through. */
+/**
+ * The plugin's second-model route: the one model this plugin calls on its own
+ * behalf.
+ *
+ * Named for what it is rather than for its first caller. It was introduced for
+ * the Advisor, whose supervision runtime has since been removed; the route
+ * itself outlived it, because four surviving features spend requests on it —
+ * the memory recall selector, the memory-consolidation planner, the
+ * action reviewer, and the review subsystem's own reviewer
+ * (`review/install.ts`).
+ *
+ * The *keys* stay `advisorProvider` / `advisorModel`: a profile document is
+ * written by users and read by whatever build is installed, so renaming a
+ * stored field would silently drop the route of every profile that set one.
+ * A rename here is free; a rename there is not.
+ */
+export interface FreeCodeGoSecondModelSettings {
+  /** Route the plugin's own model calls are reached through. */
   readonly advisorProvider: string
-  /** Model the reviewer runs on; `auto` follows the rotating free roster at request time. */
+  /** Model those calls run on; `auto` follows the rotating free roster at request time. */
   readonly advisorModel: string
-  /** Whether a finding may steer or interrupt the working agent at all. */
-  readonly advisorAllowAgentControl: boolean
-  /** Turns to wait after an interrupt before the Advisor may interrupt again. */
-  readonly advisorInterruptCooldownTurns: number
-  /** Feed durable Advisor findings into project memory as pending drafts. */
-  readonly advisorMemoryDraftsEnabled: boolean
 }
 
-/** Browser-safe aggregate state for the Host-owned Advisor runtimes. */
-export interface FreeCodeGoAdvisorStatus {
-  readonly enabled: boolean
-  readonly mode: 'async' | 'catchup' | 'blocker-only'
-  readonly provider?: string
-  readonly model?: string
-  readonly routeReady: boolean
-  readonly allowAgentControl: boolean
-  readonly interruptCooldownTurns: number
-  readonly reviewTools: readonly ('read' | 'glob' | 'grep')[]
-  readonly activeSessions: number
-  readonly queuedReviews: number
-  readonly noteCount: number
-  readonly inputTokens: number
-  readonly outputTokens: number
-  readonly lastError?: string
-  /** Highest still-active failure backoff boundary across sessions, in turn number. */
-  readonly backoffRemainingTurns?: number
-  readonly watchdogFiles: readonly string[]
-  /**
-   * Side channels (Advisor and each council perspective) whose own prompt is at
-   * or past the compaction threshold, worst first. Absent when nothing has been
-   * measured yet — an unmeasured channel is not evidence of a problem.
-   */
-  readonly sideChannelWarnings?: readonly string[]
-}
-
-/** One text-capable Harness route eligible for a second-model Advisor review. */
-export interface FreeCodeGoAdvisorModel {
+/** One text-capable Harness route eligible for the plugin's second-model calls. */
+export interface FreeCodeGoSecondModelRoute {
   readonly id: string
   readonly displayName: string
   /** Registered Harness LLM provider, never a native worker identity. */
@@ -2437,43 +2541,22 @@ export interface FreeCodeGoAdvisorModel {
   readonly description: string
 }
 
-/** A durable Advisor suggestion safe to present in the settings sidebar. */
-export interface FreeCodeGoAdvisorNote {
-  readonly id: string
-  readonly sessionId: string
-  readonly turn: number
-  readonly severity: 'nit' | 'concern' | 'blocker'
-  readonly note: string
-  readonly delivery: 'record' | 'inject' | 'steer'
-  readonly time: number
-}
-
-/** One independent perspective within an explicit Advisor Council review. */
-export interface FreeCodeGoAdvisorCouncilFinding {
-  readonly role: 'architecture' | 'security' | 'testing'
-  readonly severity: 'nit' | 'concern' | 'blocker'
-  readonly note: string
-}
-
-/** Durable Council output. Findings are preserved separately rather than force-merged. */
-export interface FreeCodeGoAdvisorCouncilReport {
-  readonly id: string
-  readonly sessionId: string
-  readonly turn: number
+/** The stored second-model route, as the settings panel reads it back. */
+export interface FreeCodeGoSecondModelStatus {
+  /** Provider half of the stored route; empty when this composition stores none. */
   readonly provider: string
+  /** Model half of the stored route; empty when this composition stores none. */
   readonly model: string
-  readonly createdAt: number
-  readonly findings: readonly FreeCodeGoAdvisorCouncilFinding[]
+  /** Both halves are non-empty, so a second-model call has a route to spend. */
+  readonly routeReady: boolean
 }
 
-/** User-editable partial update for the FreeCodeGo Advisor configuration. */
-export interface FreeCodeGoAdvisorUpdate {
-  readonly advisorEnabled?: boolean
-  readonly advisorMode?: 'async' | 'catchup' | 'blocker-only'
+/** User-editable partial update for the second-model route. */
+export interface FreeCodeGoSecondModelUpdate {
+  /** Provider half to store; an empty string resets to the schema default. */
   readonly advisorProvider?: string
+  /** Model half to store; an empty string resets to the schema default. */
   readonly advisorModel?: string
-  readonly advisorAllowAgentControl?: boolean
-  readonly advisorInterruptCooldownTurns?: number
 }
 
 /** One immutable item of the live todo/focus-chain list (todo/write shape). */
@@ -2537,8 +2620,6 @@ export interface FreeCodeGoGuardSettingsStatus {
   readonly rehydrationEnabled: boolean
   /** Conversation-arc section in rehydrated context, opt-in (rehydration.ts). */
   readonly rehydrationArcEnabled: boolean
-  /** Advisor findings persisted as memory drafts (advisor.ts). */
-  readonly advisorMemoryDraftsEnabled: boolean
   /** Declarative command policy with load-time example validation (command-policy.ts). */
   readonly commandPolicyEnabled: boolean
   /** Plan Mode: structural refusal of workspace mutation (plan-mode.ts). */
@@ -2564,7 +2645,6 @@ export interface FreeCodeGoGuardSettingsUpdate {
   readonly lspEnabled?: boolean
   readonly rehydrationEnabled?: boolean
   readonly rehydrationArcEnabled?: boolean
-  readonly advisorMemoryDraftsEnabled?: boolean
   readonly commandPolicyEnabled?: boolean
   readonly planModeEnabled?: boolean
   readonly contextBudgetEnabled?: boolean
@@ -2631,6 +2711,25 @@ export type HeadroomKind =
   | 'html' | 'tabular' | 'config' | 'lossless' | 'dedup' | 'code'
 
 /** Live Headroom context-compression state and savings counters (Remote boundary type). */
+/**
+ * One category of the prompt no compressor in this plugin can shrink.
+ *
+ * Named rather than inlined into {@link HeadroomStats} — and named *here* rather
+ * than in `headroom/runtime.ts`, which reports by importing this module — because
+ * the compression panel's surface gate reads that interface's declared fields from
+ * source: an inline object type spelled `readonly id: string` would be counted as
+ * three more fields of the report, and the gate would demand the panel read them as
+ * though they were top-level counters.
+ */
+export interface HeadroomFixedCategory {
+  /** Category id from `prompt-composition.ts`, so a display layer can localize it. */
+  readonly id: string
+  /** English label the model-facing report uses; the panel prefers its own layer. */
+  readonly label: string
+  readonly tokens: number
+}
+
+/** The compression counters and policy switches the settings panel reports. */
 export interface HeadroomStats {
   readonly enabled: boolean
   /** Cross-turn verbatim dedup. Reported because the settings switch binds to
@@ -2692,6 +2791,63 @@ export interface HeadroomStats {
    * what explains a delivery in a shape the payload did not have.
    */
   readonly ccrWriteRefusals: number
+  /**
+   * Tokens the transcript is over its compression quota by; `0` when it fits, and
+   * `0` when no conversation under pressure has been measured yet.
+   *
+   * The quota is what `prompt-composition.ts` computes and the compressor acts on:
+   * the categories no compressor can shrink are charged first, and the transcript
+   * gets the remainder. `0` is therefore two different states — "not over" and "not
+   * measured" — which is why the tokens figure below travels beside it: a quota of
+   * zero with a non-zero overage is a conversation that has to be rebuilt rather
+   * than one that is comfortable, and a panel that showed only the first number
+   * could not tell them apart.
+   */
+  readonly quotaOverTokens: number
+  /** Tokens the transcript may occupy under the quota; `0` until one is measured. */
+  readonly quotaTokens: number
+  /**
+   * Tokens the categories no compressor can shrink already cost: the system
+   * prompt, the tool block, the rules, the Skill catalog, the MCP catalogs, the
+   * subagent definitions and any summary. `0` until one is measured.
+   *
+   * Reported beside the quota because a quota alone reads as "compression is
+   * behind", which is the wrong next step when the room went to a fixed block: a
+   * 24,000-token tool block is a schema to defer or a Settings change, never
+   * something a compressor can reclaim, and a panel that showed only the overage
+   * would send the reader to the one lever that cannot move it.
+   */
+  readonly quotaFixedTokens: number
+  /**
+   * Which fixed categories those tokens are in, largest first.
+   *
+   * The total says something is eating the window; these say what. Names travel
+   * with the figures because the remedy differs per row, and the panel renders
+   * them so the row a user can turn off is identifiable at a glance.
+   */
+  readonly quotaFixedCategories: readonly HeadroomFixedCategory[]
+  /**
+   * The largest output/original ratio the compressor will accept right now.
+   *
+   * Reported because it is the figure the quota moves: with no pressure this is the
+   * configured `headroomMinSavingsRatio`, and under pressure it relaxes toward the
+   * floor that keeps a rewrite worth its cache write. A panel that showed the quota
+   * without it would report pressure the reader cannot see the effect of.
+   */
+  readonly acceptRatio: number
+  /**
+   * The bar `headroomMinSavingsRatio` configures, which the quota only ever loosens.
+   *
+   * Travels beside {@link acceptRatio} because that figure alone cannot say whether a
+   * quota is acting: the same 0.96 is "a conversation under pressure" in one
+   * deployment and "a user who typed 0.96" in another, and the only way to tell them
+   * apart is to compare against what was configured. The panel needs the comparison to
+   * report the effect at all — its chip for this figure is what tells a reader that
+   * pressure moved the bar — and a panel comparing against a number of its own would
+   * be the second opinion about a setting that this module's other readers exist to
+   * avoid.
+   */
+  readonly configuredAcceptRatio: number
   /**
    * Upstream project, license, reviewed ref, and this port's revision, composed into
    * one sentence (`headroomProvenance`). The panel renders it, which is the point:
@@ -2839,7 +2995,6 @@ export type FreeCodeGoEngineeringEvalSuite =
   | 'quality'
   | 'version'
   | 'cache'
-  | 'advisor'
   | 'progress'
   | 'agnes'
   | 'update'
@@ -3127,7 +3282,7 @@ export interface FreeCodeGoPlanReviewRequest {
  * drift this package's contract test exists to catch.
  */
 export type { ProjectConfigReport } from './project-config.ts'
-export type { MemoryConsolidation } from './memory/memory-pipeline.ts'
+export type { MemoryConsolidation, MemorySessionScope, SessionReclaim } from './memory/memory-pipeline.ts'
 export type { MemoryManifest } from './memory/manifest.ts'
 export type { ForgetRefusal } from './memory/forget.ts'
 
@@ -3151,8 +3306,6 @@ export type { ForgetRefusal } from './memory/forget.ts'
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'freecodego-action-review': { kind: 'freecodego-action-review' }
-    'freecodego-advisor': { kind: 'freecodego-advisor' }
-    'freecodego-advisor-council': { kind: 'freecodego-advisor-council' }
     'freecodego-agent-progress': { kind: 'freecodego-agent-progress' }
     'freecodego-assistant-loop-guard': { kind: 'freecodego-assistant-loop-guard' }
     'freecodego-context-budget': { kind: 'freecodego-context-budget' }

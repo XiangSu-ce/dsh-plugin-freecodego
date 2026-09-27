@@ -38,7 +38,6 @@ const GUARD_CONTRACT: readonly (readonly [keyof FreeCodeGoGuardSettingsStatus, s
   ['lspEnabled', 'LSP language services'],
   ['rehydrationEnabled', 'Post-compaction rehydration'],
   ['rehydrationArcEnabled', 'Conversation arc (goals and decisions)'],
-  ['advisorMemoryDraftsEnabled', 'Advisor findings to memory'],
   ['commandPolicyEnabled', 'Command policy (refusals)'],
   ['planModeEnabled', 'Plan Mode (structural write refusal)'],
   ['cacheColdClearEnabled', 'Cache-cold clearing'],

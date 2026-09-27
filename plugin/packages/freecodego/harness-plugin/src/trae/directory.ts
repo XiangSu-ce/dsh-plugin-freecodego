@@ -13,7 +13,7 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/trae/directory
  */
 
-import { asRecord, asString } from '../untrusted-json.ts'
+import { asNumber, asRecord, asString } from '../untrusted-json.ts'
 import { buildTraeSoloHeaders } from './bridge.ts'
 import { TRAE_DIRECTORY_TIMEOUT_MS, TRAE_FUNCTION, traeModelsUrl } from './endpoints.ts'
 import { TraeUpstreamError } from './errors.ts'
@@ -46,13 +46,43 @@ export function parseTraeModels(payload: unknown): readonly TraeModel[] {
     if (id === '' || seen.has(id)) continue
     seen.add(id)
     const named = asString(asRecord(row.display_config).display_name)?.trim() ?? ''
+    const contextWindow = traeContextWindow(row)
     models.push({
       id,
       displayName: named === '' ? id : named,
       selectable: traeRowSelectable(row, named),
+      ...(contextWindow === undefined ? {} : { contextWindow }),
     })
   }
   return models.sort((left, right) => left.displayName.localeCompare(right.displayName))
+}
+
+/**
+ * The window one configuration row publishes, or `undefined` when it publishes none.
+ *
+ * The field is `context_window_tokens`, an object keyed by client build channel —
+ * measured on a real account (46 configurations): dev 200000 on 17 rows,
+ * dev 256000 on 6, and a spread from 53,192 up to 1,000,000; four rows
+ * published nothing at all. Where both `dev` and `max` appeared they carried the
+ * same number in every row measured, so which channel this client claims does not
+ * decide the answer — and the **smallest** published number is taken anyway, because
+ * the direction that breaks is the large one: the harness sizes compaction against
+ * this value, so an over-large window lets a conversation grow past what the
+ * configuration accepts, while an over-small one only compacts earlier.
+ *
+ * Until this reader existed the connector declared a flat 128,000 for every row
+ * (see `TRAE_DEFAULT_CONTEXT`), which was wrong in both directions at once: too
+ * small for the 200,000-and-up majority, and too large for the rows serving 53,192
+ * and 120,192.
+ * @param row - the untrusted configuration row.
+ * @returns the window in tokens, or `undefined` when the row names none.
+ */
+function traeContextWindow(row: Record<string, unknown>): number | undefined {
+  const map = asRecord(row.context_window_tokens)
+  const published = Object.values(map)
+    .map(value => asNumber(value))
+    .filter((value): value is number => value !== undefined && Number.isInteger(value) && value > 0)
+  return published.length === 0 ? undefined : Math.min(...published)
 }
 
 /**

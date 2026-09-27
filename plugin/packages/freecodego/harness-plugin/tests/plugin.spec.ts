@@ -1,6 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -25,10 +24,10 @@ import { COUNCIL_ENGINES, VERIFICATION_STAGES } from '../src/engineering-remote-
 import { FreeCodeGoHarnessPlugin } from '../src/index.ts'
 import { AUDIO_FORMATS } from '../src/media-generation.ts'
 import { FreeCodeGoPolicy } from '../src/policy.ts'
-import type { SessionDeletionPersistence, SessionEventsPersistence } from '../src/session-storage-utils.ts'
+import type { SessionDeletionPersistence } from '../src/session-storage-utils.ts'
 import { runDsh } from '../src/plugin-update.ts'
 import { modelDshPluginCli } from './support/dsh-plugin-cli.ts'
-import { idleAgent, liveSession, pluginConfig, provideHostService, provideHostServiceAs, registrationHandle, runContext, settingsDescriptor, settingsSink, type AgentEnginesFace, type EngineRouterFace, type WorkspaceRegistryFace } from './support/host-services.ts'
+import { idleAgent, liveSession, pluginConfig, provideHostService, provideHostServiceAs, runContext, settingsDescriptor, settingsSink, type AgentEnginesFace, type EngineRouterFace, type WorkspaceRegistryFace } from './support/host-services.ts'
 
 function AgentEngineRegistry(ctx: Context): void {
   provideHostServiceAs<AgentEnginesFace>(ctx, 'agentEngines', { setAvailability: () => undefined })
@@ -37,16 +36,6 @@ function AgentEngineRegistry(ctx: Context): void {
   // still need an empty registry service for construction to succeed.
   provideHostService(ctx, 'agents', { list: () => [], get: () => undefined })
 }
-
-/**
- * A live Session carrying the log a test reads.
- *
- * The plugin's Advisor reads accept either the Host's `snapshotEvents()` or the
- * `events` array this fixture holds, and the session's other members belong to
- * the Host — the cast stands for them.
- */
-const loggedSession = (id: string, events: readonly { readonly type: string; readonly time: number; readonly data: unknown }[]): Session =>
-  ({ id, events } as unknown as Session)
 
 /**
  * A recorded definition, viewed the way these tests use it.
@@ -89,6 +78,47 @@ describe('the Config the settings port resolves', () => {
 })
 
 describe('FreeCodeGoHarnessPlugin engine defaults', () => {
+  it('brings the bundle own row back when the official module is selected but did not mount', async () => {
+    // The wiring half of the repair: the plugin must watch the Loader it runs in.
+    // Without the watch a boot that selected the official package keeps this
+    // bundle's row stood down and gets the official row's failed import instead,
+    // which is no capability at all.
+    const ctx = new Context()
+    await ctx.plugin(AgentEngineRegistry)
+    const restores: boolean[] = []
+    const standIn = {
+      id: 'freecodego-subagent-codex',
+      // The bundle patch's own predicate, which is the only `!!js` stand-down this
+      // repair treats as its own.
+      options: {
+        id: 'freecodego-subagent-codex',
+        name: 'freecodego/subagent-codex',
+        disabled: { __jsExpr: "ctx.get('freecodegoOfficialRows')?.holds('@deepseek-ai/dsh-subagent-codex') ?? false" },
+      },
+      disabled: true,
+      fiber: undefined,
+      update: async (next: { readonly disabled: boolean }) => { restores.push(next.disabled) },
+    }
+    const official = {
+      id: 'subagent-codex',
+      options: { id: 'subagent-codex', name: '@deepseek-ai/dsh-subagent-codex', disabled: false },
+      disabled: false,
+      fiber: undefined,
+      update: async () => undefined,
+    }
+    provideHostServiceAs(ctx, 'loader', {
+      entries: () => [official, standIn],
+      await: async () => undefined,
+    })
+    // Mounting the plugin is the whole setup: its constructor installs the watch.
+    void new FreeCodeGoHarnessPlugin(ctx, {})
+    try {
+      await vi.waitFor(() => { expect(restores).toEqual([false]) })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('stores the VyceAI key in Host credentials and lists its metered roster behind the key', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
@@ -371,141 +401,6 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     }
   })
 
-  it('enables the Advisor closed loop by default and persists only namespaced Advisor settings', async () => {
-    const ctx = new Context()
-    await ctx.plugin(AgentEngineRegistry)
-    const stored: Record<string, unknown> = { defaultModel: '' }
-    const settings = settingsSink(ctx, stored)
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, settings.config)
-    // What is asserted is what landed in the record, so the plugin needs the profile
-    // entry a Loader would have assigned to the fiber it was created in.
-    settings.attach(plugin)
-    try {
-      expect(plugin.advisorStatus()).toMatchObject({
-        enabled: true,
-        mode: 'async',
-        provider: 'opencode',
-        // The virtual `auto` route follows the rotating free roster at
-        // request time instead of pinning a model id.
-        model: 'auto',
-        routeReady: true,
-        allowAgentControl: true,
-        reviewTools: ['read', 'glob', 'grep'],
-      })
-      await expect(plugin.advisorUpdate({ advisorEnabled: true, advisorProvider: ' freecodego ', advisorModel: ' reviewer-small ', advisorAllowAgentControl: true, advisorInterruptCooldownTurns: 2 })).resolves.toMatchObject({
-        enabled: true,
-        provider: 'freecodego',
-        model: 'reviewer-small',
-        routeReady: true,
-        allowAgentControl: true,
-        interruptCooldownTurns: 2,
-      })
-      expect(stored).toMatchObject({
-        advisorEnabled: true,
-        advisorProvider: 'freecodego',
-        advisorModel: 'reviewer-small',
-        advisorAllowAgentControl: true,
-        advisorInterruptCooldownTurns: 2,
-      })
-      expect(stored).not.toHaveProperty('enabled')
-      await expect(plugin.advisorUpdate({ enabled: true } as never)).rejects.toThrow('Unknown Advisor setting: enabled')
-    } finally {
-      await ctx.fiber.dispose()
-    }
-  })
-
-  it('registers model-facing Advisor status, review, and note tools', async () => {
-    const ctx = new Context()
-    await ctx.plugin(AgentEngineRegistry)
-    const definitions: ToolDefinition[] = []
-    provideHostService(ctx, 'tools', {
-      register: (definition) => {
-        definitions.push(definition)
-        return () => undefined
-      },
-      guard: () => () => undefined,
-      schemas: () => [],
-    })
-    new FreeCodeGoHarnessPlugin(ctx, { autoSubagentModelSelection: false })
-    try {
-      expect(definitions.map(definition => definition.name)).toEqual([
-        // Session automation registers first: hook-chain status and the calendar
-        // planner are wired in the plugin constructor, before the deferred-schema
-        // entry point below. There are deliberately no schedule create/list/delete
-        // tools here — the Harness owns reminders, and registering a second set of
-        // those three verbs is the duplication this plugin was carrying.
-        'freecodego_schedule_plan',
-        'freecodego_recovery_status',
-        // Registered first: the deferred-schema entry point is what makes the
-        // task-specific tools below discoverable once their schemas are withheld.
-        'tool_search',
-        // Then the mode and diagnostic tools this plugin registers itself, before
-        // any sub-runtime starts: Plan Mode is a property of the conversation and
-        // the surface report describes what every other registration injected.
-        'engineering_plan_mode',
-        'engineering_surface_report',
-        // The unified inspect surface: one collection pass over every declared
-        // section, registered here so the answer to "what is actually loaded?"
-        // exists before any sub-runtime starts.
-        'engineering_inspect',
-        // The review set: run a review, preview its coverage without a model
-        // call, read what is running, and re-render the last report. Registered
-        // here because a review reads the workspace and nothing else, so it is
-        // available before any sub-runtime starts — and because the four names
-        // are one surface whose doors would otherwise be registered apart.
-        'engineering_code_review',
-        'engineering_review_rules',
-        'engineering_review_status',
-        'engineering_review_report',
-        // Paged recall of a parked tool result. Registered next to the inspect
-        // surface because both are diagnostics the model reaches for while
-        // something is already going wrong; the locator it reads comes from a
-        // cleared-result marker.
-        'spill_recall',
-        'engineering_context_budget',
-        // Manual context control: compacting or snipping on request, registered
-        // beside the readout that tells the model when either is worth doing.
-        'engineering_context_compact',
-        'engineering_context_snip',
-        'engineering_context_prompt',
-        'read_document',
-        // Worktree lifecycle: entering and leaving an isolated checkout is a
-        // mode change the model makes deliberately, and the status/list pair is
-        // how it finds out where it already is.
-        'engineering_worktree_enter',
-        'engineering_worktree_exit',
-        'engineering_worktree_status',
-        'engineering_worktree_list',
-        // Personas and the subagent launcher: both are how a turn picks who
-        // does the work, and both are named by the guidance this plugin injects.
-        'engineering_persona_list',
-        'engineering_subagent_start',
-        'advisor_status',
-        'advisor_review',
-        'advisor_notes',
-        'engineering_council_review',
-        'engineering_team_start',
-        'engineering_team_status',
-        'engineering_team_report',
-        'engineering_team_cancel',
-        'engineering_team_request_approval',
-        'engineering_team_verify',
-        'engineering_team_mark_implemented',
-        'freecodego_generate_image',
-        'freecodego_generate_video',
-        'freecodego_generate_audio',
-        'freecodego_transcribe_audio',
-        'headroom_retrieve',
-      ])
-      const status = definitions.find(definition => definition.name === 'advisor_status')!
-      expect(toolView(status).output.schema?.type).toBe('object')
-      const agent = { id: 'advisor-agent', session: { events: [] } }
-      expect(toolView(status).execute({}, runContext({ agent }))).toMatchObject({ enabled: true, routeReady: true, allowAgentControl: true, recentNotes: [] })
-    } finally {
-      await ctx.fiber.dispose()
-    }
-  })
-
   it('uses the saved image default without exposing a model override to the Agent', async () => {
     // Isolate DSH_HOME. Without this the plugin reads the real managed-model
     // catalog cache under the developer's home, so the resolved default depends
@@ -702,115 +597,6 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
       model: 'gpt-image-2',
     })
     await ctx.fiber.dispose()
-  })
-
-  it('offers public OpenCode and text-capable managed routes to the Advisor picker', async () => {
-    // The OpenCode public roster rotates upstream; pin the directory (and an
-    // isolated cache home, so a shared on-disk snapshot cannot leak today's
-    // upstream roster into the assertion).
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
-      JSON.stringify({ data: [
-        { id: 'mimo-v2.5-free', name: 'MiMo V2.5' },
-        { id: 'nemotron-3-ultra-free', name: 'Nemotron 3 Ultra' },
-      ] }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    ))
-    const home = await mkdtemp(join(tmpdir(), 'freecodego-advisor-'))
-    const previousHome = process.env.DSH_HOME
-    process.env.DSH_HOME = home
-    const ctx = new Context()
-    await ctx.plugin(AgentEngineRegistry)
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {}) as unknown as {
-      backendCatalog: () => Promise<{ readonly models: readonly { readonly id: string; readonly displayName: string; readonly provider: string; readonly protocol: string; readonly availability: string }[] }>
-      advisorModels: () => Promise<readonly { readonly id: string; readonly provider: string }[]>
-    }
-    plugin.backendCatalog = async () => ({ models: [
-      { id: 'reasoner', displayName: 'Reasoner', provider: 'freecodego', protocol: 'openai_chat_completions', availability: 'available' },
-      { id: 'image-gen', displayName: 'Image Generator', provider: 'freecodego', protocol: 'openai_chat_completions', availability: 'available' },
-      { id: 'offline', displayName: 'Offline', provider: 'freecodego', protocol: 'openai_chat_completions', availability: 'unavailable' },
-      { id: 'agnes-3.0-flash', displayName: 'Agnes', provider: 'agnes', protocol: 'openai_chat_completions', availability: 'available' },
-    ] })
-    try {
-      await expect(plugin.advisorModels()).resolves.toEqual(expect.arrayContaining([
-        { id: 'agnes-3.0-flash', displayName: 'Agnes', provider: 'agnes', description: 'Agnes AI · text review route' },
-        { id: 'reasoner', displayName: 'Reasoner', provider: 'freecodego', description: 'FreeCodeGo · openai_chat_completions' },
-        { id: 'mimo-v2.5', displayName: 'MiMo V2.5', provider: 'opencode', description: 'OpenCode · public free text route' },
-        { id: 'nemotron-3-ultra', displayName: 'Nemotron 3 Ultra', provider: 'opencode', description: 'OpenCode · public free text route' },
-      ]))
-    } finally {
-      await ctx.fiber.dispose()
-      process.env.DSH_HOME = previousHome
-      // The advisor directory starts a detached OpenCode catalog refresh whose
-      // write can still be landing when teardown begins. On Windows that makes
-      // a bare recursive `rm` fail with ENOTEMPTY, so wait it out with the same
-      // retry budget the other temp-home tests in this file use.
-      await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-    }
-  })
-
-  it('lists newly registered Harness text routes in the Advisor picker', async () => {
-    const ctx = new Context()
-    await ctx.plugin(AgentEngineRegistry)
-    provideHostService(ctx, 'llm', {
-      registerAdapter: () => registrationHandle(),
-      listProviders: () => [{ id: 'new-provider', name: 'New Provider' }, { id: 'media-provider', name: 'Media Provider' }],
-      listModels: async (provider: string) => provider === 'new-provider'
-        ? [
-          { provider, id: 'latest-reasoner', name: 'Latest Reasoner', description: 'New Provider · current text route' },
-          { provider, id: 'retired-route', name: 'Retired Route', availability: 'unavailable' },
-        ]
-        : [{ provider, id: 'gpt-image-2', name: 'GPT Image 2', description: 'Media Provider · image generation route' }],
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {}) as unknown as {
-      advisorModels: () => Promise<readonly { readonly id: string; readonly displayName: string; readonly provider: string; readonly description: string }[]>
-    }
-    try {
-      await expect(plugin.advisorModels()).resolves.toEqual(expect.arrayContaining([
-        { id: 'latest-reasoner', displayName: 'Latest Reasoner', provider: 'new-provider', description: 'New Provider · current text route' },
-      ]))
-      const models = await plugin.advisorModels()
-      expect(models.some(model => model.id === 'retired-route')).toBe(false)
-      expect(models.some(model => model.id === 'gpt-image-2')).toBe(false)
-    } finally {
-      await ctx.fiber.dispose()
-    }
-  })
-
-  it('keeps public OpenCode Advisor choices usable without a FreeCodeGo login', async () => {
-    // Pin the rotating upstream roster with an isolated cache home so the
-    // test stays deterministic.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
-      JSON.stringify({ data: [
-        { id: 'mimo-v2.5-free', name: 'MiMo V2.5' },
-        { id: 'hy3-free', name: 'HY3' },
-        { id: 'nemotron-3-ultra-free', name: 'Nemotron 3 Ultra' },
-        { id: 'nemotron-3.5-lightning-free', name: 'Nemotron 3.5 Lightning' },
-      ] }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    ))
-    const home = await mkdtemp(join(tmpdir(), 'freecodego-advisor-'))
-    const previousHome = process.env.DSH_HOME
-    process.env.DSH_HOME = home
-    const ctx = new Context()
-    await ctx.plugin(AgentEngineRegistry)
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {}) as unknown as {
-      backendCatalog: () => Promise<never>
-      advisorModels: () => Promise<readonly { readonly id: string; readonly provider: string }[]>
-    }
-    plugin.backendCatalog = async () => { throw new Error('not signed in') }
-    try {
-      const models = await plugin.advisorModels()
-      expect(models.map(model => `${model.provider}:${model.id}`)).toEqual(expect.arrayContaining([
-        'opencode:mimo-v2.5',
-        'opencode:hy3',
-        'opencode:nemotron-3-ultra',
-        'opencode:nemotron-3.5-lightning',
-      ]))
-    } finally {
-      await ctx.fiber.dispose()
-      process.env.DSH_HOME = previousHome
-      await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-    }
   })
 
   it('prices every enabled account whitelist model from its model-options snapshot', async () => {
@@ -1062,52 +848,6 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     }
   })
 
-  it('projects recorded Advisor notes and their delivery status for live sessions', async () => {
-    const ctx = new Context()
-    await ctx.plugin(AgentEngineRegistry)
-    provideHostService(ctx, 'sessions', {
-      list: () => [loggedSession('advisor-live', [
-        { type: 'advisor/note', time: 100, data: { id: 'note-1', severity: 'concern', note: 'Add a regression test.', turn: 2 } },
-        { type: 'advisor/delivery', time: 101, data: { id: 'note-1', channel: 'record' } },
-      ])],
-    })
-    const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
-    try {
-      expect(plugin.advisorNotes()).toEqual([{
-        id: 'note-1', sessionId: 'advisor-live', turn: 2, severity: 'concern', note: 'Add a regression test.', delivery: 'record', time: 100,
-      }])
-    } finally {
-      await ctx.fiber.dispose()
-    }
-  })
-
-  it('reads durable Advisor Council reports without exposing unrelated session events', async () => {
-    const ctx = new Context()
-    provideHostService(ctx, 'sessions', { get: () => undefined })
-    // The storage's declared read path: a handle (`open` → `read` → `close`).
-    // The adapter used to prefer an invented `inspect(id)` here, which no
-    // Harness line declares and COMPATIBILITY.md forbids carrying. The log's
-    // payloads stand in for whole events: spelling every event type is the
-    // Host's own suite's business.
-    provideHostServiceAs<SessionEventsPersistence>(ctx, 'sessionPersistence', {
-      open: async () => ({
-        read: async () => [
-          { type: 'assistant/message', time: 1, data: { secret: 'must not surface' } },
-          { type: 'advisor/council', time: 2, data: {
-            id: 'council-1', sessionId: 'restored-council', turn: 4, provider: 'freecodego', model: 'hy3', createdAt: 2,
-            findings: [{ role: 'security', severity: 'concern', note: 'Validate the boundary.' }],
-          } },
-          { type: 'advisor/council', time: 3, data: { id: 'invalid', findings: 'not-an-array' } },
-        ] as unknown as readonly SessionEvent[],
-        close: async () => undefined,
-      }),
-    })
-    const plugin = Object.assign(Object.create(FreeCodeGoHarnessPlugin.prototype), { ctx }) as FreeCodeGoHarnessPlugin
-    await expect(plugin.engineeringCouncilReports('restored-council')).resolves.toEqual([
-      { id: 'council-1', sessionId: 'restored-council', turn: 4, provider: 'freecodego', model: 'hy3', createdAt: 2, findings: [{ role: 'security', severity: 'concern', note: 'Validate the boundary.' }] },
-    ])
-  })
-
   it('deletes a closed persisted session and removes its workspace association', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
@@ -1242,6 +982,101 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     }
   })
 
+  it('accepts a published directory larger than the byte cap that used to refuse it', async () => {
+    const originalFetch = globalThis.fetch
+    const previousDshHome = process.env.DSH_HOME
+    const dshHome = await mkdtemp(join(tmpdir(), 'freecodego-community-catalog-growth-'))
+    process.env.DSH_HOME = dshHome
+    const ctx = new Context()
+    await ctx.plugin(AgentEngineRegistry)
+    // The directory is a single JSON document that only grows (≈2.9 MB on
+    // 2026-09-15, ≈4.7 MB on 2026-09-26). A cap below the live size refuses every
+    // source mid-stream, which is how a snapshot went eleven days without being
+    // replaced and why plugins published inside that window could not be searched
+    // for: they were never in the data the page had.
+    globalThis.fetch = (async (input) => {
+      if (String(input).includes('awesome-dsh-plugin.com')) throw new Error('canonical source unavailable')
+      return new Response(JSON.stringify({
+        updated: '2026-09-25',
+        plugins: [{
+          name: 'dsh-plugin-freecodego',
+          owner: 'XiangSu-ce',
+          url: 'https://github.com/XiangSu-ce/dsh-plugin-freecodego',
+          category: 'tools',
+          description: { zh: 'x'.repeat(5_000_000) },
+        }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as typeof globalThis.fetch
+    try {
+      const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+      await expect(plugin.communityCatalog()).resolves.toMatchObject({
+        updated: '2026-09-25', plugins: [{ name: 'dsh-plugin-freecodego' }],
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+      if (previousDshHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previousDshHome
+      await ctx.fiber.dispose()
+      await rm(dshHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('fetches the published directory when the page asks for a refresh instead of serving the saved snapshot', async () => {
+    const originalFetch = globalThis.fetch
+    const previousDshHome = process.env.DSH_HOME
+    const dshHome = await mkdtemp(join(tmpdir(), 'freecodego-community-catalog-refresh-'))
+    process.env.DSH_HOME = dshHome
+    const ctx = new Context()
+    await ctx.plugin(AgentEngineRegistry)
+    const mirror = (updated: string, name: string): string => JSON.stringify({
+      updated, plugins: [{ name, owner: 'XiangSu-ce', url: `https://github.com/XiangSu-ce/${name}`, category: 'tools' }],
+    })
+    try {
+      const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+      // First read has no snapshot, so it fetches and saves one.
+      globalThis.fetch = (async () => new Response(mirror('2026-09-13', 'saved-plugin'), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof globalThis.fetch
+      await expect(plugin.communityCatalog()).resolves.toMatchObject({ updated: '2026-09-13', plugins: [{ name: 'saved-plugin' }] })
+      // Opening the panel again answers from that snapshot; the refresh button is the
+      // one caller that must not, or the date beside it can never change.
+      globalThis.fetch = (async () => new Response(mirror('2026-09-25', 'dsh-plugin-freecodego'), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof globalThis.fetch
+      await expect(plugin.communityCatalog()).resolves.toMatchObject({ updated: '2026-09-13', plugins: [{ name: 'saved-plugin' }] })
+      await expect(plugin.communityCatalog(true)).resolves.toMatchObject({ updated: '2026-09-25', plugins: [{ name: 'dsh-plugin-freecodego' }] })
+    } finally {
+      globalThis.fetch = originalFetch
+      if (previousDshHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previousDshHome
+      await ctx.fiber.dispose()
+      await rm(dshHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('reports a failed refresh rather than handing back the snapshot it was asked to replace', async () => {
+    const originalFetch = globalThis.fetch
+    const previousDshHome = process.env.DSH_HOME
+    const dshHome = await mkdtemp(join(tmpdir(), 'freecodego-community-catalog-refresh-failure-'))
+    process.env.DSH_HOME = dshHome
+    const ctx = new Context()
+    await ctx.plugin(AgentEngineRegistry)
+    try {
+      const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
+      globalThis.fetch = (async () => new Response(JSON.stringify({
+        updated: '2026-09-13', plugins: [{ name: 'saved-plugin', owner: 'XiangSu-ce', url: 'https://github.com/XiangSu-ce/saved-plugin', category: 'tools' }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof globalThis.fetch
+      await expect(plugin.communityCatalog()).resolves.toMatchObject({ updated: '2026-09-13' })
+      globalThis.fetch = (async () => { throw new Error('network unavailable') }) as typeof globalThis.fetch
+      // Serving the snapshot here would leave the page showing the date the user just
+      // tried and failed to move, with nothing to say the attempt happened. The page
+      // keeps its rows when this error arrives, so the message costs no list.
+      await expect(plugin.communityCatalog(true)).rejects.toThrow('插件市场服务暂时不可用')
+    } finally {
+      globalThis.fetch = originalFetch
+      if (previousDshHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previousDshHome
+      await ctx.fiber.dispose()
+      await rm(dshHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
   it('requires manual configuration before installing an HTTP MCP that declares request headers', async () => {
     const originalFetch = globalThis.fetch
     const previousDshHome = process.env.DSH_HOME
@@ -1292,11 +1127,17 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     }
   })
 
-  it('reads the Groq transcription key only from Host credentials or the process environment', async () => {
+  it('reads the transcription key only from Host credentials or the process environment', async () => {
     const originalFetch = globalThis.fetch
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
-    provideHostService(ctx, 'credentials', { resolve: async () => ({ value: 'credential-only-groq-key', source: 'env' }) })
+    // Per reference, the way a vault answers: the key's own slot holds the key, and every
+    // other slot holds nothing. A double that answered every reference with one value
+    // would also hand that value back as the *endpoint* and the model id, which is a
+    // vault no deployment has.
+    provideHostService(ctx, 'credentials', {
+      resolve: async (ref: unknown) => String(ref) === 'GROQ_WHISPER_API_KEY' ? { value: 'credential-only-groq-key', source: 'env' } : undefined,
+    })
     const fetch = vi.fn(async () => new Response(JSON.stringify({ text: 'transcript' }), { status: 200, headers: { 'content-type': 'application/json' } }))
     globalThis.fetch = fetch as typeof globalThis.fetch
     const plugin = new FreeCodeGoHarnessPlugin(ctx, {})
@@ -1326,7 +1167,7 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     try {
       const failure = await plugin.groqWhisperTranscribe(Buffer.from('audio').toString('base64'), 'audio/webm', 'en')
         .then(() => new Error('the transcription was expected to fail'), (error: unknown) => error instanceof Error ? error : new Error(String(error)))
-      expect(failure.message).toContain('Groq Whisper transcription failed (HTTP 401)')
+      expect(failure.message).toContain('Speech transcription failed (HTTP 401)')
       expect(failure.message).not.toContain(leaked)
     } finally {
       globalThis.fetch = originalFetch

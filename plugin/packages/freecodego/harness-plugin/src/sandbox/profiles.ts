@@ -543,7 +543,7 @@ export function describeDenyEnforcement(deny: readonly string[]): {
  * carries covers a tool that did not exist when this line was written.
  *
  * `locator` is here for the reader that takes its path from a marker rather than
- * from the model — `spill_recall`. The name it uses is its own, so a list of tool
+ * from the model — the locator form of `headroom_retrieve`. The name it uses is its own, so a list of tool
  * names would have had to have been extended for it, and until it was, a profile
  * denying `**\/.env` would have stopped `read` and allowed this one.
  *

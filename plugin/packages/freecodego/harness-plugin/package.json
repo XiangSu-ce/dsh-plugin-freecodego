@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-freecodego-harness-plugin",
   "description": "FreeCodeGo engine inventory and lifecycle plugin for DeepSeek Harness",
-  "version": "0.1.7-alpha.2",
+  "version": "0.1.7-rc.2",
   "publishConfig": {
     "access": "public"
   },
@@ -40,7 +40,9 @@
     "lib/typert.remote-client.js",
     "lib/typert.remote-client.d.ts",
     "THIRD_PARTY_NOTICES.md",
+    "assets/design/**/*",
     "assets/engineering/**/*",
+    "assets/uiux/**/*",
     "assets/presets/**/*.yml",
     "lib/types/**/*.js",
     "lib/types/**/*.d.ts"
@@ -76,6 +78,7 @@
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-llm-deepseek": "workspace:^",
     "@deepseek-ai/dsh-mcp-client": "workspace:^",
+    "@deepseek-ai/dsh-output-retention": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/dsh-settings": "workspace:^",
     "@deepseek-ai/dsh-user-approval": "workspace:^",
@@ -89,6 +92,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-mcp-client": "workspace:^",
     "@deepseek-ai/dsh-typert-protocol": "workspace:^"
   }
 }

@@ -13,11 +13,30 @@ kind: "package-reference"
 
 ## 目录
 
+- [为什么这是扩展而不是重复](#why-this-is-an-extension-not-a-duplicate)
 - [路由与引擎计划](#routing-and-the-engine-plan)
 - [原生引擎](#native-engines)
 - [模型体验](#model-experience)
 - [已知限制与延期工作](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
+
+-----
+
+<a id="why-this-is-an-extension-not-a-duplicate"></a>
+## 为什么这是扩展而不是重复
+
+没有任何 Harness 版本声明过 root 引擎 seam，因此 root 引擎选择是本插件自有的能力，而不是上游实现的一份副本。三件事实可以说明：
+
+- **引擎词汇是插件自有的。** `AgentEngineId`、引擎计划、持久化 `agent-engine/selected` 绑定，以及 `defaultEngine` 设置，在 Harness 中都不存在。
+- **官方跨引擎包开不了 root 会话。** `@deepseek-ai/dsh-subagent-codex` 与 `-claude-code` 是挂在 `ctx.subagents` 上的一次性 `SubagentProvider`（`NO_START_CAPABILITIES`、`inheritsParentContext: false`），其审批按无人值守直接作答：没有交互式审批、没有多回合会话、也没有 MCP 与 Harness 工具的桥接。而这些恰恰是 `runtime-codex` 与 `runtime-claude` 存在的理由。
+- **扩展点是那个私有 factory 槽。** 路由器原地替换 Harness `AgentRegistry` 私有 `FactorySlot` 的 `target`，这是「一个进程让 root 会话跑在 Harness 自带 loop 以外的引擎上、又不必另起一个 registry」的唯一做法。由于该槽是私有的，它的形状靠文本测试钉住，而不是靠类型。
+
+两条绊线测试让这件事保持诚实——一条随本包发布，一条留在仓库自己的 web e2e 车道；在任何「把它当重复删掉」的提议之前，都值得先读它们：
+
+| 绊线 | 它在什么情况下变红 |
+|---|---|
+| `harness-plugin/tests/upstream-seam-contracts.spec.ts`（随本包发布） | 路由器所替换的 `FactorySlot` / `target` / `setFactory` 文本，以及「上游仍然没有」那条用例：哪天 Harness 真的发布 root 引擎 seam，它会变红，从而把这个包从「永久扩展」变成「迁移候选」。 |
+| `apps/web/tests/freecodego-root-engines.e2e.ts`（仅存在于仓库；web e2e 车道不发布） | 真实启动 Host 上的四条路：`deepseek` 走官方 loop 打开；`codex` 与 `claude` 要么原生打开、要么以各自的运行时码拒绝；现场开启官方 Team bundle 不会破坏 root 引擎路径。 |
 
 -----
 

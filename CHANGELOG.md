@@ -18,6 +18,137 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.1.7-rc.2 — 2026-09-28
+
+### English
+
+The first release published for Harness `0.1.7-rc.2`, under the line's own
+version rather than a counter. Three surfaces are either new or repaired: the
+design pack, the companion character, and the speech card in the settings page.
+
+#### Added
+
+- **A design pack of its own.** A `Design` settings section (`designEnabled`,
+  off) with six independent capabilities under it (`designFeaturesEnabled`).
+  They differ in what they cost rather than in what they are, so they are armed
+  separately: work that renders, knowledge that is read, and two upstream packs
+  whose whole installation is prose.
+  - **HyperFrames** — 17 Skills loaded on selection, plus five read-only tools.
+    `freecodego_design_keyframes` and `freecodego_design_lint` answer without a
+    browser (the second checks structure and determinism without rendering),
+    `freecodego_design_preview` serves a composition on loopback together with
+    its timeline listing, `freecodego_design_snapshot` photographs one seeked
+    frame, and `freecodego_design_render` encodes an MP4 frame by frame —
+    deterministic rather than a screen recording, at roughly a second per
+    frame, driving a browser already on the machine.
+  - **UI/UX catalogue** — `freecodego_uiux_search` over 34 curated tables and
+    2,385 entries, with a calibrated confidence that refuses a low-confidence
+    question rather than answering it with a rule that merely looks relevant.
+  - **Craft** — eleven vendored rulebooks reached through
+    `freecodego_design_craft` (`list`, `get`, `resolve`), including upstream's
+    own composition rule for a design system that deliberately breaks one.
+  - **Impeccable** — `freecodego_design_detect`: 61 deterministic rules,
+    delegated whole to the engine when the machine already has one and answered
+    from a built-in subset when it does not, with every result naming who
+    answered, which rules ran and how many upstream has.
+  - **React Bits** — `freecodego_reactbits` (`search`, `get`, `apply`) reads
+    upstream on demand instead of bundling components, because the licence
+    permits using them and forbids redistributing them; `apply` writes only into
+    a directory the caller names with `confirm: true`, and lists the two
+    mechanical edits it makes.
+  - **Taste** — thirteen vendored design-direction Skills, published whole
+    rather than trimmed, and loaded only when one is selected.
+- **The companion character stopped being one expression.** It is drawn from the
+  session's state rather than told what to show, and two pools now rotate *what
+  is drawn* on the shared clock without moving that state: which pose illustrates
+  the busy states, and which eyes the character wears (1.5s while busy, 4.2s at
+  rest, never the same outline twice in a row). `freecodego_companion_face` lets
+  the model ask for `neutral`, `happy`, `delighted`, `sad`, `focused`, `sleepy`
+  or `surprised` for a few seconds; the tool writes nothing, so the request
+  travels through the Session's own event window and is visible in the
+  transcript. A tool result that came back a failure briefly puts the sad face
+  on by itself, reading both shapes a result uses — the core's `isError` flag
+  and the shell renderer's trailing `[exit code: N]`.
+- **The speech card, and one question it had to be able to ask.** The
+  recognizer's endpoint, model id and key are editable on the plugin's own
+  settings page, and one button posts half a second of silence through the
+  stored route to report what actually happened. Every configuration fact the
+  card could previously show is true on a machine that cannot reach the
+  endpoint at all — a process behind a proxy it does not know about is refused
+  while the same browser reaches the provider fine — which is why the answer is
+  now a code (`ok`, `unauthorized`, `forbidden`, `not-found`, `unreachable`,
+  `provider-error`) rather than a restatement of the configuration.
+- **Turning voice input on now elects this plugin's recognizer.** Registering a
+  provider used to leave the selection with the bundled local model, so the
+  switch read as "on" while the next dictation still asked to download one. The
+  adoption happens on the registration edge, so a choice the user made in the
+  picker is kept while this plugin stays registered, and withdrawing hands the
+  selection back to a recognizer that can serve it.
+
+#### Fixed
+
+- **The speech card no longer reports a status that never existed.** A route
+  with no key is refused before any request, so the probe's `unauthorized`
+  outcome arrives without an HTTP status — and the sentence built from it said
+  `HTTP undefined`. It now names the missing key and quotes the Host's own
+  reason.
+- **The card's save confirmation was Chinese on the English page.** Both
+  branches of the label were `已保存`; the English surface says `Saved`.
+
+### 中文
+
+第一个为 Harness `0.1.7-rc.2` 发布的版本，用这条线自己的版本号而不是计数器。
+三处新做或修好的面：设计包、伴侣角色，以及设置页里的语音卡片。
+
+#### 新增
+
+- **一个自己的设计包。** 一个 `Design` 设置区（`designEnabled`，默认关），下面挂
+  六个相互独立的能力（`designFeaturesEnabled`）。它们的差别不在「是什么」而在
+  「花什么」，所以分别装备：会渲染的工作、只被读的知识，以及两套「安装就是正文」的
+  上游包。
+  - **HyperFrames** —— 17 个 Skill 按需加载，加五个只读工具。`freecodego_design_keyframes`
+    与 `freecodego_design_lint` 不需要浏览器即可作答（后者不渲染就检查结构与确定性），
+    `freecodego_design_preview` 把 composition 伺服在回环地址上并给出时间轴清单，
+    `freecodego_design_snapshot` 在指定时刻抓一帧，`freecodego_design_render` 逐帧
+    编码 MP4 —— 它是确定性的而不是录屏，约每秒一帧，驱动的是本机已有的浏览器。
+  - **UI/UX 目录** —— `freecodego_uiux_search` 检索 34 张精选表、2,385 条建议，
+    置信度经过校准：低置信度会明确拒答，而不是硬凑一条看起来相关的规则。
+  - **Craft** —— 11 篇随包发布的规则手册，经 `freecodego_design_craft`（`list`、
+    `get`、`resolve`）查阅，包含上游自己那条「设计系统可以刻意破例」的组合规则。
+  - **Impeccable** —— `freecodego_design_detect`：61 条确定性规则；本机已有引擎时
+    全量委托给它，没有则用内置子集作答，且每次结果都写明是谁回答的、跑了哪些规则、
+    上游总数是多少。
+  - **React Bits** —— `freecodego_reactbits`（`search`、`get`、`apply`）按需读取上游
+    而不是把组件打包进来，因为许可证允许使用、禁止再分发；`apply` 只写进调用者点名
+    的目录（必须带 `confirm: true`），并逐条列出它做的两处机械修改。
+  - **Taste** —— 13 篇随包发布的设计方向 Skill，整篇发布而不裁剪，只有被选中时才加载。
+- **伴侣角色不再是一个表情。** 它是从会话状态画出来的，而不是被告知该显示什么；现在有
+  两条池子按共享时钟轮换**画出来的东西**、从不移动那个状态：忙碌状态用哪个姿态来表现，
+  以及角色戴哪个眼型（忙碌 1.5 秒、休息 4.2 秒，绝不让同一个眼型连着出现两次）。
+  `freecodego_companion_face` 让模型可以点 `neutral`、`happy`、`delighted`、`sad`、
+  `focused`、`sleepy`、`surprised` 中的一个并保持几秒；这个工具不写入任何东西，请求
+  沿会话自己的事件窗口传递，因此实时出现在转录里。工具结果以失败返回时，角色会自己
+  短暂换上难过的脸，并读会话使用的**两种**形状 —— 核心的 `isError` 标记，以及 shell
+  渲染器那行 `[exit code: N]`。
+- **语音卡片，以及它必须能问的那个问题。** 识别器的接口地址、模型 id 与密钥都可以在
+  插件自己的设置页里改，另有一个按钮会向已保存的路由发半秒静音、并按实际发生的事作答。
+  卡片原先能展示的每一项配置事实，在一台根本连不到该端点的机器上全都为真（一个进程
+  不知道的代理后面会被拒绝，而同一个浏览器访问同一提供方却完全正常），所以答案现在是
+  一个代码（`ok`、`unauthorized`、`forbidden`、`not-found`、`unreachable`、
+  `provider-error`），而不是把配置再念一遍。
+- **打开语音输入现在会选定本插件的识别器。** 以前注册一个 provider 会把这个选中项留给
+  随包发布的本地模型，于是开关显示为「开」，而下一次听写仍然要求下载模型。接管发生在
+  注册的边沿上，因此只要本插件仍在册，用户在识别服务里做过的选择就被保留；退出时选中项
+  会被交还给一个确实能服务的识别器。
+
+#### 修复
+
+- **语音卡片不再报一个从未存在过的状态。** 没有密钥的路由在任何请求之前就被拒，因此
+  探测的 `unauthorized` 结果不带 HTTP 状态 —— 而由它拼出的句子写成 `HTTP undefined`。
+  现在它会点名缺失的密钥，并引用 Host 自己给出的理由。
+- **卡片的「已保存」提示在英文页面上是中文。** 那个标签的两个分支都写成了 `已保存`；
+  英文面现在显示 `Saved`。
+
 ## 0.1.7-alpha.2.2 — 2026-09-24
 
 ### English

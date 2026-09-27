@@ -12,12 +12,9 @@
 }
 .action { padding: 0 9px; cursor: pointer; }
 .action:hover { color: var(--fcg-text-primary); background: var(--fcg-bg-hover); }
-.sessionDeleteOverlay { position: fixed; z-index: 60; line-height: 0; }
 .sessionDeleteError { position: fixed; z-index: 61; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: min(420px, calc(100vw - 24px)); padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--fcg-danger) 28%, transparent); border-radius: var(--fcg-radius-sm); background: color-mix(in srgb, var(--fcg-danger) 7%, var(--fcg-bg-layer-2)); color: var(--fcg-danger); font-size: var(--fcg-font-caption); line-height: 18px; box-shadow: var(--fcg-shadow-2); }
 .sessionDeleteError span { overflow-wrap: anywhere; }
 .sessionDeleteError button { border: 0; padding: 0 2px; background: transparent; color: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
-.sessionDelete { width: 16px; min-height: 16px; padding: 0; border: 0; border-radius: 4px; color: var(--fcg-danger); background: transparent; }
-.sessionDelete:hover { color: var(--fcg-danger); background: color-mix(in srgb, var(--fcg-danger) 10%, transparent); }
 .engine { padding-left: 9px; }
 .engineControl { position: relative; display: inline-flex; align-items: center; }
 .engineLabel { color: var(--fcg-text-tertiary); }

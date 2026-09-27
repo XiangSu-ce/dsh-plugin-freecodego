@@ -70,13 +70,14 @@ const CORE_SKILL_IDS = [
   'engineering-tdd',
 ] as const
 
-/** The default-on starter set: four model-applied disciplines plus six Skills a
+/** The default-on starter set: five model-applied disciplines plus six Skills a
  *  user reaches for on demand. `grilling` travels with `grill-me`, whose entire
  *  body is a call to that primitive. */
 const STARTER_SKILL_IDS = [
   'engineering-debug',
   'engineering-plan',
   'engineering-search-first',
+  'engineering-ui-design',
   'engineering-verification',
   'grill-me',
   'grilling',
@@ -350,7 +351,7 @@ describe('FreeCodeGo engineering assets', () => {
     //    verification turn calls the verifier *after* the reads and edits that fill
     //    it — so a classifier reading the truncated list drops exactly the turns it
     //    exists to classify. The nine tools below put the verifier outside it.
-    const names = ['read_file', 'grep', 'write', 'edit', 'bash', 'glob', 'inspect', 'spill_recall', VERIFICATION_TOOL_NAME]
+    const names = ['read_file', 'grep', 'write', 'edit', 'bash', 'glob', 'inspect', 'headroom_retrieve', VERIFICATION_TOOL_NAME]
     const observation = compileTurnObservation('session-1', 3, names.flatMap((name, index) => [
       { type: 'tool/call', data: { callId: `call-${index}`, name, arguments: '{}' } },
       toolResult(`call-${index}`),
@@ -359,7 +360,7 @@ describe('FreeCodeGo engineering assets', () => {
     expect(observation?.title).toContain('verification evidence')
     // The display list stays bounded at eight, which is why the classifier cannot
     // be reading it: the verifier is deliberately absent from what it shows.
-    expect(observation?.body).toContain('Tools: read_file, grep, write, edit, bash, glob, inspect, spill_recall.')
+    expect(observation?.body).toContain('Tools: read_file, grep, write, edit, bash, glob, inspect, headroom_retrieve.')
     expect(observation?.body).not.toContain(VERIFICATION_TOOL_NAME)
   })
 
@@ -416,7 +417,7 @@ describe('FreeCodeGo engineering assets', () => {
       registerFreeCodeGoSessionEventTypes()
       expect(KNOWN_SESSION_EVENT_TYPES.has('freecodego/engine-executor')).toBe(true)
       expect(KNOWN_SESSION_EVENT_TYPES.has('freecodego/native-session')).toBe(true)
-      expect(KNOWN_SESSION_EVENT_TYPES.has('advisor/council')).toBe(true)
+      expect(KNOWN_SESSION_EVENT_TYPES.has('freecodego/hook-result')).toBe(true)
     } finally {
       await ctx.fiber.dispose()
     }
@@ -472,7 +473,7 @@ describe('FreeCodeGo engineering assets', () => {
         .filter(id => policy.get(id)?.userInvocable !== true)).toEqual([])
       // `grilling` is the primitive `grill-me` calls, so it must stay callable.
       expect(policy.get('grilling')?.modelInvocable).toBe(true)
-      expect(['engineering-debug', 'engineering-plan', 'engineering-search-first', 'engineering-verification']
+      expect(['engineering-debug', 'engineering-plan', 'engineering-search-first', 'engineering-ui-design', 'engineering-verification']
         .filter(id => policy.get(id)?.modelInvocable !== true)).toEqual([])
     } finally {
       await ctx.fiber.dispose()

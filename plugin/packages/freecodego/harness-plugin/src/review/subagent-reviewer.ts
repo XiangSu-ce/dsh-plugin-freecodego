@@ -51,8 +51,8 @@ import { parseFileComments, renderReviewUser, type ReviewFileOutcome, type Revie
  * The read and search tools a review child may use.
  *
  * Named rather than "all read-only tools", because the child's job is to read
- * code: a review that can spend its round-trips on memory search or the advisor
- * is a review that may read less code than it was going to. Every name here is
+ * code: a review that can spend its round-trips on memory search is a review that
+ * may read less code than it was going to. Every name here is
  * a tool this plugin has seen; a name a composition does not provide is simply
  * absent from the child's tool set, and the intersection is what is restricted to.
  */

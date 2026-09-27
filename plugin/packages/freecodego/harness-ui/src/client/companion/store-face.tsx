@@ -16,13 +16,8 @@ import type { JobsSnapshot } from '@deepseek-ai/dsh-api-job-controller/client'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { CompanionActivity } from './activity.ts'
 import { CompanionSvg } from './render.tsx'
+import { COMPANION_BODY, COMPANION_EYES, COMPANION_HALO, COMPANION_SURFACE } from './palette.ts'
 import { useCompanionView, useObservedCompanionObservation } from './view.ts'
-
-/** Both seats' body colour: the surrounding text colour, through the token layer. */
-export const STORE_FACE_INK = 'var(--fcg-text-primary, currentColor)'
-
-/** The surface behind the character; only visible through the eye holes. */
-export const STORE_FACE_PAPER = 'var(--fcg-bg-base, #f9f9f9)'
 
 /** The four sources the fact readers need: three snapshots and the live event feed. */
 export interface StoreFaceSources {
@@ -54,8 +49,14 @@ export function StoreFace({ sources, size, className }: {
       frame={view.frame}
       size={size}
       state={view.state}
-      ink={STORE_FACE_INK}
-      paper={STORE_FACE_PAPER}
+      pose={view.pose}
+      expression={view.expression}
+      expressionSource={view.expressionSource}
+      face={view.face}
+      ink={COMPANION_BODY}
+      eye={COMPANION_EYES}
+      paper={COMPANION_SURFACE}
+      halo={COMPANION_HALO}
       className={className}
     />
   )

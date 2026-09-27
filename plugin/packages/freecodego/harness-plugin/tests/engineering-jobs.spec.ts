@@ -149,14 +149,16 @@ describe('engineering verification jobs', () => {
     jobs.close()
   })
 
-  it('chooses the stage list from the change size when the caller names none', async () => {
+  it('keeps tests in the automatically selected stage list when coverage is only inferred from paths', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'freecodego-engineering-jobs-tier-'))
     directories.push(directory)
     // The job store lives outside the workspace so its SQLite files cannot be
     // mistaken for workspace changes by the very measurement under test.
     const workspace = join(directory, 'workspace')
     await seedGitRepository(workspace)
-    // A two-file change that ships its own test: the case the light tier exists for.
+    // A source file plus a test-file edit is only partial evidence: the path list
+    // cannot establish that the test exercises the source, so the automatic plan
+    // must retain the build/type/test stages rather than enter the light tier.
     await writeFile(join(workspace, 'src.ts'), 'export const value = 2\n')
     await writeFile(join(workspace, 'src.spec.ts'), 'export const check = true\n')
     const jobs = new EngineeringVerificationJobs(join(directory, 'jobs'))
@@ -165,9 +167,9 @@ describe('engineering verification jobs', () => {
     const settled = await waitForJob(jobs, job.id)
     // The tier decides the stages, and the summary carries the scope so "no
     // failures" cannot be read as a claim about the checks that were omitted.
-    expect(settled.verification?.stages.map(stage => stage.id)).toEqual(['scope', 'types'])
-    expect(settled.summary).toContain('light verification')
-    expect(settled.summary).toContain('omitted build+lint+tests')
+    expect(settled.verification?.stages.map(stage => stage.id)).toEqual(['scope', 'build', 'types', 'tests'])
+    expect(settled.summary).toContain('standard verification')
+    expect(settled.summary).toContain('omitted lint')
     jobs.close()
   })
 

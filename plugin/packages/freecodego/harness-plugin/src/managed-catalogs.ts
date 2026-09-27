@@ -87,11 +87,12 @@ export function isOpenCodeFreeTierRefusal(status: number, detail: string): boole
 import { readJsonFile, writeJsonFile } from './community-storage.ts'
 import { PendingWriteDrain } from './abort-drain.ts'
 import { mediaSelection } from './media-utils.ts'
-import { asRecord as record, asString as text } from './untrusted-json.ts'
+import { asNumber, asRecord as record, asString as text } from './untrusted-json.ts'
 import {
   DIRECT_REASONING_EFFORTS, fetchLogfareHealth, fetchOpenCodeHealth,
   DIRECT_CATALOG_CACHE_TTL_MS,
-  GATEWAY_HEALTH_CACHE_TTL_MS, GATEWAY_HEALTH_UNSUPPORTED_TTL_MS, GATEWAY_REASONING_EFFORTS, GROQ_WHISPER_API_KEY_REF,
+  GATEWAY_HEALTH_CACHE_TTL_MS, GATEWAY_HEALTH_UNSUPPORTED_TTL_MS, GATEWAY_REASONING_EFFORTS,
+  GROQ_WHISPER_API_KEY_REF, GROQ_WHISPER_BASE_URL, GROQ_WHISPER_BASE_URL_REF, GROQ_WHISPER_MODEL, GROQ_WHISPER_MODEL_REF,
   indexGatewayHealth, isDirectReasoningEffort, isGatewayReasoningEffort, KILO_ANONYMOUS_API_KEY,
   KILO_CATALOG_CACHE_TTL_MS, KILO_CATALOG_MAX_AGE_MS, KILO_CATALOG_RETRY_MS, KILO_GATEWAY_BASE_URL, KILO_MODEL_PREFIX, KILO_MODELS_URL, kiloModelKey,
   LOGFARE_API_KEY_REF, LOGFARE_AUTO_MODEL, OPENCODE_AUTO_MODEL, openCodeAutoPreference,
@@ -100,17 +101,17 @@ import {
   LOGFARE_TRAINING_PREFERENCE_URL, LOGFARE_TRAINING_TIMEOUT_MS,
   logfareHealthDescription, logfareModelKey, logfareResponseError, logfareSelectionId, logfareSupportsChat,
   logfareUsesTrainingData, MANAGED_MODEL_CATALOG_CACHE_TTL_MS, MODEL_CATALOG_TIMEOUT_MS, MODEL_REASON_FREECODEGO_LOGIN,
-  MODEL_REASON_OPENCODE_UNAVAILABLE, OPENCODE_CATALOG_CACHE_TTL_MS, OPENCODE_CATALOG_MAX_AGE_MS, OPENCODE_CATALOG_RETRY_MS, OPENCODE_DIRECT_BASE_URL,
-  OPENCODE_HEALTH_CACHE_TTL_MS, openCodeHealthDescription, parseKiloDirectory, parseLogfareModel,
-  parseOpenCodeDirectory, readManagedCatalogCache, sameOpenCodeRoster,
-  NVIDIA_API_KEY_REF, NVIDIA_BASE_URL, NVIDIA_MODELS, NVIDIA_MODELS_URL,
-  SENSENOVA_API_KEY_REF, SENSENOVA_BASE_URL, SENSENOVA_HEALTH_DESCRIPTION, SENSENOVA_MODELS, SENSENOVA_MODELS_URL,
+  MODEL_REASON_OPENCODE_UNAVAILABLE, OPENCODE_AGENT_CORE_TOOLS, OPENCODE_CATALOG_CACHE_TTL_MS, OPENCODE_CATALOG_MAX_AGE_MS, OPENCODE_CATALOG_RETRY_MS, OPENCODE_DIRECT_BASE_URL,
+  OPENCODE_HEALTH_CACHE_TTL_MS, openCodeFreeTierHeaders, openCodeHealthDescription, parseKiloDirectory, parseLogfareModel,
+  parseOpenCodeDirectory, parseRouteCapacity, readManagedCatalogCache, sameOpenCodeRoster,
+  NVIDIA_API_KEY_REF, NVIDIA_BASE_URL, NVIDIA_DEFAULT_CONTEXT_WINDOW, NVIDIA_MODELS, NVIDIA_MODELS_URL,
+  SENSENOVA_API_KEY_REF, SENSENOVA_BASE_URL, SENSENOVA_DEFAULT_CONTEXT_WINDOW, SENSENOVA_HEALTH_DESCRIPTION, SENSENOVA_MODELS, SENSENOVA_MODELS_URL,
   VYCE_ANTHROPIC_BASE_URL, VYCE_API_KEY_REF, VYCE_BASE_URL, VYCE_CATALOG_CACHE_TTL_MS, VYCE_CATALOG_TIMEOUT_MS,
-  VYCE_MODEL_PREFIX, VYCE_MODELS, VYCE_MODELS_URL,
+  VYCE_DEFAULT_CONTEXT_WINDOW, VYCE_MODEL_PREFIX, VYCE_MODELS, VYCE_MODELS_URL,
   WORKBUDDY_INTL_TOKEN_REFRESH_URL,
   titleCaseModel,
 } from './managed-catalog-utils.ts'
-import type { GatewayReasoningEffort, KiloCatalogState, KiloFreeModel, LogfareHealth, LogfareModel, OpenCodeCatalogCache, OpenCodeFreeModel, VyceModel } from './managed-catalog-utils.ts'
+import type { GatewayReasoningEffort, KiloCatalogState, KiloFreeModel, LogfareHealth, LogfareModel, OpenCodeCatalogCache, OpenCodeFreeModel, RouteCapacity, VyceModel } from './managed-catalog-utils.ts'
 
 /**
  * The built-in OpenCode free roster used before any directory has answered.
@@ -162,16 +163,31 @@ function vyceModelDescription(model: VyceModel): string {
 interface DirectCatalogOutcome {
   readonly kind: 'answered' | 'rejected' | 'unreachable'
   readonly ids: readonly string[]
+  /**
+   * The capacity each answered row published, by id.
+   *
+   * It travels with `ids` because both come from the same read: a roster that
+   * arrived without its numbers would otherwise have to be re-fetched to learn
+   * them, and the numbers are the half that decides whether a route is usable for
+   * the conversation at hand. Empty for every outcome but an answer, so a caller
+   * cannot mistake a failed read for a route that publishes nothing.
+   */
+  readonly capacity: ReadonlyMap<string, RouteCapacity>
 }
 
 /** Cache, in-flight read, and retry spacing for one direct provider. */
 interface DirectCatalogState {
-  answer: { readonly expiresAt: number; readonly ids: readonly string[] } | undefined
+  answer: { readonly expiresAt: number; readonly ids: readonly string[]; readonly capacity: ReadonlyMap<string, RouteCapacity> } | undefined
   load: Promise<DirectCatalogOutcome> | undefined
   retryAfter: number
 }
 
 const emptyDirectCatalogState = (): DirectCatalogState => ({ answer: undefined, load: undefined, retryAfter: 0 })
+
+/** The capacity map of an outcome that never read a row — a refusal, an outage,
+ * or a directory that has not been asked yet. Distinct from an empty *answer*,
+ * which is a directory that really described nothing. */
+const emptyRouteCapacity = (): ReadonlyMap<string, RouteCapacity> => new Map<string, RouteCapacity>()
 
 /** Late-bound plugin dependencies. Getters (not values) keep the mutable
  * account/credential state and instance-level method overrides effective. */
@@ -203,6 +219,61 @@ export interface FreeCodeGoManagedCatalogsDeps {
   readonly readManagedCatalogCache: () => Promise<FreeCodeGoManagedCatalog | undefined>
   readonly refreshManagedCatalogInBackground: () => void
   readonly refreshGatewayHealthInBackground: () => void
+}
+
+/**
+ * One recognizer route: an OpenAI-compatible address, one model id, one key.
+ *
+ * A record rather than three return values because the three travel together
+ * everywhere they go — into the multipart request, into the settings projection,
+ * and into the question "can this plugin serve the microphone at all".
+ */
+export interface GroqWhisperRoute {
+  /** Endpoint root; `/audio/transcriptions` is appended to it. */
+  readonly baseUrl: string
+  /** Model id the request names. */
+  readonly model: string
+  /**
+   * Bearer token the request authenticates with, or `undefined` when none is
+   * configured — the one field that decides whether this plugin can transcribe at
+   * all, and the only one that never reaches the browser.
+   */
+  readonly apiKey: string | undefined
+  /** True when either half differs from the Groq default this plugin ships. */
+  readonly custom: boolean
+}
+
+/**
+ * The recognizer endpoint root a stored value means, or `undefined` when it is
+ * not one.
+ *
+ * `http` is admitted beside `https` because the one legitimate non-TLS case is a
+ * recognizer on the same machine or LAN, and refusing it would put a wildcard-free
+ * local address out of reach of the only control that can name it. Everything else
+ * is a malformed value: a bare host, a whitespace, a javascript: URL.
+ * @param value - the stored or submitted endpoint.
+ * @returns the normalized root without a trailing slash, or `undefined`.
+ */
+export function speechEndpoint(value: string | undefined): string | undefined {
+  const trimmed = value?.trim().replace(/\/+$/u, '')
+  if (trimmed === undefined || trimmed === '') return undefined
+  return /^https?:\/\/[^\s/]+(:\d+)?(\/[^\s]*)?$/u.test(trimmed) && !/\s/u.test(trimmed) ? trimmed : undefined
+}
+
+/**
+ * The model id a stored value means, or `undefined` when it is not one.
+ *
+ * Deliberately a syntax check and not a vocabulary: the endpoint is the user's
+ * choice, so only it can say which ids exist, and a name this plugin refused to
+ * send would be a model the user could see in a provider's directory and not use
+ * here.
+ * @param value - the stored or submitted model id.
+ * @returns the trimmed id, or `undefined`.
+ */
+export function speechModelId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (trimmed === undefined || trimmed === '') return undefined
+  return /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,119}$/u.test(trimmed) ? trimmed : undefined
 }
 
 /** Registers the provider adapters into the LLM registry and owns every
@@ -387,11 +458,19 @@ export class FreeCodeGoManagedCatalogs {
       normalizeReasoningEffort: effort => isDirectReasoningEffort(effort) ? effort : undefined,
       defaultReasoningEffort: 'off',
       reasoningEffortsForModel: () => DIRECT_REASONING_EFFORTS,
-      includeUsage: false,
+      // The offline fallback, used only for a route whose directory entry carries
+      // no window. It is the number this provider serves for every route but one,
+      // and it is deliberately the small side of the guess: an over-large window
+      // is what let a conversation grow past the real limit unnoticed.
+      defaultContextWindow: VYCE_DEFAULT_CONTEXT_WINDOW,
+      defaultMaxTokens: 256_000,
+      // No `includeUsage: false` here: VyceAI reports token counts only when the
+      // request asks for them, and a turn with no reported usage is recorded on
+      // the token panel as zeros, so the route looks unused while it is being
+      // paid for. The adapter drops the envelope by itself if this endpoint
+      // turns out to refuse it.
       omitDefaultMaxTokens: true,
       omitMaxTokens: false,
-      defaultContextWindow: 1_000_000,
-      defaultMaxTokens: 256_000,
     })
     this.registerKnownAdapter(['vyce'], adapter)
   }
@@ -433,8 +512,13 @@ export class FreeCodeGoManagedCatalogs {
           ? openCodeAutoPreference(await this.openCodeFreeModels())
           : (await this.openCodeFreeModels()).find(candidate => candidate.id.toLowerCase() === requested)
         if (found === undefined) throw new Error(`OpenCode model "${model}" is not available in the public directory`)
-        return { baseURL: OPENCODE_DIRECT_BASE_URL, apiKey: 'public', model: found.upstreamId, headers: { 'x-opencode-client': 'desktop', 'user-agent': 'opencode/freecodego' } }
+        return { baseURL: OPENCODE_DIRECT_BASE_URL, apiKey: 'public', model: found.upstreamId, headers: openCodeFreeTierHeaders() }
       },
+      // The free tier's third condition is a body condition, and it is the one
+      // this adapter can satisfy without touching a caller's own grant: a
+      // request that already carries tools gets the missing core names appended,
+      // a request that carries none is left alone. See `withRequiredAgentTools`.
+      requireAgentTools: OPENCODE_AGENT_CORE_TOOLS,
       reasoningWire: 'standard',
       normalizeReasoningEffort: effort => isDirectReasoningEffort(effort) ? effort : undefined,
       defaultReasoningEffort: 'off',
@@ -627,7 +711,10 @@ export class FreeCodeGoManagedCatalogs {
       normalizeReasoningEffort: () => undefined,
       defaultReasoningEffort: 'off',
       reasoningEffortsForModel: () => ['off'],
-      includeUsage: false,
+      // Same reasoning as VyceAI above: usage is only reported when asked for,
+      // and `grok-4.6` reached the token panel with 99 attempts and no tokens at
+      // all before this. The adapter retries without the envelope if the route
+      // refuses it.
       // The public route enforces a 256k context window but does not publish a
       // stable per-model output limit. Omit max_tokens and let the service
       // adapt the completion budget to the selected model and prompt.
@@ -695,7 +782,11 @@ export class FreeCodeGoManagedCatalogs {
         : undefined,
       omitDefaultMaxTokens: true,
       omitMaxTokens: true,
-      defaultContextWindow: 1_000_000,
+      // The NIM directory publishes no capacity field at all, so this route has no
+      // number of its own to read and the declaration is the product's: asserting
+      // 1,000,000 for a roster that runs from small open models to 0813-era
+      // flagships was the over-large direction.
+      defaultContextWindow: NVIDIA_DEFAULT_CONTEXT_WINDOW,
     })
     this.registerKnownAdapter(['nvidia'], adapter)
   }
@@ -719,7 +810,11 @@ export class FreeCodeGoManagedCatalogs {
         : undefined,
       omitDefaultMaxTokens: true,
       omitMaxTokens: true,
-      defaultContextWindow: 1_000_000,
+      // Only reached by a route that published no window of its own, so it is the
+      // smallest window this provider serves rather than the largest: a window
+      // that is too large is the direction that lets a conversation grow past what
+      // the route accepts.
+      defaultContextWindow: SENSENOVA_DEFAULT_CONTEXT_WINDOW,
     })
     this.registerKnownAdapter(['sensenova'], adapter)
   }
@@ -990,7 +1085,7 @@ export class FreeCodeGoManagedCatalogs {
 
   private async loadOpenCodeCatalog(): Promise<readonly OpenCodeFreeModel[]> {
     const response = await fetch(`${OPENCODE_DIRECT_BASE_URL}/models`, {
-      headers: { authorization: 'Bearer public', accept: 'application/json', 'x-opencode-client': 'desktop', 'user-agent': 'opencode/freecodego' },
+      headers: { ...openCodeFreeTierHeaders(), accept: 'application/json' },
       signal: AbortSignal.timeout(15_000),
     })
     if (!response.ok) throw new Error(`OpenCode model catalog failed with HTTP ${response.status}`)
@@ -1183,7 +1278,11 @@ export class FreeCodeGoManagedCatalogs {
       description: vyceModelDescription(model),
       ...(key === undefined ? { availability: 'unavailable' as const, unavailableReason: 'VYCE_API_KEY_REQUIRED' } : { availability: 'available' as const }),
       inputModalities: ['text', 'image'] as const,
-      defaultContextWindow: 1_000_000,
+      // The route's published window, which the adapter then prefers over its own
+      // configured fallback, and which is what compaction and the context gauge
+      // are sized against. It used to be a flat 1,000,000 for every VyceAI route.
+      contextWindow: model.contextWindow ?? VYCE_DEFAULT_CONTEXT_WINDOW,
+      defaultContextWindow: model.contextWindow ?? VYCE_DEFAULT_CONTEXT_WINDOW,
       defaultMaxTokens: 256_000,
     }))
   }
@@ -1265,7 +1364,17 @@ export class FreeCodeGoManagedCatalogs {
         const id = (text(row.id) ?? '').trim()
         if (id === '' || seen.has(id)) continue
         seen.add(id)
-        merged.push(known.get(id) ?? { id, name: titleCaseModel(id) })
+        // The provider publishes the route's own window (`context_window`), and
+        // it is the only authority on it: this directory serves 270,000 for
+        // `deepseek-v4.1` and 1,000,000 for `qwen3.8-flash`. Discarding the field
+        // (as this reader used to, keeping only the id) left the plugin guessing a
+        // window per provider, and an over-large guess is not cosmetic: compaction
+        // is sized against it, so the conversation grows past the provider's real
+        // limit and the route starts refusing with nothing local to warn anyone.
+        const published = asNumber(row.context_window)
+        const contextWindow = published !== undefined && Number.isInteger(published) && published > 0 ? published : undefined
+        const base = known.get(id) ?? { id, name: titleCaseModel(id) }
+        merged.push(contextWindow === undefined ? base : { ...base, contextWindow })
       }
       // A known row the directory omitted stays selectable: a directory that has
       // not caught up must not withdraw a model the user already relies on.
@@ -1283,6 +1392,77 @@ export class FreeCodeGoManagedCatalogs {
   async groqWhisperApiKey(): Promise<string | undefined> {
     const credential = await this.deps.credentials()?.resolve(GROQ_WHISPER_API_KEY_REF)
     const value = credential?.value.trim() || process.env.GROQ_WHISPER_API_KEY?.trim()
+    return value === undefined || value === '' ? undefined : value
+  }
+
+/**
+ * The recognizer route transcription uses right now: where, which model, and with
+ * what key.
+ *
+ * One reader for three values, because they are only meaningful together — the
+ * address without the model names nobody's model, and the model without the key
+ * authenticates nothing. Every caller (the Harness speech provider deciding whether
+ * it can serve at all, the transcription remote doing the work, and the settings
+ * card describing both) asks this one question rather than reassembling it from
+ * three lookups whose answers could disagree.
+ *
+ * The route is answered whether or not a key is configured, with `apiKey: undefined`
+ * in the second case, because the settings card has to show where transcription
+ * *would* go before the user has pasted anything: an absent route would leave the
+ * first field of that card describing nothing.
+ *
+ * A stored address or model that no longer parses falls back to the Groq default
+ * instead of failing: the value is user input kept across upgrades, and a route that
+ * answers with a clear provider error is more useful than a microphone that refuses
+ * to start. What it must never do is *silently* reinterpret the pair as something the
+ * user did not store — `custom` is what the settings surface reads to say which of
+ * the two it is showing.
+ * @returns the resolved route.
+ */
+  async groqWhisperRoute(): Promise<GroqWhisperRoute> {
+    const [apiKey, storedBase, storedModel] = await Promise.all([
+      this.groqWhisperApiKey(),
+      this.groqWhisperBaseUrl(),
+      this.groqWhisperModel(),
+    ])
+    const baseUrl = speechEndpoint(storedBase) ?? GROQ_WHISPER_BASE_URL
+    const model = speechModelId(storedModel) ?? GROQ_WHISPER_MODEL
+    return {
+      apiKey,
+      baseUrl,
+      model,
+      custom: baseUrl !== GROQ_WHISPER_BASE_URL || model !== GROQ_WHISPER_MODEL,
+    }
+  }
+
+/**
+ * The stored recognizer endpoint root, or `undefined` when none is stored.
+ * @returns the raw stored value, unvalidated.
+ */
+  async groqWhisperBaseUrl(): Promise<string | undefined> {
+    return this.storedText(GROQ_WHISPER_BASE_URL_REF)
+  }
+
+/**
+ * The stored recognizer model id, or `undefined` when none is stored.
+ * @returns the raw stored value, unvalidated.
+ */
+  async groqWhisperModel(): Promise<string | undefined> {
+    return this.storedText(GROQ_WHISPER_MODEL_REF)
+  }
+
+/**
+ * One vault slot's text, or `undefined` when it holds nothing.
+ *
+ * Empty and whitespace count as nothing, because the settings surface clears a
+ * field by writing an empty string: a stored `'   '` that still counted as a
+ * value would show a route the user believes they cleared.
+ * @param ref - the credential slot to read.
+ * @returns the trimmed value, or `undefined`.
+ */
+  private async storedText(ref: ReturnType<typeof credentialRef>): Promise<string | undefined> {
+    const credential = await this.deps.credentials()?.resolve(ref)
+    const value = credential?.value.trim()
     return value === undefined || value === '' ? undefined : value
   }
 
@@ -1478,12 +1658,30 @@ export class FreeCodeGoManagedCatalogs {
    */
   async listSenseNovaModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const key = await this.sensenovaApiKey()
-    const rows = (source: readonly { readonly id: string; readonly name: string }[], availability: 'available' | 'unavailable', reason?: string): LlmModelInfo[] => source.map(model => ({
-      provider, id: model.id, name: model.name, description: `SenseNova · ×0 · ${SENSENOVA_HEALTH_DESCRIPTION}`,
-      availability, inputModalities: ['text'] as const,
-      ...(reason === undefined ? {} : { unavailableReason: reason }),
-    }))
-    if (key === undefined) return rows(SENSENOVA_MODELS, 'unavailable', 'SENSENOVA_API_KEY_REQUIRED')
+    // The window is what compaction and the context gauge are sized against, and
+    // this provider publishes the real one per route (`context_length`: 262,144
+    // for three ids, 1,048,576 for the five text ones), so a row carries the
+    // published value whenever a directory answered with it and the static
+    // roster's own per-id number otherwise. The two agree today; the directory
+    // wins because a resized route is exactly the case the constant cannot follow.
+    const rows = (
+      source: readonly { readonly id: string; readonly name: string; readonly contextWindow?: number; readonly maxTokens?: number }[],
+      availability: 'available' | 'unavailable',
+      capacity: ReadonlyMap<string, RouteCapacity> = emptyRouteCapacity(),
+      reason?: string,
+    ): LlmModelInfo[] => source.map(model => {
+      const published = capacity.get(model.id)
+      const contextWindow = published?.contextWindow ?? model.contextWindow
+      const maxTokens = published?.maxTokens ?? model.maxTokens
+      return {
+        provider, id: model.id, name: model.name, description: `SenseNova · ×0 · ${SENSENOVA_HEALTH_DESCRIPTION}`,
+        availability, inputModalities: ['text'] as const,
+        ...(contextWindow === undefined ? {} : { contextWindow, defaultContextWindow: contextWindow }),
+        ...(maxTokens === undefined ? {} : { defaultMaxTokens: maxTokens }),
+        ...(reason === undefined ? {} : { unavailableReason: reason }),
+      }
+    })
+    if (key === undefined) return rows(SENSENOVA_MODELS, 'unavailable', emptyRouteCapacity(), 'SENSENOVA_API_KEY_REQUIRED')
     const outcome = await this.directCatalogOutcome(SENSENOVA_MODELS_URL, key, this.sensenovaCatalog)
     // The directory shares its host and bearer token with inference, so a 401 is
     // an answer about the credential itself, not an unreachable directory: those
@@ -1491,10 +1689,10 @@ export class FreeCodeGoManagedCatalogs {
     // authenticated account that may not list — and a directory that did not
     // answer at all still advertises the free tier, because a listing endpoint
     // being down does not make the routes unusable.
-    if (outcome.kind === 'rejected') return rows(SENSENOVA_MODELS, 'unavailable', 'SENSENOVA_API_KEY_REJECTED')
+    if (outcome.kind === 'rejected') return rows(SENSENOVA_MODELS, 'unavailable', emptyRouteCapacity(), 'SENSENOVA_API_KEY_REJECTED')
     const allowed = new Set(outcome.ids)
     const listed = SENSENOVA_MODELS.filter(model => allowed.has(model.id))
-    return rows(listed.length > 0 ? listed : SENSENOVA_MODELS, 'available')
+    return rows(listed.length > 0 ? listed : SENSENOVA_MODELS, 'available', outcome.capacity)
   }
 
   /** List NVIDIA NIM text models. The public NIM directory answers without a
@@ -1534,12 +1732,12 @@ export class FreeCodeGoManagedCatalogs {
     const answer = state.answer
     if (answer !== undefined) {
       if (Date.now() >= answer.expiresAt) this.loadDirectCatalogInBackground(url, key, state)
-      return { kind: 'answered', ids: answer.ids }
+      return { kind: 'answered', ids: answer.ids, capacity: answer.capacity }
     }
     if (state.load !== undefined) return state.load
     // One attempt per cadence after a failure: a directory that stays down must
     // not be re-fetched by every listing, and the static roster serves meanwhile.
-    if (Date.now() < state.retryAfter) return { kind: 'unreachable', ids: [] }
+    if (Date.now() < state.retryAfter) return { kind: 'unreachable', ids: [], capacity: emptyRouteCapacity() }
     return this.loadDirectCatalog(url, key, state)
   }
 
@@ -1552,18 +1750,29 @@ export class FreeCodeGoManagedCatalogs {
     const operation = (async (): Promise<DirectCatalogOutcome> => {
       try {
         const response = await fetch(url, { headers: { accept: 'application/json', authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8_000) })
-        if (response.status === 401) return { kind: 'rejected', ids: [] }
-        if (!response.ok) return { kind: 'unreachable', ids: [] }
+        if (response.status === 401) return { kind: 'rejected', ids: [], capacity: emptyRouteCapacity() }
+        if (!response.ok) return { kind: 'unreachable', ids: [], capacity: emptyRouteCapacity() }
         const payload = record(await response.json())
-        const ids = Array.isArray(payload.data)
-          ? payload.data.map((item) => { const id = record(item).id; return typeof id === 'string' ? id.trim() : '' }).filter(id => id !== '')
-          : []
-        state.answer = { expiresAt: Date.now() + DIRECT_CATALOG_CACHE_TTL_MS, ids }
+        // One pass over the rows, keeping the id and the capacity each row
+        // published. Reading the field here is the whole point: every direct route
+        // used to resolve at the adapter's flat 1,000,000 while SenseNova was
+        // serving 262,144 for three of these very ids.
+        const rows = Array.isArray(payload.data) ? payload.data.map(item => record(item)) : []
+        const ids: string[] = []
+        const capacity = new Map<string, RouteCapacity>()
+        for (const row of rows) {
+          const id = typeof row.id === 'string' ? row.id.trim() : ''
+          if (id === '' || capacity.has(id)) continue
+          ids.push(id)
+          const published = parseRouteCapacity(row)
+          if (published.contextWindow !== undefined || published.maxTokens !== undefined) capacity.set(id, published)
+        }
+        state.answer = { expiresAt: Date.now() + DIRECT_CATALOG_CACHE_TTL_MS, ids, capacity }
         state.retryAfter = 0
         this.deps.ctx.emit('llm/adapters-updated')
-        return { kind: 'answered', ids }
+        return { kind: 'answered', ids, capacity }
       } catch {
-        return { kind: 'unreachable', ids: [] }
+        return { kind: 'unreachable', ids: [], capacity: emptyRouteCapacity() }
       }
     })()
     // The attempt itself spaces the next one, so a refused or unreachable

@@ -87,6 +87,12 @@ export const SECRET_RULES: readonly SecretRule[] = [
   { id: 'gcp-api-key', source: '\\bAIza[0-9A-Za-z_-]{35}\\b', confidence: 'high' },
   { id: 'google-oauth-access', source: '\\bya29\\.[0-9A-Za-z_-]{20,}(?![0-9A-Za-z_-])', confidence: 'high' },
   { id: 'stripe-secret-key', source: '\\bsk_live_[0-9A-Za-z]{20,}\\b', confidence: 'high' },
+  // Groq's key is `gsk_` and then 52 characters. It is in this list because this
+  // plugin's built-in recognizer *is* Groq: the request that authenticates a
+  // transcription carries it in an Authorization header, and a gateway that echoed
+  // what it rejected would otherwise put a live key into the settings card's own
+  // connection test and into any transcript of that card.
+  { id: 'groq-api-key', source: '\\bgsk_[A-Za-z0-9]{40,}(?![A-Za-z0-9_-])', confidence: 'high' },
   { id: 'npm-token', source: '\\bnpm_[A-Za-z0-9]{36}\\b', confidence: 'high' },
   { id: 'pypi-token', source: '\\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])', confidence: 'high' },
   // Anthropic keys are `sk-ant-api<NN>-…` (e.g. `sk-ant-api03-`); the vendor and

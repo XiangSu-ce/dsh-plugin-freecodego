@@ -30,8 +30,20 @@
  * topic is what recall reads, and a truncated topic reads as a confident
  * statement that the user's notes stop mid-sentence.
  *
+ * Two scopes, and what the default protects
+ * ----------------------------------------
+ * A proposal may declare itself `session`-scoped, which routes it into the live
+ * session's directory instead of the durable one; the default is `project`, so a
+ * plan that says nothing about scope — including one built by hand, or by a build
+ * that predates the field — writes exactly where it always did. The safe
+ * direction is the durable one: a temporary record that is wrongly kept is a note
+ * the user can still delete, while a durable record that is wrongly reclaimed is
+ * gone at the end of the session with no trace of what it said.
+ *
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/memory/dream
  */
+
+import type { MemoryScope } from './manifest.ts'
 
 /** Default lease lifetime: long enough for a slow model, short enough to recover. */
 export const DEFAULT_LEASE_TTL_MS = 10 * 60_000
@@ -75,6 +87,19 @@ export interface DreamIo {
    */
   readonly rename: (from: string, to: string) => void
   readonly remove: (path: string) => void
+  /**
+   * Remove a directory and everything under it, tolerating an absent one.
+   *
+   * Required, and separate from {@link remove}, for the same reason `rename` is:
+   * the temporary scope's whole promise is that a session's layer is *gone* when
+   * the task is over, and a port that may omit the operation leaves the layer
+   * reachable by omission — a reclamation that reports success while the files
+   * remain is worse than one that fails, because nothing will look again. A plain
+   * file removal is not the same operation: on a real filesystem it refuses a
+   * directory, and a caller that papered over that by falling back would be
+   * deleting one file per call and calling it a tree.
+   */
+  readonly removeTree: (path: string) => void
 }
 
 /** The lock file name inside the memory directory. */
@@ -187,6 +212,14 @@ export interface TopicProposal {
   readonly markdown: string
   /** Observation ids this topic was derived from, for the evidence trail. */
   readonly sources: readonly string[]
+  /**
+   * How long this topic is kept. Absent means `project`.
+   *
+   * The pass may only *ask* for the temporary scope; whether there is a session to
+   * write it into is the pipeline's answer, and a `session` proposal with no live
+   * session is refused by the writer rather than promoted or guessed at.
+   */
+  readonly scope?: MemoryScope
 }
 
 /** What the consolidation pass proposes. */
@@ -265,26 +298,36 @@ function renderObservations(observations: readonly MemoryObservation[]): string 
 }
 
 /**
- * Commit a plan's topics atomically.
+ * Commit a plan's topics atomically, each into the directory its scope names.
  *
  * Write-temp-then-rename, per topic, so no reader ever observes a partial topic
  * under its real name. A `commit: false` plan (the `shadow` stage) returns
  * without writing anything, which is what makes shadow safe to run in
  * production.
- * @param input - the plan, the topics directory, and the injected file operations.
+ *
+ * A `session`-scoped topic with no `sessionDirectory` is *refused*, not written to
+ * the durable directory: promoting it would keep a record the pass said was
+ * temporary, which is a silent disagreement with the plan, and the alternative —
+ * dropping it quietly — is the silent drop the caller already counts. The refusal
+ * is visible in the written-slug list the pipeline diffs against the plan.
+ * @param input - the plan, the two topic directories, and the injected file operations.
  * @returns the slugs actually written.
  */
 export function commitTopics(input: {
   readonly plan: ConsolidationPlan
   readonly directory: string
+  /** Where `session`-scoped topics go; absent means there is no live session. */
+  readonly sessionDirectory?: string
   readonly io: DreamIo
 }): readonly string[] {
   if (!input.plan.commit) return []
   const written: string[] = []
   for (const topic of input.plan.topics) {
     if (!isSafeSlug(topic.slug)) continue
-    const target = `${input.directory}/${topic.slug}.md`
-    const temporary = `${target}.tmp`
+    const target = scopedDirectory(topic, input)
+    if (target === undefined) continue
+    const file = `${target}/${topic.slug}.md`
+    const temporary = `${file}.tmp`
     // The target is never written directly. It used to be — the temporary was
     // written and then removed while the real name was written in place, which is a
     // temp file that bought nothing and a topic a reader could catch half-written.
@@ -292,10 +335,25 @@ export function commitTopics(input: {
     // what was staged.
     const content = renderTopic(topic)
     input.io.write(temporary, content)
-    input.io.rename(temporary, target)
+    input.io.rename(temporary, file)
     written.push(topic.slug)
   }
   return written
+}
+
+/**
+ * Where one topic is written, or `undefined` when its scope has no home here.
+ *
+ * Both refusals this can express are the same kind of thing — the plan asked for
+ * something this caller cannot give it — so they are answered in one place rather
+ * than at two guards whose difference a reader has to reconstruct.
+ */
+function scopedDirectory(
+  topic: TopicProposal,
+  input: { readonly directory: string; readonly sessionDirectory?: string },
+): string | undefined {
+  if (topic.scope !== 'session') return input.directory
+  return input.sessionDirectory
 }
 
 /** A slug that cannot escape its directory. */

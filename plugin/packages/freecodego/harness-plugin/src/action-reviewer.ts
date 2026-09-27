@@ -287,7 +287,7 @@ function labelled(label: string, body: string): string | undefined {
   return body === '' ? undefined : `${label}:\n${body}`
 }
 
-/** Flatten one message's content blocks to text, as the advisor's delta renderer does. */
+/** Flatten one message's content blocks to text. */
 function messageText(message: unknown): string {
   const content = (message as { readonly content?: readonly unknown[] } | undefined)?.content
   if (!Array.isArray(content)) return ''

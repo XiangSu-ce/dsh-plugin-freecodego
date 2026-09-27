@@ -243,6 +243,18 @@ describe('FolderTrustStore', () => {
     expect((await store.read()).entries).toHaveLength(1)
   })
 
+  it('preserves distinct grants issued concurrently through the same store', async () => {
+    const store = new FolderTrustStore(file)
+    await Promise.all([
+      store.grant('/work/one'),
+      store.grant('/work/two'),
+    ])
+    expect((await store.read()).entries.map(entry => entry.root).sort()).toEqual([
+      canonicalTrustKey('/work/one'),
+      canonicalTrustKey('/work/two'),
+    ].sort())
+  })
+
   it('revokes, and revoking an unknown root is a no-op', async () => {
     const store = new FolderTrustStore(file)
     await store.grant('/work/repo')

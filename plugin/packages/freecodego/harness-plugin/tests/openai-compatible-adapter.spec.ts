@@ -107,7 +107,7 @@ describe('OpenAI-compatible route', () => {
     expect(attachments.readImageRequest).toHaveBeenCalledWith(attachment, { width: 1, height: 1, maxBytes: 10 * 1024 * 1024 }, undefined)
   })
 
-  it('omits optional OpenAI fields that Logfare does not document', async () => {
+  it('honours an endpoint that was opted out of the usage envelope', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
       'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: {"choices":[{"finish_reason":"stop","delta":{}}]}\n\ndata: [DONE]\n\n',
       { status: 200, headers: { 'content-type': 'text/event-stream' } },
@@ -115,7 +115,7 @@ describe('OpenAI-compatible route', () => {
     const adapter = new OpenAiCompatibleAdapter({
       providerName: 'Mystery Provider',
       listModels: async provider => [{ provider, id: 'claude-opus-4-6', name: 'Claude Opus 4.6' }],
-      resolveConnection: async () => ({ baseURL: 'https://logfare.ai/v1', apiKey: 'logfare-test-key', model: 'claude-opus-4-6' }),
+      resolveConnection: async () => ({ baseURL: 'https://example.invalid/v1', apiKey: 'test-key', model: 'claude-opus-4-6' }),
       reasoningWire: 'standard',
       reasoningEffortsForModel: () => ['off'],
       normalizeReasoningEffort: () => undefined,
@@ -222,6 +222,97 @@ describe('OpenAI-compatible route', () => {
     // line where a hint would be is worse than no hint at all.
     expect(failure.message).not.toContain('hint')
     expect(failure.message).toBe('Gated route provider request failed (HTTP 403): {"error":{"message":"this model is no longer available"}}')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks the provider for its usage, and passes what comes back to the caller', async () => {
+    // The envelope is the only thing that makes a provider report token counts.
+    // A turn whose provider reported none reaches the token ledger as an attempt
+    // with every bucket at zero, so a route can serve traffic all day and still
+    // read as unused; that is what the token panel showed for these routes.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: {"choices":[{"finish_reason":"stop","delta":{}}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7}}\n\ndata: [DONE]\n\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ))
+    const adapter = new OpenAiCompatibleAdapter({
+      providerName: 'Direct route',
+      listModels: async provider => [{ provider, id: 'deepseek-v4.1', name: 'DeepSeek V4.1' }],
+      resolveConnection: async () => ({ baseURL: 'https://example.invalid/v1', apiKey: 'test-key' }),
+    })
+    const chunks = []
+    for await (const chunk of adapter.stream({
+      provider: 'direct', model: 'deepseek-v4.1',
+      messages: [{ id: MessageId('m7'), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] }],
+    })) chunks.push(chunk)
+
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>
+    expect(request.stream_options).toEqual({ include_usage: true })
+    expect(chunks).toContainEqual({ type: 'usage', usage: { inputTokens: 11, outputTokens: 7 } })
+  })
+
+  it('retries once without the usage envelope when the endpoint refuses it', async () => {
+    // Some endpoints answer 400 to the extension, and that refusal arrives before
+    // any generation: the same request without the field keeps such a route
+    // working, so the envelope never has to be turned off by hand for a provider
+    // that simply has not been tried.
+    const bodies: string[] = []
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      bodies.push(String(init?.body))
+      if (bodies.length === 1) {
+        return new Response(
+          JSON.stringify({ error: { message: 'Unrecognized request argument supplied: stream_options' } }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: {"choices":[{"finish_reason":"stop","delta":{}}]}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      )
+    })
+    const adapter = new OpenAiCompatibleAdapter({
+      providerName: 'Strict route',
+      listModels: async provider => [{ provider, id: 'strict-model', name: 'Strict Model' }],
+      resolveConnection: async () => ({ baseURL: 'https://example.invalid/v1', apiKey: 'test-key' }),
+    })
+    const chunks = []
+    for await (const chunk of adapter.stream({
+      provider: 'strict', model: 'strict-model',
+      messages: [{ id: MessageId('m8'), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] }],
+    })) chunks.push(chunk)
+
+    expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'ok' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [first, second] = bodies.map(body => JSON.parse(body) as Record<string, unknown>)
+    expect(first?.stream_options).toEqual({ include_usage: true })
+    expect(second?.stream_options).toBeUndefined()
+    // Everything else travels unchanged: the retry is the same request.
+    expect(second?.model).toBe(first?.model)
+    expect(second?.messages).toEqual(first?.messages)
+  })
+
+  it('surfaces a 400 that does not name the usage envelope instead of resending it', async () => {
+    // A body-shape refusal is the only 400 worth a second attempt. Retrying any
+    // other 400 would send a request the upstream had already rejected on
+    // purpose — and, on a route that bills per request, would bill for it.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      JSON.stringify({ error: { message: 'messages: at least one message is required' } }),
+      { status: 400, headers: { 'content-type': 'application/json' } },
+    ))
+    const adapter = new OpenAiCompatibleAdapter({
+      providerName: 'Brittle route',
+      listModels: async provider => [{ provider, id: 'brittle-model', name: 'Brittle Model' }],
+      resolveConnection: async () => ({ baseURL: 'https://example.invalid/v1', apiKey: 'test-key' }),
+    })
+    const failure = await (async () => {
+      for await (const _chunk of adapter.stream({
+        provider: 'brittle', model: 'brittle-model',
+        messages: [{ id: MessageId('m9'), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] }],
+      })) { /* consume */ }
+      return new Error('the request was expected to fail')
+    })().catch((error: unknown) => error as Error)
+
+    expect(failure.message).toContain('HTTP 400')
+    expect(failure.message).toContain('at least one message is required')
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 

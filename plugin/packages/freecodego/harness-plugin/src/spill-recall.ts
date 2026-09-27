@@ -274,5 +274,5 @@ export function spillRetrievalGuidance(input: {
   readonly locator: string
 }): string {
   const size = `${input.bytes.toLocaleString('en-US')} bytes${input.lines === undefined ? '' : `, ${input.lines.toLocaleString('en-US')} lines`}`
-  return `read it back with spill_recall { locator: "${input.locator}" } for the first page (${size} parked); it answers with nextOffset and eof, so pass nextOffset back as offset until eof is true.`
+  return `read it back with headroom_retrieve { locator: "${input.locator}" } for the first page (${size} parked); it answers with nextOffset and eof, so pass nextOffset back as offset until eof is true.`
 }

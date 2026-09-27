@@ -25,9 +25,9 @@ import { stableJson } from './stable-json.ts'
 /**
  * The argument keys a path-taking tool can carry its target under.
  *
- * `locator` is here because `spill_recall` reads a file handed to it by a marker,
- * and a reader the credential shield does not look at is a reader that can be
- * used to read `.env` — the shape of the bypass this guard exists to close.
+ * `locator` is here because `headroom_retrieve` reads a file handed to it by a
+ * marker, and a reader the credential shield does not look at is a reader that can
+ * be used to read `.env` — the shape of the bypass this guard exists to close.
  */
 type ToolArgsView = { readonly path?: unknown; readonly file_path?: unknown; readonly locator?: unknown; readonly command?: unknown }
 
@@ -127,7 +127,7 @@ export const CREDENTIAL_PATH_TOOLS: ReadonlySet<string> = new Set([
   // A reader that takes its path from a marker rather than from the model. It is
   // listed here for the same reason `read` is: the shield has to cover every way
   // a path becomes a file read, not only the ones whose name says so.
-  'spill_recall',
+  'headroom_retrieve',
 ])
 
 /** Basename of the last path segment, accepting both separators. */
@@ -276,7 +276,7 @@ function credentialPathsOf(args: unknown): readonly string[] {
  *
  * The lexical guard is fast and total, but it answers about the *name* the
  * model wrote. A symlink is the one construction that separates the name from
- * the file: `docs/notes.md -> .ssh/id_rsa` passes every lexical rule and still
+ * the file: `documentation/notes.md -> .ssh/id_rsa` passes every lexical rule and still
  * returns the key. Resolving the path first closes that, and on Windows it also
  * catches an 8.3 short name that names a credential file.
  *
@@ -1043,6 +1043,24 @@ export function freeCodeGoToolGuard(deps: {
 }
 
 /**
+ * Every tool name whose call runs a shell command, read from its `command` field.
+ *
+ * One vocabulary, because a second copy of it is how a guard silently stops
+ * enforcing it: this test carried `'bash'` alone in the credential shield while
+ * the engine guard carried its own `'bash' | 'shell' | 'exec_command'`, so the
+ * same `cat .env` was refused under one name and screened by nothing at all
+ * under another. `local_shell` was the last name missing here while
+ * `headroom`'s `BASH_TOOL_NAMES` already treated it as a shell — the same
+ * asymmetry one name over, and `tool-guards.spec.ts` now fails if the two lists
+ * disagree again.
+ *
+ * Which way a disagreement is settled is not a judgment call: a broader
+ * vocabulary can only add a refusal, never remove one, so the guard is the side
+ * that moves.
+ */
+export const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set(['bash', 'shell', 'exec_command', 'local_shell', 'pwsh'])
+
+/**
  * The shell command one call would run, for a tool that runs shell commands.
  *
  * Exported because every guard with a shell tier reads it from here: the command
@@ -1065,7 +1083,7 @@ export function freeCodeGoToolGuard(deps: {
  * @returns the command to inspect, or `undefined` when the tool runs no shell command.
  */
 export function bashCommandOf(toolName: string, args: unknown): string | undefined {
-  if (toolName !== 'bash' && toolName !== 'shell' && toolName !== 'exec_command' && toolName !== 'pwsh') return undefined
+  if (!SHELL_TOOL_NAMES.has(toolName)) return undefined
   const view = decodeArgs(args)
   return typeof view?.command === 'string' ? view.command : undefined
 }

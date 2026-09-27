@@ -53,6 +53,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { CompanionActivitySource, CompanionSeatInjected } from './activity.ts'
 import { CompanionSvg } from './render.tsx'
 import { NS } from './companion-locale.ts'
+import { COMPANION_BODY, COMPANION_EYES, COMPANION_HALO, COMPANION_SURFACE } from './palette.ts'
 import { useRunningRowFace } from './running-row-presence.ts'
 import { useCompanionObservation, useCompanionView } from './view.ts'
 import type { StateId } from './engine/states.ts'
@@ -81,20 +82,6 @@ export const COMPANION_MAX_PX = 64
 
 /** Share of the column the character takes. One fourteenth reads as a mark. */
 const COMPANION_COLUMN_SHARE = 14
-
-/**
- * The body colour: the surrounding text colour, resolved through the token layer
- * rather than as the engine's own `encre`, which sinks into a dark surface.
- */
-const COMPANION_INK = 'var(--fcg-text-primary, currentColor)'
-
-/**
- * The surface behind the character. It is only ever visible through the eye
- * holes, where the body paints something behind itself (an orbit, a burst) — but
- * there a wrong value is a light patch in a dark theme, so it follows the surface
- * token and keeps a literal only as the fallback for a page without the tokens.
- */
-const COMPANION_PAPER = 'var(--fcg-bg-base, #f9f9f9)'
 
 /**
  * Edge of the character for a column of this width.
@@ -227,6 +214,7 @@ export function CompanionBar(props: CompanionBarProps) {
       role="status"
       data-fcg-companion="bar"
       data-fcg-companion-state={view.state}
+      data-fcg-companion-pose={view.pose}
       // No `hidden`/unmount at rest: the lane is always here, so the composer
       // stack above which it sits has one height for the whole session.
       data-fcg-companion-rest={String(companionAtRest(view.state))}
@@ -237,8 +225,14 @@ export function CompanionBar(props: CompanionBarProps) {
           frame={view.frame}
           size={companionSize(width)}
           state={view.state}
-          ink={COMPANION_INK}
-          paper={COMPANION_PAPER}
+          pose={view.pose}
+          expression={view.expression}
+          expressionSource={view.expressionSource}
+          face={view.face}
+          ink={COMPANION_BODY}
+          eye={COMPANION_EYES}
+          paper={COMPANION_SURFACE}
+          halo={COMPANION_HALO}
           className={css.mark}
         />
       )}

@@ -117,8 +117,9 @@ describe('native model menu badges', () => {
   it('collapses provider rows by default and expands them from their headings', async () => {
     // Collapsed is the default for every provider the user is not on, and the
     // toggle is what keeps that a list rather than a dead end — a heading that
-    // cannot expand leaves the models unreachable. No `current` is reported here,
-    // so no provider is the active one and all of them start shut.
+    // cannot expand leaves the models unreachable. The checked row is the active
+    // provider even with no `current` in the snapshot: it is what the user sees
+    // selected, so its section is the one that opens.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="active"><div id="active">Active</div><button type="button" role="menuitemradio" aria-checked="true" title="A"><span class="optionCopy">A</span></button></section><section role="group" aria-labelledby="other"><div id="other">Other</div><button type="button" role="menuitemradio" title="B"><span class="optionCopy">B</span></button></section></div>'
     const dispose = install({
       language: () => 'zh',
@@ -130,7 +131,8 @@ describe('native model menu badges', () => {
     await new Promise(resolve => requestAnimationFrame(resolve))
     const other = document.getElementById('other')!
     expect(other.getAttribute('aria-expanded')).toBe('false')
-    expect(document.getElementById('active')!.getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById('active')!.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById('active')!.closest('section')?.getAttribute('data-fcg-provider-collapsed')).toBe('false')
     expect(other.closest('section')?.getAttribute('data-fcg-provider-collapsed')).toBe('true')
     expect(other.querySelector('[data-fcg-provider-count]')).toBeNull()
     expect(other.querySelector('[data-fcg-provider-chevron]')?.getAttribute('data-open')).toBe('false')
@@ -139,6 +141,81 @@ describe('native model menu badges', () => {
     expect(other.getAttribute('aria-expanded')).toBe('true')
     expect(other.closest('section')?.getAttribute('data-fcg-provider-collapsed')).toBe('false')
     expect(other.querySelector('[data-fcg-provider-chevron]')?.getAttribute('data-open')).toBe('true')
+    dispose()
+  })
+
+  it('leaves every section open when neither the menu nor the snapshot names an active provider', async () => {
+    // Collapsing everything is the state that reads as "the model list is gone",
+    // so it must never be the *guess*: with no checked row and a snapshot whose
+    // current provider has no section in this menu (the stale-directory case),
+    // the decorator has nothing to name the active provider from and shows the
+    // models instead of an empty-looking list of headings.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-alpha"><div id="m-alpha">Alpha</div><button type="button" role="menuitemradio" title="A"><span class="optionCopy">A</span></button></section><section role="group" aria-labelledby="m-beta"><div id="m-beta">Beta</div><button type="button" role="menuitemradio" title="B"><span class="optionCopy">B</span></button></section></div>'
+    const dispose = install({
+      language: () => 'zh',
+      snapshot: () => ({
+        current: { provider: 'gone', model: 'x' },
+        groups: [
+          { id: 'alpha', name: 'Alpha', models: [{ id: 'a', name: 'A', description: 'Alpha · ×0' }] },
+          { id: 'beta', name: 'Beta', models: [{ id: 'b', name: 'B', description: 'Beta · ×0' }] },
+        ],
+      }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    for (const id of ['m-alpha', 'm-beta']) {
+      expect(document.getElementById(id)!.getAttribute('aria-expanded')).toBe('true')
+      expect(document.getElementById(id)!.closest('section')?.getAttribute('data-fcg-provider-collapsed')).toBe('false')
+    }
+    dispose()
+  })
+
+  it('opens the section the picker marked as checked even when the snapshot reports another provider', async () => {
+    // The decorator resolves its snapshot through the main view's Session, which
+    // is still the previous one for a beat after a new conversation is created.
+    // Trusting it over the menu collapsed the section actually in use.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-old"><div id="m-old">Old</div><button type="button" role="menuitemradio" title="A"><span class="optionCopy">A</span></button></section><section role="group" aria-labelledby="m-live"><div id="m-live">Live</div><button type="button" role="menuitemradio" aria-checked="true" title="B"><span class="optionCopy">B</span></button></section></div>'
+    const dispose = install({
+      language: () => 'zh',
+      snapshot: () => ({
+        current: { provider: 'old', model: 'a' },
+        groups: [
+          { id: 'old', name: 'Old', models: [{ id: 'a', name: 'A', description: 'Old · ×0' }] },
+          { id: 'live', name: 'Live', models: [{ id: 'b', name: 'B', description: 'Live · ×0' }] },
+        ],
+      }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    expect(document.getElementById('m-live')!.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById('m-live')!.closest('section')?.getAttribute('data-fcg-provider-collapsed')).toBe('false')
+    expect(document.getElementById('m-old')!.getAttribute('aria-expanded')).toBe('false')
+    dispose()
+  })
+
+  it('expands a provider from its heading when the directory cannot be read at all', async () => {
+    // A Session the resolver cannot name throws out of `snapshot()`. The menu must
+    // still be usable while that is true: the heading the decorator already
+    // stamped applies the decision from its own attributes, because a heading
+    // whose click does nothing leaves every model behind it unreachable.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-alpha"><div id="m-alpha">Alpha</div><button type="button" role="menuitemradio" title="A"><span class="optionCopy">A</span></button></section><section role="group" aria-labelledby="m-beta"><div id="m-beta">Beta</div><button type="button" role="menuitemradio" title="B"><span class="optionCopy">B</span></button></section></div>'
+    let readable = true
+    const dispose = install({
+      language: () => 'zh',
+      snapshot: () => {
+        if (!readable) throw new Error('ui-model-selection: session "gone" resolved no scope')
+        return { current: { provider: 'alpha', model: 'a' }, groups: [
+          { id: 'alpha', name: 'Alpha', models: [{ id: 'a', name: 'A', description: 'Alpha · ×0' }] },
+          { id: 'beta', name: 'Beta', models: [{ id: 'b', name: 'B', description: 'Beta · ×0' }] },
+        ] }
+      },
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    const beta = document.getElementById('m-beta')!
+    expect(beta.getAttribute('aria-expanded')).toBe('false')
+    readable = false
+    beta.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    expect(beta.getAttribute('aria-expanded')).toBe('true')
+    expect(beta.closest('section')?.getAttribute('data-fcg-provider-collapsed')).toBe('false')
     dispose()
   })
 
@@ -402,8 +479,9 @@ describe('native model menu badges', () => {
 
   it('binds one collapse toggle per resolvable provider', async () => {
     // A section resolves to its provider by the heading id suffix first, so two
-    // distinct providers each get their own toggle. Both groups start collapsed,
-    // and clicking a heading expands only that one.
+    // distinct providers each get their own toggle. Nothing here names an active
+    // provider — no checked row, no `current` — so both groups start open, and
+    // clicking a heading collapses only that one.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="gpt 5.6 terra"><span class="optionCopy">gpt 5.6 terra</span></button></section><section role="group" aria-labelledby="m-agnes"><div id="m-agnes">Agnes AI</div><button type="button" role="menuitemradio" title="agnes-model"><span class="optionCopy">agnes-model</span></button></section></div>'
     const dispose = install({
       language: () => 'zh',
@@ -417,13 +495,13 @@ describe('native model menu badges', () => {
     expect([...headings].map(heading => heading.dataset.fcgProviderToggle)).toEqual(['freecodego', 'agnes'])
     for (const heading of headings) {
       expect(heading.getAttribute('role')).toBe('button')
-      expect(heading.getAttribute('aria-expanded')).toBe('false')
+      expect(heading.getAttribute('aria-expanded')).toBe('true')
     }
     document.getElementById('m-freecodego')!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     await new Promise(resolve => requestAnimationFrame(resolve))
-    expect(document.getElementById('m-freecodego')!.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById('m-freecodego')!.getAttribute('aria-expanded')).toBe('false')
     // The other provider's group is untouched by that click.
-    expect(document.getElementById('m-agnes')!.getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById('m-agnes')!.getAttribute('aria-expanded')).toBe('true')
     dispose()
   })
 
@@ -502,10 +580,12 @@ describe('native model menu badges', () => {
     expect(sensenova.dataset.fcgProviderUnavailable).toBe('true')
     expect(sensenova.style.getPropertyValue('--fcg-provider-accent')).toContain('tertiary')
     expect(sensenova.dataset.fcgProviderToggle).toBe('sensenova')
-    expect(sensenova.getAttribute('aria-expanded')).toBe('false')
+    // No provider is named as active here, so the section arrives open; the
+    // toggle still closes it.
+    expect(sensenova.getAttribute('aria-expanded')).toBe('true')
     sensenova.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     await new Promise(resolve => requestAnimationFrame(resolve))
-    expect(sensenova.getAttribute('aria-expanded')).toBe('true')
+    expect(sensenova.getAttribute('aria-expanded')).toBe('false')
     dispose()
   })
 
@@ -542,8 +622,10 @@ describe('native model menu badges', () => {
   it('opens the provider that owns the selected model and keeps the rest shut', async () => {
     // Collapsing everything opened the picker on provider names alone and read as
     // "the model list is gone". The active provider is the one group that has to
-    // be open on arrival, because it is the one the user is looking at.
-    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" aria-checked="true" title="a"><span class="optionCopy">a</span></button></section><section role="group" aria-labelledby="m-agnes"><div id="m-agnes">Agnes AI</div><button type="button" role="menuitemradio" title="b"><span class="optionCopy">b</span></button></section></div>'
+    // be open on arrival, because it is the one the user is looking at — and the
+    // picker's own checked row is where that is read from, since the decorator's
+    // snapshot can lag a new Session by a beat.
+    document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="a"><span class="optionCopy">a</span></button></section><section role="group" aria-labelledby="m-agnes"><div id="m-agnes">Agnes AI</div><button type="button" role="menuitemradio" aria-checked="true" title="b"><span class="optionCopy">b</span></button></section></div>'
     const dispose = install({
       language: () => 'zh',
       snapshot: () => ({
@@ -597,16 +679,18 @@ describe('native model menu badges', () => {
     expect(menu.dataset.fcgWidthPinned).toBe('true')
 
     // A whole toggle cycle, because the pin has to hold through both directions:
-    // the default is collapsed, so the first click expands and the second one
-    // puts the headings-only view back.
+    // Nothing here names an active provider (no checked row, and the snapshot's
+    // provider has no section), so the section starts open; a whole toggle cycle
+    // has to hold the pin in both directions.
     const active = document.getElementById('active')!
-    active.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
-    await new Promise(resolve => requestAnimationFrame(resolve))
     expect(active.getAttribute('aria-expanded')).toBe('true')
-    expect(menu.style.width).toBe('264px')
     active.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
     await new Promise(resolve => requestAnimationFrame(resolve))
     expect(active.getAttribute('aria-expanded')).toBe('false')
+    expect(menu.style.width).toBe('264px')
+    active.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    expect(active.getAttribute('aria-expanded')).toBe('true')
     expect(menu.style.width).toBe('264px')
     dispose()
   })
@@ -705,6 +789,48 @@ describe('native model menu badges', () => {
     expect(rows[0]?.dataset.fcgModelHidden).toBe('true')
     expect(rows[1]?.dataset.fcgModelHidden).toBe('true')
     expect(rows[2]?.dataset.fcgModelHidden).toBeUndefined()
+    dispose()
+  })
+
+  it("treats the plugin's own Qoder and Kilo groups as built-ins, FREE lane included", async () => {
+    // Qoder and Kilo each register an adapter of their own in
+    // `harness-plugin/src/managed-catalogs.ts` and publish `· ×0 · free` rows,
+    // but neither id ever reached the built-in set — so both groups sank below
+    // every user-configured provider and had their native FREE lane stripped,
+    // which is exactly the treatment the set exists to reserve for providers we
+    // did not ship. Each is paired with a genuinely user-configured provider so
+    // both treatments are visible in one fixture.
+    document.body.innerHTML = '<div role="menu">'
+      + '<section role="group" aria-labelledby="m-qoder"><div id="m-qoder">Qoder</div><button type="button" role="menuitemradio" title="qmodel_38flash"><span class="optionCopy">Auto</span><span class="optionMeta"><span class="modelRate modelFree">FREE</span></span></button></section>'
+      + '<section role="group" aria-labelledby="m-kilo"><div id="m-kilo">Kilo</div><button type="button" role="menuitemradio" title="kilo/gpt-5.6"><span class="optionCopy">GPT-5.6</span><span class="optionMeta"><span class="modelRate modelFree">FREE</span></span></button></section>'
+      + '<section role="group" aria-labelledby="m-kira"><div id="m-kira">基拉</div><button type="button" role="menuitemradio" title="kira-model"><span class="optionCopy">kira-model</span><span class="optionMeta"><span class="modelRate modelFree">FREE</span></span></button></section>'
+      + '<section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="gateway-model"><span class="optionCopy">gateway-model</span></button></section>'
+      + '</div>'
+    const dispose = install({
+      language: () => 'zh',
+      snapshot: () => ({ groups: [
+        { id: 'freecodego', name: 'FreeCodeGo', models: [{ id: 'gateway-model', name: 'gateway-model', description: 'FreeCodeGo · ×0.04' }] },
+        { id: 'qoder', name: 'Qoder', models: [{ id: 'qmodel_38flash', name: 'Auto', description: 'Qoder · ×0 · free' }] },
+        { id: 'kilo', name: 'Kilo', models: [{ id: 'kilo/gpt-5.6', name: 'GPT-5.6', description: 'Kilo · ×0 · free · upstream: openai/gpt-5.6' }] },
+        { id: 'kira', name: '基拉', models: [{ id: 'kira-model', name: 'kira-model', description: '基拉 · ×0' }] },
+      ] }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    const sections = [...document.querySelectorAll<HTMLElement>('[role="menu"] > section[role="group"]')]
+    const effective = [...sections]
+      .sort((left, right) => Number(left.style.order) - Number(right.style.order))
+      .map(section => section.getAttribute('aria-labelledby'))
+    expect(effective[0]).toBe('m-freecodego')
+    expect(effective.indexOf('m-qoder')).toBeLessThan(effective.indexOf('m-kira'))
+    expect(effective.indexOf('m-kilo')).toBeLessThan(effective.indexOf('m-kira'))
+    const metaOf = (headingId: string): HTMLElement => document.querySelector<HTMLElement>(`#${headingId}`)!
+      .closest('section')!
+      .querySelector<HTMLElement>('[class*="optionMeta"]')!
+    // The plugin's own free routes keep the lane the native picker drew for them…
+    expect(metaOf('m-qoder').textContent).toContain('FREE')
+    expect(metaOf('m-kilo').textContent).toContain('FREE')
+    // …while the provider the user configured still loses it.
+    expect(metaOf('m-kira').childElementCount).toBe(0)
     dispose()
   })
 

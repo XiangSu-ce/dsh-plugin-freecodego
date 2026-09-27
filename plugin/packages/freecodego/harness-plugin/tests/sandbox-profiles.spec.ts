@@ -490,7 +490,7 @@ describe('denyRefusal', () => {
   })
 
   it('covers a reader that names its file a locator', () => {
-    // `spill_recall` takes the path from a marker and spells it `locator`. A deny
+    // `headroom_retrieve` takes a path from a marker and spells it `locator`. A deny
     // list that only understood `path` and `file_path` would have refused `read`
     // of a denied file and allowed this, which is the whole file by another name.
     const refusal = denyRefusal({ deny: ['**/.env'], args: { locator: '/work/.env' }, platform: 'linux' })

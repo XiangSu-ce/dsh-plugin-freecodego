@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   CONTEXT_BAND_AT,
+  CONTEXT_BUFFER_BOUNDS,
+  CONTEXT_BUFFER_TOKENS,
   ContextBudgetStore,
+  REFERENCE_WINDOW_TOKENS,
   classifyContextPressure,
   contextBudgetFragment,
   contextBudgetReport,
+  contextBufferForWindow,
   describeContextBudget,
+  scaleThresholdToWindow,
 } from '../src/context-budget.ts'
 
 describe('context pressure bands', () => {
@@ -78,6 +83,92 @@ describe('context pressure bands', () => {
     expect(line).toContain('22,000 remaining')
     expect(line).toContain('tight')
     expect(describeContextBudget(contextBudgetReport({ usedTokens: 5, measured: true }))).toContain('no remaining figure is available')
+  })
+})
+
+describe('a fixed threshold scales to the window in use', () => {
+  const bounds = { min: 256, max: 1_000_000 }
+
+  it('returns the figure unchanged at the reference window and for an unknown one', () => {
+    expect(scaleThresholdToWindow(1_200, REFERENCE_WINDOW_TOKENS, bounds)).toBe(1_200)
+    // No window is the case the fixed number was always for, so the behaviour
+    // before this existed is what remains rather than a guessed denominator.
+    expect(scaleThresholdToWindow(1_200, undefined, bounds)).toBe(1_200)
+    expect(scaleThresholdToWindow(1_200, 0, bounds)).toBe(1_200)
+  })
+
+  it('holds the share of the window constant across models', () => {
+    expect(scaleThresholdToWindow(1_200, 8_000, bounds)).toBe(256)
+    expect(scaleThresholdToWindow(1_200, 32_000, bounds)).toBe(300)
+    expect(scaleThresholdToWindow(1_200, 1_000_000, bounds)).toBe(9_375)
+  })
+
+  it('clamps into the bounds the caller owns', () => {
+    // A threshold below the smallest payload worth a rewrite, or above the largest
+    // useful one, is a policy decision the caller made — this function only knows
+    // how to scale.
+    expect(scaleThresholdToWindow(2_000, 32_000, { min: 500, max: 100_000 })).toBe(500)
+    expect(scaleThresholdToWindow(2_000, 10_000_000, { min: 500, max: 100_000 })).toBe(100_000)
+  })
+})
+
+describe('the fixed slack held back for what no compressor can shrink', () => {
+  it('scales with the window and clamps into the buffer bounds', () => {
+    expect(contextBufferForWindow(REFERENCE_WINDOW_TOKENS)).toBe(CONTEXT_BUFFER_TOKENS)
+    // A 32k window holds a quarter of it back — 5,000 — because the share of the
+    // window is what has to stay constant, not the token count.
+    expect(contextBufferForWindow(32_000)).toBe(5_000)
+    // The floor: below it the slack is smaller than the window's own granularity.
+    expect(contextBufferForWindow(8_000)).toBe(CONTEXT_BUFFER_BOUNDS.min)
+    // The ceiling: past it the buffer would hold back more than a session can keep.
+    expect(contextBufferForWindow(1_000_000)).toBe(CONTEXT_BUFFER_BOUNDS.max)
+    // An unnoticed window still answers the reference figure; the caller is what
+    // decides not to hold anything back without a denominator.
+    expect(contextBufferForWindow(undefined)).toBe(CONTEXT_BUFFER_TOKENS)
+  })
+
+  it('is charged against the same room as the reply reserve, and moves the band', () => {
+    // 80k of 100k with no reserve is "critical"; holding 20k of slack in addition
+    // to the 5k reply makes it "over" — the window never had the room the plain
+    // fraction claimed, because the tool schemas in it cannot be compacted away.
+    expect(contextBudgetReport({ usedTokens: 80_000, contextWindow: 100_000, measured: true }).band).toBe('critical')
+    const withBuffer = contextBudgetReport({ usedTokens: 80_000, contextWindow: 100_000, measured: true, responseReserve: 5_000, buffer: 20_000 })
+    expect(withBuffer.band).toBe('over')
+    // The 20k of room that is left is all either claim may take, and the piece it
+    // gives up is the buffer: 5k reserved for the reply, 15k of the 20k held back.
+    expect(withBuffer.responseReserve).toBe(5_000)
+    expect(withBuffer.buffer).toBe(15_000)
+    expect(withBuffer.remainingTokens).toBe(0)
+  })
+
+  it('gives the buffer way first when there is not room for both claims', () => {
+    // 10k of room cannot hold a 20k buffer and an 8k reserve. The reply reserve is
+    // the part the next turn needs, so it is preserved and the slack shrinks to
+    // what is left rather than the shortfall counting both.
+    const report = contextBudgetReport({ usedTokens: 90_000, contextWindow: 100_000, measured: true, responseReserve: 8_000, buffer: 20_000 })
+    expect(report.responseReserve).toBe(8_000)
+    expect(report.buffer).toBe(2_000)
+    expect(report.remainingTokens).toBe(0)
+    // Over the window: neither claim can be held, and the shortfall stays the
+    // overrun rather than the overrun plus figures that were never reserved.
+    const past = contextBudgetReport({ usedTokens: 150_000, contextWindow: 100_000, measured: true, responseReserve: 8_000, buffer: 20_000 })
+    expect(past.responseReserve).toBe(0)
+    expect(past.buffer).toBe(0)
+    expect(past.remainingTokens).toBe(-50_000)
+  })
+
+  it('names the two held-back figures separately, because they are spent differently', () => {
+    const text = contextBudgetFragment(contextBudgetReport({ usedTokens: 70_000, contextWindow: 100_000, measured: true, responseReserve: 5_000, buffer: 10_000 }))
+    expect(text).toContain('reserving 5,000 for the reply')
+    expect(text).toContain('holding 10,000 as fixed headroom for tool schemas and instructions')
+    expect(text).toContain('15,000 left')
+    expect(describeContextBudget(contextBudgetReport({ usedTokens: 70_000, contextWindow: 100_000, measured: true, responseReserve: 5_000, buffer: 10_000 })))
+      .toContain('a 5,000-token reply reserve and 10,000 of fixed headroom')
+    // With no buffer — every caller that passes none — the text is the one from
+    // before the figure existed, byte for byte.
+    const plain = contextBudgetFragment(contextBudgetReport({ usedTokens: 70_000, contextWindow: 100_000, measured: true, responseReserve: 5_000 }))
+    expect(plain).toContain('left after reserving 5,000 for the reply.')
+    expect(plain).not.toContain('headroom')
   })
 })
 

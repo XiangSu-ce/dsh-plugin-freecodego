@@ -184,6 +184,60 @@ describe('Trae model directory', () => {
     })
     expect(traeModelRow({ id: 'solo-auto', displayName: 'Auto', selectable: true }, 'sg').realm).toBe('sg')
   })
+
+  it('reads the window each configuration publishes instead of one number for the table', () => {
+    // Shaped like the measured table: the window lives in `context_window_tokens`,
+    // an object keyed by client build channel, and it is not one size — the rows
+    // below are 200,000 / 53,192 / 120,192 out of a spread that reaches 1,000,000,
+    // where the connector used to declare a flat 128,000 for all of them. That
+    // direction matters both ways: 128,000 is short changed on the 200,000 rows and
+    // over-promised on the 53,192 one.
+    const models = parseTraeModels({
+      config_info_list: [
+        { config_name: 'doubao', context_window_tokens: { dev: 200_000 }, display_config: { display_name: 'Doubao', model_capability: 'reasoning_model' } },
+        { config_name: 'solo-small', context_window_tokens: { dev: 53_192, max: 53_192 }, display_config: { display_name: 'Small', model_capability: 'reasoning_model' } },
+        { config_name: 'solo-encoded', context_window_tokens: { dev: 120_192 }, display_config: { display_name: 'Encoded', model_capability: 'reasoning_model' } },
+      ],
+    })
+    expect(models.map(model => [model.id, model.contextWindow])).toEqual([
+      ['doubao', 200_000],
+      ['solo-encoded', 120_192],
+      ['solo-small', 53_192],
+    ])
+  })
+
+  it('takes the smaller channel when a row names more than one, and nothing for a row that names none', () => {
+    const models = parseTraeModels({
+      config_info_list: [
+        // Both channels were equal in every measured row, so the choice is free
+        // there — and where it would not be, the smaller one is the safe read:
+        // compaction is sized against this number, so too large lets a prompt grow
+        // past what the configuration accepts.
+        { config_name: 'both', context_window_tokens: { dev: 200_000, max: 300_000 }, display_config: { display_name: 'Both', model_capability: 'reasoning_model' } },
+        // Four configurations on the measured account published no window at all.
+        { config_name: 'silent', display_config: { display_name: 'Silent', model_capability: 'reasoning_model' } },
+        // A directory is remote input: a string, a zero and a negative are all
+        // "publishes nothing", never a window the harness would compact against.
+        { config_name: 'stringy', context_window_tokens: { dev: '200000' }, display_config: { display_name: 'Stringy', model_capability: 'reasoning_model' } },
+        { config_name: 'zeroish', context_window_tokens: { dev: 0, max: -1 }, display_config: { display_name: 'Zeroish', model_capability: 'reasoning_model' } },
+        { config_name: 'nonsense', context_window_tokens: 'nope', display_config: { display_name: 'Nonsense', model_capability: 'reasoning_model' } },
+      ],
+    })
+    const windowOf = (id: string): number | undefined => models.find(model => model.id === id)?.contextWindow
+    expect(windowOf('both')).toBe(200_000)
+    expect(windowOf('silent')).toBeUndefined()
+    expect(windowOf('stringy')).toBeUndefined()
+    expect(windowOf('zeroish')).toBeUndefined()
+    expect(windowOf('nonsense')).toBeUndefined()
+  })
+
+  it('carries a published window through the row the picker renders, and the fallback only when there is none', () => {
+    // The card and the adapter read the same row, so a configuration serving
+    // 53,192 must not be advertised at the connector's fallback just because the
+    // adapter happens to be the only reader that used to look.
+    expect(traeModelRow({ id: 'solo-small', displayName: 'Small', selectable: true, contextWindow: 53_192 }).contextWindow).toBe(53_192)
+    expect(traeModelRow({ id: 'solo-silent', displayName: 'Silent', selectable: true }).contextWindow).toBe(128_000)
+  })
 })
 
 describe('Trae authorization URL', () => {

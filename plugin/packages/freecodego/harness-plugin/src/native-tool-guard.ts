@@ -267,7 +267,7 @@ export async function nativeToolDenial(call: NativeToolCall, deps: NativeToolGua
     const denial = credentialReadDenial(call.name, call.arguments)
     if (denial !== undefined) return denial
     // The lexical tier answers about the name the engine wrote; only a
-    // resolution can see that `docs/notes.md` is a link to `.ssh/id_rsa`.
+    // resolution can see that `documentation/notes.md` is a link to `.ssh/id_rsa`.
     // Fail-open: an unresolvable path stays with the lexical tier's answer.
     const resolved = await credentialRealpathDenial(call.name, call.arguments).catch(() => undefined)
     if (resolved !== undefined) return resolved

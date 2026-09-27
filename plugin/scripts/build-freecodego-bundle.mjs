@@ -36,6 +36,54 @@ const ownPackages = {
 }
 
 /**
+ * Upstream Harness packages this bundle ships, by package directory.
+ *
+ * The Harness's cross-engine subagent providers (`ctx.subagents.registerProvider`
+ * under the names `codex` and `claude-code`) are the official way to put a Codex
+ * or Claude child behind `spawn_teammate`, and no upstream bundle mounts either
+ * — the base composition mounts only `subagent-spawn-in-process` and
+ * `-fork-in-process`, so an unmodified install can reach no engine but its own.
+ *
+ * `tool-session-query` is the same shape of gap for session history: the base
+ * mounts `session-query-sqlite` and `session-projection`, so the services exist,
+ * but no bundle mounts the package that turns them into model-facing tools and it
+ * is absent from the `dsh` install contract too — so an unmodified install can
+ * search no prior session at all. It ships here rather than as a row naming the
+ * official package because it has to work with nothing installed.
+ *
+ * Shipping these artifacts and mounting their rows is what closes each gap
+ * without this plugin owning a second implementation of anything.
+ *
+ * They are artifacts rather than aliases because their rows name *this* bundle's
+ * subpath (`freecodego/subagent-codex`), which is a real module the Loader
+ * imports on its own; an alias only rewrites an import inside another build.
+ */
+const upstreamArtifacts = {
+  '@deepseek-ai/dsh-subagent-codex': 'packages/subagent/subagent-codex',
+  '@deepseek-ai/dsh-subagent-claude-code': 'packages/subagent/subagent-claude-code',
+  '@deepseek-ai/dsh-tool-session-query': 'packages/session-query/tool-session-query',
+}
+
+/**
+ * Harness packages these artifacts' sources import that the published install
+ * does not carry, by package directory.
+ *
+ * These are workspace packages used across the Harness, but they are not in the
+ * package set a `dsh` install resolves from — `dsh-timeout`, `dsh-sdk-protocol`,
+ * and `dsh-subprocess` are absent while `dsh-subprocess-local`, the provider of
+ * the same `subprocess` service, is present. Left external they would be bare
+ * specifiers nothing links, and the row would fail to import on every real
+ * install; `verifyExternalsResolvable` below would also fail this build, because
+ * a bare `@deepseek-ai/*` import has to be declared as a dependency or a peer.
+ * Inlining them is what makes these artifacts self-contained.
+ */
+const inlinedHarnessDeps = {
+  '@deepseek-ai/dsh-timeout': 'packages/util/timeout',
+  '@deepseek-ai/dsh-sdk-protocol': 'packages/sdk/protocol',
+  '@deepseek-ai/dsh-subprocess': 'packages/subprocess/subprocess',
+}
+
+/**
  * Resolve a workspace package's declared entry to the file on disk.
  * @param directory - repository-relative package directory.
  * @param subpath - export key to resolve; `.` is the package entry.
@@ -76,6 +124,48 @@ function runEsbuild(args) {
 function aliasArgs() {
   return Object.entries(ownPackages).flatMap(([name, directory]) => [
     `--alias:${name}=${builtEntry(directory)}`,
+  ])
+}
+
+/**
+ * Aliases that inline one of the Harness's own packages into an artifact.
+ *
+ * Applied to the provider artifacts only. A global alias would put a second copy
+ * of `dsh-subprocess`'s service definition into `bootstrap.js`, where the
+ * published `dsh-subprocess-local` already supplies that service under the same
+ * name.
+ * @returns The `--alias:` arguments for {@link inlinedHarnessDeps}.
+ */
+function inlinedDependencyArgs() {
+  return Object.entries(inlinedHarnessDeps).flatMap(([name, directory]) => [
+    `--alias:${name}=${builtEntry(directory)}`,
+  ])
+}
+
+/**
+ * Emit one upstream package as its own artifact.
+ *
+ * Built from the package's own built entry rather than from a copy: the row in
+ * `cordis.patch.yml` names this bundle's subpath, so the module the Loader
+ * imports is upstream's, inlined here and updated with it.
+ * @param directory - repository-relative package directory of the upstream package.
+ * @param name - output file name inside `dist/`.
+ */
+function buildUpstreamArtifact(directory, name) {
+  runEsbuild([
+    builtEntry(directory),
+    '--bundle', '--platform=node', '--format=esm', '--target=es2024',
+    '--outfile=' + join(output, name),
+    '--external:@deepseek-ai/*',
+    '--external:typescript',
+    // The Codex provider resolves its `app-server` binary through the package
+    // manifest (`createRequire(...).resolve('@openai/codex/package.json')`), at
+    // module scope, so the package has to stay a real install and cannot be
+    // inlined. The Claude provider's SDK is already a dependency of this bundle,
+    // and stays external for the same reason it does in the Host build.
+    '--external:@openai/codex',
+    '--external:@anthropic-ai/claude-agent-sdk',
+    ...inlinedDependencyArgs(),
   ])
 }
 
@@ -282,14 +372,30 @@ buildHost()
 // Before spending time on the rest: the Host bundle is what the loader's shim
 // imports from, and a missing export only shows up when the plugin loads.
 verifyHostExports()
-buildPlugin(builtEntry('packages/experimental/agent-team'), 'agent-team.js')
-buildPlugin(builtEntry('packages/experimental/tool-agent-team'), 'tool-agent-team.js')
-// Harness capabilities this composition mounts and no upstream bundle does: the
-// reminder scheduler, and the Auto preset's LLM authorization gate. Mounting the
-// Harness's own is why the plugin no longer ships a scheduler beside the first or
-// an approval gate beside the second.
-buildPlugin(builtEntry('packages/schedule/schedule'), 'schedule.js')
+// No `agent-team.js`, `tool-agent-team.js`, or `schedule.js`: all three were
+// upstream's own modules compiled into this payload as fallbacks for
+// compositions that had not selected the bundle that mounts them, and all three
+// are gone (see the patch file's note where their rows used to be). The official
+// `@deepseek-ai/dsh-experimental-agent-team-profile` mounts the team pair by name
+// and the Web composition declares the scheduler rows, so a copy here only ever
+// raced them.
+//
+// The Auto preset's LLM authorization gate still ships: the official
+// `@deepseek-ai/dsh-experimental-auto-review` bundle exists, but no profile this
+// plugin ships selects it, so this row is the capability itself rather than a
+// copy of a mounted one.
 buildPlugin(builtEntry('packages/experimental/auto-review'), 'auto-review.js')
+// The Harness's cross-engine subagent providers, which no upstream bundle mounts.
+// Mounting them is what lets the official team's `spawn_teammate` create a Codex
+// or Claude teammate: the provider registers under `codex`/`claude-code` on
+// `ctx.subagents`, and the team tool selects a provider by name.
+buildUpstreamArtifact(upstreamArtifacts['@deepseek-ai/dsh-subagent-codex'], 'subagent-codex.js')
+buildUpstreamArtifact(upstreamArtifacts['@deepseek-ai/dsh-subagent-claude-code'], 'subagent-claude-code.js')
+// The session-history tools. Its own package imports `@deepseek-ai/dsh-timeout`,
+// which the published install does not carry, so the artifact inlines it with
+// {@link inlinedHarnessDeps} the same way the two providers above do; the rest of
+// its imports are services the base composition already mounts.
+buildUpstreamArtifact(upstreamArtifacts['@deepseek-ai/dsh-tool-session-query'], 'tool-session-query.js')
 // Codex still runs its app-server protocol in a spawned worker, so it is built
 // here. Claude does not: its SDK session runs in the Host process,
 // `runtime-claude/src/worker.ts` is deleted, and its manifest exports no

@@ -29,7 +29,7 @@ interface InstalledPayload {
 }
 
 interface CommunityApi {
-  readonly communityCatalog: () => Promise<RemoteResult<{ readonly updated?: string; readonly plugins: readonly { readonly name: string; readonly owner: string; readonly url: string; readonly category: string | readonly string[]; readonly iconUrl?: string; readonly screenshots?: readonly string[]; readonly description?: { readonly zh?: string; readonly en?: string }; readonly npm?: string; readonly stars?: number; readonly downloads?: number; readonly added?: string }[] }>>
+  readonly communityCatalog: (refresh?: boolean) => Promise<RemoteResult<{ readonly updated?: string; readonly plugins: readonly { readonly name: string; readonly owner: string; readonly url: string; readonly category: string | readonly string[]; readonly iconUrl?: string; readonly screenshots?: readonly string[]; readonly description?: { readonly zh?: string; readonly en?: string }; readonly npm?: string; readonly stars?: number; readonly downloads?: number; readonly added?: string }[] }>>
   readonly communityCatalogIcons?: ((urls: readonly string[]) => Promise<RemoteResult<Readonly<Record<string, string>>>>) | undefined
   readonly communityEnvironment: () => Promise<RemoteResult<{ readonly ready: boolean; readonly platform: string; readonly node: string; readonly profile: string }>>
   readonly communityInstalled: () => Promise<RemoteResult<InstalledPayload>>
@@ -263,8 +263,9 @@ function CapabilityIcon({ item }: { readonly item: CapabilityMarketplaceItem }):
 interface PluginState {
   readonly loading: boolean
   readonly catalog: readonly RegistryPlugin[]
+  /** Every merged repository entry the directory carries, ranked by popularity. */
   readonly plugins: readonly RegistryPlugin[]
-  /** Merged-entry count before the display cap, so the page can say what it hid. */
+  /** Directory size, so the page can say how many entries the ranked page hid. */
   readonly marketTotal: number
   readonly iconUrls: Readonly<Record<string, string>>
   readonly registryUpdated: string | undefined
@@ -281,7 +282,14 @@ interface PluginState {
   readonly error: string | undefined
 }
 
-/** How many merged repository entries the market grid renders before the cap. */
+/**
+ * How many merged repository entries the plugin grid renders at once.
+ *
+ * A cap on the render, never on the data: the market view shows the ranked top and a
+ * search shows its best matches, but both read the whole directory first. Capping the
+ * list the search filters is what made everything past the 50th entry unfindable — this
+ * catalog carries thousands of entries, and the page could only ever reach fifty.
+ */
 const MARKET_ENTRY_LIMIT = 50
 
 const INITIAL_STATE: PluginState = {
@@ -428,9 +436,9 @@ function remoteValue<T>(result: RemoteResult<T>): T {
 export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, language }: CommunityApi): ReactNode {
   const isZh = language === 'zh'
   const text = isZh ? {
-    installed: '已安装插件', popular: '社区热门插件', installedIntro: '管理已通过社区页加入当前 Profile 的插件，可在此直接卸载。', marketIntro: '根据市场下载量与 Stars 动态排行，安装由本机 Harness 安全完成。', updatedAt: '目录更新于', refresh: '刷新', categories: '社区能力分类', plugin: '插件', backToCommunity: '返回社区', searchInstalled: '搜索已安装插件', searchMarket: '搜索社区插件', searchPlaceholder: '名称、作者、功能、npm 包名', noPnpm: '未检测到 pnpm，当前电脑环境无法安装社区插件，请先安装 pnpm 后刷新。', marketError: '插件市场服务不可用：', capabilityError: '添加失败：', loading: '正在读取精选插件…', restartNotice: '插件安装或卸载后，部分改动需要重启 Harness 才会生效。', restartNow: '立即重启', emptyMarket: '精选目录暂时没有可用条目。', emptyInstalled: '当前 Profile 尚未安装可识别的社区插件。', featureCount: (count: number) => `包含 ${count} 个同仓库功能`, terminalOnly: '仅支持 TUI Profile', installing: '安装中', uninstalling: '卸载中', install: '一键安装', uninstall: '卸载', installedCount: (count: number) => `已安装插件 ${count} 个`, marketCount: (count: number) => `当前显示 ${count} 个社区条目`, marketTruncated: (total: number, shown: number) => `（目录共 ${total} 个，此处按下载量排行显示前 ${shown} 个）`, searchCount: (count: number) => `搜索结果 ${count} 个`, usableCount: (count: number) => `，其中 ${count} 个可用于 Web/Host。`, close: '关闭', modalFeatureCount: '同仓库功能：', openProject: '打开项目主页', readmeLoading: '正在读取完整功能介绍…', readmeChinese: '已优先显示上游中文说明。', readmeEmpty: '暂无 README 内容。', readmeError: '暂时无法读取插件 README，请打开项目主页查看完整说明。',
+    installed: '已安装插件', popular: '社区热门插件', installedIntro: '管理已通过社区页加入当前 Profile 的插件，可在此直接卸载。', marketIntro: '根据市场下载量与 Stars 动态排行，安装由本机 Harness 安全完成。', updatedAt: '目录更新于', refresh: '刷新', categories: '社区能力分类', plugin: '插件', backToCommunity: '返回社区', searchInstalled: '搜索已安装插件', searchMarket: '搜索社区插件', searchPlaceholder: '名称、作者、功能、npm 包名', noPnpm: '未检测到 pnpm，当前电脑环境无法安装社区插件，请先安装 pnpm 后刷新。', marketError: '插件市场服务不可用：', capabilityError: '添加失败：', loading: '正在读取精选插件…', restartNotice: '插件安装或卸载后，部分改动需要重启 Harness 才会生效。', restartNow: '立即重启', emptyMarket: '精选目录暂时没有可用条目。', emptyInstalled: '当前 Profile 尚未安装可识别的社区插件。', featureCount: (count: number) => `包含 ${count} 个同仓库功能`, terminalOnly: '仅支持 TUI Profile', installing: '安装中', uninstalling: '卸载中', install: '一键安装', uninstall: '卸载', installedCount: (count: number) => `已安装插件 ${count} 个`, marketCount: (count: number) => `当前显示 ${count} 个社区条目`, marketTruncated: (total: number, shown: number) => `（目录共 ${total} 个，此处按下载量排行显示前 ${shown} 个）`, searchCount: (count: number) => `搜索结果 ${count} 个`, searchTruncated: (matched: number, shown: number) => `（命中 ${matched} 个，此处按下载量排行显示前 ${shown} 个）`, usableCount: (count: number) => `，其中 ${count} 个可用于 Web/Host。`, close: '关闭', modalFeatureCount: '同仓库功能：', openProject: '打开项目主页', readmeLoading: '正在读取完整功能介绍…', readmeChinese: '已优先显示上游中文说明。', readmeEmpty: '暂无 README 内容。', readmeError: '暂时无法读取插件 README，请打开项目主页查看完整说明。',
   } : {
-    installed: 'Installed plugins', popular: 'Popular community plugins', installedIntro: 'Manage plugins added to this profile from Community. You can uninstall them here.', marketIntro: 'Ranked from marketplace downloads and stars. Installation is handled safely by the local Harness.', updatedAt: 'Directory updated', refresh: 'Refresh', categories: 'Community capability categories', plugin: 'Plugins', backToCommunity: 'Back to community', searchInstalled: 'Search installed plugins', searchMarket: 'Search community plugins', searchPlaceholder: 'Name, author, feature, or npm package', noPnpm: 'pnpm was not detected, so this computer cannot install community plugins. Install pnpm and refresh.', marketError: 'Plugin marketplace is unavailable:', capabilityError: 'Failed to add: ', loading: 'Loading featured plugins…', restartNotice: 'Some changes take effect after Harness restarts.', restartNow: 'Restart now', emptyMarket: 'No featured entries are currently available.', emptyInstalled: 'No recognizable community plugins are installed in this profile.', featureCount: (count: number) => `${count} additional features in this repository`, terminalOnly: 'TUI profile only', installing: 'Installing', uninstalling: 'Uninstalling', install: 'Install', uninstall: 'Uninstall', installedCount: (count: number) => `${count} installed plugins`, marketCount: (count: number) => `${count} community entries shown`, marketTruncated: (total: number, shown: number) => ` (${total} entries in the directory; the top ${shown} by downloads are listed here)`, searchCount: (count: number) => `${count} search results`, usableCount: (count: number) => `; ${count} available to Web/Host`, close: 'Close', modalFeatureCount: 'Repository features:', openProject: 'Open project page', readmeLoading: 'Loading the full feature overview…', readmeChinese: 'Upstream Chinese description preferred and shown.', readmeEmpty: 'No README content is available.', readmeError: 'The plugin README could not be read. Open the project page for the complete details.',
+    installed: 'Installed plugins', popular: 'Popular community plugins', installedIntro: 'Manage plugins added to this profile from Community. You can uninstall them here.', marketIntro: 'Ranked from marketplace downloads and stars. Installation is handled safely by the local Harness.', updatedAt: 'Directory updated', refresh: 'Refresh', categories: 'Community capability categories', plugin: 'Plugins', backToCommunity: 'Back to community', searchInstalled: 'Search installed plugins', searchMarket: 'Search community plugins', searchPlaceholder: 'Name, author, feature, or npm package', noPnpm: 'pnpm was not detected, so this computer cannot install community plugins. Install pnpm and refresh.', marketError: 'Plugin marketplace is unavailable:', capabilityError: 'Failed to add: ', loading: 'Loading featured plugins…', restartNotice: 'Some changes take effect after Harness restarts.', restartNow: 'Restart now', emptyMarket: 'No featured entries are currently available.', emptyInstalled: 'No recognizable community plugins are installed in this profile.', featureCount: (count: number) => `${count} additional features in this repository`, terminalOnly: 'TUI profile only', installing: 'Installing', uninstalling: 'Uninstalling', install: 'Install', uninstall: 'Uninstall', installedCount: (count: number) => `${count} installed plugins`, marketCount: (count: number) => `${count} community entries shown`, marketTruncated: (total: number, shown: number) => ` (${total} entries in the directory; the top ${shown} by downloads are listed here)`, searchCount: (count: number) => `${count} search results`, searchTruncated: (matched: number, shown: number) => ` (${matched} matches; the top ${shown} by downloads are shown here)`, usableCount: (count: number) => `; ${count} available to Web/Host`, close: 'Close', modalFeatureCount: 'Repository features:', openProject: 'Open project page', readmeLoading: 'Loading the full feature overview…', readmeChinese: 'Upstream Chinese description preferred and shown.', readmeEmpty: 'No README content is available.', readmeError: 'The plugin README could not be read. Open the project page for the complete details.',
   }
   const [state, setState] = useState<PluginState>(INITIAL_STATE)
   const [selectedPlugin, setSelectedPlugin] = useState<RegistryPlugin | undefined>(undefined)
@@ -483,22 +491,27 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
     })
   }
 
-  const load = async (restartRequired = false): Promise<void> => {
+  const load = async (options: { readonly restartRequired?: boolean; readonly refresh?: boolean } = {}): Promise<void> => {
+    const { restartRequired = false, refresh = false } = options
     const token = ++loadToken.current
     setState(previous => ({ ...previous, loading: true, error: undefined }))
     try {
       const [registry, installed, environment] = await Promise.all([
-        communityCatalog().then(remoteValue),
+        // `refresh` reaches the Host, which is the only side that can fetch: the panel
+        // asking nicely for newer data it already has is a button that cannot work.
+        communityCatalog(refresh).then(remoteValue),
         communityInstalled().then(remoteValue),
         communityEnvironment().then(remoteValue),
       ])
       if (token !== loadToken.current) return
       const catalog = registry.plugins.map(value => value as unknown as RegistryPlugin)
         .filter(plugin => plugin.npm !== 'dshmarket' && plugin.name !== 'dsh-market')
-      // The page shows a ranked top-N, but a hard cap with no total reads as
-      // "this is everything". Keep the pre-cap count so the footnote can say so.
+      // The whole directory is kept, not the ranked page: the market view renders a
+      // top-N, but a search has to reach every entry. Cutting this list first is
+      // exactly how a directory of thousands became a page of fifty — the search had
+      // nothing else to look at.
       const merged = mergeRepositoryEntries(catalog)
-      const plugins = merged.slice(0, MARKET_ENTRY_LIMIT)
+      const plugins = merged
       const activation = installed.activation ?? {}
       setState({
         loading: false,
@@ -670,7 +683,7 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
     setState(previous => ({ ...previous, busyUrl: plugin.url, phase: 'uninstalling', seconds: undefined, error: undefined }))
     try {
       const result = await communityUninstall(plugin.url).then(remoteValue)
-      await load(result.restartRequired)
+      await load({ restartRequired: result.restartRequired })
     } catch (error) {
       setState(previous => ({ ...previous, busyUrl: undefined, error: error instanceof Error ? error.message : String(error) }))
     }
@@ -770,12 +783,27 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
 
   const installedPlugins = useMemo(() => mergeRepositoryEntries(state.catalog)
     .filter(plugin => installedName(plugin, state.installed, state.installedSources) !== undefined), [state.catalog, state.installed, state.installedSources])
-  const visiblePlugins = useMemo(() => {
+  /** The ranked page the market view opens on, before any search narrows it. */
+  const popularPlugins = useMemo(() => state.plugins.slice(0, MARKET_ENTRY_LIMIT), [state.plugins])
+  /**
+   * Matches across the whole directory.
+   *
+   * Kept apart from the rendered page so the count can be honest about the display
+   * cap: a search that silently rendered the first 50 of 300 matches would report the
+   * page it drew instead of the answer it found.
+   */
+  const searchMatches = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
-    const all = pluginView === 'installed' ? installedPlugins : state.plugins
-    const source = query === '' ? all : all.filter(plugin => (plugin.searchText ?? '').includes(query))
-    return filter === 'plugin' ? source : []
-  }, [filter, installedPlugins, pluginView, searchQuery, state.plugins])
+    return query === '' ? [] : state.plugins.filter(plugin => (plugin.searchText ?? '').includes(query))
+  }, [searchQuery, state.plugins])
+  const visiblePlugins = useMemo(() => {
+    if (filter !== 'plugin') return []
+    if (pluginView === 'installed') {
+      const query = searchQuery.trim().toLowerCase()
+      return query === '' ? installedPlugins : installedPlugins.filter(plugin => (plugin.searchText ?? '').includes(query))
+    }
+    return searchQuery.trim() === '' ? popularPlugins : searchMatches.slice(0, MARKET_ENTRY_LIMIT)
+  }, [filter, installedPlugins, pluginView, popularPlugins, searchMatches, searchQuery])
   const visibleReadyCount = useMemo(() => visiblePlugins.filter(plugin => !isTerminalPlugin(plugin)).length, [visiblePlugins])
   const selectFilter = (next: 'plugin' | 'mcp' | 'skill'): void => {
     setFilter(next)
@@ -788,7 +816,7 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
   return <section className={css.community} aria-busy={state.loading || state.busyUrl !== undefined}>
     <div className={css.communityHeader}>
       <div><div className={css.kicker}>{pluginView === 'installed' ? 'INSTALLED COMMUNITY PLUGINS' : 'POPULAR FROM DSH MARKET'}</div><strong className={css.sectionName}>{pluginView === 'installed' ? text.installed : text.popular}</strong><p className={css.communityIntro}>{pluginView === 'installed' ? text.installedIntro : `${text.marketIntro}${state.registryUpdated === undefined ? '' : ` ${text.updatedAt} ${state.registryUpdated}`}`}</p></div>
-      <button className={css.button} type="button" onClick={() => { void load() }} disabled={state.loading || state.busyUrl !== undefined}>{text.refresh}</button>
+      <button className={css.button} type="button" onClick={() => { void load({ refresh: true }) }} disabled={state.loading || state.busyUrl !== undefined}>{text.refresh}</button>
     </div>
     <div className={css.communityFilterBar}>
       <div className={css.communityFilters} role="tablist" aria-label={text.categories}>
@@ -836,7 +864,7 @@ export function CommunityPluginsPage({ communityCatalog, communityCatalogIcons, 
         </article>
       })}
     </div> : null}
-    {filter === 'plugin' ? <small className={css.communityFootnote}>{pluginView === 'installed' ? text.installedCount(visiblePlugins.length) : searchQuery.trim() === '' ? <>{text.marketCount(visiblePlugins.length)}{state.marketTotal > state.plugins.length ? text.marketTruncated(state.marketTotal, state.plugins.length) : ''}</> : text.searchCount(visiblePlugins.length)}{text.usableCount(visibleReadyCount)}</small> : null}
+    {filter === 'plugin' ? <small className={css.communityFootnote}>{pluginView === 'installed' ? text.installedCount(visiblePlugins.length) : searchQuery.trim() === '' ? <>{text.marketCount(visiblePlugins.length)}{state.marketTotal > visiblePlugins.length ? text.marketTruncated(state.marketTotal, visiblePlugins.length) : ''}</> : <>{text.searchCount(searchMatches.length)}{searchMatches.length > visiblePlugins.length ? text.searchTruncated(searchMatches.length, visiblePlugins.length) : ''}</>}{text.usableCount(visibleReadyCount)}</small> : null}
     {selectedCapability === undefined ? null : <CapabilityDetailModal item={selectedCapability as CapabilityDetailItem} language={language} busy={capabilityBusy === selectedCapability.id} onClose={() => { setSelectedCapability(undefined) }} onInstall={selectedCapability.installable && !selectedCapability.installed ? () => { void installCapability(selectedCapability) } : undefined} />}
     {selectedPlugin !== undefined ? <div className={css.communityModalBackdrop} role="presentation" onClick={() => { setSelectedPlugin(undefined) }}><article className={css.communityModal} role="dialog" aria-modal="true" aria-label={selectedPlugin.name} tabIndex={-1} onClick={(event) => { event.stopPropagation() }}><header className={css.communityModalHeader}><div><div className={css.kicker}>PLUGIN DETAILS</div><PluginIcon plugin={selectedPlugin} iconUrl={state.iconUrls[selectedPlugin.url] ?? selectedPlugin.iconUrl ?? selectedPlugin.screenshots?.[0]} /><h3 className={css.communityModalTitle}>{selectedPlugin.name}</h3><small className={css.communityModalOwner}>{selectedPlugin.owner} · {localizeCategory(categories(selectedPlugin)[0] ?? 'plugin', language)}</small></div><button ref={modalCloseRef} className={css.button} type="button" onClick={() => { setSelectedPlugin(undefined) }}>{text.close}</button></header><p className={css.communityModalSummary}>{localizedPluginDescription(selectedPlugin, language)}</p>{isZh && !pluginDescriptionLocalized(selectedPlugin, language) ? <p className={css.sectionMeta}>{upstreamEnglishHint('zh')}</p> : null}{selectedPlugin.featureNames !== undefined && selectedPlugin.featureNames.length > 0 ? <div className={css.communityFeatureList}>{text.modalFeatureCount}{selectedPlugin.featureNames.join('、')}</div> : null}<div className={css.communityModalStats}><span>★ {formatCount(selectedPlugin.stars)}</span><span>↓ {formatCount(selectedPlugin.downloads)}</span><a href={`${selectedPlugin.url}#readme`} target="_blank" rel="noreferrer">{text.openProject}</a></div><div className={css.communityReadme}>{readme.loading ? <p className={css.loading}>{text.readmeLoading}</p> : readme.text !== undefined ? <>{isZh && readme.localized ? <p className={css.sectionMeta}>{text.readmeChinese}</p> : null}<pre>{readme.text}</pre></> : <p className={css.sectionMeta}>{readme.error === 'unreadable' ? text.readmeError : text.readmeEmpty}</p>}</div><footer className={css.communityModalFooter}>{isTerminalPlugin(selectedPlugin) ? <span className={css.communityIncompatible}>{text.terminalOnly}</span> : (() => { const name = installedName(selectedPlugin, state.installed, state.installedSources); return <button className={`${css.button} ${name === undefined ? css.buttonPrimary : css.buttonDanger}`} type="button" onClick={() => { if (name === undefined) void install(selectedPlugin); else void uninstall(selectedPlugin); setSelectedPlugin(undefined) }} disabled={state.busyUrl !== undefined || state.environmentReady === false || (name !== undefined && communityUninstall === undefined)}>{name === undefined ? text.install : text.uninstall}</button> })()}</footer></article></div> : null}
   </section>

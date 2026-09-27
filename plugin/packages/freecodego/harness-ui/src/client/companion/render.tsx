@@ -31,9 +31,20 @@
  *   itself contain an earlier freeze — so the floor is a measured figure (see the
  *   test in `companion-render-slots.client.spec.tsx`) and anything past it still
  *   renders instead of disappearing.
- * - **Ink follows the theme.** `ink` defaults to `currentColor`, so the body takes
- *   the surrounding text colour and the companion reads correctly in a dark
- *   theme, where the engine's own `encre` (#0a0a0c) would sink into the surface.
+ * - **The colours are the caller's, and the two meanings of `paper` are split.**
+ *   This module stays a drawing primitive: `ink` defaults to `currentColor` and
+ *   `paper` to a plain light value, so a caller that passes nothing gets a neutral
+ *   drawing. What the *seats* pass comes from `./palette.ts`, which declares the
+ *   character's fixed colours.
+ *
+ *   The split is the load-bearing part. `paper` used to be two facts at once: the
+ *   colour seen through the eye holes (the eyes) and the surface a particle's
+ *   depth haze recedes into (the page). A fixed-palette character needs the first
+ *   to ignore the theme and the second to follow it, so the eyes moved to their
+ *   own prop (`eye`) and `paper` kept the haze.
+ *
+ *   A black body on a dark surface is then the one combination that needs help,
+ *   which is what `halo` is: a filter over the drawn body alone.
  */
 import { useId } from 'react'
 import type { BotFrame } from './engine/engine.ts'
@@ -41,6 +52,7 @@ import { DEMI_VIEWBOX, RAYON } from './engine/repere.ts'
 import { NOTIF_BLUE, type DotRender } from './engine/decor.ts'
 import { mixHex } from './engine/skins.ts'
 import type { StateId } from './engine/states.ts'
+import type { RingName } from './eyes/rings.ts'
 
 /**
  * Rings mounted when a frame needs no more than this: a measured figure, kept so
@@ -76,17 +88,36 @@ export interface CompanionSvgProps {
   /** Square edge in pixels. The viewBox scales, so the drawing stays vector. */
   size: number
   /**
-   * The body colour. Defaults to `currentColor` so the companion inherits the
-   * surrounding text colour. `encre` (#0a0a0c) would disappear on a dark surface.
+   * The body colour. Defaults to `currentColor` so the drawing inherits the
+   * surrounding text colour; the seats pass the character's own fixed body colour
+   * from `./palette.ts` instead.
    */
   ink?: string
   /**
-   * The surface colour behind the companion, used for the opaque backing that
-   * keeps back-half decor from showing through the eye holes. It only has to be
-   * right when the state paints something behind the body — an orbit or a burst;
-   * at rest it is not visible at all.
+   * The surface a particle's depth haze recedes into. It has to follow the page,
+   * because that is what it is: a particle falling back into the surface it sits
+   * on. Only the `burst` and `orbit` poses carry hazed particles at all.
    */
   paper?: string
+  /**
+   * The eyes' colour — the opaque backing painted at the silhouette, which is what
+   * shows through the mask's eye holes and through the notch of a shape like the
+   * egg.
+   *
+   * Defaults to `paper`, which is exactly what it was before the two facts were
+   * separated: a caller that has no reason to distinguish them keeps the old
+   * behaviour, and the seats are the only callers that do.
+   */
+  eye?: string
+  /**
+   * A filter over the drawn body alone, so a dark-bodied character can be told
+   * apart from a dark surface.
+   *
+   * It deliberately does not cover the particles or the rings: a halo around a
+   * burst would outline every speck of confetti, and the rings are meant to read as
+   * light rather than as an edge.
+   */
+  halo?: string | undefined
   /** Accessible name. Omitted means decorative, which is how a brand mark is used. */
   label?: string
   /**
@@ -97,10 +128,51 @@ export interface CompanionSvgProps {
    */
   className?: string | undefined
   /**
-   * Which pose is showing, published as `data-fcg-state`. Observability only:
-   * the frame is the truth, and this is the name of the state that produced it.
+   * Which state is showing, published as `data-fcg-state`. Observability only:
+   * the frame is the truth, and this is the name of the state the session is in.
    */
   state?: StateId
+  /**
+   * Which pose drew that state, published as `data-fcg-pose`.
+   *
+   * The two are the same name for a state that does not rotate. Where they differ,
+   * the state is what the words are about and the pose is only the drawing —
+   * published separately so a rotating pool is observable without a reader having
+   * to believe the session changed state.
+   */
+  pose?: StateId
+  /**
+   * The expression worn while it holds, published as `data-fcg-companion-expression`;
+   * `null` and omitted both mean "nothing worn".
+   *
+   * It sits beside `state`/`pose` rather than on a seat's wrapper because it is a
+   * property of the drawing, not of the seat: all three seats draw one character,
+   * and the rail has no wrapper element to put it on at all. The name is published
+   * rather than the outline it resolves to, because the outline is already in the
+   * paths and a reader — a host, or the live run that confirmed this feature end to
+   * end — needs to tell a face that was asked for from one the pose owns.
+   */
+  expression?: string | null
+  /**
+   * Which source that expression came from, published as
+   * `data-fcg-companion-expression-source`.
+   *
+   * A second attribute rather than a second value in the first one, because the two
+   * are different claims: `request` is the model saying something about itself, and
+   * `moment` is the session's own fact (a tool call that failed) putting a face on
+   * without anybody asking. A reader asking "why is it frowning" needs to know which
+   * channel to look in, and nothing else on the element answers that.
+   */
+  expressionSource?: 'request' | 'moment' | null
+  /**
+   * The outline the eyes are drawn with, published as `data-fcg-face`.
+   *
+   * The name rather than the paths, for the reason `state` and `pose` are names: the
+   * eyes are redrawn every frame (the body breathes, so the eye box moves with it), so
+   * a reader diffing the paths cannot tell a face that rotated from one that only
+   * breathed. A state whose pool rotates is otherwise unobservable from outside.
+   */
+  face?: RingName
 }
 
 /** A colour we can mix; `currentColor` and `var(...)` deliberately are not. */
@@ -113,12 +185,14 @@ function mixable(color: string): boolean {
  *
  * `depth` is the engine's depth haze — a particle recedes into the surface as it
  * falls inward — and only the renderer can apply it, because only the renderer
- * knows the chosen colours. It is applied two ways, for one reason: the seats pass
- * **theme tokens** (`var(--fcg-text-primary)`) so the character follows light and
- * dark, and a token's value is not knowable here. Literal hex is mixed in TS, in
- * parity with the reference renderer; anything symbolic is handed to CSS, whose
- * `color-mix` resolves the tokens at paint time. Without that second path the haze
- * would be dropped in the only place this ships, since both seats pass tokens.
+ * knows the chosen colours. It is applied two ways, for one reason: one half of
+ * the pair is a **token** — `paper` is the page, so it has to follow light and
+ * dark, which is why `./palette.ts` keeps it theme-following while the body and
+ * the eyes do not — and a token's value is not knowable here. Literal hex is mixed
+ * in TS, in parity with the reference renderer; anything symbolic is handed to
+ * CSS, whose `color-mix` resolves the tokens at paint time. Without that second
+ * path the haze would be dropped in the only place this ships, since the surface
+ * the seats pass is the page token.
  *
  * Exported because it is the whole of that decision and needs no DOM to assert.
  * @param color - the particle's own colour, when the engine gave it one.
@@ -136,7 +210,10 @@ export function dotFill(color: string | undefined, depth: number | undefined, in
 
 /** One frame of the companion, drawn as SVG. */
 export function CompanionSvg(props: CompanionSvgProps) {
-  const { frame, size, ink = 'currentColor', paper = '#f9f9f9', label, className, state } = props
+  const { frame, size, ink = 'currentColor', paper = '#f9f9f9', eye, halo, label, className, state, pose, expression, expressionSource, face } = props
+  // Named rather than folded into the destructuring above: the default has to read
+  // as "the eyes fall back to the haze surface", not as two unrelated props.
+  const eyeFill = eye ?? paper
   const uid = useId().replace(/:/g, '')
   const maskId = `fcg-companion-mask-${uid}`
 
@@ -153,6 +230,13 @@ export function CompanionSvg(props: CompanionSvgProps) {
     <svg
       className={className}
       data-fcg-state={state}
+      data-fcg-pose={pose}
+      // Always present, empty when nothing was asked: an attribute that appeared and
+      // disappeared with a mood would make "no request" and "not supported" the same
+      // reading for whoever looks.
+      data-fcg-companion-expression={expression ?? ''}
+      data-fcg-companion-expression-source={expressionSource ?? ''}
+      data-fcg-face={face}
       width={size}
       height={size}
       viewBox={`${-VB} ${-VB} ${VB * 2} ${VB * 2}`}
@@ -225,9 +309,9 @@ export function CompanionSvg(props: CompanionSvgProps) {
         ))}
       </g>
 
-      <g opacity={frame.bodyAlpha}>
+      <g opacity={frame.bodyAlpha} style={halo === undefined ? undefined : { filter: halo }}>
         {/* Opaque backing at the silhouette: without it a back-half ring shows through the eyes. */}
-        <path d={frame.bodyPath} style={{ fill: paper }} />
+        <path d={frame.bodyPath} style={{ fill: eyeFill }} />
         <g mask={`url(#${maskId})`}>
           <rect x={-VB} y={-VB} width={VB * 2} height={VB * 2} style={{ fill: ink }} />
         </g>

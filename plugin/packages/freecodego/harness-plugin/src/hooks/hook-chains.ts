@@ -9,7 +9,7 @@
  * do when work fails*: a tool call that keeps failing, a task that ended
  * blocked. Those decisions are today either absent or hand-coded per call site.
  *
- * OpenClaude's `src/utils/hookChains.ts` (and `docs/hook-chains.md`) solve that
+ * OpenClaude's `src/utils/hookChains.ts` and the `docs/hook-chains` page beside it solve that
  * with declarative rules over a small event vocabulary, and its guard design is
  * the part worth copying exactly — a recovery layer that can storm is worse than
  * no recovery layer:

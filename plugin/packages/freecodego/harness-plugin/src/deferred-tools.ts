@@ -76,7 +76,7 @@ export interface FreeCodeGoDeferredToolSettings {
 }
 
 /** Plugin-owned tool prefixes eligible for deferral. */
-const DEFERRED_PREFIXES: readonly string[] = ['engineering_', 'advisor_', 'freecodego_']
+const DEFERRED_PREFIXES: readonly string[] = ['engineering_', 'freecodego_']
 
 /**
  * Most schemas one `tool_search` call may return, whatever the query form.
@@ -96,7 +96,9 @@ export const MAX_TOOL_SEARCH_RESULTS = 20
  * Exported because more than one module has to agree with it: any prompt text
  * that tells the model to call a tool by name must not name a deferrable one, or
  * the instruction is un-followable until a discovery call the model was never
- * told to make. `plan-mode.ts` asserts its own guidance against this predicate.
+ * told to make. `tool-reachability.spec.ts` holds the two assertions that make
+ * that a rule rather than a hope: the Plan Mode guidance names nothing
+ * deferrable, and no always-immediate tool's description does either.
  *
  * An explicit `deferredToolNames` setting is deliberately not consulted: that is
  * an operator's override, and a prompt-bearing module cannot read it.
@@ -111,27 +113,69 @@ export function isDeferrableByPrefix(name: string): boolean {
  * The sentence that makes a deferred tool reachable, for prompt text that names
  * one.
  *
- * A prompt may name a tool only if the Agent can call it, and this plugin ships
- * two ways to keep that true. Its own fixed set of named tools pays the schema
- * (`ALWAYS_IMMEDIATE`); text it injects *unsolicited* — a persona brief, a
- * memory-context block at session start — does not, because that cost would be
- * paid by every Agent for a pointer most of them never follow. Such text names
- * the tool and how to load it instead, which is the shape this plugin treats as
- * the only acceptable one: telling a model to call a tool, withholding the
- * schema, and saying nothing about `tool_search` is a defect in every module
- * that has had to fix it (`plan-mode`, the native-engine media guidance).
+ * A prompt may name a tool only if the Agent can call it, and this plugin keeps
+ * that true along three routes, because the text that names a tool arrives by
+ * three different ones.
+ *
+ * 1. **Always in the schema** (`ALWAYS_IMMEDIATE`). The plugin's own fixed set of
+ *    named tools pays the schema. This is how the Plan Mode guidance and the
+ *    file-reading guidance are safe: their text is fixed and the tool is one.
+ * 2. **Carrying this sentence.** Text injected *unsolicited* does not pay the
+ *    schema, because that cost would be borne by every Agent for a pointer most
+ *    of them never follow — a stop-time review gate, the memory index written to
+ *    disk, the session-start memory block, a native-engine media brief. Such text
+ *    names the tool and how to load it instead.
+ * 3. **Riding the discovery result.** A *description* that names a sibling tool
+ *    needs nothing here, and that is a decision rather than an oversight: a
+ *    deferred tool's description is only ever visible after a `tool_search`
+ *    fetched it, and that result states the rule for the descriptions it returns
+ *    (`…including one that a description above points you at…`). Repeating this
+ *    sentence in every description would be the same rule stated twice, in text
+ *    the model re-reads on every request. This is why
+ *    `engineering_memory_timeline` names `engineering_memory_get` with no hint.
+ *
+ * Route 3 is the one with a boundary, and the boundary is what makes routes 1 and
+ * 2 necessary rather than merely tidy: it covers text that arrived *through* a
+ * discovery call. An `ALWAYS_IMMEDIATE` tool's description never does — it is in
+ * the schema from the first request — so a name in one of those is a dead pointer
+ * whatever the model does, and `tool-reachability.spec.ts` fails the build if one
+ * appears. Injected text is outside that route for the same reason: nothing the
+ * model did brought it, so there is no result to have carried the sentence.
+ *
+ * The shape all three exist to prevent is one: telling a model to call a tool,
+ * withholding the schema, and saying nothing about `tool_search`. That is a defect
+ * in every module that has had to fix it (`plan-mode`, the native-engine media
+ * guidance).
  *
  * Returning `''` when the tool is not deferrable keeps the caller from
  * restating the rule, and means the sentence disappears by itself if the tool
  * ever moves into `ALWAYS_IMMEDIATE`.
  *
- * @param name - The plugin-owned tool name the surrounding text names.
- * @returns A sentence to append after naming the tool, or `''` when its schema
- *   is always present.
+ * The non-empty sentence **leads with a space**, and that is load-bearing rather
+ * than tidy: the callers append it directly to the sentence that named the tool
+ * (`\`…is UNVERIFIED.${deferredToolFetchHint(NAME)}\``), and a hint that began
+ * with a letter rendered as `UNVERIFIED.Most tool schemas…`. One caller worked
+ * around it with a `hint === '' ? a : \`${a} ${hint}\`` ternary, which is the
+ * same rule stated twice — the shape of a separator the function should own.
+ * With it owned here, `''` and `' …'` are the only two answers and every caller
+ * concatenates unconditionally.
+ *
+ * @param name - The plugin-owned tool name the surrounding text names, or
+ *   several when one sentence points at more than one (`engineering_codegraph_search`
+ *   names the explain and path queries together). The names that are always
+ *   immediate drop out, and `''` comes back when none is deferrable — so a caller
+ *   passes every name its sentence used and appends the result unconditionally,
+ *   whether that is one name, two, or none.
+ * @returns A sentence to append after naming the tools, or `''` when every
+ *   schema is always present.
  */
-export function deferredToolFetchHint(name: string): string {
-  if (!isDeferrableByPrefix(name)) return ''
-  return `Most tool schemas are not in the request until they are fetched, so if ${name} is not in your schema, load it first with tool_search "select:${name}" — a call to a tool you have not fetched is refused.`
+export function deferredToolFetchHint(name: string | readonly string[]): string {
+  const names = (typeof name === 'string' ? [name] : name).filter(candidate => isDeferrableByPrefix(candidate))
+  if (names.length === 0) return ''
+  const list = names.join(', ')
+  const pronoun = names.length === 1 ? 'it' : 'them'
+  const verb = names.length === 1 ? 'is' : 'are'
+  return ` Most tool schemas are not in the request until they are fetched, so if ${list} ${verb} not in your schema, load ${pronoun} first with tool_search "select:${list}" — a call to a tool you have not fetched is refused.`
 }
 
 /**
@@ -141,9 +185,9 @@ export function deferredToolFetchHint(name: string): string {
  * - `engineering_status` is the diagnostic a user reaches for when nothing else
  *   works, and it is small.
  * - `engineering_repo_map` is a first-turn orientation tool.
- * - `advisor_review` and `headroom_retrieve` are answers to something the model
- *   has already been shown (a hint to consult the advisor; a compression marker
- *   naming a hash), so a discovery round-trip there is pure latency.
+ * - `headroom_retrieve` is an answer to something the model has already been
+ *   shown (a compression marker naming a hash), so a discovery round-trip there
+ *   is pure latency.
  * - `engineering_plan_mode` is named *by name* in the Plan Mode guidance this
  *   plugin injects, including in the enforcement addendum's line on how to move
  *   the mode. An instruction that names a deferred tool is a dead end — the call
@@ -154,6 +198,17 @@ export function deferredToolFetchHint(name: string): string {
  *   request; the alternative was deleting the pointer and leaving the mode's
  *   programmatic path unreachable except through a search the model has no
  *   reason to run.
+ * - `freecodego_companion_face` is named by the companion-face guidance this
+ *   plugin injects, so the rule two entries up puts it here — and a live run is
+ *   what the rule is for. With its schema deferred the turn carried the
+ *   instruction and nothing else: the model read "use
+ *   `freecodego_companion_face` when the character beside the composer should
+ *   show how a stretch of work is going", had no schema to call, and was never
+ *   told to fetch one, so two turns that each ended on a missing file — the
+ *   moment the guidance was written for — answered in prose and left the
+ *   character in its idle face. The schema is one enum and no arguments, the
+ *   cheapest row in this set, and its ``freecodego_`` family membership is
+ *   exactly what the prefix rule would otherwise act on.
  * - `read_document` is named by the injected file-reading guidance ("Use
  *   `read_document` — not `read` — for PDF files and Jupyter notebooks"), so a
  *   deferred schema makes that instruction un-followable for exactly the file
@@ -173,10 +228,10 @@ const ALWAYS_IMMEDIATE: ReadonlySet<string> = new Set([
   'engineering_status',
   'engineering_repo_map',
   'engineering_plan_mode',
-  'advisor_review',
   'headroom_retrieve',
   'read_document',
   'edit_and_run',
+  'freecodego_companion_face',
 ])
 
 /** Structural view of the Harness tools service — only what this module uses. */

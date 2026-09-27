@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-面向 DeepSeek Harness `freecodego@0.1.7-alpha.2.2` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.1.7-alpha.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.1.7-alpha.2`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
+面向 DeepSeek Harness `freecodego@0.1.7-rc.2` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.1.7-rc.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.1.7-rc.2`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
 
 ## 目录
 
@@ -32,10 +32,10 @@ kind: "package-bundle"
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.2/freecodego-0.1.7-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-rc.2/freecodego-0.1.7-rc.2.tgz
 ```
 
-`freecodego-0.1.7-alpha.2.tgz` 就是面向 Harness `0.1.7-alpha.2` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
+`freecodego-0.1.7-rc.2.tgz` 就是面向 Harness `0.1.7-rc.2` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
 
 `dsh` 命令由 Harness CLI 提供，不来自本 bundle。普通终端里请先用 `npm install --global @deepseek-ai/dsh` 安装它（并确保 `pnpm` 可用）。桌面端通过自己的私有 shim 运行同一条命令并传入当前 `DSH_HOME`，因此 Web 与桌面端选择同一个 Harness home 时共用同一份 Profile 数据目录。
 
@@ -84,7 +84,7 @@ Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是�
 
 这个包挂载一个四工具的改动审查器。`engineering_code_review` 会审查工作区（已暂存、未暂存**以及**未跟踪的改动）、从 merge base 起算的一段引用范围、或某个提交对其第一父提交的差异，并按 `text`、`json` 或 `sarif` 渲染报告；`engineering_review_rules` 完全不花模型调用，直接返回会审查什么、按哪条规则；`engineering_review_status` 与 `engineering_review_report` 分别显示正在跑什么、以及把上一次结果按另一位读者重新渲染。规则分四层解析 —— 本次运行传入的规则文件、项目自己的（`.opencodereview/rule.json`、`.dsh/review.json` 或 `.freecodego/review.json`）、用户级 `~/.opencodereview/rule.json`、以及随插件发布的基线 —— 命中的第一层胜出，所以项目覆盖是替换而不是并入。覆盖面按文件核算：只要还有改动过的文件没被审到，这次运行就不能结束，而每次跳过都会记录原因。
 
-审查要花模型调用，所以是可选的。`reviewMode` 取 `off`、`record`（结论成为持久会话事件，所以事后不必重跑就能回答"那次审查说了什么"）或 `gate`（达到 `reviewThreshold` 的结论会在 `reviewCooldownTurns` 过去后注入回这一回合，Agent 必须回应它才能结束）。`reviewDeep` 为每个改动文件各开一个只读子 Agent，`reviewEscalation` 会用独立裁定者复核高危结论，并要求它去**反驳**。审查跑在本插件的第二模型路由（`advisorProvider` / `advisorModel`）上，所以全新安装无需额外配置即可使用。
+审查要花模型调用，所以是可选的。`reviewMode` 取 `off`、`record`（结论成为持久会话事件，所以事后不必重跑就能回答"那次审查说了什么"）或 `gate`（达到 `reviewThreshold` 的结论会在 `reviewCooldownTurns` 过去后注入回这一回合，Agent 必须回应它才能结束）。`reviewDeep` 为每个改动文件各开一个只读子 Agent，`reviewEscalation` 会用独立裁定者复核高危结论，并要求它去**反驳**。审查跑在本插件的第二模型路由（`advisorProvider` / `advisorModel`）上，所以全新安装无需额外配置即可使用；设置页的**第二模型路由**面板就是改这条路由的地方，凡共用它的功能 —— 这里的审查器、记忆召回选择器、记忆整合规划与待执行操作复核 —— 都会跟着改。
 
 <a id="project-memory"></a>
 ## 项目记忆

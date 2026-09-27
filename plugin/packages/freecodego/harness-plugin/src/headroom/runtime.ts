@@ -117,8 +117,10 @@ export interface HeadroomSettings {
 }
 
 import { toolDefinition } from '../tool-definition.ts'
-import type { HeadroomKind, HeadroomStats } from '../types.ts'
-export type { HeadroomKind, HeadroomStats } from '../types.ts'
+import { scaleThresholdToWindow } from '../context-budget.ts'
+import { redactCredentialShapes } from '../secret-scan.ts'
+import type { HeadroomFixedCategory, HeadroomKind, HeadroomStats } from '../types.ts'
+export type { HeadroomFixedCategory, HeadroomKind, HeadroomStats } from '../types.ts'
 
 // ─── Port provenance ────────────────────────────────────────────────────────
 
@@ -257,8 +259,43 @@ export const DEFAULT_EXCLUDE_TOOLS: readonly string[] = [
  * without this sentence, and which is why the case was invisible: every fixture
  * large enough to test the fold was also large enough for the generic stage.
  */
-const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(['bash', 'shell', 'exec_command', 'local_shell', 'pwsh'])
-const BASH_SEARCH_PROGRAMS: ReadonlySet<string> = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep', 'ag', 'ack'])
+export const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(['bash', 'shell', 'exec_command', 'local_shell', 'pwsh'])
+
+/**
+ * Programs whose shell line is a read-only search, by the name the line spells.
+ *
+ * `BASH_TOOL_NAMES` above is named the way it is because the platform picks the
+ * shell. This set carried the same omission one name-type further on, and the
+ * cost is bounded the same way — both sentences are what make the case invisible
+ * without them:
+ *
+ * - **The omission.** Seven Unix programs were listed and neither search program
+ *   the platform actually has. `findstr` ships with Windows and is the program
+ *   this subsystem's own compressor names as a member of the family it reads
+ *   ("grep/rg/findstr output", `search-compressor.ts`); `Select-String` is
+ *   PowerShell's own grep. On win32 the base `cordis.patch.yml` disables
+ *   `tool-bash` and enables `tool-pwsh`, so `pwsh` is the only shell a session can
+ *   call — and a `findstr` line under it was classified as *not* a search, so
+ *   `foldGatedTool` returned undefined for a result that folds under `grep`.
+ * - **The bound.** This branch's floor is 200 characters while the generic
+ *   stage's is `MIN_COMPRESSIBLE_CHARS`, and that stage folds a search shape
+ *   through the same `compactLossless(text, 'search')`. So the miss was only ever
+ *   visible *between the two floors* — a search result of 200 to 1200 characters
+ *   folded under `grep` and not under `findstr`. Every fixture large enough to
+ *   test the fold was also large enough for the generic stage.
+ *
+ * Comparison is case-insensitive because PowerShell resolves a cmdlet name that
+ * way: `Select-String` and `select-string` are one program, and naming both
+ * spellings would be two copies of one name — the same fact
+ * `SHELL_INTERPRETERS` records for `cmd.exe`/`CMD.EXE`/`cmd`.
+ *
+ * A Windows executable extension is deliberately *not* stripped here. `findstr.exe`
+ * is the same program as `findstr`, but the one vocabulary for that is
+ * `programName` in `command-policy.ts`, and a second copy of the extension list is
+ * the defect this repository keeps recording. The tokens read here are command
+ * words rather than argv program positions, which is why the two readers differ.
+ */
+const BASH_SEARCH_PROGRAMS: ReadonlySet<string> = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep', 'ag', 'ack', 'findstr', 'select-string'])
 
 /** Distinct error-indicator keywords (original ERROR_INDICATOR_KEYWORDS). */
 const ERROR_INDICATOR_KEYWORDS: readonly string[] = [
@@ -312,9 +349,17 @@ function isExcludedTool(name: string, excludeTools: readonly string[] | undefine
   return DEFAULT_EXCLUDE_TOOLS.some(matches) || (excludeTools ?? []).some(matches)
 }
 
-/** True when the shell command is a read-only search (original _bash_command_is_search). */
+/**
+ * True when the shell command is a read-only search (original
+ * `_bash_command_is_search`).
+ *
+ * Tokens are lowercased before the lookup because the search vocabulary names
+ * PowerShell cmdlets, and PowerShell resolves those case-insensitively: a `pwsh`
+ * line may spell the same program `Select-String` or `select-string`. Every POSIX
+ * member of the set is already lowercase, so this only ever adds a match.
+ */
 function bashCommandIsSearch(command: string): boolean {
-  const tokens = command.split(/[\s|;&]+/u).map(token => token.replace(/^["']|["']$/gu, ''))
+  const tokens = command.split(/[\s|;&]+/u).map(token => token.replace(/^["']|["']$/gu, '').toLowerCase())
   let sawSearchProgram = false
   for (const token of tokens) {
     if (BASH_SEARCH_PROGRAMS.has(token)) {
@@ -328,6 +373,84 @@ function bashCommandIsSearch(command: string): boolean {
 }
 
 const ACCEPT_MIN_RATIO_DEFAULT = 0.85
+
+/**
+ * The smallest saving a rewrite is still worth accepting under pressure.
+ *
+ * A rewrite of a tool result is not free even when it shrinks: it is a new byte
+ * sequence in the prefix, so a rendering that saves almost nothing buys a cache
+ * write with a saving it will never repay — the calculation
+ * `compaction-economics.ts` makes for the whole prefix, applied to one payload.
+ * Two percent is the floor that keeps a quota from asking for that trade: past
+ * it, the answer is to reclaim the room elsewhere, not to rewrite for nothing.
+ */
+const MIN_ACCEPTED_SAVING = 0.02
+
+/**
+ * How far over its compression quota a conversation is, as the caller measured it.
+ *
+ * `quotaTokens` is what the transcript may occupy once the categories no
+ * compressor can shrink are charged; `overTokens` is what it exceeds that by.
+ * Pushed by the composition that computed both, so the compressor never keeps a
+ * second opinion about how full the conversation is.
+ */
+/**
+ * One parked page a caller asked for, in the vocabulary the reader speaks.
+ *
+ * Byte offsets and byte budgets rather than lines, because bytes are what the
+ * storage measures in and what makes each page's size checkable.
+ */
+export interface ParkedPageRequest {
+  readonly locator: string
+  readonly offset?: number | undefined
+  readonly maxBytes?: number | undefined
+  readonly maxLines?: number | undefined
+}
+
+/**
+ * The reader for the locator half of `headroom_retrieve`.
+ *
+ * Injected rather than implemented here: reading a parked artifact is a
+ * filesystem read behind the credential guard, and that path lives with the
+ * plugin that owns the policy and the guard. What this module needs from it is
+ * one call that answers a page, and the shape of that answer is already pinned
+ * where the paging is tested.
+ */
+export type ParkedPageReader = (request: ParkedPageRequest) => Promise<unknown>
+
+/**
+ * The two forms one retrieval marker can take.
+ *
+ * They are one tool because they answer one question — "the bytes I needed were
+ * taken out of my context, where are they?" — and the model cannot tell which
+ * mechanism removed them. `hash` comes from a compression marker, `locator` from
+ * a cleared-result marker.
+ */
+export interface HeadroomRetrieveArgs {
+  readonly hash?: string | undefined
+  readonly locator?: string | undefined
+  readonly offset?: number | undefined
+  readonly max_bytes?: number | undefined
+  readonly max_lines?: number | undefined
+}
+
+export interface HeadroomQuota {
+  readonly overTokens: number
+  readonly quotaTokens: number
+  /**
+   * Tokens the unshrinkable categories already cost, and which they are.
+   *
+   * The overage says compression has to reclaim room; these say *where the room
+   * went*, which is the other half of the answer a user acts on — every one of
+   * them is a settings change (defer tool schemas, turn a Skill pack off) rather
+   * than something compression could ever fix.
+   */
+  readonly fixedTokens?: number | undefined
+  /** Those same tokens by category, so the panel can name them. Typed by the
+   *  reported shape ({@link HeadroomFixedCategory}) because these figures travel
+   *  straight to a panel through `status()` — one spelling, both ends. */
+  readonly fixedCategories?: readonly HeadroomFixedCategory[] | undefined
+}
 
 /**
  * The ratio at or below which a Stage 2 lossless fold is delivered on the spot.
@@ -358,6 +481,16 @@ const ACCEPT_MIN_RATIO_DEFAULT = 0.85
 const FOLD_DECISIVE_RATIO = 0.6
 const ERROR_PROTECTION_MAX_CHARS = 8_000
 const MIN_COMPRESSIBLE_CHARS = 1_200
+
+/**
+ * The range a window-scaled threshold may take.
+ *
+ * Deliberately the same range the `headroomThresholdChars` setting accepts (256 to
+ * 1,000,000), so a threshold derived from the window can never be a value the user
+ * could not have typed: an auto-derived figure outside the setting's own domain
+ * would be a second policy for one number.
+ */
+const THRESHOLD_BOUNDS = { min: 256, max: 1_000_000 } as const
 
 /** Flavor detection for structured-config outputs (text-only heuristics). */
 type ConfigFlavor = 'yaml' | 'toml' | 'ini'
@@ -434,6 +567,7 @@ export class FreeCodeGoHeadroomRuntime {
    * spill policy cannot take its place.
    */
   private readonly archive: SpillArchive
+  private readonly readParkedPage: ParkedPageReader | undefined
   private readonly store: CcrStore
   private readonly logCompressor = new LogCompressor()
   private readonly crusherConfig: SmartCrusherConfig = SMART_CRUSHER_DEFAULTS
@@ -462,6 +596,28 @@ export class FreeCodeGoHeadroomRuntime {
    */
   private writeRefusals = 0
   private disposed = false
+  /**
+   * The last budget signal a caller pushed. Absent means "no pressure known",
+   * which is the behaviour every deployment had before quotas existed.
+   */
+  private quota: HeadroomQuota | undefined
+  /**
+   * The last window a caller pushed, and it is deliberately *not* part of
+   * {@link quota}.
+   *
+   * The two are different facts with different lifetimes, and carrying one inside
+   * the other made the payload threshold move for the wrong reason. Pressure only
+   * exists in the bands where a quota means something (`tight` and above), while
+   * the window is known on every settled turn — so a threshold read off the quota
+   * was the configured figure at `comfortable` and the window-scaled figure at
+   * `tight`, i.e. it *rose* at the band boundary: on a million-token model, 1,200
+   * characters became 9,375 exactly when the conversation started running out of
+   * room, and the payload bar that the window scaling exists to raise was left
+   * unraised in the common case where there is room to spare. `cache-cold.ts`
+   * already reads `contextWindow` from the stored report rather than from the
+   * quota for this reason; the runtime now takes it the same way.
+   */
+  private contextWindow: number | undefined
 
   constructor(
     private readonly ctx: Context,
@@ -476,8 +632,15 @@ export class FreeCodeGoHeadroomRuntime {
        * still the ones the archive sees.
        */
       readonly store?: (archive: SpillArchive) => CcrStore
+      /**
+       * The reader for the locator form of `headroom_retrieve`. Absent in a
+       * composition that mounts no parked-result reader, where that form refuses
+       * with a sentence that names the alternative rather than failing obscurely.
+       */
+      readonly readParkedPage?: ParkedPageReader
     } = {},
   ) {
+    this.readParkedPage = options.readParkedPage
     this.archive = new SpillArchive({
       store: () => this.spillStore(),
       logger: ctx.logger,
@@ -561,6 +724,21 @@ export class FreeCodeGoHeadroomRuntime {
       retrievals: this.retrievals,
       retrieveMisses: this.retrieveMisses,
       ccrWriteRefusals: this.writeRefusals,
+      // Read back through the same accessor the waterfall decides with, for the
+      // same reason the settings are: a panel that computed the bar itself could
+      // display a figure different from the one in force.
+      quotaOverTokens: this.quota?.overTokens ?? 0,
+      quotaTokens: this.quota?.quotaTokens ?? 0,
+      // The fixed side of the same subtraction, so the panel can name what the
+      // transcript is competing with instead of showing a bare overage.
+      quotaFixedTokens: this.quota?.fixedTokens ?? 0,
+      quotaFixedCategories: this.quota?.fixedCategories ?? [],
+      acceptRatio: this.acceptMaxRatio(),
+      // Read through the same accessor the waterfall decides with, for the same reason
+      // the bar beside it is: a panel comparing the effective bar against a figure of
+      // its own (the shipped default, most likely) would report "the quota is acting"
+      // for a deployment whose configured value happens to differ from it.
+      configuredAcceptRatio: this.minRatio(),
       provenance: headroomProvenance(),
     }
   }
@@ -570,10 +748,28 @@ export class FreeCodeGoHeadroomRuntime {
     return settings?.headroomEnabled !== false && !this.disposed
   }
 
+  /**
+   * The smallest payload worth a compression attempt, in characters.
+   *
+   * The configured figure is the answer for {@link REFERENCE_WINDOW_TOKENS}, and it
+   * is scaled to the window the conversation is actually on: the question this
+   * threshold asks is "is this payload large enough to matter", and matter is a
+   * share of the window. With no window pushed the configured figure is used as it
+   * always was, so a deployment that never reports a window sees no change at all.
+   *
+   * Read from {@link contextWindow} and never from the quota, because the window is
+   * known whether or not the conversation is under pressure: reading it off the
+   * quota made this figure rise at the moment the band flipped, which is the
+   * opposite of what a conversation running out of room needs.
+   *
+   * The scaling is not an override: a user who typed a number still gets that
+   * number's *share*, and the bounds are the range the setting itself accepts.
+   */
   private threshold(): number {
     const settings = this.settings?.get() as HeadroomSettings | undefined
     const threshold = settings?.headroomThresholdChars
-    return typeof threshold === 'number' && Number.isFinite(threshold) && threshold >= 256 ? Math.floor(threshold) : MIN_COMPRESSIBLE_CHARS
+    const base = typeof threshold === 'number' && Number.isFinite(threshold) && threshold >= 256 ? Math.floor(threshold) : MIN_COMPRESSIBLE_CHARS
+    return scaleThresholdToWindow(base, this.contextWindow, THRESHOLD_BOUNDS)
   }
 
   private minRatio(): number {
@@ -581,6 +777,68 @@ export class FreeCodeGoHeadroomRuntime {
     const ratio = settings?.headroomMinSavingsRatio
     if (typeof ratio === 'number' && Number.isFinite(ratio) && ratio > 0 && ratio < 1) return ratio
     return ACCEPT_MIN_RATIO_DEFAULT
+  }
+
+  /**
+   * Point the compressor at the conversation's compression quota.
+   *
+   * Why this is a push and not a lookup: the figure comes from the prompt
+   * breakdown, which needs the session log and the folded request header, and the
+   * compression waterfall runs per tool result with neither. The caller that
+   * already measures the conversation pushes the number here, so the decision
+   * inside the waterfall stays one arithmetic step with no second measurement.
+   *
+   * A quota is a session fact and this runtime is process-wide, so the value
+   * in force describes the most recently measured conversation under pressure.
+   * That is deliberate: the alternative is a stale per-session quota surviving a
+   * conversation that ended, and a compression budget that outlives its transcript
+   * is worse than one that is merely shared.
+   * @param quota - the conversation's pressure, or `undefined` when it has none.
+   */
+  setCompressionQuota(quota: HeadroomQuota | undefined): void {
+    this.quota = quota
+  }
+
+  /**
+   * Point the runtime at the window the conversation is on.
+   *
+   * Separate from {@link setCompressionQuota} because it answers a different
+   * question with a different lifetime: pressure exists only in the bands where a
+   * quota means anything, while the window is a property of the routed model and is
+   * known on every settled turn. The caller that measures the conversation pushes
+   * both; a conversation with room to spare pushes `undefined` pressure and a real
+   * window, and that is the case the payload threshold has to scale in.
+   * @param contextWindow - the routed model's advertised window, or `undefined`
+   *   when it advertises none.
+   */
+  setContextWindow(contextWindow: number | undefined): void {
+    this.contextWindow = contextWindow !== undefined && Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : undefined
+  }
+
+  /**
+   * The largest output/original ratio this payload may ship at.
+   *
+   * Identity while no conversation is over its quota: the configured
+   * `headroomMinSavingsRatio` is the whole answer, exactly as before quotas
+   * existed. Under pressure the *required saving* is divided by the pressure, so
+   * a conversation twice over its budget asks for half the saving it normally
+   * would, down to {@link MIN_ACCEPTED_SAVING}. The ratio is the inverse of the
+   * saving (a payload must come out at or below it), which is why the relaxation
+   * moves the bar *up* while the rewriting rule stays the same.
+   *
+   * The fold bar is deliberately not read through here: `foldDecisiveBar` decides
+   * whether a reversible rendering is a delivery or a candidate, and relaxing it
+   * would change which of two renderings the model receives rather than how much
+   * of a saving is enough to ship at all.
+   * @returns the ratio a candidate must be at or below to be delivered.
+   */
+  private acceptMaxRatio(): number {
+    const configured = this.minRatio()
+    const quota = this.quota
+    if (quota === undefined || quota.overTokens <= 0) return configured
+    const pressure = quota.overTokens / Math.max(1, quota.quotaTokens)
+    const saving = Math.max(MIN_ACCEPTED_SAVING, (1 - configured) / (1 + pressure))
+    return 1 - saving
   }
 
   private dedupEnabled(): boolean {
@@ -837,9 +1095,9 @@ export class FreeCodeGoHeadroomRuntime {
    */
   private compressWorking(text: string, query: HeadroomQuery, bias: number, originalBytes: number, dedup?: DeferredRender): string | undefined {
     const workingBytes = Buffer.byteLength(text, 'utf8')
-    if (workingBytes < MIN_COMPRESSIBLE_CHARS) return undefined
+    if (workingBytes < this.threshold()) return undefined
 
-    const minRatio = this.minRatio()
+    const minRatio = this.acceptMaxRatio()
     const acceptRatio = (candidate: string): boolean =>
       Buffer.byteLength(candidate, 'utf8') / Math.max(1, workingBytes) <= minRatio
     const ratioOf = (candidate: string): number =>
@@ -1401,8 +1659,8 @@ export class FreeCodeGoHeadroomRuntime {
   private compressSection(section: ContentSection, query: HeadroomQuery, bias: number, store: CcrStore): SectionCompression {
     if (section.atomic || section.contentType === 'code') return { text: section.content }
     const bytes = Buffer.byteLength(section.content, 'utf8')
-    if (bytes < MIN_COMPRESSIBLE_CHARS) return { text: section.content }
-    const minRatio = this.minRatio()
+    if (bytes < this.threshold()) return { text: section.content }
+    const minRatio = this.acceptMaxRatio()
     switch (section.contentType) {
       case 'json': {
         const stage = new StagedCcrStore(store)
@@ -1525,43 +1783,111 @@ export class FreeCodeGoHeadroomRuntime {
       schema: { type: 'object' as const, additionalProperties: true },
       render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value) }],
     }
-    const dispose = tools.register(toolDefinition({
+    // Registration is wrapped because this tool is the only door back to bytes the
+    // model was shown a marker for: without it a compression marker is a dead end
+    // and a cleared-result marker is a path nothing pages. A failure here is
+    // therefore reported with what it costs, not as a bare error — the same
+    // contract every registration in `index.ts` keeps.
+    const register = tools.register
+    try {
+      this.registerRetrieve(register, output)
+    } catch (error) {
+      try {
+        this.ctx.logger.warn(`freecodego: headroom_retrieve was not registered, so compressed originals and parked results cannot be read back: ${redactCredentialShapes(String(error))}`)
+      } catch { /* logging must never decide whether the plugin loads */ }
+    }
+  }
+
+  /**
+   * The retrieval tool itself, split out so a failure to register is contained.
+   * @param register - the registry's own register function.
+   * @param output - the tool's output declaration, shared with the schema above it.
+   */
+  private registerRetrieve(register: (tool: unknown) => () => void, output: Parameters<typeof toolDefinition>[0]['output']): void {
+    const dispose = register(toolDefinition({
       name: 'headroom_retrieve',
-      description: 'Retrieve the original uncompressed text for a compressed tool output. Use this when a compressed result references "hash=<24 hex chars>" or "<<ccr:hash,...>>" and you need the full content that was omitted.',
+      description: 'Retrieve text that was taken out of your context before you saw it. One tool for both markers, because both mean the same thing: (1) a compressed tool output carries "hash=<24 hex chars>" (or "<<ccr:hash,...>>") — pass hash to get the omitted original back; (2) a cleared tool result carries a locator path — pass locator to page through the parked artifact, and pass the previous page\'s nextOffset as offset until eof is true. Pass exactly one of the two; the marker you are holding says which.',
       parameters: {
         type: 'object',
         additionalProperties: false,
-        required: ['hash'],
-        properties: { hash: { type: 'string', pattern: '^[a-f0-9]{24}$', description: 'The 24-hex hash from the compressed output marker.' } },
+        properties: {
+          hash: { type: 'string', pattern: '^[a-f0-9]{24}$', description: 'The 24-hex hash from a compressed-output marker.' },
+          locator: { type: 'string', description: 'The parked artifact path named in a cleared-result marker.' },
+          offset: { type: 'integer', minimum: 0, description: 'Byte offset to start a parked page at; pass the previous page\'s nextOffset to continue. An offset inside a multi-byte character is moved back to that character\'s first byte, and the answer\'s offset reports the byte really served.' },
+          max_bytes: { type: 'integer', minimum: 1, description: 'Parked pages only: bytes to serve at most.' },
+          max_lines: { type: 'integer', minimum: 1, description: 'Parked pages only: whole lines to serve at most.' },
+        },
       },
       output,
-      execute: async (args: { readonly hash: string }) => {
+      execute: async (args: HeadroomRetrieveArgs | undefined) => {
+        const hash = typeof args?.hash === 'string' && args.hash !== '' ? args.hash : undefined
+        const locator = typeof args?.locator === 'string' && args.locator.trim() !== '' ? args.locator.trim() : undefined
+        // Two markers, two originals: a call that carries both is a model that has
+        // confused which one it is holding, and answering either would be picking
+        // for it.
+        if (hash !== undefined && locator !== undefined) {
+          throw new Error('Pass either hash (from a compressed-output marker) or locator (from a cleared-result marker), not both: they name different originals.')
+        }
+        if (locator !== undefined) {
+          if (this.readParkedPage === undefined) {
+            throw new Error('This composition mounts no parked-result reader, so a locator cannot be paged here. Read the path with the file tools instead.')
+          }
+          // Deliberately outside the hash counters: `retrievals`/`retrieveMisses`
+          // measure whether the hash promise is decaying (an archive that stops
+          // resolving), and a paged read of a path on disk says nothing about it.
+          return await this.readParkedPage({ locator, offset: args?.offset, maxBytes: args?.max_bytes, maxLines: args?.max_lines })
+        }
+        if (hash === undefined) {
+          throw new Error('Pass hash (from a compressed-output marker) or locator (from a cleared-result marker): the marker you are holding names one of them.')
+        }
         this.retrievals += 1
-        const payload = this.store.get(args.hash)
+        const payload = this.store.get(hash)
         if (payload !== undefined) return payload
         // The entry is process-local and expires; the Harness's spill store is not.
         // An archived answer is a retrieval that succeeded, so it is deliberately
         // not counted as a miss: the miss counter exists to show the promise
         // decaying, and this is the opposite of decay.
-        const archived = await this.archive.recover(args.hash)
+        const archived = await this.archive.recover(hash)
         if (archived !== undefined) return archived
-        const locator = await this.archive.locatorFor(args.hash)
+        // Named `archiveLocator` rather than `locator`: the argument of the same
+        // name above is the other form of this call, and shadowing it here is how a
+        // later edit ends up answering the wrong one.
+        const archiveLocator = await this.archive.locatorFor(hash)
         this.retrieveMisses += 1
-        if (locator !== undefined) {
+        if (archiveLocator !== undefined) {
           // Archived but not readable here: name the locator rather than claim the
           // bytes are gone, because they are not — the model can read the artifact
           // with the file tools the marker's own hint points at.
-          throw new Error(`The original for hash "${args.hash}" is no longer held in memory (expired or evicted), and its archived copy at ${locator} could not be read back here. Read it at that locator, or re-run the original tool.`)
+          throw new Error(`The original for hash "${hash}" is no longer held in memory (expired or evicted), and its archived copy at ${archiveLocator} could not be read back here. Read it at that locator, or re-run the original tool.`)
         }
         // Tombstone instead of a bare error: the model learns the original
         // is gone for good (TTL/capacity eviction) and must re-run the tool
         // rather than retrying the same hash in a doom loop.
-        throw new Error(`The original for hash "${args.hash}" is no longer stored (expired or evicted). The compressed summary you have is all that remains; re-run the original tool if you need the full content again.`)
+        throw new Error(`The original for hash "${hash}" is no longer stored (expired or evicted). The compressed summary you have is all that remains; re-run the original tool if you need the full content again.`)
       },
-      presentCall: (args: { readonly hash: string }) => ({ card: 'generic', title: `Retrieve original (hash ${args.hash})` }),
+      presentCall: (args: HeadroomRetrieveArgs | undefined) => ({
+        card: 'generic',
+        title: typeof args?.hash === 'string' && args.hash !== ''
+          ? `Retrieve original (hash ${args.hash})`
+          : retrieveTitleForLocator(args?.locator),
+      }),
     }))
     this.ctx.effect(() => dispose, 'freecodego: headroom_retrieve tool')
   }
+}
+
+/**
+ * What a parked-result call card names.
+ *
+ * The last path segment only: a locator is an absolute path under the data home,
+ * and the whole thing is noise on a card whose job is recognition.
+ * @param locator - the locator the call carried, when it carried one.
+ * @returns the card title.
+ */
+function retrieveTitleForLocator(locator: unknown): string {
+  if (typeof locator !== 'string' || locator.trim() === '') return 'Retrieve original'
+  const segments = locator.replaceAll('\\', '/').split('/')
+  return `Read parked result (${segments.at(-1) ?? locator})`
 }
 
 /**

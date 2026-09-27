@@ -1,6 +1,169 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/harness-plugin/README.md
-README.md: c54b12c23ad101daf98b59dc43da90985fc975c9
-README.zh.md: a9e65f3ce6601d9c54acfc1c9fe77f35bf078ee9
+/:
+  en: ee0d9c84d482493a
+  zh: ae82889f296d39f4
+/dsh-freecodego-harness-plugin:
+  en: 1d0a88e3af5f2f3e
+  zh: 5d1108a3268145af
+/dsh-freecodego-harness-plugin/summary:
+  en: d40518e576fc53a7
+  zh: bb54c20ca12a480f
+/dsh-freecodego-harness-plugin/table-of-contents:
+  en: 30a6d701b2a56fca
+  zh: 879ad596c6925d5a
+/dsh-freecodego-harness-plugin/documentation:
+  en: 660155133b4c29cf
+  zh: b1f215d495826eb3
+/dsh-freecodego-harness-plugin/subagent-model-routing:
+  en: 32df208a73ec7b8b
+  zh: 0cf95a41bd0a5af7
+/dsh-freecodego-harness-plugin/free-models:
+  en: 89a133e60ce39ac3
+  zh: 85e08cee07a9563a
+/dsh-freecodego-harness-plugin/session-deletion:
+  en: 2967cf05c54c36ab
+  zh: b7270ef9d2b12b23
+/dsh-freecodego-harness-plugin/engineering-enhancement:
+  en: 9ba707e6f3f4dde6
+  zh: bc20d5da950a23df
+/dsh-freecodego-harness-plugin/engineering-enhancement/multi-engine-engineering-team:
+  en: 5664429e597614cd
+  zh: 4ba0a216949cdb4f
+/dsh-freecodego-harness-plugin/engineering-enhancement/multi-engine-engineering-team/verification-evidence-and-adversarial-probes:
+  en: 65f364316448d759
+  zh: d8aaf3df61001361
+/dsh-freecodego-harness-plugin/engineering-enhancement/deterministic-scan-selection:
+  en: 86659016f7ab84d6
+  zh: 007794e0b1e7cb06
+/dsh-freecodego-harness-plugin/code-review:
+  en: c7dd48f1a27c6b15
+  zh: 45c3b366f06bde18
+/dsh-freecodego-harness-plugin/hunk-level-change-tracking:
+  en: b8c2f1b53e00a076
+  zh: fb4f08f48a7f2d8c
+/dsh-freecodego-harness-plugin/context-compression-headroom:
+  en: 963a96552c7b1a8d
+  zh: 618b8d3b5f911082
+/dsh-freecodego-harness-plugin/context-compression-headroom/code-skeletonization:
+  en: 242b58fc3fc51f2a
+  zh: 686c9fd98c0f222e
+/dsh-freecodego-harness-plugin/context-compression-headroom/on-demand-tool-schemas:
+  en: 3d59fa69eddc3d5c
+  zh: 2d3eb8fe54207759
+/dsh-freecodego-harness-plugin/context-discipline-command-policy-and-plan-mode:
+  en: 2913d62cee9634f6
+  zh: d94348745c0f179c
+/dsh-freecodego-harness-plugin/prompt-composition:
+  en: 4d0e2a360061467a
+  zh: f5452b6e9851b4e8
+/dsh-freecodego-harness-plugin/post-compaction-rehydration:
+  en: 3bda6bf0f3f5d806
+  zh: 9adf3eade6e15501
+/dsh-freecodego-harness-plugin/project-memory:
+  en: 922940810f839cbe
+  zh: 2da34e11db13b558
+/dsh-freecodego-harness-plugin/plugin-conflict-protection:
+  en: 350dc185fc062c71
+  zh: c17aecbc6d44fced
+/dsh-freecodego-harness-plugin/release-updates:
+  en: 687ec267d12bded1
+  zh: 3cf22c9bc436fc4a
+/dsh-freecodego-harness-plugin/zcode-glm-5-3-flash-promotion:
+  en: 49c53908827a765f
+  zh: 8524c23d225bd68b
+/dsh-freecodego-harness-plugin/mcp-and-skills:
+  en: 034f8a212e4efa61
+  zh: f0e4aed9dd036a41
+/dsh-freecodego-harness-plugin/optional-harness-capabilities:
+  en: b39a1a583ff84365
+  zh: 26a98c493331e46b
+/dsh-freecodego-harness-plugin/optional-harness-capabilities/browser-control:
+  en: faeb0d1fce125134
+  zh: a5aa882f5dfabb4d
+/dsh-freecodego-harness-plugin/optional-harness-capabilities/desktop-control:
+  en: 855d31e99eb29c34
+  zh: 98db23fffd826c94
+/dsh-freecodego-harness-plugin/optional-harness-capabilities/session-history-retrieval:
+  en: e33dd3e0d7a4a0b5
+  zh: 88045c85653bf44d
+/dsh-freecodego-harness-plugin/optional-harness-capabilities/voice-input:
+  en: b3c5a5b220d887d3
+  zh: 8d0167b63f2e7116
+/dsh-freecodego-harness-plugin/companion-character:
+  en: cdf29f08077a6517
+  zh: 05b8817118bfd4c4
+/dsh-freecodego-harness-plugin/third-party-plugin-tools:
+  en: 5115ab958ec9578d
+  zh: 15544ed456eaba52
+/dsh-freecodego-harness-plugin/media-defaults:
+  en: 96d181fb3bfff585
+  zh: 77c5138e46761b6a
+/dsh-freecodego-harness-plugin/media-defaults/the-image-video-switch:
+  en: 72814dc7a167921c
+  zh: f4a95b15e2c76f1e
+/dsh-freecodego-harness-plugin/media-defaults/which-protocols:
+  en: bdee91cb22023259
+  zh: a6c9acb093364358
+/dsh-freecodego-harness-plugin/media-defaults/which-models:
+  en: bc10adf3d0cd3d09
+  zh: 9e4f544a69d92ef7
+/dsh-freecodego-harness-plugin/model-picker-and-provider-accounts:
+  en: 6f92c3b33499c327
+  zh: aa9ebe5419bc523d
+/dsh-freecodego-harness-plugin/settings-migration-orphan-engineering-keys:
+  en: 17e94581082bef1d
+  zh: 9907de52d41a7119
+/dsh-freecodego-harness-plugin/community-plugins:
+  en: 8656711f0b5ad851
+  zh: a8c4c2a12b5ba9fd
+/dsh-freecodego-harness-plugin/model-experience:
+  en: 215e7ba838619b7b
+  zh: 215e7ba838619b7b
+/dsh-freecodego-harness-plugin/model-experience/prompt-sections:
+  en: d2738fee8e970ded
+  zh: 1bd73f3cd0c24d2f
+/dsh-freecodego-harness-plugin/model-experience/prompt-sections/what-the-model-sees:
+  en: 8a26fd3d19651c0a
+  zh: 350ce31159403e02
+/dsh-freecodego-harness-plugin/model-experience/prompt-sections/what-the-model-sees/composite-edit-guidance:
+  en: 3ec793dcbac41c22
+  zh: 2fb6bc709e9c5a0c
+/dsh-freecodego-harness-plugin/model-experience/prompt-sections/token-effect:
+  en: a9bf13373680d0e3
+  zh: a63884a5ce238243
+/dsh-freecodego-harness-plugin/model-experience/prompt-sections/kv-cache-effect:
+  en: fa69c2ef3b21eec4
+  zh: ba6734a1202ba97b
+/dsh-freecodego-harness-plugin/model-experience/engineering-tools:
+  en: 26bf7f5c683b768e
+  zh: fb94fd6f7e5838d6
+/dsh-freecodego-harness-plugin/model-experience/engineering-tools/what-the-model-sees:
+  en: 5ceb831cddd6d4b5
+  zh: 06e3bdff72137172
+/dsh-freecodego-harness-plugin/model-experience/engineering-tools/token-effect:
+  en: e0b7b30ccbdb7e5c
+  zh: 719465971bade8a8
+/dsh-freecodego-harness-plugin/model-experience/engineering-tools/kv-cache-effect:
+  en: fdfe396fd670d30f
+  zh: 905c4d650b3c5c44
+/dsh-freecodego-harness-plugin/model-experience/injected-guidance:
+  en: 483807794c84de6e
+  zh: 4733f4075aa0b006
+/dsh-freecodego-harness-plugin/model-experience/injected-guidance/what-the-model-sees:
+  en: 0eb0acef3b9ef437
+  zh: 57a7801bf1158b16
+/dsh-freecodego-harness-plugin/model-experience/injected-guidance/token-effect:
+  en: 8f1de09933d9ecdd
+  zh: 01d051dbc87ba270
+/dsh-freecodego-harness-plugin/model-experience/injected-guidance/kv-cache-effect:
+  en: 0ce477142517ecfc
+  zh: 94438ea15a5ce3fb
+/dsh-freecodego-harness-plugin/known-limitations-and-deferred-work:
+  en: 869a78ba55632aed
+  zh: 7c9cafba74b15c45
+/dsh-freecodego-harness-plugin/known-limitations-and-deferred-work/dev-note:
+  en: 23c8fdd7bf160058
+  zh: 0c84b908cd1c8505

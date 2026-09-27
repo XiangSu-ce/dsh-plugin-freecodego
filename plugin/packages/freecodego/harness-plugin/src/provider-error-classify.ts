@@ -187,6 +187,16 @@ const KIND_BY_CODE: Readonly<Record<string, ProviderErrorKind>> = {
   INVALID_CREDENTIAL: 'auth',
   // `QUOTA_EXCEEDED_CODE`: an exhausted balance, canonical in `dsh-llm/error`.
   QUOTA: 'quota',
+  // `ACCOUNT_QUOTA_EXCEEDED_CODE`, added in rc.2: the *same* condition on a route
+  // signed in with a DeepSeek account, re-coded by `llm-deepseek-account` so the
+  // first-party billing page can be offered instead of a top-up link. It has to be
+  // named here as well, because the re-code copies the original failure (status
+  // included) but the original is built from the *message* — `llm-pi-ai`'s
+  // `isQuotaExceededError` — so the status may be absent or unrelated, and this
+  // table is then the only place that still knows what happened. Unnamed, an
+  // account out of credit classified as `unknown`, which is retryable: the budget
+  // would be spent re-sending a request the account had already refused.
+  ACCOUNT_QUOTA: 'quota',
   // `CONTEXT_WINDOW_EXCEEDED_CODE`, likewise.
   CONTEXT_WINDOW_EXCEEDED: 'context-overflow',
   ABORTED: 'cancelled',

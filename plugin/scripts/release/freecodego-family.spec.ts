@@ -54,10 +54,21 @@ const bundlePayload = [
   // of this plugin with it while the tarball still looked complete.
   'dist/harness-plugin.js',
   'dist/session-events.js',
-  'dist/agent-team.js',
-  'dist/tool-agent-team.js',
-  'dist/schedule.js',
+  // No `dist/agent-team.js`, `dist/tool-agent-team.js`, or `dist/schedule.js`:
+  // those three were upstream's own modules compiled into this payload as rows of
+  // their own, and the rows are deleted (the official team bundle mounts the first
+  // two by name, and the Web composition declares the scheduler). A payload row for
+  // a file the build no longer emits fails here, which is what keeps this list
+  // honest in the other direction too.
   'dist/auto-review.js',
+  'dist/subagent-codex.js',
+  'dist/subagent-claude-code.js',
+  // The module the `tool-session-query` row loads, resolved through the
+  // manifest's own `./tool-session-query` export. Upstream keeps that id, so this
+  // build's copy is the only thing that answers it here: a payload that lost it
+  // would mount a row resolving to nothing — five read-only retrieval tools gone,
+  // and the tarball still looking complete.
+  'dist/tool-session-query.js',
 ]
 
 /**
@@ -213,15 +224,16 @@ describe('freecodego release family', () => {
     expect(() => { family.validatePayload(bundle, bundlePayload) }).not.toThrow()
 
     // The hazard this catches: the bundle's `cordis.patch.yml` mounts
-    // `freecodego/schedule`, so a stale `dist/` silently drops the scheduler.
-    const stale = bundlePayload.filter(path => path !== 'dist/schedule.js')
+    // `freecodego/auto-review`, so a stale `dist/` silently drops the Auto preset's
+    // authorization gate.
+    const stale = bundlePayload.filter(path => path !== 'dist/auto-review.js')
     expect(() => { family.validatePayload(bundle, stale) })
-      .toThrow(/does not carry dist\/schedule\.js, which its manifest resolves to/)
+      .toThrow(/does not carry dist\/auto-review\.js, which its manifest resolves to/)
   })
 
   it('names only paths the manifest resolves, so no snapshot row is inert', () => {
     // A snapshot row earns its place by failing when the payload drops it, which
-    // is what the sibling test above demonstrates for `dist/schedule.js`. The
+    // is what the sibling test above demonstrates for `dist/auto-review.js`. The
     // gate's declared set comes from the manifest, so a row no manifest names
     // cannot fail: it would sit in the list looking like coverage while the file
     // it names went unbuilt. Asking the gate itself, rather than re-deriving

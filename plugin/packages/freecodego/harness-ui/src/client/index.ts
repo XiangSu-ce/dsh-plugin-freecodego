@@ -10,14 +10,15 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from '@deepseek-ai/dsh-freecodego-harness-plugin'
-import type { AdvisorSnapshot, AdvisorUpdate, EngineeringMemoryIndex } from './settings-tab.tsx'
+import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { EngineeringMemoryIndex } from './settings-tab.tsx'
 import freeCodeGoRemote from '@deepseek-ai/dsh-freecodego-harness-plugin/remote'
-import { ADVISOR_CHANGE_EVENT, CAPABILITY_CHANGE_EVENT, ENGINEERING_CHANGE_EVENT, AdvisorSettingsSection, EngineeringSettingsSection, FreeCodeGoSettingsSection, McpSettingsSection, PluginConflictNotice, SkillSettingsSection, type EngineeringLoopStatus, type EngineeringSettings, type EngineeringStatus, type EngineeringTeamDecision, type EngineeringTeamImplementation, type EngineeringTeamJob, type EngineeringTeamReport, type EngineeringTeamVerification } from './settings-tab.tsx'
+import { CAPABILITY_CHANGE_EVENT, ENGINEERING_CHANGE_EVENT, EngineeringSettingsSection, FreeCodeGoSettingsSection, McpSettingsSection, PluginConflictNotice, SkillSettingsSection, type EngineeringLoopStatus, type EngineeringSettings, type EngineeringStatus, type EngineeringTeamDecision, type EngineeringTeamImplementation, type EngineeringTeamJob, type EngineeringTeamReport, type EngineeringTeamVerification } from './settings-tab.tsx'
 import { SessionDeleteMenuItem } from './session-delete-menu-item.tsx'
-import { SessionDeleteOverlay } from './session-delete-overlay.tsx'
+import { SessionDeleteNotice } from './session-delete-notice.tsx'
 import { WEB_SEARCH_NAMESPACE, WebSearchProviderSection, type WebSearchModelOption, type WebSearchNamespaceValue } from './web-search-provider-section.tsx'
-import { EngineAction, EngineExecutionBadge, LanguageAction, VoiceInputAction } from './toolbar-actions.tsx'
+import { DesignSection } from './design-section.tsx'
+import { EngineAction, EngineExecutionBadge, LanguageAction } from './toolbar-actions.tsx'
 import { installFreeCodeGoSidebarIcons } from './sidebar-icons.ts'
 import { installCompanion } from './companion/companion.tsx'
 import { installNativeModelMenuBadges, type NativeModelDirectorySnapshot } from './native-model-menu-badges.ts'
@@ -48,13 +49,6 @@ const SETTINGS_ENTRY = 'freecodego-harness-plugin'
 type ManagedCatalog = { readonly catalogRevision: string; readonly groups?: readonly { readonly id: number; readonly name: string; readonly enabled: boolean; readonly default?: boolean; readonly rateMultiplier?: number; readonly sortOrder?: number }[]; readonly models: readonly { readonly id: string; readonly displayName: string; readonly provider: string; readonly protocol: string; readonly availability: string; readonly compatibleEngines: readonly FreeCodeGoEngineId[]; readonly choices: readonly { readonly routeKey: string; readonly label: string; readonly availability: string; readonly compatibleEngines: readonly FreeCodeGoEngineId[]; readonly zeroPrice?: boolean; readonly locked?: boolean; readonly rateMultiplier?: number; readonly groupName?: string; readonly groupId?: number; readonly protocol?: string; readonly access?: string; readonly unlockRequired?: boolean; readonly unlockReason?: string; readonly unlockExpiresAt?: string }[] }[] }
 type CapabilitySnapshot = { readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly voiceInputEnabled: boolean; readonly sessionDeleteEnabled: boolean; readonly modelCategories: Readonly<Record<string, 'text' | 'image' | 'video' | 'audio'>>; readonly mcpServers: readonly { readonly id: string; readonly enabled: boolean; readonly transport: 'stdio' | 'streamable-http'; readonly serverName: string; readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>>; readonly cwd: string; readonly url: string; readonly headers: Readonly<Record<string, string>> }[]; readonly skillRoots: readonly { readonly id: string; readonly enabled: boolean; readonly path: string }[]; readonly skillInvocationOverrides?: Readonly<Record<string, boolean>> | undefined; readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly { readonly name: string; readonly description: string; readonly source: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }
 type CapabilityMarketplacePage = { readonly kind: 'mcp' | 'skill'; readonly total: number; readonly offset: number; readonly limit: number; readonly query?: string; readonly categories: readonly { readonly id: string; readonly label: string; readonly count?: number }[]; readonly items: readonly { readonly id: string; readonly kind: 'mcp' | 'skill'; readonly title: string; readonly description: string; readonly category: string; readonly sourceUrl: string; readonly iconUrl?: string; readonly author?: string; readonly popularity: number; readonly installed: boolean; readonly installable: boolean; readonly requiresConfiguration?: boolean }[] }
-// `AdvisorSnapshot` / `AdvisorUpdate` used to be declared here as well as in
-// settings-tab.tsx, and the copies had already drifted: this one was missing
-// `sideChannelWarnings`, which the Advisor section renders. The panel kept
-// working only because TypeScript types do not strip runtime fields. One
-// definition now, imported from the module that consumes it.
-type AdvisorModelChoice = { readonly id: string; readonly displayName: string; readonly provider: string; readonly description: string }
-type AdvisorNote = { readonly id: string; readonly sessionId: string; readonly turn: number; readonly severity: 'nit' | 'concern' | 'blocker'; readonly note: string; readonly delivery: 'record' | 'inject' | 'steer'; readonly time: number }
 type GatewayModelPrice = { readonly modelId: string; readonly displayName: string; readonly provider: string; readonly source: 'gateway' | 'vyce' | 'empero' | 'opencode' | 'openrouter' | 'logfare' | 'workbuddy' | 'agnes' | 'sensenova' | 'nvidia'; readonly groupName: string; readonly platform?: string; readonly rateMultiplier: number; readonly billingMode: 'token' | 'per-request' | 'image'; readonly currency: string; readonly description?: string; readonly originalInputPricePerMillion?: number; readonly originalOutputPricePerMillion?: number; readonly originalCacheReadPricePerMillion?: number; readonly originalCacheWritePricePerMillion?: number; readonly originalPerRequestPrice?: number; readonly originalImageOutputPricePerMillion?: number; readonly inputPricePerMillion?: number; readonly outputPricePerMillion?: number; readonly cacheReadPricePerMillion?: number; readonly cacheWritePricePerMillion?: number; readonly perRequestPrice?: number; readonly imageOutputPricePerMillion?: number; readonly imagePrices?: readonly { readonly label: string; readonly price: number; readonly originalPrice?: number }[] }
 
 // Function-typed properties, not methods: `useSyncExternalStore` is handed
@@ -102,6 +96,13 @@ function useEpochSelector(store: EpochStore): SnapshotSelectorHook<number> {
 // entry's `hooks` compartment — the route `@deepseek-ai/dsh-client-ui-jobs` takes
 // for its own job list. An undeclared service is not a soft failure here either:
 // the Context getter throws and the whole client entry ends up FAILED.
+/**
+ * The design pack's status, taken from the Host package rather than a second
+ * declaration: the page renders one row per feature, and a locally re-spelled
+ * shape would drift from the one the Host actually answers with.
+ */
+type DesignStatus = import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoDesignStatus
+
 export const inject = ['slots', 'locale', 'remote', 'connection', 'sessions', 'jobs', 'uiSession', 'uiConversation']
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -135,6 +136,14 @@ export const zh = {
   engineCodex: 'Codex',
   engineClaude: 'Claude',
   engineering: '工程增强',
+  design: '设计',
+  designIntro: '按需开启设计能力。每项功能单独开关，未开启时不占用对话上下文；开启后它提供的工具与技能再按需加载。',
+  designMasterOn: '总开关已开启',
+  designMasterOff: '总开关已关闭',
+  designTools: '提供的工具',
+  designLoading: '正在读取设计功能状态…',
+  designLoadFailed: '无法读取设计功能状态。',
+  designWriteFailed: '写入失败，状态未改变。',
   title: 'FreeCodeGo Agent',
   eyebrow: 'FREECODEGO CONTROL DECK',
   heroDescription: '统一管理模型路由、账户授权与实时额度。支持 FreeCodeGo 网关、OpenCode 与 Agnes。',
@@ -256,6 +265,14 @@ export const en = {
   engineCodex: 'Codex',
   engineClaude: 'Claude',
   engineering: 'Engineering',
+  design: 'Design',
+  designIntro: 'Turn design capabilities on as you need them. Each one has its own switch and costs no conversation context until it is enabled; its tools and Skills load on demand from there.',
+  designMasterOn: 'Master switch on',
+  designMasterOff: 'Master switch off',
+  designTools: 'Tools provided',
+  designLoading: 'Reading design capability status…',
+  designLoadFailed: 'Could not read the design capability status.',
+  designWriteFailed: 'The change was not saved; the status is unchanged.',
   title: 'FreeCodeGo Agent',
   eyebrow: 'FREECODEGO CONTROL DECK',
   heroDescription: 'Manage model routing, account authorization, and live credits across FreeCodeGo, OpenCode, and Agnes.',
@@ -363,6 +380,11 @@ export function apply(ctx: ClientContext): void {
   // slot ledger and nothing else from the shell.
   installCompanion(ctx)
   registerAgentProgressUi(ctx)
+  // Voice input deliberately registers no keyboard command and no composer
+  // control of its own: this plugin contributes a *recognizer* to the harness's
+  // voice-input feature (see `harness-plugin/src/speech-provider.ts`), and the
+  // microphone, its shortcut, and its settings page stay upstream's. A second
+  // button here would be a second capture path onto the same feature.
   // The core Tool package only owns a specialized read_image card. Register
   // FreeCodeGo media tool views here so generated attachments render inline
   // without requiring a Harness core UI upgrade.
@@ -634,7 +656,13 @@ export function apply(ctx: ClientContext): void {
   const pluginConflictSetEnabled = (enabled: boolean): Promise<RemoteResult<FreeCodeGoPluginConflictStatus>> => backendCall<FreeCodeGoPluginConflictStatus>('pluginConflictSetEnabled', enabled)
   const headroomStatus = (): Promise<RemoteResult<HeadroomStats>> => backendCall<HeadroomStats>('headroomStatus')
   const headroomSetEnabled = (enabled: boolean): Promise<RemoteResult<HeadroomStats>> => backendCall<HeadroomStats>('headroomSetEnabled', enabled)
-  const headroomUpdate = (patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean }): Promise<RemoteResult<HeadroomStats>> => backendCall<HeadroomStats>('headroomUpdate', patch)
+  // `foldPolicy` is part of this patch because the settings page sends it and the
+  // Host applies it (`HeadroomStats.foldPolicy` is what the switch reads back).
+  // Leaving it out of the declared shape did not break the wire — the object is
+  // passed through whole — but it made the panel's own prop type the only place the
+  // field was named, so a later edit that rebuilt the patch field by field would
+  // have dropped a setting the UI still offered.
+  const headroomUpdate = (patch: { readonly thresholdChars?: number; readonly minSavingsRatio?: number; readonly dedupEnabled?: boolean; readonly excludeTools?: readonly string[]; readonly foldReads?: boolean; readonly codeSkeletonEnabled?: boolean; readonly foldPolicy?: 'reversible' | 'max' }): Promise<RemoteResult<HeadroomStats>> => backendCall<HeadroomStats>('headroomUpdate', patch)
   const deferredToolsStatus = (): Promise<RemoteResult<DeferredToolStatus>> => backendCall<DeferredToolStatus>('deferredToolsStatus')
   const deferredToolsSetEnabled = (enabled: boolean): Promise<RemoteResult<DeferredToolStatus>> => backendCall<DeferredToolStatus>('deferredToolsSetEnabled', enabled)
   const mediaGenerationStatus = (): Promise<RemoteResult<FreeCodeGoMediaToolStatus>> => backendCall<FreeCodeGoMediaToolStatus>('mediaGenerationStatus')
@@ -642,6 +670,9 @@ export function apply(ctx: ClientContext): void {
   const reviewStatus = (sessionId: string): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewStatus', sessionId)
   const reviewStart = (sessionId: string, request: FreeCodeGoReviewStartRequest): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewStart', sessionId, request)
   const reviewUpdate = (sessionId: string, patch: FreeCodeGoReviewUpdate): Promise<RemoteResult<FreeCodeGoReviewStatus>> => backendCall<FreeCodeGoReviewStatus>('reviewUpdate', sessionId, patch)
+  const secondModelStatus = (): Promise<RemoteResult<FreeCodeGoSecondModelStatus>> => backendCall<FreeCodeGoSecondModelStatus>('secondModelStatus')
+  const secondModelUpdate = (patch: FreeCodeGoSecondModelUpdate): Promise<RemoteResult<FreeCodeGoSecondModelStatus>> => backendCall<FreeCodeGoSecondModelStatus>('secondModelUpdate', patch)
+  const secondModelRoutes = (): Promise<RemoteResult<readonly FreeCodeGoSecondModelRoute[]>> => backendCall<readonly FreeCodeGoSecondModelRoute[]>('secondModelRoutes')
   const guardSettingsStatus = (): Promise<RemoteResult<FreeCodeGoGuardSettingsStatus>> => backendCall<FreeCodeGoGuardSettingsStatus>('guardSettingsStatus')
   const guardSettingsUpdate = (patch: FreeCodeGoGuardSettingsUpdate): Promise<RemoteResult<FreeCodeGoGuardSettingsStatus>> => backendCall<FreeCodeGoGuardSettingsStatus>('guardSettingsUpdate', patch)
   const automationSettingsStatus = (): Promise<RemoteResult<FreeCodeGoAutomationSettings>> => backendCall<FreeCodeGoAutomationSettings>('automationSettingsStatus')
@@ -684,11 +715,6 @@ export function apply(ctx: ClientContext): void {
   const skillRootRemove = (id: string): Promise<RemoteResult<CapabilitySnapshot>> => backendCall<CapabilitySnapshot>('skillRootRemove', id)
   /** Set or clear one Skill's model-invocation override (`modelInvocable` omitted clears it). */
   const skillInvocationSet = (input: { readonly name: string; readonly modelInvocable?: boolean }): Promise<RemoteResult<CapabilitySnapshot>> => backendCall<CapabilitySnapshot>('skillInvocationSet', input)
-  const advisorStatus = (): Promise<RemoteResult<AdvisorSnapshot>> => backendCall<AdvisorSnapshot>('advisorStatus')
-  const advisorUpdate = (input: AdvisorUpdate): Promise<RemoteResult<AdvisorSnapshot>> => backendCall<AdvisorSnapshot>('advisorUpdate', input)
-  const advisorModels = (): Promise<RemoteResult<readonly AdvisorModelChoice[]>> => backendCall<readonly AdvisorModelChoice[]>('advisorModels')
-  const advisorNotes = (): Promise<RemoteResult<readonly AdvisorNote[]>> => backendCall<readonly AdvisorNote[]>('advisorNotes')
-  const advisorReviewNow = (sessionId: string): Promise<RemoteResult<AdvisorSnapshot>> => backendCall<AdvisorSnapshot>('advisorReviewNow', sessionId)
   const engineeringEval = (): Promise<RemoteResult<FreeCodeGoEngineeringEvalReport>> => backendCall<FreeCodeGoEngineeringEvalReport>('engineeringEval')
   const engineeringMemorySearch = (sessionId: string, searchText?: string, limit?: number): Promise<RemoteResult<readonly EngineeringMemoryIndex[]>> => backendCall<readonly EngineeringMemoryIndex[]>('engineeringMemorySearch', sessionId, searchText, limit)
   const engineeringMemoryRecall = (sessionId: string): Promise<RemoteResult<FreeCodeGoEngineeringMemoryRecall>> => backendCall<FreeCodeGoEngineeringMemoryRecall>('engineeringMemoryRecall', sessionId)
@@ -700,11 +726,12 @@ export function apply(ctx: ClientContext): void {
   const engineeringStatus = (): Promise<RemoteResult<EngineeringStatus>> => backendCall<EngineeringStatus>('engineeringStatus')
   const engineeringSetEnabled = (enabled: boolean): Promise<RemoteResult<EngineeringStatus>> => backendCall<EngineeringStatus>('engineeringSetEnabled', enabled)
   const engineeringSettingsUpdate = (input: Partial<EngineeringSettings>): Promise<RemoteResult<EngineeringStatus>> => backendCall<EngineeringStatus>('engineeringSettingsUpdate', input)
+  const designStatus = (): Promise<RemoteResult<DesignStatus>> => backendCall<DesignStatus>('designStatus')
+  const designSetEnabled = (enabled: boolean): Promise<RemoteResult<DesignStatus>> => backendCall<DesignStatus>('designSetEnabled', enabled)
+  const designFeatureSetEnabled = (id: string, enabled: boolean): Promise<RemoteResult<DesignStatus>> => backendCall<DesignStatus>('designFeatureSetEnabled', id, enabled)
   const engineeringLoopStatus = (sessionId: string): Promise<RemoteResult<EngineeringLoopStatus>> => backendCall<EngineeringLoopStatus>('engineeringLoopStatus', sessionId)
   const engineeringLoopArm = (sessionId: string): Promise<RemoteResult<EngineeringLoopStatus>> => backendCall<EngineeringLoopStatus>('engineeringLoopArm', sessionId)
   const engineeringLoopStop = (sessionId: string): Promise<RemoteResult<EngineeringLoopStatus>> => backendCall<EngineeringLoopStatus>('engineeringLoopStop', sessionId)
-  const engineeringCouncilReview = (sessionId: string): Promise<RemoteResult<{ readonly id: string; readonly findings: readonly { readonly role: string; readonly severity: string; readonly note: string }[] }>> => backendCall('engineeringCouncilReview', sessionId)
-  const engineeringCouncilReports = (sessionId: string): Promise<RemoteResult<readonly { readonly id: string; readonly sessionId: string; readonly turn: number; readonly provider: string; readonly model: string; readonly createdAt: number; readonly findings: readonly { readonly role: 'architecture' | 'security' | 'testing'; readonly severity: 'nit' | 'concern' | 'blocker'; readonly note: string }[] }[]>> => backendCall('engineeringCouncilReports', sessionId)
   const engineeringTeamStart = (sessionId: string, request: { readonly objective: string; readonly plan: string; readonly constraints?: readonly string[]; readonly engines?: readonly ('deepseek' | 'codex' | 'claude')[]; readonly maxRounds?: number; readonly run_in_background?: boolean }): Promise<RemoteResult<EngineeringTeamJob>> => backendCall('engineeringTeamStart', sessionId, request)
   const engineeringTeamJob = (id: string): Promise<RemoteResult<EngineeringTeamJob>> => backendCall('engineeringTeamJob', id)
   const engineeringTeamCancel = (id: string): Promise<RemoteResult<EngineeringTeamJob>> => backendCall('engineeringTeamCancel', id)
@@ -723,6 +750,8 @@ export function apply(ctx: ClientContext): void {
   const engineeringMemoryRetentionSweep = (sessionId: string, retentionDays?: number): Promise<RemoteResult<{ readonly retentionDays: number; readonly deletedMemories: number; readonly deletedOutboxEntries: number }>> => backendCall('engineeringMemoryRetentionSweep', sessionId, retentionDays)
   const engineeringMemoryConsolidate = (sessionId: string): Promise<RemoteResult<MemoryConsolidation>> => backendCall<MemoryConsolidation>('engineeringMemoryConsolidate', sessionId)
   const engineeringMemoryManifest = (sessionId: string): Promise<RemoteResult<MemoryManifest>> => backendCall<MemoryManifest>('engineeringMemoryManifest', sessionId)
+  const engineeringMemorySessionScope = (sessionId: string): Promise<RemoteResult<MemorySessionScope>> => backendCall<MemorySessionScope>('engineeringMemorySessionScope', sessionId)
+  const engineeringMemorySessionReclaim = (sessionId: string): Promise<RemoteResult<SessionReclaim>> => backendCall<SessionReclaim>('engineeringMemorySessionReclaim', sessionId)
   const engineeringGraphRuntimeStatus = (): Promise<RemoteResult<{ readonly state: 'unavailable' | 'ready' | 'installing' | 'error'; readonly installed: boolean; readonly version: string; readonly runtimeDirectory: string; readonly pythonPath?: string; readonly wheelDigest?: string; readonly reason?: string }>> => backendCall('engineeringGraphRuntimeStatus')
   const engineeringGraphRuntimePackages = (): Promise<RemoteResult<readonly { readonly id: 'managed-uv-python' | 'existing-python'; readonly label: string; readonly detail: string; readonly compatible: boolean; readonly requiresPath: boolean; readonly detectedPath?: string }[]>> => backendCall('engineeringGraphRuntimePackages')
   const engineeringGraphRuntimeInstall = (input: { readonly packageId: 'managed-uv-python' | 'existing-python'; readonly pythonPath?: string }): Promise<RemoteResult<{ readonly state: 'unavailable' | 'ready' | 'installing' | 'error'; readonly installed: boolean; readonly version: string; readonly runtimeDirectory: string; readonly pythonPath?: string; readonly wheelDigest?: string; readonly reason?: string }>> => backendCall('engineeringGraphRuntimeInstall', input)
@@ -771,11 +800,10 @@ export function apply(ctx: ClientContext): void {
   }
   const capabilityMarketplace = (input: { readonly kind: 'mcp' | 'skill'; readonly query?: string; readonly category?: string; readonly offset?: number; readonly limit?: number }): Promise<RemoteResult<CapabilityMarketplacePage>> => backendCall<CapabilityMarketplacePage>('capabilityMarketplace', input)
   const mcpPresetInstall = (id: string): Promise<RemoteResult<CapabilitySnapshot>> => backendCall<CapabilitySnapshot>('mcpPresetInstall', id)
-  // One reader for the delete capability, shared by both of this plugin's
-  // delete surfaces (the row menu entry and the hover overlay). They have to
-  // agree: a row that offers the action while the overlay hides is exactly the
-  // state a user would call a bug, and two copies of this expression is how they
-  // drift.
+  // The delete capability as this client reads it before the Host answers:
+  // absent settings read as enabled, like every other switch in the tab. The
+  // menu row is its one consumer, and the notice needs no gate because it only
+  // draws a refusal something else already produced.
   const sessionDeleteEnabled = async (): Promise<boolean> => {
     try { return (await readFreeCodeGoSettings()).sessionDeleteEnabled !== false } catch { return true }
   }
@@ -798,19 +826,21 @@ export function apply(ctx: ClientContext): void {
     name: 'shell.overlay', id: 'freecodego-plugin-conflict-notice', order: 50,
     inject: () => ({ status: pluginConflictStatus }),
   }, PluginConflictNotice))
+  // The only surface for a refused deletion: the delete itself lives in the
+  // session row's menu, which dismisses whatever the answer is, so its failure
+  // needs a reporter that outlives it.
   shellSlots.inject('shell.overlay', () => shellSlots.register({
-    name: 'shell.overlay', id: 'freecodego-session-delete-overlay', order: 40,
-    inject: () => ({ deleteSession, capabilities, isEnabled: sessionDeleteEnabled }),
-  }, SessionDeleteOverlay))
-  // The named row for the same action, in every session's "..." menu. `inject`
-  // waits for the core workspace browser to declare the list, so an installation
-  // without that surface never registers this entry at all — there is nothing to
-  // hide on a page that renders no rows.
+    name: 'shell.overlay', id: 'freecodego-session-delete-notice', order: 40,
+    inject: () => ({ language: settingsLanguage() }),
+  }, SessionDeleteNotice))
+  // The delete itself, in every session's "..." menu. `inject` waits for the core
+  // workspace browser to declare the list, so an installation without that
+  // surface never registers this entry at all — there is nothing to hide on a
+  // page that renders no rows.
   shellSlots.inject('sidebar.workspaces.session.menu.item', () => shellSlots.register({
     name: 'sidebar.workspaces.session.menu.item', id: 'freecodego-session-delete', order: 500, locale: NS,
-    // The open session id rides along so the row can step aside for it, the same
-    // rule the hover control follows: the Host refuses to delete the session it
-    // is holding open.
+    // The open session id rides along so the row can step aside for it: the Host
+    // refuses to delete the session it is holding open.
     inject: () => ({ deleteSession, isEnabled: sessionDeleteEnabled, currentSessionId: () => mainViewSessionId(ctx) }),
   }, SessionDeleteMenuItem))
 
@@ -866,6 +896,17 @@ export function apply(ctx: ClientContext): void {
     }),
   }, WebSearchProviderSection))
 
+  // The design page is a container of independent capabilities, and its master
+  // switch lives on the page itself. Unlike the engineering pack — whose master
+  // switch sits on the plugin's own settings tab — this section is registered
+  // unconditionally: a page that only appears once its switch is on cannot be
+  // where the user turns it on.
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'freecodego-design', order: 35,
+    label: () => t('design'), locale: NS,
+    inject: () => ({ status: designStatus, setEnabled: designSetEnabled, setFeatureEnabled: designFeatureSetEnabled, t }),
+  }, DesignSection))
+
   // These are additive plugin slots: the core settings shell and conversation
   // composer remain untouched, while every settings page gets the same
   // language and new-session engine controls.
@@ -900,9 +941,6 @@ export function apply(ctx: ClientContext): void {
     inject(name: string, setup: () => unknown): unknown
     register(options: Record<string, unknown>, component: unknown): unknown
   }
-  const isVoiceInputEnabled = async (): Promise<boolean> => {
-    try { return (await readFreeCodeGoSettings()).voiceInputEnabled !== false } catch { return true }
-  }
   conversationSlots.inject('conversation.input.left', () => conversationSlots.register({
     name: 'conversation.input.left',
     id: 'freecodego-engine-composer',
@@ -913,13 +951,6 @@ export function apply(ctx: ClientContext): void {
     // where the global read is only ever a guess.
     inject: (sessionId: string) => ({ catalog: engineCatalog, setDefaultEngine, sessionId, t }),
   }, EngineAction))
-  conversationSlots.inject('conversation.input.right', () => conversationSlots.register({
-    name: 'conversation.input.right',
-    id: 'freecodego-voice-input',
-    order: -10,
-    locale: NS,
-    inject: () => ({ voiceInputEnabled: isVoiceInputEnabled, voiceTranscribe: (audioBase64: string, mimeType: string, language?: string) => backendCall<{ readonly text: string; readonly model: string }>('groqWhisperTranscribe', audioBase64, mimeType, language) }),
-  }, VoiceInputAction))
   conversationSlots.inject('conversation.session.header.utilities', () => conversationSlots.register({
     name: 'conversation.session.header.utilities',
     id: 'freecodego-language-session',
@@ -987,6 +1018,15 @@ export function apply(ctx: ClientContext): void {
       sensenovaSetKey: (value: string) => backendCall<FreeCodeGoSenseNovaStatus>('sensenovaSetKey', value),
       nvidiaStatus: () => backendCall<FreeCodeGoNvidiaStatus>('nvidiaStatus'),
       nvidiaSetKey: (value: string) => backendCall<FreeCodeGoNvidiaStatus>('nvidiaSetKey', value),
+      // The microphone's own route: which endpoint, model, and key transcription
+      // would use. Read on the settings page rather than at boot, because the card
+      // is the only reader and it has to describe the route *now*.
+      speechStatus: () => backendCall<FreeCodeGoSpeechStatus>('speechStatus'),
+      speechSetRoute: (input: FreeCodeGoSpeechRouteInput) => backendCall<FreeCodeGoSpeechStatus>('speechSetRoute', input),
+      // One real round trip through the stored route — the only question a
+      // configured-but-unusable route can be diagnosed by, because every other
+      // fact the card shows is true in that state.
+      speechTest: () => backendCall<FreeCodeGoSpeechTest>('speechTest'),
       useConnectionEpoch,
       paymentPlans: () => backendCall<readonly { readonly id: string | number; readonly name: string; readonly description?: string; readonly price?: number; readonly originalPrice?: number; readonly currency?: string; readonly validityDays?: number; readonly validityUnit?: string; readonly features?: readonly string[]; readonly productName?: string; readonly forSale?: boolean }[]>('paymentPlans'),
       paymentChannels: () => backendCall<readonly { readonly paymentType: string; readonly currency?: string; readonly balanceRechargeMultiplier?: number; readonly feeRate?: number; readonly fixedFee?: number; readonly fixedFeeDisplayAmount?: number; readonly fixedFeeDisplayCurrency?: string; readonly singleMin?: number; readonly singleMax?: number }[]>('paymentChannels'),
@@ -1069,7 +1109,10 @@ export function apply(ctx: ClientContext): void {
       pluginUpdateSetEnabled: (enabled: boolean) => backendCall<import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoPluginUpdateStatus>('pluginUpdateSetEnabled', enabled),
       pluginUpdateInstall: () => backendCall<import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoPluginUpdateStatus>('pluginUpdateInstall'),
       pluginUpdateRollback: () => backendCall<import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoPluginUpdateStatus>('pluginUpdateRollback'),
-      communityCatalog: () => backendCall<{ readonly updated?: string; readonly plugins: readonly { readonly name: string; readonly owner: string; readonly url: string; readonly category: string | readonly string[]; readonly iconUrl?: string; readonly screenshots?: readonly string[]; readonly description?: { readonly zh?: string; readonly en?: string }; readonly npm?: string; readonly stars?: number; readonly downloads?: number; readonly added?: string }[] }>('communityCatalog'),
+      // Forwarded as a value, never omitted: the Host declares this method with one
+      // optional parameter, and an optional parameter still counts toward the Remote
+      // layer's arity, so a zero-argument call is refused outright.
+      communityCatalog: (refresh?: boolean) => backendCall<{ readonly updated?: string; readonly plugins: readonly { readonly name: string; readonly owner: string; readonly url: string; readonly category: string | readonly string[]; readonly iconUrl?: string; readonly screenshots?: readonly string[]; readonly description?: { readonly zh?: string; readonly en?: string }; readonly npm?: string; readonly stars?: number; readonly downloads?: number; readonly added?: string }[] }>('communityCatalog', refresh === true),
       communityCatalogIcons: (urls: readonly string[]) => backendCall<Readonly<Record<string, string>>>('communityCatalogIcons', urls),
       communityEnvironment: () => backendCall<{ readonly ready: boolean; readonly platform: string; readonly node: string; readonly profile: string }>('communityEnvironment'),
       communityInstalled: () => backendCall<{ readonly installed: Record<string, string>; readonly activation: Record<string, { readonly state: string }>; readonly sources: Record<string, readonly string[]>; readonly restartRequired: boolean }>('communityInstalled'),
@@ -1120,6 +1163,9 @@ export function apply(ctx: ClientContext): void {
       reviewStatus,
       reviewStart,
       reviewUpdate,
+      secondModelStatus,
+      secondModelUpdate,
+      secondModelRoutes,
       guardSettingsStatus,
       guardSettingsUpdate,
       automationSettingsStatus,
@@ -1134,15 +1180,9 @@ export function apply(ctx: ClientContext): void {
       mcpRemove: (id: string) => backendCall<{ readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly mcpServers: readonly { readonly id: string; readonly enabled: boolean; readonly transport: 'stdio' | 'streamable-http'; readonly serverName: string; readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>>; readonly cwd: string; readonly url: string; readonly headers: Readonly<Record<string, string>> }[]; readonly skillRoots: readonly { readonly id: string; readonly enabled: boolean; readonly path: string }[]; readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly { readonly name: string; readonly description: string; readonly source: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }>('mcpRemove', id),
       skillRootSave: (input: { readonly id?: string; readonly enabled: boolean; readonly path: string }) => backendCall<{ readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly mcpServers: readonly { readonly id: string; readonly enabled: boolean; readonly transport: 'stdio' | 'streamable-http'; readonly serverName: string; readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>>; readonly cwd: string; readonly url: string; readonly headers: Readonly<Record<string, string>> }[]; readonly skillRoots: readonly { readonly id: string; readonly enabled: boolean; readonly path: string }[]; readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly { readonly name: string; readonly description: string; readonly source: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }>('skillRootSave', input),
       skillRootRemove: (id: string) => backendCall<{ readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly mcpServers: readonly { readonly id: string; readonly enabled: boolean; readonly transport: 'stdio' | 'streamable-http'; readonly serverName: string; readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>>; readonly cwd: string; readonly url: string; readonly headers: Readonly<Record<string, string>> }[]; readonly skillRoots: readonly { readonly id: string; readonly enabled: boolean; readonly path: string }[]; readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly { readonly name: string; readonly description: string; readonly source: string; readonly modelInvocable: boolean; readonly userInvocable: boolean }[] }>('skillRootRemove', id),
-      advisorStatus,
-      advisorUpdate,
-      advisorModels,
-      advisorNotes,
       engineeringStatus,
       engineeringSetEnabled,
       engineeringSettingsUpdate,
-      engineeringCouncilReview,
-      engineeringCouncilReports,
       engineeringTeamStart,
       engineeringTeamJob,
       engineeringTeamCancel,
@@ -1194,7 +1234,6 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('settings.section', () => {
     let disposeMcp: (() => void) | undefined
     let disposeSkill: (() => void) | undefined
-    let disposeAdvisor: (() => void) | undefined
     const reconcile = async (snapshot?: CapabilitySnapshot): Promise<void> => {
       const result = snapshot === undefined ? await capabilities() : { ok: true as const, value: snapshot }
       if (!result.ok) return
@@ -1218,18 +1257,6 @@ export function apply(ctx: ClientContext): void {
         disposeSkill()
         disposeSkill = undefined
       }
-      const advisor = await advisorStatus()
-      if (!advisor.ok) return
-      if (advisor.value.enabled && disposeAdvisor === undefined) {
-        disposeAdvisor = ctx.slots.register({
-          name: 'settings.section', id: 'freecodego-advisor', order: 33,
-          label: () => 'Advisor', locale: NS,
-          inject: () => ({ advisorStatus, advisorUpdate, advisorModels, advisorNotes, advisorReviewNow, currentSessionId }),
-        }, AdvisorSettingsSection)
-      } else if (!advisor.value.enabled && disposeAdvisor !== undefined) {
-        disposeAdvisor()
-        disposeAdvisor = undefined
-      }
     }
     const refresh = (): void => { void reconcile().catch(() => undefined) }
     const changed = (event: Event): void => {
@@ -1238,15 +1265,12 @@ export function apply(ctx: ClientContext): void {
     }
     refresh()
     globalThis.addEventListener(CAPABILITY_CHANGE_EVENT, changed)
-    globalThis.addEventListener(ADVISOR_CHANGE_EVENT, refresh)
     const offConnection = ctx.on('connection/reset', refresh)
     return () => {
       globalThis.removeEventListener(CAPABILITY_CHANGE_EVENT, changed)
-      globalThis.removeEventListener(ADVISOR_CHANGE_EVENT, refresh)
       offConnection()
       disposeMcp?.()
       disposeSkill?.()
-      disposeAdvisor?.()
     }
   })
 
@@ -1270,7 +1294,7 @@ export function apply(ctx: ClientContext): void {
       disposeEngineering = scope.slots.register({
         name: 'settings.section', id: 'freecodego-engineering', order: 34,
         label: () => t('engineering'), locale: NS,
-        inject: () => ({ engineeringStatus, engineeringSetEnabled, engineeringSettingsUpdate, engineeringLoopStatus, engineeringLoopArm, engineeringLoopStop, engineeringCouncilReview, engineeringCouncilReports, engineeringTeamStart, engineeringTeamJob, engineeringTeamCancel, engineeringTeamReports, engineeringTeamDecision, engineeringTeamVerify, engineeringTeamImplementation, engineeringMemoryList, engineeringMemorySearch, engineeringMemoryRecall, engineeringMemoryTimeline, engineeringMemoryGet, engineeringMemoryReview, engineeringMemoryDelete, engineeringMemoryPurgeProject, engineeringMemoryExport, engineeringMemoryBackup, engineeringMemoryRetentionSweep, engineeringMemoryConsolidate, engineeringMemoryManifest, engineeringGraphRuntimeStatus, engineeringGraphRuntimePackages, engineeringGraphRuntimeInstall, engineeringGraphRuntimeRemove, engineeringGraphProjectStatus, engineeringGraphBuild, engineeringGraphUpdate, engineeringGraphCancel, engineeringGraphCanvas, engineeringGraphClearProject, engineeringCodeGraphRuntimeStatus, engineeringCodeGraphRuntimePackages, engineeringCodeGraphRuntimeInstall, engineeringCodeGraphRuntimeRemove, engineeringCodeGraphProjectStatus, engineeringCodeGraphBuild, engineeringCodeGraphSync, engineeringCodeGraphCancel, engineeringCodeGraphClearProject, engineeringCheckpointList, engineeringCheckpointCapture, engineeringCheckpointDiff, engineeringCheckpointRestore, engineeringCheckpointRemove, engineeringCheckpointSetPinned, engineeringSpecExport, engineeringEval, inspectReport, planReviewOpen, planReviewCompose, currentSessionId }),
+        inject: () => ({ engineeringStatus, engineeringSetEnabled, engineeringSettingsUpdate, engineeringLoopStatus, engineeringLoopArm, engineeringLoopStop, engineeringTeamStart, engineeringTeamJob, engineeringTeamCancel, engineeringTeamReports, engineeringTeamDecision, engineeringTeamVerify, engineeringTeamImplementation, engineeringMemoryList, engineeringMemorySearch, engineeringMemoryRecall, engineeringMemoryTimeline, engineeringMemoryGet, engineeringMemoryReview, engineeringMemoryDelete, engineeringMemoryPurgeProject, engineeringMemoryExport, engineeringMemoryBackup, engineeringMemoryRetentionSweep, engineeringMemoryConsolidate, engineeringMemoryManifest, engineeringMemorySessionScope, engineeringMemorySessionReclaim, engineeringGraphRuntimeStatus, engineeringGraphRuntimePackages, engineeringGraphRuntimeInstall, engineeringGraphRuntimeRemove, engineeringGraphProjectStatus, engineeringGraphBuild, engineeringGraphUpdate, engineeringGraphCancel, engineeringGraphCanvas, engineeringGraphClearProject, engineeringCodeGraphRuntimeStatus, engineeringCodeGraphRuntimePackages, engineeringCodeGraphRuntimeInstall, engineeringCodeGraphRuntimeRemove, engineeringCodeGraphProjectStatus, engineeringCodeGraphBuild, engineeringCodeGraphSync, engineeringCodeGraphCancel, engineeringCodeGraphClearProject, engineeringCheckpointList, engineeringCheckpointCapture, engineeringCheckpointDiff, engineeringCheckpointRestore, engineeringCheckpointRemove, engineeringCheckpointSetPinned, engineeringSpecExport, engineeringEval, inspectReport, planReviewOpen, planReviewCompose, currentSessionId }),
       }, EngineeringSettingsSection)
     }
     const refresh = (): void => {

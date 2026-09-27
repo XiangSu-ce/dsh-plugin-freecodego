@@ -264,7 +264,7 @@ describe('2. the guards judge one call in a fixed order', () => {
     const root = await workspace()
     const secret = `${root}/id_rsa`
     await writeFile(secret, 'PRIVATE KEY\n', 'utf8')
-    const alias = `${root}/docs/notes.md`
+    const alias = `${root}/documentation/notes.md`
     await symlink(secret, alias).catch(() => undefined)
 
     // The lexical tier answers for the name the model wrote.

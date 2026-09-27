@@ -2,6 +2,11 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+// Read from the plugin rather than restated: the patch's selectors and this table
+// are two halves of one decision, and a spec that spelled the ids out would keep
+// passing while the two drifted apart.
+import { CAPABILITIES, CAPABILITY_ENTRY_IDS, CAPABILITY_ROW_SERVICE } from '../src/capability-rows.ts'
+import { OFFICIAL_ROW_SERVICE } from '../src/stand-in-rows.ts'
 
 const bundleDirectory = resolve(import.meta.dirname, '../../bundle-latest')
 const sourceDirectory = resolve(import.meta.dirname, '../src')
@@ -22,7 +27,7 @@ describe('FreeCodeGo RC.1 composition', () => {
     const patch = await readFile(resolve(bundleDirectory, 'cordis.patch.yml'), 'utf8')
 
     expect(manifest.name).toBe('freecodego')
-    expect(manifest.freecodego?.harnessBaseline).toBe('0.1.7-alpha.2')
+    expect(manifest.freecodego?.harnessBaseline).toBe('0.1.7-rc.2')
     // `dsh.bootstrap` used to be declared here, naming `bootstrapFreeCodeGoHarness`. It was
     // never part of the Harness contract — `DshManifest` declares `bundle`, `profile` and
     // `client` — and no reader anywhere resolved it, so the pre-Loader window it advertised
@@ -33,6 +38,10 @@ describe('FreeCodeGo RC.1 composition', () => {
     expect(manifest.dsh?.client?.inject).toContain('@deepseek-ai/dsh-client-ui-conversation')
     expect(manifest.dependencies).toEqual({
       '@anthropic-ai/claude-agent-sdk': '0.3.246',
+      // The Codex subagent provider locates its `app-server` binary through this
+      // package's manifest, so it is a runtime dependency of the two provider
+      // artifacts this bundle ships — not a build-time one.
+      '@openai/codex': '0.153.4',
       'eventsource-parser': '^3.1.0',
       'js-yaml': '^4.2.0',
       tar: '7.5.2',
@@ -94,7 +103,10 @@ describe('FreeCodeGo RC.1 composition', () => {
     // `searchProvider`, so disabling it turned every `web_search` into the
     // Harness's own `WEB_PROVIDER_CONFIGURED_MISSING`
     // (`packages/web/web/src/index.ts`), and `llm-deepseek` supplies the same id
-    // for the LLM route, so a fresh profile's default model named nothing.
+    // for the LLM route, so a fresh profile's default model named nothing. Since
+    // 0.1.7-rc.2 that row mounts `@deepseek-ai/dsh-llm-deepseek-api-key` and a
+    // second row registers `deepseek-account` beside it, which is why the
+    // supplier scan below follows one import hop (see `supplies`).
     //
     // The rule this asserts is the one the plugin's composition follows: a row
     // is disabled only when the id it supplied is still supplied by a row that
@@ -161,18 +173,27 @@ describe('FreeCodeGo RC.1 composition', () => {
     expect(unsupplied).toStrictEqual([])
   })
 
-  it('mounts the optional Harness capabilities only as disabled rows, one provider each', async () => {
+  it('mounts the optional Harness capabilities behind the install probe, one provider each', async () => {
     // Browser and desktop control are the Harness's own experimental providers.
     // They are not in this bundle's `peerDependencies` — the list that *is* the
     // install contract — and upstream documents them as activating "only when
-    // explicitly mounted", so an enabled row would name a package the Harness
-    // need not supply. What that costs depends on the grain: in a preset, one
-    // unresolvable enabled row makes the whole preset unselectable
+    // explicitly mounted". What an unresolvable *enabled* row costs depends on the
+    // grain: in a preset, one makes the whole preset unselectable
     // (`agent-presets/src/discovery.ts`, `unresolvableRows`, skips a row only
-    // while `Boolean(row.disabled)`), while a host-plane row that cannot load
-    // fails that entry alone. This file's own composition therefore holds them
-    // disabled, and the recipe is asserted here so a later edit cannot quietly
-    // turn one on — or add a second provider, which both registries reject.
+    // while `Boolean(row.disabled)`), while a host-plane row that cannot load fails
+    // that entry alone and is reported as `did not activate` on every boot. So
+    // these rows are neither plainly enabled nor plainly off: they carry this
+    // plugin's capability selector (`capability-rows.ts`), whose fallback is `true`
+    // and which the plugin answers from whether the packages resolve.
+    //
+    // Two rules are pinned here, and they are the rule rather than the instance.
+    // First, a row outside the install contract may only be enabled by *that*
+    // selector: a later edit that writes `disabled: false` on one of them, or adds
+    // a row naming another package the Harness need not supply, fails here.
+    // Second, the patch and the plugin's table have to agree in both directions,
+    // because either half alone is inert — a table entry with no selector is a
+    // capability the plugin would start and the patch would keep off, and a
+    // selector with no table entry is a row that can never be answered.
     const manifest = JSON.parse(await readFile(resolve(bundleDirectory, 'package.json'), 'utf8')) as {
       readonly peerDependencies: Readonly<Record<string, string>>
     }
@@ -180,13 +201,34 @@ describe('FreeCodeGo RC.1 composition', () => {
     const harnessRows = patch.filter(row => row.name?.startsWith('@deepseek-ai/dsh-') === true)
     expect(harnessRows.length).toBeGreaterThan(0)
 
-    // The rule, not the instance: an enabled row may only name a package the
-    // install contract promises.
     expect(
       harnessRows
-        .filter(row => row.disabled !== true && manifest.peerDependencies[row.name ?? ''] === undefined)
+        .filter(row => row.disabled !== true && row.selector === undefined && manifest.peerDependencies[row.name ?? ''] === undefined)
         .map(row => `${row.id}: ${row.name}`),
     ).toStrictEqual([])
+
+    const capabilityRows = harnessRows.filter(row => row.selector?.includes(CAPABILITY_ROW_SERVICE) === true)
+    expect(capabilityRows.map(row => row.id).sort()).toStrictEqual([...CAPABILITY_ENTRY_IDS].sort())
+    // Each selector asks about the capability its *own* row names, so the answer
+    // a row gets is about the code that row imports and not about its neighbour's.
+    for (const row of capabilityRows) {
+      expect(row.selector).toContain(`usable('${row.name ?? ''}')`)
+    }
+    // And every specifier the probe checks has to be answerable from the patch as
+    // it stands: either the install contract promises it, or it is a row the
+    // selector gates (so "it resolves" and "its row may start" are the same
+    // question), or it is a dependency of one of those rows and says which. A
+    // specifier with none of the three would be a requirement no edit to this
+    // composition could satisfy.
+    const rowNames = new Set(capabilityRows.map(row => row.name))
+    for (const capability of CAPABILITIES) {
+      for (const module_ of capability.modules) {
+        const answerable = manifest.peerDependencies[module_.specifier] !== undefined
+          || rowNames.has(module_.specifier)
+          || module_.from !== undefined
+        expect(answerable, `${capability.id}: ${module_.specifier}`).toBe(true)
+      }
+    }
 
     const named = new Map(harnessRows.map(row => [row.id, row.name ?? ''] as const))
     expect(named.get('browser-use')).toBe('@deepseek-ai/dsh-browser-use')
@@ -210,18 +252,35 @@ describe('FreeCodeGo RC.1 composition', () => {
     expect(harnessRows.find(row => row.id === 'computer-use-cua-driver-native')?.body).not.toMatch(/^\s+config:\s*$/mu)
   })
 
-  it('mounts session-history tools as an opt-in whose services the base already supplies', async () => {
-    // The row is only the *whole* opt-in while the base composition keeps
-    // supplying what the tools inject. Nothing in the Loader checks that pairing:
-    // a missing `ctx.sessionQuery` would leave this row permanently pending, and a
-    // missing provider would leave it failing, both silently as far as this file
-    // is concerned. So the pair is asserted rather than assumed — together with
-    // the one caveat that makes the row useful only half-way, which is why this
-    // file states the `openAt` override next to it.
-    const patch = compositionRows(read(resolve(bundleDirectory, 'cordis.patch.yml')), 'freecodego/bundle-latest/cordis.patch.yml')
+  it('mounts session-history tools on by default without naming the official package', async () => {
+    // This row is the one mount in this bundle that needs nothing installed, so it
+    // is on by default rather than selected: the package injects services the base
+    // already mounts, and no upstream bundle mounts the tool package itself. It
+    // names this bundle's own build of upstream's source (`freecodego/tool-session-query`)
+    // so the capability works on an install with nothing else added, and it still
+    // stands down for a composition that mounts the official package — which is what
+    // the selector asks about, so a later edit cannot quietly mount both and hand the
+    // model two copies of the same five tools.
+    //
+    // The pairing with the base is asserted rather than assumed: a missing
+    // `ctx.sessionQuery` would leave this row permanently pending, and a missing
+    // provider would leave it failing, both silently as far as this file is
+    // concerned — together with the one caveat that makes the row useful only
+    // half-way, which is why this file states the `openAt` override next to it.
+    const patchText = read(resolve(bundleDirectory, 'cordis.patch.yml'))
+    const patch = compositionRows(patchText, 'freecodego/bundle-latest/cordis.patch.yml')
     const row = patch.find(entry => entry.id === 'tool-session-query')
-    expect(row?.name).toBe('@deepseek-ai/dsh-tool-session-query')
-    expect(row?.disabled).toBe(true)
+    expect(row?.name).toBe('freecodego/tool-session-query')
+    expect(row?.disabled).toBeUndefined()
+    expect(row?.selector).toContain(OFFICIAL_ROW_SERVICE)
+    expect(row?.selector).toContain('@deepseek-ai/dsh-tool-session-query')
+    // The second switch, and it is this file's own layer: the base keeps SQLite
+    // closed on purpose, so the pair has to be turned on here or the two search
+    // tools answer SESSION_QUERY_SEARCH_DISABLED for good.
+    const override = patch.filter(entry => entry.id === 'session-query-sqlite')
+    expect(override).toHaveLength(1)
+    expect(override[0]?.body).toMatch(/^\s+openAt:\s*first-search\s*$/mu)
+    expect(override[0]?.body).toMatch(/^\s+path:\s*!!js\s+dshHomePath\('session-index\.db'\)\s*$/mu)
 
     const toolEntry = resolve(workspaceDirectory, 'packages/session-query/tool-session-query/src/index.ts')
     const basePath = resolve(workspaceDirectory, 'packages/bundle/base/cordis.patch.yml')
@@ -247,10 +306,53 @@ describe('FreeCodeGo RC.1 composition', () => {
     expect(owner?.body).toMatch(/^\s+openAt:\s*never\s*$/mu)
   })
 
+  it('enables the Harness scheduler instead of mounting a second copy of it', async () => {
+    // 0.1.7-rc.2 declares `schedule` and `time-context` in the Web composition and
+    // leaves them disabled; alpha.2 declared neither, which is why this plugin used
+    // to compile the scheduler package into its own payload and mount a row of its
+    // own for it. Two mounts of one service is the failure this avoids, and the
+    // premise it depends on is upstream's, so the premise is read from upstream's
+    // file rather than restated: if rc.3 stops declaring either row, the override
+    // below becomes a stderr warning and the capability silently disappears — a
+    // note cannot catch that.
+    const webAppPath = resolve(workspaceDirectory, 'packages/bundle/web-app/cordis.patch.yml')
+    const patch = compositionRows(read(resolve(bundleDirectory, 'cordis.patch.yml')), 'freecodego/bundle-latest/cordis.patch.yml')
+
+    expect(patch.find(row => row.id === 'schedule')?.disabled).toBe(false)
+    expect(patch.find(row => row.id === 'time-context')?.disabled).toBe(false)
+    // And no scheduler row of this bundle's own: the copy that used to sit here is
+    // deleted, because with the Web composition's rows enabled it could only ever
+    // have been a second mount of one service. This is the assertion that a
+    // reintroduced copy has to fail.
+    expect(patch.find(row => row.name === 'freecodego/schedule')).toBeUndefined()
+
+    if (!existsSync(webAppPath)) return
+    const webApp = compositionRows(read(webAppPath), 'bundle/web-app/cordis.patch.yml')
+    expect(webApp.find(row => row.id === 'schedule')?.name).toBe('@deepseek-ai/dsh-schedule')
+    expect(webApp.find(row => row.id === 'time-context')?.name).toBe('@deepseek-ai/dsh-time-context')
+    // The override is only an *enable* while upstream keeps them off by default.
+    expect(webApp.find(row => row.id === 'schedule')?.disabled).toBe(true)
+    expect(webApp.find(row => row.id === 'time-context')?.disabled).toBe(true)
+    // No upstream bundle may declare the scheduler a second time, or enabling one
+    // row would leave the other as a competing mount this file cannot see.
+    expect(webApp.filter(row => row.name === '@deepseek-ai/dsh-schedule')).toHaveLength(1)
+  })
+
   it('does not depend on unpublished Harness source subpaths', async () => {
     const files = ['agnes.ts', 'openai-compatible-adapter.ts', 'engineering.ts']
     const sources = await Promise.all(files.map(file => readFile(resolve(sourceDirectory, file), 'utf8')))
     expect(sources.join('\n')).not.toContain('@deepseek-ai/dsh-llm-deepseek/src/')
+
+    // Every source file, not just those three. `./src/*` is a development alias the
+    // Harness packages grant for their own internal imports, and their published `files`
+    // ship `lib/**` alone -- so a bundle built from a `…/src/…` specifier loads in this
+    // workspace and dies in a packaged runtime with `Cannot find module`. One such import
+    // (the meter's `src/estimate.ts`) failed the Desktop bundle outright: the shared
+    // Host refused `sessionPersistence`, and every entry that waits on a service the
+    // plugin's rows provide stayed pending behind it.
+    const specifiers = [...(readSources(sourceDirectory) ?? '')
+      .matchAll(/['"](@deepseek-ai\/[a-z0-9-]+\/src\/[^'"]+)['"]/gu)]
+    expect(specifiers.map(match => match[1])).toEqual([])
   })
 
   it('declares the conversation service used by Agent progress rendering', async () => {
@@ -275,10 +377,13 @@ describe('FreeCodeGo RC.1 composition', () => {
  * that a new composition walks straight through. `tool-ralph` is listed though
  * the base disables it, because a profile patch may re-enable it.
  *
- * The two plugin rows are the ones that consume the Harness's subagent backends
- * rather than supplying their own — the point of the plugin's team tool is to
- * name `subagent-spawn-in-process` / `subagent-fork-in-process`, which is why a
- * disable of either of those has to fail here too.
+ * The plugin's own rows are absent on purpose, and one of them used to be here.
+ * `freecodego/tool-agent-team` named `subagent-spawn-in-process` /
+ * `subagent-fork-in-process` in its config, which is why a disable of either had
+ * to fail: that row delegated through the Harness's own backends. The row is gone
+ * — the official team bundle mounts the same module by name — and the plugin's
+ * remaining team tooling reaches engines through `ctx.agents`, not through a
+ * configured provider id, so no plugin row states one to model here.
  */
 const providerRegistries = [
   { row: 'agent-default-model', key: 'provider', api: 'registerAdapter' },
@@ -286,8 +391,6 @@ const providerRegistries = [
   { row: 'tool-subagent-fork', key: 'provider', api: 'registerProvider' },
   { row: 'workflow-ptc', key: 'provider', api: 'registerProvider' },
   { row: 'tool-ralph', key: 'subagentProvider', api: 'registerProvider' },
-  { row: 'freecodego-tool-agent-team', key: 'freshProvider', api: 'registerProvider' },
-  { row: 'freecodego-tool-agent-team', key: 'forkProvider', api: 'registerProvider' },
   { row: 'web', key: 'searchProvider', api: 'registerSearchProvider' },
   { row: 'web', key: 'fetchProvider', api: 'registerFetchProvider' },
 ] as const
@@ -297,6 +400,15 @@ interface CompositionRow {
   readonly name: string | undefined
   /** Undefined when the row states nothing, which is how a patch inherits. */
   readonly disabled: boolean | undefined
+  /**
+   * The `!!js` expression a row states instead of a value, when it states one.
+   *
+   * Kept beside {@link disabled} rather than folded into it because the two are not
+   * the same statement: a boolean is what a deployment decided, while an expression
+   * is a question the Loader re-asks at every recomposition. {@link disabled} is
+   * `undefined` for a selector row, which is why the rule below reads them apart.
+   */
+  readonly selector?: string | undefined
   readonly body: string
   readonly source: string
 }
@@ -329,6 +441,7 @@ function compositionRows(text: string, source: string): CompositionRow[] {
       id: head[2] ?? '',
       name: /^\s+name:\s*'([^']+)'/mu.exec(body)?.[1],
       disabled: stated === undefined ? undefined : stated === 'true',
+      selector: /^\s+disabled:\s*!!js\s+"([^"]*)"\s*$/mu.exec(body)?.[1],
       body,
       source,
     })
@@ -354,15 +467,51 @@ function providerReferences(body: string): Array<{ readonly key: string; readonl
 
 /**
  * Whether a package supplies a provider id for a registry: the package declares
- * the id and calls that registry's registration API. Both are read from the
+ * the id and reaches that registry's registration API — itself, or through a
+ * helper it imports from another Harness package. Both are read from the
  * package's sources rather than inferred from its name, because the name says
  * nothing about which registry it registers into.
+ *
+ * The helper hop is `0.1.7-rc.2`'s shape. The DeepSeek route is two rows now,
+ * and the api-key row (`@deepseek-ai/dsh-llm-deepseek-api-key`) declares
+ * `'deepseek-official'` while registering through `registerDeepSeekProvider`,
+ * imported from `@deepseek-ai/dsh-llm-deepseek` — the package whose body calls
+ * `ctx.llm.registerAdapter`. A scan that read only the row's own package
+ * reported the base's `agent-default-model.provider` as unsupplied with that row
+ * mounted: a guard failing on a composition that is correct, which is worse than
+ * the break it exists to catch, because it gets "fixed" by widening the disable
+ * it was protecting. The hop stays one import deep and only counts bindings the
+ * imported package actually exports, so "declares the id somewhere, imports
+ * something" is not enough to be read as a supplier.
  */
 function supplies(name: string, providerId: string, api: string): boolean {
   const source = packageSource(name)
   if (source === undefined) return false
   const declared = source.includes(`'${providerId}'`) || source.includes(`"${providerId}"`)
-  return declared && source.includes(`.${api}(`)
+  if (!declared) return false
+  return [source, ...importedHelperSources(source, name)].some(text => text.includes(`.${api}(`))
+}
+
+/**
+ * The sources of packages a package imports named bindings from, one hop deep.
+ * A specifier counts only when the binding is exported by the package it names,
+ * which keeps a re-exported constant and a look-alike name out of the match.
+ */
+function importedHelperSources(source: string, name: string): string[] {
+  const sources = new Set<string>()
+  for (const statement of source.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](@deepseek-ai\/dsh-[^'"]+)['"]/gu)) {
+    const specifier = statement[2]
+    if (specifier === undefined || specifier === name) continue
+    const imported = packageSource(specifier)
+    if (imported === undefined) continue
+    const bindings = (statement[1] ?? '').split(',')
+    if (!bindings.some(binding => {
+      const symbol = binding.trim().split(/\s+as\s+/u)[0]?.replace(/^type\s+/u, '').trim() ?? ''
+      return symbol !== '' && new RegExp(`export[^\n]*\\b${symbol}\\b`, 'u').test(imported)
+    })) continue
+    sources.add(imported)
+  }
+  return [...sources]
 }
 
 /** Name → directory for every package the working checkout holds. */

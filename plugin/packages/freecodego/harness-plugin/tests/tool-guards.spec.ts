@@ -3,7 +3,32 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { stableJson } from '../src/stable-json.ts'
-import { bashCredentialDenial, credentialReadDenial, credentialRealpathDenial, DoomLoopGuard, isCredentialPath } from '../src/tool-guards.ts'
+import { bashCommandOf, bashCredentialDenial, credentialReadDenial, credentialRealpathDenial, DoomLoopGuard, isCredentialPath, SHELL_TOOL_NAMES } from '../src/tool-guards.ts'
+import { BASH_TOOL_NAMES } from '../src/headroom/runtime.ts'
+
+describe('the shell-tool vocabulary', () => {
+  it('accepts every spelling it owns, and only those', () => {
+    // `local_shell` was the one name this reader did not know while `headroom`'s
+    // `BASH_TOOL_NAMES` already treated it as a shell, so `cat .env` run through
+    // that name was screened by nothing — the drift the comment above
+    // `bashCommandOf` records having fixed once already, one name over.
+    expect(SHELL_TOOL_NAMES.size).toBeGreaterThanOrEqual(5)
+    for (const name of SHELL_TOOL_NAMES) {
+      expect(bashCommandOf(name, { command: 'cat .env' }), name).toBe('cat .env')
+    }
+    // A tool that runs no shell, and a shell call with no command to read.
+    expect(bashCommandOf('read', { command: 'cat .env' })).toBeUndefined()
+    expect(bashCommandOf('bash', { path: '.env' })).toBeUndefined()
+  })
+
+  it('is not narrower than the list headroom compresses by', () => {
+    // Both lists answer "does this call run a shell command", so a name in one
+    // and not the other is a guard that does not fire rather than a difference of
+    // opinion — and the guard is the side that moves, because a broader
+    // vocabulary can only add a refusal.
+    expect([...BASH_TOOL_NAMES].filter(name => !SHELL_TOOL_NAMES.has(name))).toStrictEqual([])
+  })
+})
 
 describe('credential read guard', () => {
   it('flags env, key, and secret-store paths', () => {
@@ -103,7 +128,7 @@ describe('credential read guard', () => {
 
   it('denies a search tool that would print the credential file it names', () => {
     // `grep` returns the matching *lines*, so it is a file read whose name does not
-    // say so — the same reason `spill_recall` is on the list. It was the one
+    // say so — the same reason `headroom_retrieve` is on the list. It was the one
     // content-returning tool the shield was not pointed at, so `grep({ path: '.env' })`
     // printed the file that `read` refuses.
     expect(credentialReadDenial('grep', { pattern: '.', path: '.env' })).toContain('credential guard')
@@ -173,7 +198,7 @@ describe('credential read guard', () => {
     expect(bashCredentialDenial('node scripts/env-check.ts')).toBeUndefined()
     expect(bashCredentialDenial('echo .env.example')).toBeUndefined()
     // `printenv` as an argument to another program is not an environment dump.
-    expect(bashCredentialDenial('grep printenv docs/README.md')).toBeUndefined()
+    expect(bashCredentialDenial('grep printenv documentation/README.md')).toBeUndefined()
     expect(bashCredentialDenial('which printenv')).toBeUndefined()
   })
   it('resolves the shell expansions that hide a credential name', () => {

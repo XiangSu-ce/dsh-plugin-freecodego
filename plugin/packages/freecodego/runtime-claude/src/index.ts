@@ -455,7 +455,7 @@ function isCouncilReadOnlyTool(toolName: string): boolean {
   return toolName === 'Read'
     || toolName === 'Glob'
     || toolName === 'Grep'
-    || /^mcp__freecodego-host__freecodego_harness_(?:read|glob|grep|engineering_graph_(?:status|search|explain|path|affected|overview|canvas)|engineering_memory_(?:search|get|timeline)|advisor_(?:status|notes))$/u.test(toolName)
+    || /^mcp__freecodego-host__freecodego_harness_(?:read|glob|grep|engineering_graph_(?:status|search|explain|path|affected|overview|canvas)|engineering_memory_(?:search|get|timeline))$/u.test(toolName)
 }
 
 function claudeSdkEffort(value: string | undefined): Exclude<ClaudeReasoningEffort, 'off'> | undefined {

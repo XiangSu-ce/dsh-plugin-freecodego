@@ -67,8 +67,19 @@ const GUIDANCE_SECTION_ORDER = 1301
 /** The edit tool this delegates to, tried in order. */
 const EDIT_TOOL_CANDIDATES: readonly string[] = ['edit']
 
-/** The shell tool this delegates to, tried in order — Windows compositions may ship `pwsh` only. */
-const SHELL_TOOL_CANDIDATES: readonly string[] = ['bash', 'pwsh']
+/**
+ * The shell tools this delegates to, tried in order.
+ *
+ * This is the same vocabulary as `SHELL_TOOL_NAMES` in `tool-guards.ts` — a second,
+ * divergent list is how a guard silently stops enforcing a spelling (the
+ * `local_shell` gap already bit `plan-mode.ts` once). The order is preference, not
+ * membership: `bash` is preferred where both exist (it carries POSIX test
+ * commands), with the other Host spellings tried in turn, and `pwsh` last so a
+ * Windows-only composition ships with the one shell its runtime actually carries.
+ *
+ * @see SHELL_TOOL_NAMES
+ */
+const SHELL_TOOL_CANDIDATES: readonly string[] = ['bash', 'shell', 'exec_command', 'local_shell', 'pwsh']
 
 /**
  * The registry slice the composite needs: register its own tool, look up the tools

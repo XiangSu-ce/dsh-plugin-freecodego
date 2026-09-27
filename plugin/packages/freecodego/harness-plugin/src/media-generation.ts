@@ -736,8 +736,8 @@ interface CircuitState {
 /**
  * Session-scoped breaker memory: a provider that just failed twice is skipped
  * first on the next request within the window instead of being retried
- * ahead of healthy routes on every call (Advisor's backoff pattern, applied
- * to media fallback chains). Routes still get a retry after the window, so a
+ * ahead of healthy routes on every call (the same bounded-backoff shape the
+ * plugin's other model-calling surfaces use). Routes still get a retry after the window, so a
  * recovered provider rejoins automatically.
  */
 const mediaCircuits = new Map<string, CircuitState>()

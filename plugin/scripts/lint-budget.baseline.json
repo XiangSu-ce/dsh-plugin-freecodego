@@ -1,27 +1,27 @@
 {
   "version": 1,
   "generatedBy": "npx oxlint --format=json --type-aware .",
-  "total": 2329,
+  "total": 2228,
   "rules": {
-    "@stylistic(max-len)": 910,
+    "@stylistic(max-len)": 869,
     "sonarjs(no-all-duplicated-branches)": 3,
     "sonarjs(no-identical-functions)": 5,
-    "typescript(no-base-to-string)": 101,
-    "typescript(no-deprecated)": 25,
+    "typescript(no-base-to-string)": 99,
+    "typescript(no-deprecated)": 24,
     "typescript(no-dynamic-delete)": 4,
-    "typescript(no-explicit-any)": 33,
+    "typescript(no-explicit-any)": 32,
     "typescript(no-misused-promises)": 1,
-    "typescript(no-non-null-assertion)": 367,
-    "typescript(no-unnecessary-condition)": 300,
-    "typescript(no-unnecessary-type-assertion)": 283,
+    "typescript(no-non-null-assertion)": 363,
+    "typescript(no-unnecessary-condition)": 273,
+    "typescript(no-unnecessary-type-assertion)": 281,
     "typescript(no-unnecessary-type-conversion)": 7,
-    "typescript(no-unsafe-argument)": 9,
-    "typescript(no-unsafe-assignment)": 63,
-    "typescript(no-unsafe-call)": 35,
-    "typescript(no-unsafe-member-access)": 119,
-    "typescript(no-unsafe-return)": 14,
+    "typescript(no-unsafe-argument)": 8,
+    "typescript(no-unsafe-assignment)": 60,
+    "typescript(no-unsafe-call)": 30,
+    "typescript(no-unsafe-member-access)": 108,
+    "typescript(no-unsafe-return)": 13,
     "typescript(only-throw-error)": 1,
-    "typescript(require-await)": 47,
+    "typescript(require-await)": 45,
     "typescript(unbound-method)": 2
   },
   "files": {
@@ -71,12 +71,6 @@
     },
     "packages/freecodego/harness-plugin/src/action-review.ts": {
       "@stylistic(max-len)": 1
-    },
-    "packages/freecodego/harness-plugin/src/advisor.ts": {
-      "@stylistic(max-len)": 5,
-      "typescript(no-base-to-string)": 1,
-      "typescript(no-non-null-assertion)": 2,
-      "typescript(no-unnecessary-condition)": 5
     },
     "packages/freecodego/harness-plugin/src/agent-progress.ts": {
       "typescript(no-deprecated)": 4,
@@ -461,32 +455,6 @@
     "packages/freecodego/harness-plugin/src/system-power.ts": {
       "typescript(no-unnecessary-condition)": 1
     },
-    "packages/freecodego/harness-plugin/src/team/authority.ts": {
-      "typescript(no-unnecessary-condition)": 2
-    },
-    "packages/freecodego/harness-plugin/src/team/board.ts": {
-      "@stylistic(max-len)": 3,
-      "typescript(no-base-to-string)": 1
-    },
-    "packages/freecodego/harness-plugin/src/team/context.ts": {
-      "@stylistic(max-len)": 4,
-      "typescript(no-unnecessary-condition)": 1
-    },
-    "packages/freecodego/harness-plugin/src/team/members.ts": {
-      "@stylistic(max-len)": 1
-    },
-    "packages/freecodego/harness-plugin/src/team/roles.ts": {
-      "@stylistic(max-len)": 1
-    },
-    "packages/freecodego/harness-plugin/src/team/tools.ts": {
-      "@stylistic(max-len)": 9,
-      "typescript(no-unnecessary-condition)": 2,
-      "typescript(no-unnecessary-type-assertion)": 2,
-      "typescript(require-await)": 1
-    },
-    "packages/freecodego/harness-plugin/src/team/worktree.ts": {
-      "@stylistic(max-len)": 5
-    },
     "packages/freecodego/harness-plugin/src/token-usage.ts": {
       "@stylistic(max-len)": 21,
       "typescript(no-non-null-assertion)": 5,
@@ -521,24 +489,11 @@
     "packages/freecodego/harness-plugin/src/worktree/fast.ts": {
       "typescript(no-non-null-assertion)": 1
     },
-    "packages/freecodego/harness-plugin/src/worktree/pool.ts": {
-      "typescript(require-await)": 1
-    },
     "packages/freecodego/harness-plugin/src/worktree/tools.ts": {
       "typescript(no-unnecessary-condition)": 6
     },
     "packages/freecodego/harness-plugin/tests/action-reviewer.spec.ts": {
       "typescript(no-unnecessary-type-assertion)": 12
-    },
-    "packages/freecodego/harness-plugin/tests/advisor-auto-trigger.spec.ts": {
-      "@stylistic(max-len)": 1
-    },
-    "packages/freecodego/harness-plugin/tests/advisor.spec.ts": {
-      "@stylistic(max-len)": 1,
-      "typescript(no-explicit-any)": 1,
-      "typescript(no-unsafe-assignment)": 2,
-      "typescript(no-unsafe-call)": 3,
-      "typescript(no-unsafe-member-access)": 7
     },
     "packages/freecodego/harness-plugin/tests/agent-progress.spec.ts": {
       "typescript(no-unsafe-assignment)": 3,
@@ -655,9 +610,6 @@
       "typescript(no-unnecessary-type-assertion)": 1,
       "typescript(no-unsafe-argument)": 1
     },
-    "packages/freecodego/harness-plugin/tests/managed-policy.spec.ts": {
-      "@stylistic(max-len)": 1
-    },
     "packages/freecodego/harness-plugin/tests/memory-export.spec.ts": {
       "typescript(no-unnecessary-type-assertion)": 8
     },
@@ -716,9 +668,6 @@
     "packages/freecodego/harness-plugin/tests/session-delete.spec.ts": {
       "@stylistic(max-len)": 4
     },
-    "packages/freecodego/harness-plugin/tests/side-channel-budget.spec.ts": {
-      "@stylistic(max-len)": 2
-    },
     "packages/freecodego/harness-plugin/tests/skills.spec.ts": {
       "typescript(no-unnecessary-type-assertion)": 8
     },
@@ -752,9 +701,6 @@
     },
     "packages/freecodego/harness-plugin/tests/worktree-creator.spec.ts": {
       "typescript(no-unnecessary-type-assertion)": 4
-    },
-    "packages/freecodego/harness-plugin/tests/worktree-pool.spec.ts": {
-      "@stylistic(max-len)": 1
     },
     "packages/freecodego/harness-plugin/tests/worktree-tools.spec.ts": {
       "@stylistic(max-len)": 3,
@@ -839,11 +785,6 @@
     "packages/freecodego/harness-ui/src/client/provider-card.tsx": {
       "@stylistic(max-len)": 1
     },
-    "packages/freecodego/harness-ui/src/client/session-delete-overlay.tsx": {
-      "@stylistic(max-len)": 4,
-      "typescript(no-non-null-assertion)": 1,
-      "typescript(no-unnecessary-condition)": 4
-    },
     "packages/freecodego/harness-ui/src/client/settings-tab.tsx": {
       "@stylistic(max-len)": 173,
       "sonarjs(no-identical-functions)": 3,
@@ -861,14 +802,6 @@
     },
     "packages/freecodego/harness-ui/src/client/toolbar-actions.tsx": {
       "@stylistic(max-len)": 3
-    },
-    "packages/freecodego/harness-ui/src/client/voice-input.tsx": {
-      "@stylistic(max-len)": 3,
-      "typescript(no-deprecated)": 1,
-      "typescript(no-non-null-assertion)": 1,
-      "typescript(no-unnecessary-condition)": 13,
-      "typescript(no-unsafe-argument)": 1,
-      "typescript(no-unsafe-member-access)": 2
     },
     "packages/freecodego/harness-ui/tests/checkpoint-panel.client.spec.tsx": {
       "@stylistic(max-len)": 1,
@@ -913,12 +846,6 @@
     "packages/freecodego/harness-ui/tests/trust-panel.client.spec.tsx": {
       "@stylistic(max-len)": 1,
       "typescript(no-unsafe-call)": 1
-    },
-    "packages/freecodego/harness-ui/tests/voice-input.client.spec.tsx": {
-      "typescript(no-unsafe-assignment)": 1,
-      "typescript(no-unsafe-call)": 2,
-      "typescript(no-unsafe-member-access)": 2,
-      "typescript(no-unsafe-return)": 1
     },
     "packages/freecodego/native-runtime-host/src/claude-runtime-manager.ts": {
       "typescript(no-unnecessary-condition)": 1,

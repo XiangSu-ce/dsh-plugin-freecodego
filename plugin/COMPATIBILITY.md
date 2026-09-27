@@ -1,7 +1,7 @@
 # Harness Target
 
-FreeCodeGo targets DeepSeek Harness `0.1.7-alpha.2` at tag
-`dsh-v0.1.7-alpha.2`. The checked-in candidate source follows that official
+FreeCodeGo targets DeepSeek Harness `0.1.7-rc.2` at tag
+`dsh-v0.1.7-rc.2`. The checked-in candidate source follows that official
 at the commit recorded in `harness.lock.json`; that lock file is the sole
 source used by assembly, builds, tests, and release verification.
 
@@ -34,17 +34,23 @@ counterpart — not as a second peer that can disagree:
   has no preset gate. (`action-reviewer.ts`, `standsDown`.)
 - **Scheduling.** `@deepseek-ai/dsh-schedule` owns reminders: the durable record,
   the `schedule` projection, delivery, and `schedule_create` / `_list` / `_delete`.
-  It is not mounted by any upstream bundle, so this composition mounts it. The
-  plugin contributes calendar arithmetic only — `freecodego_schedule_plan` answers
-  when a cron rule next falls and whether one `every_seconds` reminder can carry
-  it — and stores no reminder of its own. (`automation.ts`.)
-- **Teams.** `ctx.agentTeams` plus `tool-agent-team` own the roster, mailbox, and
-  shared board. While they are composed the plugin does not register its own
-  `engineering_team_board` / `_plan` / `_claim` / `_task_update` /
-  `_member_start` / `_member_stop`, and keeps `engineering_team_merge` (writer
-  worktree isolation) and `engineering_team_recover`. The bundle loads the
-  Harness's team rows before `freecodego` so the decision is settled before the
-  first request catalog is assembled. (`team/authority.ts`.)
+  The Web composition declares that row and leaves it `disabled: true`; this layer
+  turns the declared rows on (`schedule` and `time-context` together) rather than
+  mounting a copy of the package — an enabled row and an inserted duplicate would
+  be two mounts of one service. The plugin contributes calendar arithmetic only —
+  `freecodego_schedule_plan` answers when a cron rule next falls and whether one
+  `every_seconds` reminder can carry it — and stores no reminder of its own.
+  (`automation.ts`.)
+- **Teams.** `ctx.agentTeams` — the roster, mailbox, and shared board — belongs to
+  the Harness's own team runtime, which
+  `@deepseek-ai/dsh-experimental-agent-team-profile` mounts **by name**. This
+  composition mounts no copy of it and holds no fallback: a duplicate was a second
+  implementation of a capability the official bundle already supplies, and the two
+  could only ever race for the service. What the plugin adds *beside* that runtime
+  is additive — the two cross-engine subagent providers (below) so the official
+  `spawn_teammate` can put a Codex or a Claude teammate behind it, and a reader of
+  the official team session events that turns the board into audit and stop-gate
+  evidence (`team-workflow.ts`).
 
 - **Provider rows.** A row is disabled only when a row that stays mounted still
   supplies the id it was supplying, *in the registry that reads it*. Provider ids
@@ -56,7 +62,14 @@ counterpart — not as a second peer that can disagree:
   its own model adapters *beside* the official one rather than in place of it.
   Disabling the two of them once made every `web_search` throw the Harness's own
   `WEB_PROVIDER_CONFIGURED_MISSING` (`packages/web/web/src/index.ts`) and left a
-  fresh profile's default model naming nothing.
+  fresh profile's default model naming nothing. `0.1.7-rc.2` split that route in
+  two: the `llm-deepseek` row now mounts `@deepseek-ai/dsh-llm-deepseek-api-key`
+  (still the only row registering `deepseek-official`), and a second row,
+  `llm-deepseek-account`, registers `deepseek-account` from
+  `@deepseek-ai/dsh-llm-deepseek-account` beside it. Both stay mounted, and the
+  guard follows one import hop, because that api-key row registers through the
+  `registerDeepSeekProvider` helper rather than calling `ctx.llm.registerAdapter`
+  itself.
   (`harness-plugin/tests/alpha-composition.spec.ts` holds the guard: it parses the
   base composition and the plugin patch, and requires a mounted supplier for every
   provider reference the composed tree names.)
@@ -72,8 +85,9 @@ counterpart — not as a second peer that can disagree:
   the fast path and the whole answer where no backend is mounted, and every held
   write is archived through the Harness's store (`headroom/ccr-spill.ts`), with the
   delivered text naming the backend's locator so the copy is reachable after a
-  restart. `spill_recall` (byte-exact paging) and `headroom_retrieve` are the
-  increments; the Harness's policy keeps its own `read`-skipping, cap-bounded
+  restart. Byte-exact paging is the locator form of `headroom_retrieve` — one tool
+  and one schema for both markers, because a model holding a marker cannot tell
+  which mechanism removed the bytes; the Harness's policy keeps its own `read`-skipping, cap-bounded
   behaviour and is never pre-empted. (`result-spill.ts`, `spill-recall.ts`.)
 - **Entry enablement.** The Loader owns it: `plugin-manager` writes it, its page
   shows it, and `dsh plugin` addresses it. The plugin's third-party conflict guard
@@ -106,16 +120,17 @@ counterpart — not as a second peer that can disagree:
   mounts it (`resolve`/`listDir`/`readText`/`contains`, so the dialog sees the same filesystem
   the model does and containment is the backend's canonical answer), the host's own filesystem
   only as the fallback. (`capabilities.ts` `readSkill`, `skill-detail.ts` `SkillCompanionFs`.)
-- **Advisor evidence.** The reviewer's `read`, `glob`, and `grep` are the Harness's own tools:
-  the loop offers their mounted schemas and dispatches each call through `ctx.tools.execute`
-  with the calling agent, so evidence arrives through the mounted filesystem seam, the
-  registry's `tools/pre-execute` pipeline (where this plugin's credential-path guard and the
-  deployment's approval policy already sit), and the tools' own paging. The plugin keeps only
-  what nothing else provides: its own side-channel loop and route, the cross-perspective
-  evidence cache (one execution serves every council perspective asking the same question),
-  and a named bound on what it hands the reviewer — a prefix the reviewer was not told about
-  is the one it reasons about as if it were whole. It ships no tools of its own any more.
-  (`advisor.ts` `ADVISOR_REVIEW_TOOLS`, `executeReviewTool`, `AdvisorEvidenceCache`.)
+- **Review evidence.** A per-file review child is a real child agent whose tools are the
+  Harness's own: the plugin restricts the child to the intersection of its allow-list with the
+  schemas the composition actually mounted (`ctx.tools.restrict`), so the child's `read`,
+  `glob` and `grep` calls run on the Harness's loop against the mounted filesystem seam, through
+  the registry's `tools/pre-execute` pipeline (where this plugin's credential-path guard and the
+  deployment's approval policy already sit), with the tools' own paging. The child is pinned
+  read-only with approvals `never`, and it ships no tools of its own. What the plugin keeps is
+  the part nothing else provides: the review pipeline, and a named ceiling on the answer it
+  accepts — an answer cut at the ceiling is reported as *findings missing*, not as absent.
+  (`review/subagent-reviewer.ts` `REVIEW_SUBAGENT_TOOLS`, `createSubagentFileReviewer`,
+  `TRUNCATED_ANSWER_NOTE`.)
 - **Profile package operations.** `dsh plugin` owns every profile manifest edit:
   the dependency, the `dsh.profile.bundles` line that mounts a bundle, the overlay
   patch that line loads, and the diagnostic log. The community marketplace asks
@@ -142,22 +157,27 @@ counterpart — not as a second peer that can disagree:
   (`hooks/files.ts` `harnessOwnsClaudeHookFiles` / `claudeHookDialectOf`,
   `index.ts` `claudeHookDialect`, `inspect/host.ts`.)
 
-The two Harness capabilities this composition mounts and no upstream bundle does
+The three Harness capabilities this composition mounts and no upstream bundle does
 are bundled from official source by `scripts/build-freecodego-bundle.mjs` and
 listed in `packages/freecodego/bundle-latest/cordis.patch.yml` as
-`freecodego/schedule` and `freecodego/auto-review`.
+`freecodego/auto-review`, `freecodego/subagent-codex` and
+`freecodego/subagent-claude-code` — upstream's own packages, none of which any
+upstream bundle mounts, so a composition without these rows cannot select the two
+provider names `spawn_teammate` documents as its defaults. Each stands down through
+a `!!js` predicate when the official package *is* mounted (`stand-in-rows.ts`), so
+an install that supplies its own keeps it.
 
 ## NPM Version Selection
 
-The public package is `freecodego@0.1.7-alpha.2.2`. It is published for the
-supported Harness version `0.1.7-alpha.2`, and `freecodego.harnessBaseline`,
+The public package is `freecodego@0.1.7-rc.2`. It is published for the
+supported Harness version `0.1.7-rc.2`, and `freecodego.harnessBaseline`,
 `engines.dsh` and the release's asset name all state that line exactly: the
 baseline is what a Host selects a version by, and the bundle metadata and
 release checks reject a package whose declared baseline is not the supported
 source line.
 
 The version itself is the line, with a counter appended for a later publication
-on the same line (`0.1.7-alpha.2.2`, the hotfix form
+on the same line (`0.1.7-rc.2`, the hotfix form
 `packages/freecodego/AGENTS.md` documents). Only the first publication on a line
 carries the bare line version, and a version is never reused: a tag is immutable
 in the published repository, so a release that has been tagged is never

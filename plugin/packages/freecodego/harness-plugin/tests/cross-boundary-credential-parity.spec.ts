@@ -190,6 +190,17 @@ const SAMPLES: readonly Sample[] = [
     hostRules: ['github-oauth'],
   },
   {
+    what: 'a Groq API key',
+    secret: 'gsk_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKL',
+    // The provider this plugin's recognizer authenticates against, which is why the
+    // shape matters at both boundaries: the settings card's connection test renders
+    // whatever the endpoint answered, and a transcription request in a worker's log
+    // carries the same key.
+    text: 'groq refused gsk_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKL for the request',
+    workerShapes: ['groq-api-key'],
+    hostRules: ['groq-api-key'],
+  },
+  {
     what: 'a Slack token',
     secret: 'xoxb-1234567890-abcdefghijkl',
     text: 'slack webhook refused xoxb-1234567890-abcdefghijkl',

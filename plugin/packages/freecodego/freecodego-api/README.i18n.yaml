@@ -1,6 +1,34 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/freecodego-api/README.md
-README.md: 188240a3d001c3f2ff3eb3b75087ee315ba9ce47
-README.zh.md: dd8ff9e38d322042057b7ea90f38a3b85dc29109
+/:
+  en: d46074f0b4f4c365
+  zh: 99f28ee81094a747
+/dsh-freecodego-api:
+  en: 28bcd39d456196c2
+  zh: 58b1ef92d3d2ab1e
+/dsh-freecodego-api/summary:
+  en: 594be4e6a7e10dfa
+  zh: baf215618a8197e2
+/dsh-freecodego-api/table-of-contents:
+  en: 27f3bc999fe09590
+  zh: ad43e4055ad8e2ec
+/dsh-freecodego-api/credential-handling:
+  en: a9c15a2d2ff41efa
+  zh: eb3daf17a12ca3eb
+/dsh-freecodego-api/routes-and-namespace:
+  en: 3007fd39d74bff6c
+  zh: 249e9ff338e71df5
+/dsh-freecodego-api/model-experience:
+  en: fa7fcfb304d87cf3
+  zh: 29df14d990fe9683
+/dsh-freecodego-api/model-experience/kv-cache-effect:
+  en: b589da09b8e1a045
+  zh: 37de9e1ff7d14b39
+/dsh-freecodego-api/known-limitations-and-deferred-work:
+  en: e3f011b9163004c3
+  zh: 2934bd79214a805e
+/dsh-freecodego-api/known-limitations-and-deferred-work/dev-note:
+  en: 27548c1fa893d928
+  zh: ffc4bd2342d5e3cb

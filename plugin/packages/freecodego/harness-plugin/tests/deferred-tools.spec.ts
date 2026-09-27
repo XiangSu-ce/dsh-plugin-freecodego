@@ -26,13 +26,12 @@ const SCHEMAS = [
   { name: 'read', description: 'Read a file', parameters: { type: 'object' } },
   { name: 'engineering_status', description: 'Engineering status', parameters: { type: 'object' } },
   { name: 'engineering_repo_map', description: 'Repo map', parameters: { type: 'object' } },
-  { name: 'advisor_review', description: 'Advisor review', parameters: { type: 'object' } },
   { name: 'headroom_retrieve', description: 'Retrieve compressed original', parameters: { type: 'object' } },
   { name: 'engineering_memory_search', description: 'Search durable project memory', parameters: { type: 'object' } },
   { name: 'engineering_memory_get', description: 'Read selected memory records', parameters: { type: 'object' } },
   { name: 'engineering_checkpoint_restore', description: 'Restore a checkpoint', parameters: { type: 'object' } },
   { name: 'engineering_team_start', description: 'Start an engineering team', parameters: { type: 'object' } },
-  { name: 'advisor_notes', description: 'Read advisor notes', parameters: { type: 'object' } },
+  { name: 'freecodego_recovery_status', description: 'Recovery status', parameters: { type: 'object' } },
   { name: 'freecodego_generate_image', description: 'Generate an image', parameters: { type: 'object' } },
   { name: 'mcp__context7__query-docs', description: 'Query docs', parameters: { type: 'object' } },
 ]
@@ -122,12 +121,12 @@ function deferredHarness(options: {
 
 /** Every tool name the plugin owns and defers by default. */
 const EXPECTED_DEFERRED = [
-  'advisor_notes',
   'engineering_checkpoint_restore',
   'engineering_memory_get',
   'engineering_memory_search',
   'engineering_team_start',
   'freecodego_generate_image',
+  'freecodego_recovery_status',
 ]
 
 function lastDeny(restrictions: readonly Restriction[]): readonly string[] {
@@ -151,8 +150,8 @@ describe('deferred tool query grammar', () => {
   })
 
   it('parses an exact selection, tolerating spacing and case', () => {
-    expect(parseToolSearchQuery('select:engineering_memory_search, advisor_notes').exact)
-      .toEqual(['engineering_memory_search', 'advisor_notes'])
+    expect(parseToolSearchQuery('select:engineering_memory_search, freecodego_recovery_status').exact)
+      .toEqual(['engineering_memory_search', 'freecodego_recovery_status'])
     expect(parseToolSearchQuery('SELECT : a').exact).toEqual(['a'])
   })
 
@@ -161,16 +160,16 @@ describe('deferred tool query grammar', () => {
   })
 
   it('returns exact selections in the order they were asked for', () => {
-    const matches = matchDeferredTools('select:advisor_notes,engineering_memory_get', SCHEMAS)
-    expect(matches.map(tool => tool.name)).toEqual(['advisor_notes', 'engineering_memory_get'])
+    const matches = matchDeferredTools('select:freecodego_recovery_status,engineering_memory_get', SCHEMAS)
+    expect(matches.map(tool => tool.name)).toEqual(['freecodego_recovery_status', 'engineering_memory_get'])
   })
 
   it('drops exact names that are not deferred rather than inventing them', () => {
     // `matchDeferredTools` only sees candidates the caller already filtered, so
     // an unknown name resolves to nothing rather than to a phantom tool.
     const deferred = SCHEMAS.filter(schema => EXPECTED_DEFERRED.includes(schema.name))
-    const matches = matchDeferredTools('select:engineering_status,nope,advisor_notes', deferred)
-    expect(matches.map(tool => tool.name)).toEqual(['advisor_notes'])
+    const matches = matchDeferredTools('select:engineering_status,nope,freecodego_recovery_status', deferred)
+    expect(matches.map(tool => tool.name)).toEqual(['freecodego_recovery_status'])
   })
 
   it('requires every +term to appear in the name and still ranks by the rest', () => {
@@ -237,6 +236,35 @@ describe('deferred tool fetch hint', () => {
     expect(deferredToolFetchHint('engineering_plan_mode')).toBe('')
     expect(deferredToolFetchHint('read')).toBe('')
   })
+
+  it('leads with the separator, so a caller concatenates without a ternary', () => {
+    // A hint that began with a letter rendered as `UNVERIFIED.Most tool schemas…`
+    // at the one call site that appends it to a sentence ending in a period, and
+    // the workaround there was a `hint === '' ? a : `${a} ${hint}`` ternary — the
+    // same rule stated twice. The space is the function's to own.
+    expect(deferredToolFetchHint('engineering_memory_search').startsWith(' ')).toBe(true)
+    expect(deferredToolFetchHint('read_document')).toBe('')
+  })
+
+  it('names every tool when one sentence points at two', () => {
+    const hint = deferredToolFetchHint(['engineering_codegraph_explain', 'engineering_codegraph_path'])
+    expect(hint).toContain('engineering_codegraph_explain, engineering_codegraph_path')
+    expect(hint).toContain('select:engineering_codegraph_explain, engineering_codegraph_path')
+    // The pronoun and the verb follow the count, or the sentence reads as though
+    // one tool were meant and the second name is decoration.
+    expect(hint).toContain(' are not in your schema')
+    expect(hint).toContain('load them first')
+  })
+
+  it('drops the always-immediate names out of a list, and the sentence with them', () => {
+    // Callers pass every name their sentence used and append unconditionally, so
+    // the filter has to be here rather than at each of them.
+    const mixed = deferredToolFetchHint(['read_document', 'engineering_memory_get'])
+    expect(mixed).toContain('engineering_memory_get')
+    expect(mixed).not.toContain('read_document')
+    expect(deferredToolFetchHint(['read_document', 'engineering_plan_mode'])).toBe('')
+    expect(deferredToolFetchHint([])).toBe('')
+  })
 })
 
 describe('deferred tool split', () => {
@@ -244,9 +272,9 @@ describe('deferred tool split', () => {
     const harness = deferredHarness()
     const status = harness.service.status()
     expect(status.deferred.map(entry => entry.name).sort()).toEqual(EXPECTED_DEFERRED)
-    // Status/ repo-map / advisor_review / headroom_retrieve stay, and so does
+    // Status/ repo-map / headroom_retrieve stay, and so does
     // every tool this plugin does not own.
-    for (const name of ['engineering_status', 'engineering_repo_map', 'advisor_review', 'headroom_retrieve', 'read', 'mcp__context7__query-docs']) {
+    for (const name of ['engineering_status', 'engineering_repo_map', 'headroom_retrieve', 'read', 'mcp__context7__query-docs']) {
       expect(status.deferred.some(entry => entry.name === name)).toBe(false)
     }
   })
@@ -272,7 +300,7 @@ describe('deferred tool split', () => {
     // `ALWAYS_IMMEDIATE` wins over an explicit list: deferring `tool_search`
     // would be a lockout, and the others are answers to something the model has
     // already been shown.
-    const harness = deferredHarness({ settings: { deferredToolNames: ['tool_search', 'engineering_status', 'advisor_review'] } })
+    const harness = deferredHarness({ settings: { deferredToolNames: ['tool_search', 'engineering_status', 'headroom_retrieve'] } })
     expect(harness.service.status().deferred).toEqual([])
   })
 
@@ -373,7 +401,7 @@ describe('deferred tool split', () => {
     const agent = harness.startSession()
     const listed = await harness.call({ query: 'list:engineering_' }, agent) as string
     expect(listed).toContain('engineering_memory_search')
-    expect(listed).not.toContain('advisor_notes')
+    expect(listed).not.toContain('freecodego_recovery_status')
     expect(listed).not.toContain('<function>')
     expect(listed).toContain('is not callable until its schema is fetched')
     expect(harness.restrictions).toHaveLength(1)
@@ -412,8 +440,8 @@ describe('deferred tool split', () => {
   it('never un-defers a tool that was not fetched', async () => {
     const harness = deferredHarness()
     const agent = harness.startSession()
-    await harness.call({ query: 'select:advisor_notes' }, agent)
-    expect([...lastDeny(harness.restrictions)].sort()).toEqual(EXPECTED_DEFERRED.filter(name => name !== 'advisor_notes'))
+    await harness.call({ query: 'select:freecodego_recovery_status' }, agent)
+    expect([...lastDeny(harness.restrictions)].sort()).toEqual(EXPECTED_DEFERRED.filter(name => name !== 'freecodego_recovery_status'))
   })
 
   it('reports a helpful answer when a query matches nothing', async () => {
@@ -466,7 +494,7 @@ describe('deferred tool split', () => {
     const harness = deferredHarness()
     const first = harness.startSession('agent-a')
     const second = harness.startSession('agent-b')
-    await harness.call({ query: 'select:advisor_notes' }, first)
+    await harness.call({ query: 'select:freecodego_recovery_status' }, first)
     // Three layers: agent-a's initial deny, agent-b's initial deny, and agent-a's
     // narrower re-apply. Agent-b's layer is untouched by agent-a's discovery —
     // otherwise one agent's fetch would widen another agent's tool pool.
@@ -530,8 +558,8 @@ describe('deferred tool settings re-sync', () => {
     const harness = deferredHarness()
     harness.startSession('agent-a')
     expect([...lastDeny(harness.restrictions)].sort()).toEqual(EXPECTED_DEFERRED)
-    harness.commitSettings({ deferredToolNames: ['advisor_notes'] })
-    expect([...(harness.restrictions.at(-1)?.deny ?? [])].sort()).toEqual(['advisor_notes'])
+    harness.commitSettings({ deferredToolNames: ['freecodego_recovery_status'] })
+    expect([...(harness.restrictions.at(-1)?.deny ?? [])].sort()).toEqual(['freecodego_recovery_status'])
     // The previous restriction is released rather than left intersecting.
     expect(harness.restrictions.length).toBe(2)
     expect(harness.restrictions[0]?.disposed).toBe(true)
@@ -546,10 +574,10 @@ describe('deferred tool settings re-sync', () => {
     await harness.call({ query: 'select:engineering_memory_search' }, agent)
     expect([...lastDeny(harness.restrictions)].sort())
       .toEqual(EXPECTED_DEFERRED.filter(name => !revealed.includes(name)))
-    harness.commitSettings({ deferredToolNames: ['engineering_memory_search', 'advisor_notes'] })
+    harness.commitSettings({ deferredToolNames: ['engineering_memory_search', 'freecodego_recovery_status'] })
     // `engineering_memory_search` is still eligible and was already shown, so it
     // is not taken back; only the newly-scoped name is denied.
-    expect([...(harness.restrictions.at(-1)?.deny ?? [])].sort()).toEqual(['advisor_notes'])
+    expect([...(harness.restrictions.at(-1)?.deny ?? [])].sort()).toEqual(['freecodego_recovery_status'])
   })
 
   it('leaves an unchanged deny list alone instead of churning the scope', () => {

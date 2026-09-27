@@ -173,6 +173,16 @@ describe('verification command classification', () => {
     expect(classifyVerificationCommand(['bash', '-c', '   ']).reason).toContain('empty line')
   })
 
+  it('does not split quoted separators inside an inline script', () => {
+    // Shell separators inside the quoted `-e` argument are JavaScript text, not
+    // later shell commands. Splitting raw text misread this harmless output call
+    // as a final `process.exit(0)` program and counted an unfalsifiable probe.
+    const command = ['sh', '-c', 'node -e "console.log(\'inside; still inside\'); process.exit(0)"']
+    const classified = classifyVerificationCommand(command)
+    expect(classified.verification).toBe(false)
+    expect(classified.reason).toContain('no assertion')
+  })
+
   it('reads every shell the command policy names as a wrapper, not just the POSIX few', () => {
     // The wrapper branch answers from `command-policy.ts`'s SHELL_INTERPRETERS. The
     // copy that used to live in this module drifted in both directions: it was
@@ -221,8 +231,16 @@ describe('exit status attribution', () => {
   it('refuses a status that belongs to a filter after the check', () => {
     const piped = exitStatusIsAttributable(['sh', '-c', 'npm test | tail -20'])
     expect(piped.attribuable).toBe(false)
-    expect(piped.reason).toContain("filter's")
+    expect(piped.reason).toContain('final stage')
     expect(exitStatusIsAttributable(['bash', '-c', 'pytest -q | grep FAIL']).attribuable).toBe(false)
+  })
+
+  it('does not mistake a quoted pipe for a pipeline or trust a real pipeline status', () => {
+    const quoted = exitStatusIsAttributable(['sh', '-c', 'node -e "console.log(\'|\')"'])
+    expect(quoted.attribuable).toBe(true)
+    const pipeline = exitStatusIsAttributable(['sh', '-c', 'pnpm test | node -e "assert(true)"'])
+    expect(pipeline.attribuable).toBe(false)
+    expect(pipeline.reason).toContain('final stage')
   })
 
   it('finds the shell behind a launcher before calling a status attributable', () => {
@@ -240,7 +258,7 @@ describe('exit status attribution', () => {
       const command = [...launcher, 'sh', '-c', 'pnpm test | tail -20']
       const attribution = exitStatusIsAttributable(command)
       expect(attribution.attribuable, command.join(' ')).toBe(false)
-      expect(attribution.reason, command.join(' ')).toContain("filter's")
+      expect(attribution.reason, command.join(' ')).toContain('pipeline\'s final stage')
     }
     // And the control: a launcher over a check that has no filter is still the check's
     // own status, so finding the shell must not turn every launched run unattributable.

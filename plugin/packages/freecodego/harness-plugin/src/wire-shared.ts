@@ -39,6 +39,17 @@ export const DONE = '[DONE]'
  * that its tool set changed — a silent failure, which is the one outcome this
  * package's callers cannot diagnose.
  *
+ * rc.2 gives that rule a name and a shape. `ToolUpdate` (`'in-history' |
+ * 'addition-only'`) is now a field of the resolved model info, and the core's
+ * `projectToolUpdates` decides what each route receives: a route that declares no
+ * mode gets its developer messages *stripped* and its deferred declarations
+ * flattened before dispatch (`withoutDeveloperMessages`, plus `deferLoading`
+ * removed from every schema). This plugin's routes declare no mode, so a
+ * `developer` message arriving at these wires now means the projection was
+ * bypassed — which is why the throw below is an invariant rather than a live code
+ * path, and why "declare support" (not "loosen the check") is the fix if a dialect
+ * ever grows a tool-addition frame.
+ *
  * @param what - the message or content with no frame on this dialect.
  * @throws LlmError marked `UNSUPPORTED_CONTENT`, the code the core classifies.
  */

@@ -35,6 +35,10 @@ import { STATE_BY_ID, type StateId } from './engine/states.ts'
 import type { CompanionActivity } from './activity.ts'
 import { CompanionArbiter } from './arbiter.ts'
 import { companionClock } from './driver.ts'
+import { poseAt } from './poses.ts'
+import { withRings } from './eyes/apply.ts'
+import { EYE_FACES, faceFor, faceRingAt } from './eyes/faces.ts'
+import type { RingName } from './eyes/rings.ts'
 import {
   awaitingInteraction,
   emptyMemory,
@@ -54,6 +58,41 @@ interface CompanionRuntime {
   memory: CompanionSignalMemory
   /** Last state whose frame was published, so a frozen companion can skip ticks. */
   published: StateId | undefined
+  /**
+   * The pose the engine is currently playing, or `undefined` before the first
+   * publish. Tracked separately from `published` because the two answer different
+   * questions: `published` is what the reader was last *told*, and this is what the
+   * engine is *drawing*. Re-entering the engine for a pose already on screen would
+   * restart its morph for no visible change.
+   */
+  publishedPose: StateId | undefined
+  /** The outline the eyes are showing, so a change of face can be told from a redraw. */
+  publishedFace: RingName | undefined
+  /**
+   * The expression and its source the reader was last told, or `null` for neither.
+   *
+   * Tracked beside `publishedFace` because they answer different questions and one does
+   * not imply the other: several names draw one outline (`neutral` and a pool's `open`
+   * are the same picture), so an expression can arrive, change source, or end while the
+   * eyes are already drawn exactly that way. The published attributes are the *only*
+   * thing about a face anything outside the component can read, so a gate that watched
+   * the outline alone would leave them saying something no longer true — and would leave
+   * a live probe unable to see a request that happened to ask for the current shape.
+   */
+  publishedExpression: string | null
+  /** Which source that expression came from, or `null` when nothing was worn. */
+  publishedExpressionSource: 'request' | 'moment' | null
+  /**
+   * The outline the eyes are coming from, and when they started coming from it.
+   *
+   * The engine morphs its own eye placement itself, so the only thing `./eyes/faces.ts`
+   * needs from this half is what an outline is giving way to and how long it has had:
+   * one pair of facts, remembered here rather than derived, because a morph is the one
+   * thing about a companion that a clock cannot reconstruct.
+   */
+  faceFrom: RingName | undefined
+  /** Milliseconds, from the shared clock, at which `faceFrom` gave way to the face. */
+  faceChangedAtMs: number
 }
 
 /**
@@ -75,6 +114,12 @@ function createRuntime(): CompanionRuntime {
     arbiter: new CompanionArbiter(),
     memory: emptyMemory(companionClock().nowSeconds() * 1000),
     published: undefined,
+    publishedPose: undefined,
+    publishedFace: undefined,
+    publishedExpression: null,
+    publishedExpressionSource: null,
+    faceFrom: undefined,
+    faceChangedAtMs: 0,
   }
 }
 
@@ -239,12 +284,61 @@ export function useObservedCompanionObservation(
   }
 }
 
-/** The published pose: one frame, and the name of the state that produced it. */
+/** The published pose: one frame, and what produced it. */
 export interface CompanionView {
   /** The engine frame to draw. Render-only; the caller owns the clock. */
   frame: BotFrame
-  /** Which state is showing, for the label and for `data-fcg-state`. */
+  /**
+   * Which state is showing, for the label and for `data-fcg-state`.
+   *
+   * This is the arbiter's answer and only its answer: a pool rotates which pose
+   * *draws* the state, never which state the session is in, so the words a reader
+   * sees cannot disagree with the session they describe.
+   */
   state: StateId
+  /**
+   * The pose that produced `frame` — the state itself for a state that does not
+   * rotate, and one of its pool's poses otherwise. Published as `data-fcg-pose` so
+   * a change of drawing is observable without pretending the state changed.
+   */
+  pose: StateId
+  /**
+   * The expression worn while it holds, and `null` at every other moment — never the
+   * outline that is drawn, which is `expression` resolved against the pose and then
+   * morphed.
+   *
+   * Two sources reach it, and `signals.ts` is the one place that decides between them: a
+   * request the model made through `freecodego_companion_face`, or a moment the session
+   * had (a tool call that came back a failure). Published as
+   * `data-fcg-companion-expression`, together with {@link CompanionView.expressionSource}.
+   * The face's whole effect is a face, and a face is the one thing nothing outside the
+   * component can diff: the eyes are cubic curves inside a mask, redrawn every frame.
+   * Publishing it is what makes the feature observable rather than merely plausible — it is
+   * how the live run after this shipped confirmed the call had reached the seat.
+   */
+  expression: string | null
+  /**
+   * Which source that expression came from, or `null` when nothing is worn.
+   *
+   * Published as `data-fcg-companion-expression-source`. Worth a second attribute because
+   * the two are different claims about the same character: `request` means the model said
+   * something about itself, `moment` means the session did, and a reader debugging "why is
+   * it frowning" needs to know which channel to look in.
+   */
+  expressionSource: 'request' | 'moment' | null
+  /**
+   * The outline the eyes are drawn with at this instant — the state's face, from its
+   * pool, or the expression a request put there. Published as `data-fcg-face`.
+   *
+   * The request above says what was *asked for*; this says what is *drawn*, and they
+   * differ for every state whose pool rotates: the eyes are paths inside a mask, and
+   * every path changes on every frame anyway (the body breathes, so the eye box moves),
+   * so nothing outside the component can tell a rotating face from a still one. It is
+   * the same argument `data-fcg-pose` is published under, for the other half of the
+   * drawing, and it is what a test reads to assert that a waiting seat's face moves
+   * while its words do not.
+   */
+  face: RingName
 }
 
 /**
@@ -266,6 +360,10 @@ export function useCompanionView(observation: CompanionObservation): CompanionVi
   const [view, setView] = useState<CompanionView>(() => ({
     frame: initialRuntime.engine.sample(0),
     state: 'idle',
+    pose: 'idle',
+    expression: null,
+    expressionSource: null,
+    face: EYE_FACES.idle,
   }))
 
   const reducedRef = useRef(reducedMotion)
@@ -277,22 +375,67 @@ export function useCompanionView(observation: CompanionObservation): CompanionVi
     if (runtime === undefined) return
     const clock = companionClock()
     const nowSeconds = clock.nowSeconds()
-    const projected = projectSignals(observationRef.current, nowSeconds * 1000, runtime.memory)
+    const nowMs = nowSeconds * 1000
+    const projected = projectSignals(observationRef.current, nowMs, runtime.memory)
     runtime.memory = projected.memory
-    const decision = runtime.arbiter.decide(projected.signals, nowSeconds * 1000)
-    if (decision.changed) {
-      // Resetting rather than transitioning is what makes a frozen companion
-      // show the pose itself instead of a morph caught halfway.
-      if (reducedRef.current) runtime.engine.reset(decision.state, 0)
-      else runtime.engine.setState(decision.state, nowSeconds)
-    }
+    const decision = runtime.arbiter.decide(projected.signals, nowMs)
     const frozen = reducedRef.current
-    if (frozen && !decision.changed && runtime.published === decision.state) return
+    // Which pose illustrates that decision at this instant. The reduced-motion
+    // preference is applied inside `poseAt`, which is the only place it is applied.
+    const pose = poseAt(decision.state, nowMs, !frozen)
+    // Driven by the *pose* rather than by the decision: two states can be drawn by
+    // one pose, and a re-entry for a pose already on screen would restart its morph
+    // for no visible change. Resetting rather than transitioning is what makes a
+    // frozen companion show the pose itself.
+    // Which outline the state wears, with an expression the model asked for outranking
+    // it while it holds. Keyed by the decision rather than by the pose because the face
+    // moves on its own clock (`eyes/pools.ts`): the pose pool varies only the three busy
+    // states' bodies, so a waiting session would otherwise wear one expression until its
+    // words changed.
+    const face = faceFor(decision.state, projected.expression, nowMs, !frozen)
+    const expression = projected.expression ?? null
+    const expressionSource = projected.expressionSource ?? null
+    // Every question is asked before anything is applied, because each is a reason to
+    // publish: the words changed, the face under them did, or the expression the reader
+    // is told about did — including the case where it changed to a name drawn with the
+    // outline already on screen, which the outline alone cannot report.
+    const poseChanged = pose !== runtime.publishedPose
+    const faceChanged = face !== runtime.publishedFace
+    const expressionChanged = expression !== runtime.publishedExpression
+      || expressionSource !== runtime.publishedExpressionSource
+    // A frozen companion draws a face that is a pure function of the state and of a
+    // request, so only those two can move it — a rotation cannot, and an arriving
+    // request can. That is what makes the gate a behaviour rather than a comment.
+    if (frozen && !decision.changed && runtime.published === decision.state && !poseChanged && !faceChanged && !expressionChanged) return
+    if (poseChanged) {
+      if (frozen) runtime.engine.reset(pose, 0)
+      else runtime.engine.setState(pose, nowSeconds)
+      runtime.publishedPose = pose
+    }
+    if (faceChanged) {
+      runtime.faceFrom = runtime.publishedFace
+      runtime.faceChangedAtMs = nowMs
+      runtime.publishedFace = face
+    }
     runtime.published = decision.state
+    runtime.publishedExpression = expression
+    runtime.publishedExpressionSource = expressionSource
     const frame = frozen
-      ? runtime.engine.sample(frozenAtSeconds(decision.state))
+      ? runtime.engine.sample(frozenAtSeconds(pose))
       : runtime.engine.sample(nowSeconds)
-    setView({ frame, state: decision.state })
+    // The outline is the last thing applied, so what a seat draws is one frame: the
+    // engine's placement with this instant's outline drawn into it. It is applied here
+    // rather than in the renderer for the reason the module note gives — the frame is
+    // the truth, and a seat that drew its own eyes could disagree with the other seat.
+    const ring = faceRingAt(runtime.faceFrom, pose, face, nowMs - runtime.faceChangedAtMs, !frozen)
+    setView({
+      frame: withRings(frame, ring),
+      state: decision.state,
+      pose,
+      expression,
+      expressionSource,
+      face,
+    })
   }, [])
 
   const publishRef = useRef(publish)

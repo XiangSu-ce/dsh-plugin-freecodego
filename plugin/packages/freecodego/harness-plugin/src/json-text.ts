@@ -4,7 +4,8 @@
  * Why this exists
  * ---------------
  * Two modules ask a model for a JSON object and read it back out of the answer:
- * the action reviewer (`{verdict, rationale}`) and the Advisor (`{severity, note}`).
+ * the action reviewer and the coverage reviewer, both of which read a
+ * `{verdict, rationale}`-shaped reply (`action-review.ts`, `review-coverage.ts`).
  * Both grew the same extraction, and the same one is wrong:
  *
  * ```ts

@@ -12,9 +12,9 @@
  *    handler, which is outside every promise in the module, so it is an uncaught
  *    exception that ends the agent process. The timeout bounds time, not bytes: a
  *    gating hook may run for ten minutes.
- * 2. **A handler that has to be stopped.** The deadline has to actually end the child
- *    (and, on Windows, its tree), and it has to be reported as a timeout rather than
- *    as a failure.
+ * 2. **A handler that has to be stopped.** The deadline has to actually end the
+ *    child tree — including a background descendant — and has to be reported as a
+ *    timeout rather than as a failure.
  *
  * The commands below are `node -e` one-liners so the cases need no fixture and no
  * platform-specific binary. The spawn happens inside the module under test; the
@@ -106,6 +106,34 @@ describe('commandHookRunner', () => {
     ).rejects.toThrow('hook timed out after 200ms')
     expect(Date.now() - started).toBeLessThan(5_000)
   })
+
+  it('kills a background descendant when a command handler times out', async () => {
+    // Killing only the shell leaves its background child alive. The child writes
+    // a start marker before scheduling its delayed side effect, so the test proves
+    // the background process actually ran before asserting that it was terminated.
+    const directory = mkdtempSync(join(tmpdir(), 'freecodego-hook-tree-'))
+    const startedMarker = join(directory, 'started')
+    const marker = join(directory, 'survived')
+    const childScript = `const fs=require('node:fs');fs.writeFileSync(process.env.FREECODEGO_HOOK_STARTED,'yes');setTimeout(()=>fs.writeFileSync(process.env.FREECODEGO_HOOK_MARKER,'alive'),1800)`
+    const childCommand = `node -e "${childScript}"`
+    const foregroundWaiter = 'node -e "setTimeout(() => {}, 5000)"'
+    const shellLine = process.platform === 'win32'
+      ? `start /b "" ${childCommand} & ${foregroundWaiter}`
+      : `${childCommand} & ${foregroundWaiter}`
+    try {
+      const started = Date.now()
+      await expect(commandHookRunner(commandHandler(shellLine), {}, 200, {
+        FREECODEGO_HOOK_STARTED: startedMarker,
+        FREECODEGO_HOOK_MARKER: marker,
+      })).rejects.toThrow('hook timed out after 200ms')
+      expect(Date.now() - started).toBeLessThan(1_500)
+      expect(existsSync(startedMarker)).toBe(true)
+      await sleep(2_200)
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 10_000)
 
   it('reports a shell that cannot start as a non-zero exit rather than a throw', async () => {
     // Fail open: a handler that cannot run is recorded, not propagated. 127 is the

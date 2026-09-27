@@ -1,0 +1,153 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 0 24px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.intro {
+  color: var(--dsh-text-secondary, #8b93a1);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 62ch;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  border: 1px solid var(--dsh-border, #2b3040);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.rowHead {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.rowTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rowBody {
+  color: var(--dsh-text-secondary, #8b93a1);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-line;
+}
+
+.meta {
+  color: var(--dsh-text-tertiary, #6d7484);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tool {
+  background: var(--dsh-surface-raised, #1d2130);
+  border-radius: 5px;
+  font-family: var(--dsh-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+.switch {
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 20px;
+  position: relative;
+  width: 36px;
+}
+
+.switchInput {
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.track {
+  background: var(--dsh-border, #39404f);
+  border-radius: 999px;
+  height: 100%;
+  pointer-events: none;
+  transition: background 120ms ease;
+  width: 100%;
+}
+
+.track::after {
+  background: #fff;
+  border-radius: 50%;
+  content: '';
+  height: 14px;
+  left: 3px;
+  position: absolute;
+  top: 3px;
+  transition: transform 120ms ease;
+  width: 14px;
+}
+
+.switchInput:checked + .track {
+  background: var(--dsh-accent, #438de7);
+}
+
+.switchInput:checked + .track::after {
+  transform: translateX(16px);
+}
+
+.switchInput:disabled + .track {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.switchInput:focus-visible + .track {
+  outline: 2px solid var(--dsh-accent, #438de7);
+  outline-offset: 2px;
+}
+
+.loading {
+  color: var(--dsh-text-secondary, #8b93a1);
+  font-size: 12px;
+}
+
+.error {
+  color: #e46c61;
+  font-size: 12px;
+}

@@ -386,11 +386,12 @@ export async function skillPresetRemove(host: CommunityRemotesHost, id: string):
 
 /** Public, credential-free community catalog used by the embedded settings page. 
  * @param host - the Host surface this remote call reaches its services through.
+ * @param options - `refresh` fetches the published directory instead of serving the saved snapshot.
  * @returns the community Catalog Payload.
  */
-export async function communityCatalog(host: CommunityRemotesHost): Promise<CommunityCatalogPayload> {
+export async function communityCatalog(host: CommunityRemotesHost, options: { readonly refresh?: boolean } = {}): Promise<CommunityCatalogPayload> {
   if (host.state.communityCatalogPromise !== undefined) return host.state.communityCatalogPromise
-  const operation = loadCommunityCatalog(host)
+  const operation = loadCommunityCatalog(host, options.refresh === true)
   host.state.communityCatalogPromise = operation
   try { return await operation } finally {
     if (host.state.communityCatalogPromise === operation) host.state.communityCatalogPromise = undefined
@@ -533,8 +534,26 @@ export async function communityUninstall(host: CommunityRemotesHost, url: string
   try { return await task } finally { host.state.communityMutationTask = undefined }
 }
 
-async function loadCommunityCatalog(host: CommunityRemotesHost): Promise<CommunityCatalogPayload> {
+/**
+ * Read the directory the page renders.
+ *
+ * `refresh` is the difference between opening the panel and pressing its refresh
+ * button, and it exists because those are not the same request: opening the panel
+ * wants an answer now and will take a saved snapshot, while the button is a user
+ * asking for the newest published directory — serving the snapshot it was clicked
+ * to replace is what made the control look inert, and it is also why a snapshot
+ * that had gone stale could never be replaced by hand. A requested refresh that
+ * fails reports the failure instead of quietly handing back the snapshot, so a
+ * directory that cannot be updated says so rather than showing a stale date the
+ * refresh button appears unable to change. The page keeps the rows it already has
+ * when that error arrives, so the cost is a message, not the list.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @param refresh - whether the caller asked for the published directory itself.
+ * @returns the community Catalog Payload.
+ */
+async function loadCommunityCatalog(host: CommunityRemotesHost, refresh: boolean): Promise<CommunityCatalogPayload> {
   const cachePath = host.catalogs.catalogCachePath('community-plugin-catalog.json')
+  if (refresh) return refreshCommunityCatalog(cachePath)
   const cached = await readCommunityCatalogCache(cachePath)
   if (cached !== undefined) {
     refreshCommunityCatalogInBackground(host, cachePath)
@@ -551,7 +570,13 @@ function refreshCommunityCatalogInBackground(host: CommunityRemotesHost, cachePa
   // miss one that starts after the drain snapshot.
   const operation = host.catalogs.pendingWrites
     .run(() => refreshCommunityCatalog(cachePath))
-    .then(() => undefined, () => undefined)
+    // Discarded as a *result*, not as a fact worth knowing: this refresh is the only
+    // writer of the snapshot the page reads, so a failure that leaves no trace
+    // anywhere is how a directory stayed eleven days stale without a single line to
+    // look at. The page still shows the saved snapshot; the log says why it is old.
+    .then(() => undefined, (error: unknown) => {
+      host.ctx.logger?.warn?.(`freecodego: community catalog refresh failed; serving the saved snapshot (${error instanceof Error ? error.message : String(error)})`)
+    })
   host.state.communityCatalogRefreshPromise = operation
   void operation.finally(() => {
     if (host.state.communityCatalogRefreshPromise === operation) host.state.communityCatalogRefreshPromise = undefined

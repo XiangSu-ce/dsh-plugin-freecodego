@@ -22,18 +22,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { groqWhisperTranscribe } from '../src/account-remotes.ts'
 
+/** The route a test asks the transcriber to use, with the built-in one as the default. */
+interface RouteDouble {
+  readonly baseUrl: string
+  readonly model: string
+  readonly apiKey: string | undefined
+  readonly custom: boolean
+}
+
+const builtinRoute: RouteDouble = { baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', apiKey: 'groq-key', custom: false }
+
 /** One transcription attempt, with the multipart body it produced. */
-async function upload(mimeType: string, language?: unknown): Promise<{ readonly name: string; readonly type: string; readonly language: unknown }> {
-  const host = { catalogs: { groqWhisperApiKey: async () => 'groq-key' } }
+async function upload(mimeType: string, language?: unknown, route: RouteDouble = builtinRoute): Promise<{ readonly name: string; readonly type: string; readonly language: unknown; readonly url: string; readonly model: unknown }> {
+  const host = { catalogs: { groqWhisperRoute: async () => route } }
   let seen: FormData | undefined
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+  let seenUrl = ''
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    seenUrl = String(url)
     seen = init?.body as FormData
     return new Response(JSON.stringify({ text: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } })
   })
   const payload = Buffer.from(new Uint8Array([1, 2, 3, 4])).toString('base64')
   await groqWhisperTranscribe(host as never, payload, mimeType, language as string | undefined)
   const file = seen?.get('file') as File | null
-  return { name: String(file?.name), type: String(file?.type), language: seen?.get('language') }
+  return { name: String(file?.name), type: String(file?.type), language: seen?.get('language'), url: seenUrl, model: seen?.get('model') }
 }
 
 afterEach(() => { vi.restoreAllMocks() })
@@ -56,6 +68,31 @@ describe('the upload name and the media type describe one container', () => {
     const uploaded = await upload(mimeType)
     expect(uploaded.type).toBe(mimeType)
     expect(uploaded.name).toBe(`recording.${extension}`)
+  })
+})
+
+describe('the route is the user\'s, not this module\'s', () => {
+  it('posts to the stored endpoint with the stored model', async () => {
+    // The whole point of a configurable route: a self-hosted or third-party
+    // recognizer is the same multipart request at another address, and the default
+    // must not leak back in beside it.
+    const uploaded = await upload('audio/wav', 'zh', {
+      baseUrl: 'https://asr.example.com/v1',
+      model: 'sensevoice-small',
+      apiKey: 'other-key',
+      custom: true,
+    })
+    expect(uploaded.url).toBe('https://asr.example.com/v1/audio/transcriptions')
+    expect(uploaded.model).toBe('sensevoice-small')
+  })
+
+  it('refuses to invent a route when no key is configured', async () => {
+    // Readiness and the request agree on this: an undefined key is a refusal, not a
+    // request to the default endpoint with an empty bearer token.
+    const host = { catalogs: { groqWhisperRoute: async () => ({ ...builtinRoute, apiKey: undefined }) } }
+    const fetch = vi.spyOn(globalThis, 'fetch')
+    await expect(groqWhisperTranscribe(host as never, Buffer.from([1, 2, 3]).toString('base64'), 'audio/wav')).rejects.toThrow(/No speech recognizer key is configured/u)
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
 

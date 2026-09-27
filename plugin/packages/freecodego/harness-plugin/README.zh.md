@@ -22,8 +22,8 @@ kind: "package-reference"
 - [文档](#documentation)
 - [Subagent 模型路由](#subagent-model-routing)
 - [免费模型](#free-models)
-- [Advisor 评审回路](#advisor-review-loop)
 - [Engineering 增强](#engineering-enhancement)
+- [会话删除](#session-deletion)
 - [代码审查](#code-review)
 - [上下文压缩（Headroom）](#context-compression-headroom)
 - [提示词构成](#prompt-composition)
@@ -36,6 +36,7 @@ kind: "package-reference"
 - [Zcode GLM-5.3 Flash 推广](#zcode-glm-53-flash-promotion)
 - [MCP 与 Skills](#mcp-and-skills)
 - [可选的本体能力](#optional-harness-capabilities)
+- [伴侣角色](#companion-character)
 - [第三方插件工具](#third-party-plugin-tools)
 - [媒体默认值](#media-defaults)
 - [模型选择器与供应商账号](#model-picker-and-provider-accounts)
@@ -91,12 +92,8 @@ Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是�
 
 <!-- generated:free-models:end -->
 
-<a id="advisor-review-loop"></a>
-## Advisor 评审回路
-
-独立的 Advisor 在公开的 `freecodego/hy3` 路由上默认启用。它以独立的模型上下文评审持久轮次事件，并且只拥有有界、只读的工作区工具（`read`、`glob` 与 `grep`）。它的结论与 token 用量被追加到 Harness 会话；凭据、隐藏推理与不受限的主 Agent 工具绝不复制进评审上下文。
-
-每个 DeepSeek、Codex 与 Claude Agent 都会收到 `advisor_status`、`advisor_review` 与 `advisor_notes`。这让活动 Agent 能查看评审者、在有用的检查点请求第二意见，并消费既有结论，而不需要单独的 UI 操作。具体的顾虑或阻塞会引导 Agent，而低严重度或处于冷却期的结论会在下一个安全步骤注入。原生 Codex 与 Claude 把引导作为后续原生轮次消费，并在下一个用户轮次之前暂存注入。关闭 Agent 控制则只把结论保留为 `record` 事件。更改 Advisor 路由或投递设置即时生效；原生会话在每轮之前刷新其投影出的 Harness 工具。
+<a id="session-deletion"></a>
+## 会话删除
 
 会话删除对陈旧的侧栏行是幂等的：当会话日志已被移除但缓存的投影仍列出该 id 时，Host 清除其工作区关联并返回成功，而不是留下一个无法删除的 Ungrouped 行。活动或正在运行的会话仍必须在删除前关闭。
 
@@ -151,7 +148,7 @@ CodeGraph 引擎在 SHA-256 校验之后下载针对当前 OS/CPU 的官方自�
 
 大小是最后一道闸门，而且它是对**字节**设的上限，不是对估算值：估算值只为展示而经插件唯一的 token 估算器定价，这样本模块就不会变成第二处给文本定价的地方。**大小无法判定**的文件会**保持选中**并被具名标记为未检查。“没量过”与“很小”是两个不同的答案，而只有一个才是把目光移开的理由；把未知读成其中任何一个，都是“靠不看而通过的预算”。
 
-`engineering_inspect` 把这次选择作为 `scan` 段报告：分母、每一条带理由的排除、运行会读到的字节与 token 合计，以及所有大小未检查的文件名。该段**有意不受**文件夹信任门禁约束，差别在于它读什么——大小与路径名，从不读内容。字节数不是指令，而把它门禁掉，会让一份在“没人信任过的检出”上**仍然可用**的诊断也消失。账本的**对账**那一半——运行时究竟交代了哪些被选中的文件——尚未实现，因为本插件还没有任何地方记录**逐文件的扫描结果**：council 与 advisor 报告携带的是发现，而不是它们覆盖过的文件集合。
+`engineering_inspect` 把这次选择作为 `scan` 段报告：分母、每一条带理由的排除、运行会读到的字节与 token 合计，以及所有大小未检查的文件名。该段**有意不受**文件夹信任门禁约束，差别在于它读什么——大小与路径名，从不读内容。字节数不是指令，而把它门禁掉，会让一份在“没人信任过的检出”上**仍然可用**的诊断也消失。账本的**对账**那一半——运行时究竟交代了哪些被选中的文件——尚未实现，因为本插件还没有任何地方记录**逐文件的扫描结果**：council 报告携带的是发现，而不是它们覆盖过的文件集合。
 
 <a id="code-review"></a>
 ## 代码审查
@@ -189,7 +186,7 @@ CodeGraph 引擎在 SHA-256 校验之后下载针对当前 OS/CPU 的官方自�
 
 投递方式是一条注入消息，这是 Harness 在收尾时刻提供的机制：它会继续这一回合，所以 Agent 必须回应这个结论才能结束。这就是它成为门禁而不是通知的原因，也是 `verify-on-stop` 用的同一种形状。
 
-**路由用的是本插件的第二模型路由**（`advisorProvider` / `advisorModel`，默认落到 OpenCode 的虚拟 `auto`），而不是新增一对设置：两者都是"本插件替自己调用的那个模型"，那一对已经由用户配置、由界面编辑，再加一对只会让同一个意图有两个地方可以设置并互相矛盾。路由按请求解析，所以改设置无需重载即可生效；全新安装开箱就能审查，而不是第一次调用就失败。
+**路由用的是本插件的第二模型路由**（配置键 `advisorProvider` / `advisorModel`，默认落到 OpenCode 的虚拟 `auto`），而不是新增一对设置：四个存活下来的、替本插件自己调用模型的面——本审查器、记忆召回选择器、记忆归并规划器、动作审查器——共用它，而不是各自长出一条路由；再加一对只会让同一个意图有两个地方可以设置并互相矛盾。键保留历史拼写，因为 profile 文档是用户写的：改掉一个已存储字段会静默丢掉每个设过它的 profile 的路由，而那些读取方会不留话地回到默认值。路由按请求解析，所以改设置无需重载即可生效；全新安装开箱就能审查，而不是第一次调用就失败。
 
 **界面侧**的审查 Remote 是发起即返回：一次运行按文件花模型调用、可能跑上几分钟，所以调用只启动运行并回传当下的运行状态，调用方用同一个 Remote 轮询。同一工作区的第二次并发运行会被拒绝，并用一句话点名占着名额的那次运行，而不是排进一个看起来像卡死的队列。每个 Remote 都接收会话 id 并据此解析工作目录 —— 用路径参数就会让浏览器问起一个会话从未打开过的目录。设置页显示模式、阈值、冷却、深度审查与对抗复核，并连同覆盖面算术一起渲染报告。
 
@@ -229,7 +226,7 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 
 `deferredToolSchemasEnabled`（默认开启）让这些工具保持注册但扣住它们的 schema。在 `agent/session-start` 上，插件在一次绝不会阻塞会话的尝试中用 `deny: [...deferred]` 限定 agent 的工具作用域；Harness 从可见集合推导线上 schema，而被拒绝的名称会让一次直接调用以 `UNKNOWN_TOOL` 失败——可见性与可调用性读自同一个真源，因此模型既不能调用没被展示给它的东西，也看不到自己不能调用的工具。`tool_search` 随后为它返回的工具解除该拒绝，因此在一次发现调用之后，一个延迟工具与一个立即工具一样可用。查询语法刻意跟随 Claude Code 的 `ToolSearch`：`select:A,B` 用于精确名称，`+term rest` 要求名称中含某个词，裸关键词用于排序。
 
-`tool_search`、`engineering_status`、`engineering_repo_map`、`advisor_review` 与 `headroom_retrieve` 从不延迟。延迟一个入口点等同于把门锁上，前两个是用户在别的东西都不灵时会去用的，而后两个回答的是模型已经被展示过的东西——一个去咨询 advisor 的提示，或压缩标记里的一个 hash——在那里走一轮发现往返纯粹是延迟。
+`tool_search`、`engineering_status`、`engineering_repo_map`、`engineering_plan_mode`、`headroom_retrieve`、`read_document` 与 `edit_and_run` 从不延迟。延迟一个入口点等同于把门锁上；诊断双雄是用户在别的东西都不灵时会去用的；`headroom_retrieve` 回答的是模型已经被展示过的东西（压缩标记里的一个 hash），在那里走一轮发现往返纯粹是延迟；而最后两个被本插件自己注入的提示词文本点名，延迟它们的 schema 会让那条指令无法执行。
 
 关键词查询按名称与描述的 BM25F 排序（`tool-search-rank.ts`），而不是数子串命中：稀有度就地从这份延迟目录本身计算，词频会饱和，描述长度被归一化，而一个三字符以上、前缀命中某个词的查询词按半次命中计。旧的计数法在几百个工具的目录上会暴露三件事：每个描述都有的词压过真正要紧的那个、最长的描述获胜、重复的词压过一个工具自己的名字。`max_results` 的公开上限在生成答案的地方被强制执行，而不只是写在描述里。
 
@@ -268,8 +265,6 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 
 **记忆的凭据筛查**（`secret-scan.ts`）。项目记忆是从 agent 读到的东西写成的，因此一个 `.npmrc` 或一条粘贴进来的 curl 命令可以把真实令牌写进一条会活过该会话、并在后续对话中被重新注入的条目。这份精心挑选的规则集在有用的方向上做子集：只取带独特厂商前缀、误报率极低的规则，刻意不要那些让人干脆关掉扫描器的通用关键词上下文规则。扫描器从不返回密钥本身——一条命中只携带四个字符的前缀与一个长度——而置信度也是匹配的一部分。在写入路径上，*被标注*的凭据（既有那条关键词规则）与*厂商前缀*凭据都会拒绝该条目，而仅形态匹配（一个 JWT、一个裸 `sk-`、一段 PEM）会在原地脱敏并保留该条目，因为丢掉一个不透明标识符的代价低于留住一份凭据。
 
-**旁路通道预算不变式**（`side-channel-budget.ts`）。Claude Code 把这条作为其分类器的硬性运行规则：旁路提示词必须严格小于主循环，以便压缩发生在*旁路通道*溢出之前。我们的 Advisor 以及每个议会视角正是这样的通道，因此每次调用在发送之前——而不是在失败之后——就对照 Harness 的压缩阈值（窗口乘以 `compaction-basic` 的默认比例）度量；比较对象是阈值而不是当前对话大小，因为一个尚未长大的会话里的大通道恰恰是会出问题的那种情况。记录按通道保留**最差**的一次占用而不是最近一次——一个曾经越线的通道还会再次越线，而「最后一次调用很小」什么都证明不了。这只会被报告，绝不强制执行：插件无法调整另一个组件的提示词大小，而拒绝评审等于用一项可度量的成本换来监督的静默丢失。未知阈值不产生警告，因为拿一个占用去比一条未命名的线，等于默认把它判为安全。
-
 **隔离报告**（`isolation-report.ts`）。成员的受限被报告为*请求*了什么、实际把它缩窄的是哪个机制（`tool-scope`、`harness-policy`、`both` 或 `none`），以及一个供调用方分支的 `restricted` 标志——它从**解析后的工具集**与沙箱模式回读计算得出，绝不从角色的意图得出。「我们要了只读」与「只读正在生效」是两个不同的事实，而把两者混为一谈的 brief 正是把一个可写成员误认为受限成员的途径。唯一绝不静默的结果是只读请求上的 `enforcedBy: none`：它携带 `fallbackReason`，而处于自己 worktree 中的 `workspace-write` 成员被报告为*已被围隔*而不是受限，因为私有 worktree 实际买到的就是围隔。
 
 <a id="prompt-composition"></a>
@@ -297,6 +292,8 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 
 **`MEMORY.md` 是一份有界的绝对路径索引。** 路径是绝对的，因为相对指针要针对某个作用域根解析，而那个根取决于索引是在哪里被找到的；一个把这个推理重构错的模型不会报告路径坏了，而会报告什么都没找到。溢出时整行丢弃并说明丢了多少，因为截断描述会让索引声称在描述一条它已经不再描述的记录 —— 读者分不清"摘要很短"和"被截断了" —— 而丢掉一行是可见的，数量是可行动的。
 
+**一个主题可以被限定在单个会话内，然后随会话回收。** 持久层是 `topics/`；被整合判定为 `session` 的主题改写到该会话自己的目录 —— `sessions/<id>/topics/` —— 并在会话销毁时连同目录一起删除，索引同步重新生成，因此不会有指针比它指向的文件活得更久。默认是持久的，而这个默认值很重要：被误留的临时记录只是用户还能删掉的一条笔记，而被误回收的持久记录会在会话结束时消失，连它曾说了什么都不剩。无法命名目录的会话 id 根本拿不到临时层 —— 整合会报告这次拒绝，而不是把 id 哈希成一个谁也映射不回去的名字 —— 而索引里带着作用域，所以读者不必从一个路径恰好指向哪里去猜它的寿命。
+
 **遗忘要凭证据，绝不凭模式。** "忘掉你知道的关于 X 的一切"是这个子系统唯一不能靠把 X 变成一组文件来回答的请求：那是一次相关性判断，判宽一点就以没有撤销的方式删掉了用户想保留的记录，而这个存储的全部价值就在于它记得。所以调用方要做只有调用方能做的事 —— 读出打算删除的字节并连同哈希交出来 —— 而这个模块只做机械工作：用磁盘上的文件核对证据，然后精确删除那个文件。目录或通配符会被拒绝，因为"这底下的一切"又是一次判断，而它的证据不是调用方读得到的东西；哈希不匹配以及另外四种形状同样是拒绝而不是警告，每次拒绝都会说明是哪一种。
 
 **记忆有管理面。** 设置面板可以按需整合、重建索引、导出已审核记忆、创建备份、清理过期内容，全部限定在一个打开且绑定工作区的会话内。只有面向用户的 Remotes 可以批准、拒绝、导出、清空或删除记录，而记忆也可以毕业为 `.freecodego/skill-drafts/` 下的 Skill 草稿。
@@ -313,7 +310,7 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 <a id="release-updates"></a>
 ## 发布更新
 
-更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.1.7-alpha.2` 构建的 `freecodego-0.1.7-alpha.2.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
+更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.1.7-rc.2` 构建的 `freecodego-0.1.7-rc.2.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
 
 <a id="zcode-glm-53-flash-promotion"></a>
 ## Zcode GLM-5.3 Flash 推广
@@ -338,9 +335,13 @@ Skill 的安装是一条可核对的记录，而不是一次复制：来源按 `
 <a id="optional-harness-capabilities"></a>
 ## 可选的本体能力
 
-浏览器控制、桌面控制与会话历史检索是 Harness 自己的能力，而没有任何 bundle 挂载它们：本 bundle 在 `bundle-latest/cordis.patch.yml` 里携带它们的行并置为 `disabled: true`，因此需要其中某一项的部署，是在管理其他 Loader 条目的地方把它打开，而不是去改 `node_modules` 里的文件。三行全部关闭，出于两条对每一项都成立的理由。
+浏览器控制、桌面控制与会话历史检索是 Harness 自己的能力，而没有任何 bundle 挂载它们：本 bundle 在 `bundle-latest/cordis.patch.yml` 里携带它们的行，因此需要其中某一项的部署不必去改 `node_modules` 里的文件。
 
-那些包没有一个在本 bundle 的 `peerDependencies`（也就是安装契约）里，因此一条 enabled 的行会点名一个 Harness 并不必须提供的包。而一条解析不到的行，失败粒度取决于它被挂在哪一层：携带这种行的 preset 会被报告为损坏并变为不可选，而 Host 平面的一行只死那一个条目，因为 Loader 会捕获 import 错误、记录它，并让树里其余部分继续运行。所以 Host 平面是唯一能承载“可选能力”的平面。
+**装上那些包就是 opt-in。** 这些行携带的是选择器而不是一个值——`disabled: !!js "!ctx.get('freecodegoCapabilities')?.usable('…')"`——由插件启动那些本安装确实解析得到的行（表格与探测实现见 `src/capability-rows.ts`）。不需要再去找第二个开关；把包移除后，下一次启动它们会安静地回到关闭状态。
+
+选择器不是装饰，理由是那些包没有一个在本 bundle 的 `peerDependencies`（也就是安装契约）里：一条直接 **enabled** 的行会点名一个 Harness 并不必须提供的包，import 失败，然后每次启动都被报告为 `did not activate`、面板上显示为未运行——那是一个永久损坏的插件，而不是一个未被使用的插件。选择器自身的兜底是 `true`，因此在本插件挂载之前该行就已是关闭状态，而只要这个问题问不出来它就一直关着。即使一条解析不到的行真的启动了，它的失败粒度也取决于它被挂在哪一层：携带这种行的 preset 会被报告为损坏并变为不可选，而 Host 平面的一行只死那一个条目，因为 Loader 会捕获 import 错误、记录它，并让树里其余部分继续运行。所以 Host 平面是唯一能承载“可选能力”的平面。
+
+如果某个部署宁愿自己表态也不装包，它仍可以在管理其他 Loader 条目的地方切换这一行：那会写入一个普通布尔值，而插件不把它当作自己的选择器，因此那个选择永远不会被推翻——包括由此得到的、包不存在时的失败条目。包缺失时，插件会往 Host 日志写一行，点名该能力、解析不到的 specifier，以及供应它的命令。
 
 能力本身是 Harness 的；它背后的引擎不一定。下面这张表是部署实际在同意的东西，连同每个依赖携带的许可证：
 
@@ -352,15 +353,17 @@ Skill 的安装是一条可核对的记录，而不是一次复制：来源按 `
 
 ### 浏览器控制
 
-两行都要开。`mode` 必填且没有默认值：行里带的是 `mode: launch` 与 `headless: true`；`mode: attach` 配合 `endpoint` 则驱动一个你已经打开的浏览器，并保留它的标签页与登录态。服务只有一个 provider 槽位并拒绝第二次注册，因此 Chrome DevTools MCP 与 Stagehand 是替换而不是追加。
+当 `@deepseek-ai/dsh-browser-use`、`@deepseek-ai/dsh-experimental-browser-use-playwright-mcp` 以及前者所解析的那一个固定版本 `@playwright/mcp` 都能解析到时，这两行会一起启动——因此在 profile 目录里 `pnpm add @deepseek-ai/dsh-browser-use @deepseek-ai/dsh-experimental-browser-use-playwright-mcp @playwright/mcp` 就是全部安装步骤。`mode` 必填且没有默认值：行里带的是 `mode: launch` 与 `headless: true`；`mode: attach` 配合 `endpoint` 则驱动一个你已经打开的浏览器，并保留它的标签页与登录态。服务只有一个 provider 槽位并拒绝第二次注册，因此 Chrome DevTools MCP 与 Stagehand 是替换而不是追加。
 
-先决条件是上游运行时能启动的浏览器；已有的 Chromium 用 `executablePath` 指定。启动出来的浏览器属于那个活着的 Agent 与 Session、在同一个会话的多个轮次间复用、并随会话运行时一起销毁——重新加载或 fork 会从全新状态开始，日志里不会恢复任何 cookie 或页面。挂接式（attach）的浏览器仍属外部所有，且被保留给一个会话。初始化在创建或恢复完成之前完成，因此一个起不来的 provider 会拒绝那次创建，而不是在没有浏览器的情况下继续；而一次被取消的调用也无法撤销已经送达浏览器的动作。
+先决条件是上游运行时能启动的浏览器，而插件在挂载这一对之前会先检查它——因为 provider 是在 `agent/created` 里带着 `failOnStartupError: true` 打开浏览器的，一个起不来的浏览器会拒绝会话创建，而不是降级运行。已有的 Chromium 用 `executablePath` 指定，它同时满足这项检查并传给 provider。没有指定时，插件会去问 Playwright 自己：**这一次安装**将要启动哪个浏览器（因为该行配置了 `headless: true`，同版本的 headless shell 也认），那个文件不在机器上就把两行留在关闭状态，并在 Host 日志里点名它找过的路径——目录扫描问的不是同一个问题，一个装着旧版 Playwright 浏览器的机器会被读成“可用”。
+
+有一个坑值得写在这里，因为学会它的代价是一行：patch 层里的 `config:` 条目会**替换**该行的整份配置，而不是合并进去，而 provider 的 schema 要求 `mode` 必填。因此这类覆盖必须把整份配置重述一遍——在补充字段之外也要写上 `mode: launch`——否则该行会在启动汇总里以 `failed to import` 失败。启动出来的浏览器属于那个活着的 Agent 与 Session、在同一个会话的多个轮次间复用、并随会话运行时一起销毁——重新加载或 fork 会从全新状态开始，日志里不会恢复任何 cookie 或页面。挂接式（attach）的浏览器仍属外部所有，且被保留给一个会话。初始化在创建或恢复完成之前完成，因此一个起不来的 provider 会拒绝那次创建，而不是在没有浏览器的情况下继续；而一次被取消的调用也无法撤销已经送达浏览器的动作。
 
 有一个配置陷阱值得从上游带过来：当系统提示词配置了 `toolOrder` 时，浏览器工具必须留在 `<unlisted-tools>` 之下——把它们显式列出来，会让那些没有浏览器连接的会话在组装提示词时失败。本 bundle 不设置 `toolOrder`。
 
 ### 桌面控制
 
-启用 `computer-use` 与 `computer-use-cua-driver-native`。原生 provider 没有任何配置项，并加载紧挨着它声明的那一个精确的 Cua Driver npm 版本。替代方案是 `computer-use-cua-driver-mcp`：它通过 MCP 驱动一个已经装好的 `cua-driver` 可执行文件——当应该由一个独立应用持有桌面权限与执行权时选它，代价是要装那一个。
+当 `@deepseek-ai/dsh-computer-use`、`@deepseek-ai/dsh-experimental-computer-use-cua-driver-native` 以及它们加载的 Cua Driver 包都能解析到时，两行会一起启动（在 profile 目录里 `pnpm add` 这三个）。原生 provider 没有任何配置项，并加载紧挨着它声明的那一个精确的 Cua Driver npm 版本。替代方案是 `computer-use-cua-driver-mcp`：它通过 MCP 驱动一个已经装好的 `cua-driver` 可执行文件——当应该由一个独立应用持有桌面权限与执行权时选它，代价是要装那一个。
 
 先决条件属于机器而不属于部署：平台二进制通过 npm optional dependencies 到达，因此那些必须保持启用；启动 Host 的那个应用需要获得桌面权限授权。原生运行时与 Host 共享同一进程，它自己的文档把话说得很直白——原生崩溃可能终止 Host。截图还需要附件存储与一条声明了图像输入的模型路由。
 
@@ -368,7 +371,7 @@ Skill 的安装是一条可核对的记录，而不是一次复制：来源按 `
 
 ### 会话历史检索
 
-这一项只有一行，且不需要装任何依赖：`tool-session-query` 注入的服务由基础组合已经挂载，因此把它打开就是这五个工具本身的全部 opt-in。
+这一项什么都不用装，因此在每个安装上都是默认开启的：`tool-session-query` 注入的服务由基础组合已经挂载，所以这一行点名的是本 bundle 自己构建的那一份（`freecodego/tool-session-query`），用户没有任何东西需要补。它仍会在某个组合自己挂载 `@deepseek-ai/dsh-tool-session-query` 时让位，因此这五个工具永远不会存在两份。
 
 内容搜索是第二个开关，而这部分容易漏。基础组合刻意以 `openAt: never` 挂载 `session-query-sqlite`：查询服务保持可用（精确读取、标题、血缘），而 SQLite 从不打开。因此在没有下面这段覆盖的情况下打开工具，会得到五个工具里三个能用、两个永远回答 `SESSION_QUERY_SEARCH_DISABLED`，而 Web 侧栏依旧只匹配标题与工作区名。本 bundle 的 patch 文件正是基础组合点名的“后来的 patch 层”，所以这一对应该放在一起：
 
@@ -379,7 +382,26 @@ Skill 的安装是一条可核对的记录，而不是一次复制：来源按 `
     openAt: first-search
 ```
 
-这五个工具是只读的，跨会话访问按调用逐次授权，判据是与调用方自己会话的 `cwd` 精确相等。代价是提示词表面：启用该包会给每个模型请求加上一段固定引导与五个工具 schema，`engineering_surface_report` 会把它作为注入字节对照已审阅的锁报告出来。
+这五个工具是只读的，跨会话访问按调用逐次授权，判据是与调用方自己会话的 `cwd` 精确相等。代价是提示词表面，而现在每个安装都会付这笔钱：该包会给每个模型请求加上一段固定引导与五个工具 schema，`engineering_surface_report` 会把它作为注入字节对照已审阅的锁报告出来。宁愿不付的部署，可以在管理其他 Loader 条目的地方把这单独一行关掉。
+
+### 语音输入
+
+Harness 的语音输入是它自己的可选 bundle（`@deepseek-ai/dsh-experimental-voice-input-bundle`），而那个 bundle 挂载的识别器是本地 SenseVoice 模型、首次使用时下载——也就是「使用语音输入前需要安装」那个弹窗。本插件不再自带话筒，而是把第二个识别器注册到那个 bundle 自己的注册表上：`freecodego`，背后是转写工具所用的同一条 Groq `whisper-large-v3-turbo` 路由，声明为 `cloud` 且没有任何需要准备的东西。因此 Harness 自己语音页面里的「识别服务」下拉会多出一个免下载的选项，选中它不会触发安装弹窗——因为那个弹窗的判据是「`host-local` 的 provider 且其准备状态为未准备」。
+
+注册即等于选定，这是刻意的：**进入名册就会接管选中项**，所以打开 `voiceInputEnabled` 就是全部动作 —— 下一次听写不会再要求下载本机模型，不必再去下拉里选一次。接管只发生在注册的**边沿**上，因此在用户于下拉里选了别的识别器之后、只要本插件仍在册就会尊重那个选择；下一次接管是该开关被关掉再打开。`voiceInputEnabled`（默认开）决定本插件是否提供自己的识别器，改动不需要重启 Host。注册表是被等待而不是启动时读一次，因为语音 bundle 可能在本插件启动之后才被挂载。两种拒绝会原样保留 Harness 自己的识别器：取不到凭据，或该 id 已被注册。当本插件退出而选中项正指向它时，该选中项会被交还给另一个仍在册的识别器，因为注册表拒绝服务一个它找不到的 id；若没有可交还的对象，日志会点名该改哪个控件。凭据是本插件自己的 Groq 密钥，与转写工具用的是同一个 —— 而接口地址、模型 id 与这把密钥都可以在插件自己的设置页（*语音识别路由*）里改，写入的最后一步就是重新决定注册。那张卡片还提供一次真实往返（*连通性* / *Test*）：向已保存的路由发半秒数字静音，并把结果以一个代码交回、由卡片写成一句话，因为卡片能展示的每一项「配置事实」，在一台根本连不到该端点的机器上全都为真。这正是这张卡片存在的原因 —— Node 的 `fetch` 不读 Windows 的代理设置、Harness 只在启动时按环境安装代理、而只有 Harness 主目录的 `.env` 可以携带它（`HTTPS_PROXY`）—— 所以一个进程不知道的代理后面的主机会被 `api.groq.com` 拒绝（403），而同一个浏览器访问该提供方却完全正常。
+
+<a id="companion-character"></a>
+## 伴侣角色
+
+伴侣是画在输入框旁边、以及作为侧栏品牌标记的那个小人 —— 同一个角色、两个座位，会话所处的每个状态都有一个姿态：休息、思考中、工具在跑、回复在流式输出、回合刚刚结束、失败、等待用户回答，以及已休眠的会话。状态是**推导**出来的，从不自行声明：客户端里的一条阶梯（`harness-ui` 的 `companion/arbiter.ts`）读取会话列表、后台任务名册与会话自己的事件日志，而每个座位都拿到**同一份**事件流（`companion/activity.ts`），因此同时画出的两份形象不可能对「Agent 在做什么」产生分歧。标签与无障碍状态文本描述的是那个状态、而不是图形 —— 这正是「忙碌的会话可以一直换形状、却从不宣称一个尚未到达的结果」的依据。
+
+有三个决定值得写下来，因为每一个都是这个角色**刻意不做**的事。
+
+- **图形在动，文字不动。** 两条池子轮换的是**画出来的东西**，从不移动状态。`companion/poses.ts` 轮换三个长时间忙碌状态各自用哪个姿态来表现，`companion/eyes/pools.ts` 则按自己的时钟轮换眼睛（忙碌时 1.5 秒、休息时 4.2 秒，绝不让同一个眼型连着出现两次）—— 这就是「等待中的会话原先会一直戴着同一个表情，只要窗口开着」的修复。两者都是共享时钟的纯函数，所以同一瞬间的两个座位画出同一张图，晚挂载的座位也不会落后一格；`prefers-reduced-motion` 会同时冻结两者。
+- **模型可以点一个表情，但不能点文字。** `freecodego_companion_face` 可以让角色戴上 `neutral`、`happy`、`delighted`、`sad`、`focused`、`sleepy`、`surprised` 中的一个，持续几秒。这个工具**不写入任何东西**：调用连同它的名字与参数落进会话的事件窗口，而客户端自己的事件流正是从那里读它，所以这个请求会实时出现在转录里，也不存在第二条需要与第一条保持同步的通道。请求来的表情是装饰 —— 状态仍由阶梯决定，再用 `neutral` 调一次就能提前结束一个心情。
+- **失败的步骤不用谁开口就能换上一张脸。** 工具结果以失败返回时，角色会短暂戴上难过的脸（2.6 秒）。会话使用的**两种**形状都算：核心的 `isError` 标记，以及 harness 自己为「命令以非零码退出」渲染的那行 `[exit code: N]` —— 后者才是实践中「一个工具失败了」的绝大多数，也正是只读第一种形状就会让角色永远不皱眉的原因。这行标记用的是本插件诊断 loader 失败时**同一个**模式读取的，并由一条用例把两个读者互相对住，谁都不能单独漂移。
+
+每个状态、姿态、眼型与表情都会作为 data 属性发布在被画的元素上（`data-fcg-state`、`data-fcg-pose`、`data-fcg-face`、`data-fcg-companion-expression` 与其 `-source`），因为眼睛是 mask 里每一帧都要重画的路径：组件之外没有任何东西能分辨「轮换的脸」与「静止的脸」，而 `-source` 分隔的是「模型点名的脸」与「会话自己挣来的脸」。
 
 <a id="third-party-plugin-tools"></a>
 ## 第三方插件工具
@@ -529,11 +551,11 @@ Use edit_and_run when a change and the check that proves it are one step: give t
 
 固定文本位于固定的 `order` 值上，因此会跨轮次留在已缓存的 prefix 内。挂载或卸载某个分区的设置变更会移动其后所有分区，从该点起使 prefix 失效。
 
-### Advisor 与 Engineering 工具
+### Engineering 工具
 
 #### 模型看到什么
 
-`advisor_status`、`advisor_review` 与 `advisor_notes` 暴露独立的 Advisor：它的路由、一次有界评审，以及它已记录的持久结论。Engineering 套件（`engineering_status`、`engineering_inspect`、`engineering_context_budget`、`engineering_context_compact`、`engineering_context_snip`、`engineering_context_prompt`、`engineering_surface_report`、`engineering_plan_mode`、`engineering_team_*` 系列动词，以及 `engineering_memory_*`、`engineering_graph_*`、`engineering_codegraph_*` 与 `engineering_checkpoint_*` 家族）暴露持久看板、记忆、仓库图与检查点。媒体生成只有在媒体提供方获授权时才会以 `agnes_generate_image` 与 `agnes_generate_video` 出现。以上每一个名字都只在 `tool-manifest.ts` 声明一次，并同时声明持有它需要什么能力、以及 Plan Mode 是否可以调用它。这张表就是 Plan Mode 围栏与验证门禁所读的东西，且有测试按注册字面量双向核对——因此本页写了而插件并未注册的工具会让测试失败，而不是让这段文字继续错下去。
+Engineering 套件（`engineering_status`、`engineering_inspect`、`engineering_context_budget`、`engineering_context_compact`、`engineering_context_snip`、`engineering_context_prompt`、`engineering_surface_report`、`engineering_plan_mode`、`engineering_team_*` 系列动词，以及 `engineering_memory_*`、`engineering_graph_*`、`engineering_codegraph_*` 与 `engineering_checkpoint_*` 家族）暴露持久看板、记忆、仓库图与检查点。媒体生成只有在媒体提供方获授权时才会以 `agnes_generate_image` 与 `agnes_generate_video` 出现。以上每一个名字都只在 `tool-manifest.ts` 声明一次，并同时声明持有它需要什么能力、以及 Plan Mode 是否可以调用它。这张表就是 Plan Mode 围栏与验证门禁所读的东西，且有测试按注册字面量双向核对——因此本页写了而插件并未注册的工具会让测试失败，而不是让这段文字继续错下去。
 
 #### Token 影响
 
@@ -547,11 +569,11 @@ Use edit_and_run when a change and the check that proves it are one step: give t
 
 #### 模型看到什么
 
-Advisor 引导以后续轮次抵达，绝不重写此前的消息：已结束的评审以 `record`、注入轮次或 steer 投递，Agent 在承载它的那一轮读到它。Plan Mode 规则以独立分区陈述，而不是塞进工具描述里。
+注入的引导以后续形式抵达，绝不重写此前的消息：hook 的上下文文本作为附加上下文附带（或以 steer 投递），而收尾门禁——`verify-on-stop` 的提示与审查门禁的结论——是以注入消息抵达的，Agent 在承载它们的那一轮回应。Plan Mode 规则以独立分区陈述，而不是塞进工具描述里。
 
 #### Token 影响
 
-已投递的结论只在承载它的那一轮计费一次。持久的 `advisor/note`、`advisor/delivery` 与 `advisor/state` 记录是 log-only 的，绝不进入请求。
+一条注入消息只在承载它的那一轮计费一次。持久的 `freecodego/hook-invoked` 与 `freecodego/hook-result` 记录是 log-only 的，绝不进入请求。
 
 #### KV Cache 影响
 

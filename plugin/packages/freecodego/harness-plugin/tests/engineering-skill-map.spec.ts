@@ -131,7 +131,7 @@ describe('session-start capability map', () => {
     const text = mapText(injected) ?? ''
     expect(text).toContain('subagent-driven-development')
     expect(text).toContain('engineering-release-readiness')
-    // 41 shipped Skills stay inside the map's entry bound.
+    // 42 shipped Skills stay inside the map's entry bound.
     expect(text.match(/^- /gm)?.length ?? 0).toBeLessThanOrEqual(48)
     await registry.dispose()
   })
@@ -227,7 +227,9 @@ describe('capability map budget telemetry', () => {
     // here; long names and full-length descriptions are what exhaust it.
     const wide = Array.from({ length: 48 }, (_, index) => ({
       name: `skill-${String(index).padStart(2, '0')}-${'n'.repeat(60)}`,
-      description: 'x'.repeat(200),
+      // Well over the per-description cap, so the fixture keeps meaning "a
+      // full-length description" whatever the cap is set to.
+      description: 'x'.repeat(400),
       modelInvocable: index % 2 === 0,
       userInvocable: true,
     }))
@@ -244,7 +246,9 @@ describe('capability map budget telemetry', () => {
   it('counts each shortened description exactly once', () => {
     // Regression guard: the uncapped figure re-reads rendered lines, and a
     // re-render there would double every increment.
-    const built = buildSkillMap(briefs(5, 'y'.repeat(200)))!
+    // Over the cap, not at it: a fixture exactly on the boundary stopped
+    // testing anything the moment the cap moved.
+    const built = buildSkillMap(briefs(5, 'y'.repeat(400)))!
     expect(built.metrics.descriptionsTruncated).toBe(5)
     expect(buildSkillMap([])).toBeUndefined()
   })

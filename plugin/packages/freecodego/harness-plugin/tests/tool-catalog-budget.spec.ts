@@ -76,7 +76,7 @@ describe('the index budget', () => {
 
   it('renders one group line per distinct prefix, largest first', () => {
     const entries: CatalogEntry[] = [
-      { name: 'advisor_a', summary: 'x' },
+      { name: 'vendor_a', summary: 'x' },
       ...catalog(60, 'engineering_'),
       ...catalog(5, 'freecodego_'),
     ]
@@ -84,7 +84,7 @@ describe('the index budget', () => {
     // the three group lines with room to spare.
     const listing = renderToolCatalog(entries, 200)
     expect(listing.detail).toBe('grouped')
-    expect(listing.groups.map(group => group.prefix)).toEqual(['engineering_', 'freecodego_', 'advisor_'])
+    expect(listing.groups.map(group => group.prefix)).toEqual(['engineering_', 'freecodego_', 'vendor_'])
     expect(listing.groups.map(group => group.count)).toEqual([60, 5, 1])
   })
 
@@ -134,8 +134,8 @@ describe('the index budget', () => {
   })
 
   it('keeps a summary-less tool readable at full detail', () => {
-    const listing = renderToolCatalog([{ name: 'advisor_notes' }])
-    expect(listing.text.startsWith('- advisor_notes\n')).toBe(true)
+    const listing = renderToolCatalog([{ name: 'vendor_notes' }])
+    expect(listing.text.startsWith('- vendor_notes\n')).toBe(true)
   })
 })
 
@@ -148,23 +148,23 @@ describe('the grouping key', () => {
 })
 
 describe('the names-only listing', () => {
-  const entries = [...catalog(30, 'engineering_'), ...catalog(4, 'advisor_')]
+  const entries = [...catalog(30, 'engineering_'), ...catalog(4, 'vendor_')]
 
   it('lists one prefix and nothing else', () => {
-    const text = renderDeferredNameList(entries, 'advisor_')
-    expect(text).toContain('advisor_0')
+    const text = renderDeferredNameList(entries, 'vendor_')
+    expect(text).toContain('vendor_0')
     expect(text).not.toContain('engineering_0')
   })
 
   it('is case-insensitive, so a prefix typed by a model still matches', () => {
-    expect(renderDeferredNameList(entries, 'ADVISOR_')).toContain('advisor_3')
+    expect(renderDeferredNameList(entries, 'VENDOR_')).toContain('vendor_3')
   })
 
   it('lists everything for an empty prefix and for `all`', () => {
     for (const prefix of ['', 'all', 'ALL']) {
       const text = renderDeferredNameList(entries, prefix)
       expect(text).toContain('engineering_29')
-      expect(text).toContain('advisor_3')
+      expect(text).toContain('vendor_3')
     }
   })
 
@@ -183,7 +183,7 @@ describe('the names-only listing', () => {
   it('answers an unknown prefix with the groups that exist', () => {
     const text = renderDeferredNameList(entries, 'nope_')
     expect(text).toContain('No deferred tool name starts with "nope_"')
-    expect(text).toContain('advisor_')
+    expect(text).toContain('vendor_')
     expect(text).toContain('engineering_')
   })
 })

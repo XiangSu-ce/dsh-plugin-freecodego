@@ -12,7 +12,7 @@
  *   says so explicitly instead of presenting English as if it were localized.
  */
 
-/** Chinese descriptions for the 41 Skills this package bundles across its three
+/** Chinese descriptions for the 42 Skills this package bundles across its three
  *  asset roots (`skills-starter`, `skills`, `skills-superpowers`). */
 export const BUILTIN_SKILL_ZH: Readonly<Record<string, string>> = {
   // Authored for FreeCodeGo.
@@ -26,6 +26,7 @@ export const BUILTIN_SKILL_ZH: Readonly<Record<string, string>> = {
   'engineering-silent-failure': '检查异步任务、缓存、重试、空状态与错误路由中被隐藏的失败。',
   'engineering-spec-mining': '改遗留代码前，从调用方、测试、事件、数据格式与可观测行为中提取既有契约。',
   'engineering-tdd': '当行为可被确定性地描述与验证时，采用测试先行开发。',
+  'engineering-ui-design': '设计或修改任何「用户看得见」的界面（屏幕、页面、组件、表单、空状态、错误态）时使用：先给出默认数值尺度（间距、字号、圆角、动效时长、对比度、点击区域），再按层级、状态与实机渲染来验收，而不是凭代码观感下结论。',
   'engineering-verification': '宣布完成前，为构建、类型、Lint、测试、安全与改动范围提供证据；没有本轮新跑出的证据，就不能宣称「已完成」。',
   'prompt-techniques': '中文提示词技术速查：零样本、少样本、思考链、自一致性、RAG、ReAct、反思、思维树等，注明各自何时值得用、代价多大、最小形态是什么。',
   // Vendored from mattpocock/skills (MIT).
@@ -59,6 +60,27 @@ export const BUILTIN_SKILL_ZH: Readonly<Record<string, string>> = {
   'using-git-worktrees': '开工前先确保工作区隔离：优先用平台的原生隔离能力，其次回退到 git worktree，不在主分支上直接改。',
   'finishing-a-development-branch': '收尾一个开发分支：确认测试、判断所处环境，然后给出合并 / 提 PR / 保留 / 丢弃的选项并执行清理。',
   'receiving-code-review': '收到评审意见后的处理纪律：先核实再实施，不清楚就先问；技术上正确优先于社交舒服，不做表演式赞同或盲从。',
+} as const
+
+/**
+ * Chinese names for the prompt-composition categories the compression panel
+ * reports.
+ *
+ * The category labels are minted in `prompt-composition.ts` (`PROMPT_COMPOSITION_CATEGORIES`)
+ * because the model-facing report and the quota read them, and that layer is
+ * English by construction. Keyed by the category **id** rather than its label: a
+ * label is prose that may be reworded, and a Chinese layer that matched on prose
+ * would silently stop matching.
+ */
+export const PROMPT_CATEGORY_ZH: Readonly<Record<string, string>> = {
+  'system-prompt': '系统提示',
+  tools: '工具定义',
+  rules: '规则',
+  skills: 'Skills 技能',
+  mcp: 'MCP 与动态工具',
+  subagents: '子 Agent 定义',
+  summary: '已总结对话',
+  conversation: '会话记录',
 } as const
 
 /**

@@ -35,7 +35,6 @@ import { asRecord as record, asString as text } from './untrusted-json.ts'
 import { WORKBUDDY_INTL_AUTH_PLATFORM, WORKBUDDY_INTL_AUTH_STATE_URL, WORKBUDDY_INTL_AUTH_USER_AGENT, WORKBUDDY_INTL_LOGIN_ACCOUNT_URL, WORKBUDDY_INTL_TOKEN_POLL_URL, WORKBUDDY_LOGIN_STATE_TTL_MS } from './managed-catalog-utils.ts'
 import { enrichCatalogChoices, managedCatalogGroups, mergeCatalogModels } from './model-catalog.ts'
 import {
-  GROQ_WHISPER_BASE_URL, GROQ_WHISPER_MODEL,
   LOGFARE_API_KEY_REF, LOGFARE_CATALOG_TIMEOUT_MS, LOGFARE_REGISTER_URL, LOGFARE_SESSION_REF,
   logfareResponseError, logfareSessionCookie,
   NVIDIA_API_KEY_REF, NVIDIA_BASE_URL,
@@ -417,7 +416,15 @@ export async function vyceSetKey(host: AccountRemotesHost, value: string): Promi
 }
 
 /**
- * Transcribe one recorded clip through Groq Whisper.
+ * Transcribe one recorded clip through the configured recognizer route.
+ *
+ * The route is read per request rather than captured at boot, because it is user
+ * input: the settings surface can replace the endpoint, the model, or the key while
+ * the Host runs, and a captured route would keep dictating through the old one —
+ * including a key the user just cleared. The default is Groq's
+ * `whisper-large-v3-turbo`; anything else is whatever address and model the user
+ * spelled in FreeCodeGo settings, which is why the message names the route it used
+ * instead of naming Groq.
  * @param host - the Host surface this remote call reaches its services through.
  * @param audioBase64 - the recorded audio, base64 encoded.
  * @param mimeType - the recording's MIME type.
@@ -429,8 +436,10 @@ export async function groqWhisperTranscribe(host: AccountRemotesHost, audioBase6
   if (typeof mimeType !== 'string' || !/^audio\/[A-Za-z0-9.+-]+$/u.test(mimeType)) throw new Error('Groq audio MIME type is invalid')
   const bytes = Buffer.from(audioBase64, 'base64')
   if (bytes.length === 0 || bytes.toString('base64').replace(/=+$/u, '') !== audioBase64.replace(/=+$/u, '')) throw new Error('Groq audio payload is not canonical base64')
+  const route = await host.catalogs.groqWhisperRoute()
+  if (route.apiKey === undefined) throw new Error('No speech recognizer key is configured: paste one in FreeCodeGo settings → 语音输入')
   const form = new FormData()
-  form.set('model', GROQ_WHISPER_MODEL)
+  form.set('model', route.model)
   form.set('response_format', 'json')
   // The caller's hint travels as given, trimmed. The guard this replaces kept
   // `[A-Za-z-]{2,16}`, which forwarded `chinese` — a value no provider reads as a
@@ -444,17 +453,15 @@ export async function groqWhisperTranscribe(host: AccountRemotesHost, audioBase6
   if (typeof language === 'string' && language.trim() !== '') form.set('language', language.trim())
   const audio = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
   form.set('file', new Blob([audio], { type: mimeType }), `recording.${audioExtension(mimeType)}`)
-  const apiKey = await host.catalogs.groqWhisperApiKey()
-  if (apiKey === undefined) throw new Error('Groq Whisper API key is not configured')
-  const response = await fetch(`${GROQ_WHISPER_BASE_URL}/audio/transcriptions`, { method: 'POST', headers: { authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(120_000) })
+  const response = await fetch(`${route.baseUrl}/audio/transcriptions`, { method: 'POST', headers: { authorization: `Bearer ${route.apiKey}` }, body: form, signal: AbortSignal.timeout(120_000) })
   const value = record(await response.json().catch(() => ({})))
   if (!response.ok) {
     const detail = typeof value.error === 'object' ? text(record(value.error).message) ?? 'provider error' : text(value.error) ?? 'provider error'
-    throw new Error(`Groq Whisper transcription failed (HTTP ${response.status}): ${upstreamMessage(detail, 'provider error')}`)
+    throw new Error(`Speech transcription failed (HTTP ${response.status}) on ${route.model}: ${upstreamMessage(detail, 'provider error')}`)
   }
   const transcript = text(value.text)
-  if (transcript === undefined) throw new Error('Groq Whisper returned no transcript')
-  return { text: transcript, model: GROQ_WHISPER_MODEL }
+  if (transcript === undefined) throw new Error(`Speech transcription on ${route.model} returned no transcript`)
+  return { text: transcript, model: route.model }
 }
 
 /** Return Logfare readiness and the current standard/premium model counts without exposing secrets. 

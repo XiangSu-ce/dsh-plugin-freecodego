@@ -148,6 +148,16 @@ describe('registration and nested dispatch', () => {
     expect(registerEditAndRunTool({ ctx: ctx(), registry: harness(['edit', 'bash'], {}).registry })).toBeDefined()
   })
 
+  it('delegates through every shell spelling this Host can register, not only bash and pwsh', () => {
+    // `SHELL_TOOL_CANDIDATES` used to list only `['bash', 'pwsh']`, so a composition
+    // that registered `local_shell` (Codex) or `exec_command` (Claude) instead had
+    // no shell for the composite to delegate to and `edit_and_run` was not
+    // registered at all. Assert each spelling is recognised as a valid delegate.
+    for (const shell of ['bash', 'shell', 'exec_command', 'local_shell', 'pwsh']) {
+      expect(registerEditAndRunTool({ ctx: ctx(), registry: harness(['edit', shell], {}).registry })).toBeDefined()
+    }
+  })
+
   it('declares the parameters the model needs as a JSON Schema object', () => {
     // The registered `parameters` is what the provider turns into the model's
     // `input_schema`, so a malformed one is invisible here and expensive there.

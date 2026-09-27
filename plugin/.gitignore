@@ -44,6 +44,7 @@
 !/pnpm-lock.yaml
 !/tsconfig.base.json
 !/tsconfig.base.client.json
+!/tsconfig.desktop-keyboard-tests.json
 !/tsconfig.host.json
 !/tsconfig.client.json
 !/tsconfig.json
@@ -159,6 +160,15 @@
 # tarball a release publishes. (`prepack` is npm's lifecycle, not npm's
 # publication: the artifact is the release asset now.)
 !/scripts/build-freecodego-bundle.mjs
+
+# The Windows installer a release attaches -- the official Desktop shell with
+# this bundle built into it -- names its own provenance, and this file is that
+# provenance: the only supported entry point, and the only place that pins the
+# Electron release the shell must run on. Its seams are environment variables
+# the fork patches read (see `build-freecodego-desktop.mjs` and
+# `sync-harness.mjs`), so a clone that has both can reproduce the attached
+# bytes; without it the release notes would claim a build nobody can re-run.
+!/scripts/build-freecodego-desktop.mjs
 # License compliance gates must ship with the repository so CI can enforce them.
 # The in-package vendored-source spec ships with its gate: the disclosure table is
 # generated from provenance records on disk, so a clone without this spec has no

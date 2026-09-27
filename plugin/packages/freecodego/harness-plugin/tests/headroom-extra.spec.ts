@@ -460,6 +460,55 @@ describe('headroom cross-turn dedup reaches the model', () => {
       expect(other?.content?.[0]?.text, spelling).toBe(posix?.content?.[0]?.text)
     }
   })
+
+  it('folds a read-only search spelled the way the platform spells the program', async () => {
+    // The case above varies the *shell*. This one varies the *program*, and that
+    // is the axis the search vocabulary still answered POSIX-only on: the set that
+    // decides `bashCommandIsSearch` names `grep`, `rg` and five more Unix programs,
+    // and on win32 — where the base `cordis.patch.yml` disables `tool-bash` and
+    // enables `tool-pwsh`, so `pwsh` is the only shell a session can call — neither
+    // of the two search programs the platform actually has was in it. `findstr`
+    // ships with Windows and is the program this port's own search compressor names
+    // ("grep/rg/findstr output", `search-compressor.ts`); `Select-String` is
+    // PowerShell's own grep. A shell line using either was therefore classified as
+    // *not* a search, and `foldGatedTool` returned undefined for it.
+    //
+    // The cost is bounded and this fixture is sized to sit inside the bound, which
+    // is why the defect was invisible: the shell branch's floor is 200 characters
+    // while the generic stage's is `MIN_COMPRESSIBLE_CHARS` (1 200), so a search
+    // result between the two floors folded under `grep` and not under `findstr`.
+    // Every fixture large enough to test the fold was also large enough for the
+    // generic stage to fold it anyway.
+    //
+    // `Select-String` is spelled three ways on purpose. PowerShell resolves cmdlet
+    // names case-insensitively, so `Select-String` and `select-string` are one
+    // program — the same fact `SHELL_INTERPRETERS` records when it says `cmd.exe`,
+    // `CMD.EXE` and `cmd` are one name and the list names it once.
+    const body = Array.from({ length: 20 }, (_value, index) => `src/headroom/runtime.ts:${100 + index}:const value${index} = compute(${index})`).join('\n')
+    expect(body.length).toBeGreaterThan(200)
+    expect(body.length).toBeLessThan(1_200)
+    const spellings = [
+      // The control, first: the POSIX spelling this branch already reached.
+      ['bash', 'grep -n compute src/headroom/runtime.ts'],
+      ['pwsh', 'findstr /s /n compute *.ts'],
+      ['pwsh', 'Select-String -Pattern compute -Path *.ts'],
+      ['pwsh', 'select-string compute *.ts'],
+    ] as const
+    // One settings object for every run, so the only thing that varies between
+    // them is the shell and the command.
+    const settings = { headroomEnabled: true, headroomThresholdChars: 1_200 }
+    const control = await harness(settings).run(spellings[0][0], body, { command: spellings[0][1] })
+    expect(control?.kind).toBe('accept')
+    expect((control?.content?.[0]?.text ?? '').length).toBeLessThan(body.length)
+    // Every other spelling is asserted against the control rather than against a
+    // literal, so the claim is "these are the same fold" and not "this spelling
+    // shortened the text somehow".
+    for (const [shell, command] of spellings.slice(1)) {
+      const other = await harness(settings).run(shell, body, { command })
+      expect(other?.kind, command).toBe(control?.kind)
+      expect(other?.content?.[0]?.text, command).toBe(control?.content?.[0]?.text)
+    }
+  })
 })
 
 describe('headroom tabular, config, html routing', () => {
@@ -805,5 +854,81 @@ describe('headroom lossy branches keep their recovery channel', () => {
     const protectedText = protectTags(text, false)
     expect(protectedText.cleaned).not.toContain('<system-reminder>')
     expect(restoreTags(protectedText.cleaned, protectedText.blocks)).toBe(text)
+  })
+})
+
+describe('headroom payload threshold scales with the window', () => {
+  /**
+   * A window and a pressure, pushed the way the caller that measures the
+   * conversation pushes them: `setContextWindow` on every settled turn, and
+   * `setCompressionQuota` only in the bands where a quota means anything.
+   */
+  function harness(settings: HeadroomSettings): {
+    readonly run: (text: string) => Promise<{ readonly kind: string } | undefined>
+    readonly window: (contextWindow: number | undefined) => void
+    readonly quota: (quota: { readonly overTokens: number; readonly quotaTokens: number } | undefined) => void
+  } {
+    const listeners = new Map<string, (exec: never, result: never, next: () => Promise<unknown>) => Promise<unknown>>()
+    const ctx = {
+      effect: (callback: () => unknown) => { callback() },
+      on: (event: string, handler: unknown) => { listeners.set(event, handler as never); return () => undefined },
+      get: () => undefined,
+    }
+    const runtime = new FreeCodeGoHeadroomRuntime(ctx as never, { get: () => settings })
+    runtime.start()
+    return {
+      run: async (text) => {
+        const listener = listeners.get('tools/post-execute')
+        if (listener === undefined) return undefined
+        return await listener({ name: 'bash', arguments: {} } as never, { content: [{ type: 'text', text }] } as never, async () => ({ kind: 'next' })) as never
+      },
+      window: (contextWindow) => { runtime.setContextWindow(contextWindow) },
+      quota: (quota) => { runtime.setCompressionQuota(quota) },
+    }
+  }
+
+  /** A repeated-structure log: one shape the log branch compresses well. */
+  const LOG = Array.from({ length: 90 }, (_value, index) =>
+    `2026-09-25T10:00:${String(index % 60).padStart(2, '0')}Z [INFO] request ${index} completed in ${10 + index}ms path=/api/items/${index}`).join('\n')
+
+  it('raises the bar on a large window, and does it with no pressure at all', async () => {
+    // The window-scaling exists because "large enough to be worth a rewrite" is a
+    // *share* of the window, and 1,200 characters is 0.03% of a million-token one —
+    // where it asks the compressor to spend a rewrite on payloads no reader would
+    // notice. That is a statement about the model, not about how full the
+    // conversation is, so it has to hold on a conversation with room to spare.
+    const reference = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    expect((await reference.run(LOG))?.kind).toBe('accept')
+
+    const large = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    large.window(1_000_000)
+    expect((await large.run(LOG))?.kind).toBe('next')
+  })
+
+  it('answers the same on one window whether or not the conversation is under pressure', async () => {
+    // The defect this pins, stated as the equality it broke: the window used to
+    // travel *inside* the quota, and a quota only exists in the bands where pressure
+    // means something (`tight` and above). So the same payload on the same model got
+    // two different answers — compressed with room to spare, left alone once the
+    // conversation started running out of it, because the bar rose by the window
+    // ratio (1,200 → 9,375 characters on a million-token model) at the band
+    // boundary. Pressure may relax the *saving* a rendering has to reach; it may not
+    // move how large a payload has to be to be worth trying.
+    const roomToSpare = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    roomToSpare.window(1_000_000)
+    const roomToSpareKind = (await roomToSpare.run(LOG))?.kind
+
+    const pressured = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    pressured.window(1_000_000)
+    pressured.quota({ overTokens: 40_000, quotaTokens: 20_000 })
+    expect((await pressured.run(LOG))?.kind).toBe(roomToSpareKind)
+
+    // The control, so `next` above is the window's doing and not a payload every
+    // branch refuses on its own floor: on the reference window, with the same
+    // pressure, this payload *is* compressed.
+    const control = harness({ headroomEnabled: true, headroomThresholdChars: 1_200 })
+    control.window(128_000)
+    control.quota({ overTokens: 40_000, quotaTokens: 20_000 })
+    expect((await control.run(LOG))?.kind).toBe('accept')
   })
 })

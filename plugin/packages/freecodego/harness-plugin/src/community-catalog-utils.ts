@@ -69,7 +69,17 @@ export function communityIconScore(name: string): number {
 }
 
 const COMMUNITY_CATALOG_TIMEOUT_MS = 20_000
-const COMMUNITY_CATALOG_MAX_BYTES = 4_000_000
+// The published directory is a single JSON document that only ever grows, and this
+// cap is the whole of it that is accepted: 2.9 MB on 2026-09-15, 4.7 MB on
+// 2026-09-26 (≈165 KB/day). At the old 4 MB, every source was refused *mid-stream*
+// — the canonical host answered too slowly to finish inside the timeout, and both
+// npm mirrors were past the cap — so the refresh failed, the failure was handed to
+// a rejection handler that discards it, and the page served an 11-day-old snapshot
+// whose every symptom (a directory date that would not move, plugins added after
+// that date missing from a search that could not possibly find them) looked like a
+// search defect. Sized for months of that growth while still bounding what a
+// server that lies about its length can push into memory.
+const COMMUNITY_CATALOG_MAX_BYTES = 32_000_000
 const COMMUNITY_ICON_TIMEOUT_MS = 8_000
 const COMMUNITY_README_MAX_BYTES = 96_000
 const NPM_PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i

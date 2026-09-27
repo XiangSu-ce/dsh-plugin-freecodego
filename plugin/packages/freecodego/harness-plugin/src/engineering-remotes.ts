@@ -1,10 +1,9 @@
 /**
- * Advisor and engineering remotes for the FreeCodeGo Harness plugin: the
- * Advisor model directory and review trigger, engineering councils, local
- * memory, and the Graphify code-graph remotes. The plugin class satisfies the
- * narrow host view below; members that map to plugin methods delegate back to
- * the live instance so instance-level overrides (tests, future remotes) keep
- * working.
+ * Engineering remotes for the FreeCodeGo Harness plugin: the engineering
+ * councils, local memory, and the Graphify code-graph remotes. The plugin class
+ * satisfies the narrow host view below; members that map to plugin methods
+ * delegate back to the live instance so instance-level overrides (tests, future
+ * remotes) keep working.
  *
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/engineering-remotes
  */
@@ -16,34 +15,27 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ClaudeRuntimeManager, CodexRuntimeManager } from '@deepseek-ai/dsh-freecodego-native-runtime-host'
-import type { FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorModel, FreeCodeGoAdvisorStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoManagedCatalog } from './types.ts'
+import type { FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoManagedCatalog, FreeCodeGoSecondModelRoute } from './types.ts'
 import type { FreeCodeGoEngineeringCanvasGraph, FreeCodeGoEngineeringCodeGraphProjectStatus, FreeCodeGoEngineeringCodeGraphRuntimePackage, FreeCodeGoEngineeringCodeGraphRuntimeStatus, FreeCodeGoEngineeringCouncilDecision, FreeCodeGoEngineeringCouncilImplementation, FreeCodeGoEngineeringCouncilJob, FreeCodeGoEngineeringCouncilReport, FreeCodeGoEngineeringCouncilRequest, FreeCodeGoEngineeringGraphProjectStatus, FreeCodeGoEngineeringLoopStatus, FreeCodeGoEngineeringGraphRuntimePackage, FreeCodeGoEngineeringGraphRuntimeStatus, FreeCodeGoEngineeringMemoryBackup, FreeCodeGoEngineeringMemoryDetail, FreeCodeGoEngineeringMemoryIndex, FreeCodeGoEngineeringMemoryPage, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringMemoryRetentionResult, FreeCodeGoEngineeringMemoryReviewDecision, FreeCodeGoEngineeringMemoryTimeline, FreeCodeGoEngineeringMemoryTrust, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineeringVerificationResult, FreeCodeGoEngineeringVerificationStage } from './types.ts'
-import type { FreeCodeGoAdvisorRuntime } from './advisor.ts'
 import type { FreeCodeGoEngineCouncil } from './engine-council.ts'
 import { councilJobFromEvents, councilReportsFromEvents } from './engine-council.ts'
 import type { FreeCodeGoEngineeringRegistry } from './engineering.ts'
 import { writeSpecArtifacts } from './engineering-spec.ts'
 import { VERIFICATION_STAGES, latestApprovedPlan, normalizeEngineeringCouncilRequest, validateEngineeringCouncilDecisionRequest, validateEngineeringCouncilVerificationRequest, validateEngineeringGraphRuntimeInstall, validateEngineeringMemoryListRequest, validateEngineeringMemoryReviewRequest, validateEngineeringMemoryTimelineRequest } from './engineering-remote-utils.ts'
 import type { FreeCodeGoManagedCatalogs } from './managed-catalogs.ts'
+import { hostSessionEvents, isSecondModelTextRoute, isSecondModelTextModalities, LOGFARE_AUTO_MODEL, MODEL_CATALOG_TIMEOUT_MS, withTimeout } from './managed-catalog-utils.ts'
 import { agnesMediaCategory } from './agnes.ts'
-import {
-  advisorCouncilReportsFromSession, hostSessionEvents, isAdvisorTextModel, isAdvisorTextModalities,
-  LOGFARE_AUTO_MODEL, MODEL_CATALOG_TIMEOUT_MS, withTimeout,
-} from './managed-catalog-utils.ts'
-import type { HostSessionEvents } from './managed-catalog-utils.ts'
 import { readPersistedEvents } from './session-storage-utils.ts'
 import type { SessionEventsPersistence } from './session-storage-utils.ts'
 
-// Text and media Agnes routes are intentionally separate: only text-capable
-// ids are eligible as a default chat model, while media tools route by their
-// own ids. Media membership follows the live directory via the shared keyword
-// heuristic instead of a pinned id list, so newly added Agnes image/video
-// models are classified without a plugin update.
 /**
  * Agnes model ids the plugin's text routes use.
+ *
+ * Read by `engine-remotes.ts`, which resolves a saved model id to the Agnes
+ * engine; the media half of the Agnes routing classifies its own ids through
+ * `agnesMediaCategory` rather than this pinned list.
  */
 export const AGNES_TEXT_MODEL_IDS = new Set(['agnes-3.0-flash'])
-function isAgnesMediaModelId(id: string): boolean { return agnesMediaCategory(id) !== undefined }
 
 /**
  * Default look-back window (in days) for the memory retention sweep. The UI
@@ -53,14 +45,130 @@ function isAgnesMediaModelId(id: string): boolean { return agnesMediaCategory(id
 export const ENGINEERING_MEMORY_DEFAULT_RETENTION_DAYS = 90
 
 /**
- * Narrow view of the plugin surface required by the Advisor and engineering
- * remotes. The plugin satisfies it through its `engineeringRemotesHost`
- * accessor.
+ * The settings panel's second-model directory: every text route this install
+ * can spend the plugin's own calls on.
+ *
+ * Why this lives beside the engineering remotes
+ * --------------------------------------------
+ * It needs exactly the seams this host view already carries — the live Harness
+ * LLM registry for mounted providers, and the managed catalogs for the routes a
+ * fresh install can reach without an account. Rebuilding either list here would
+ * be a second answer to "what can this install call", and the two answers would
+ * drift exactly when a provider is added or retired.
+ *
+ * Where the rows come from, in priority order
+ * ------------------------------------------
+ * The Harness registry is the source of truth for newly added provider/model
+ * routes; each managed catalog below is a compatibility fallback for a provider
+ * that is temporarily offline or not yet mounted. A row the registry already
+ * holds is not overwritten by a catalog row with the same provider/model pair —
+ * the live answer wins because it is the one the request path would use.
+ * @param host - the Host surface the directory reads its seams through.
+ * @returns every eligible route, display-name ordered.
+ */
+export async function secondModelRoutes(host: EngineeringRemotesHost): Promise<readonly FreeCodeGoSecondModelRoute[]> {
+  const models = new Map<string, FreeCodeGoSecondModelRoute>()
+  const llm = host.ctx.get('llm') as {
+    listProviders?: () => readonly { readonly id: string }[]
+    listModels?: (provider: string) => Promise<readonly LlmModelInfo[]>
+  } | undefined
+  const providerEntries = llm?.listProviders?.() ?? []
+  await Promise.all(providerEntries.map(async (entry) => {
+    const provider = entry.id.trim()
+    if (provider === '' || llm?.listModels === undefined) return
+    try {
+      const directory = await withTimeout(llm.listModels(provider), MODEL_CATALOG_TIMEOUT_MS, `${provider} model directory`)
+      for (const model of directory) {
+        const metadata = model as LlmModelInfo & { readonly availability?: unknown }
+        // LlmModelInfo carries no protocol field; modalities are the only
+        // reliable signal that a route can hold a text conversation.
+        if (metadata.availability === 'unavailable' || !isSecondModelTextRoute(model) || !isSecondModelTextModalities(model.inputModalities)) continue
+        const modelProvider = model.provider.trim() || provider
+        const key = `${modelProvider}:${model.id}`
+        models.set(key, {
+          id: model.id,
+          displayName: model.name,
+          provider: modelProvider,
+          description: model.description ?? `${modelProvider} · text route`,
+        })
+      }
+    } catch { /* one slow or credential-gated provider must not hide others */ }
+  }))
+
+  // OpenCode's public routes remain selectable before a FreeCodeGo account
+  // is configured. Managed routes are an additive best-effort lookup.
+  // The logfare auto route only resolves with a configured key: advertising
+  // it without one would offer a route that fails at selection time.
+  if (await host.catalogs.logfareApiKey() !== undefined) {
+    models.set(`logfare:${LOGFARE_AUTO_MODEL.id}`, {
+      id: LOGFARE_AUTO_MODEL.id,
+      displayName: LOGFARE_AUTO_MODEL.name,
+      provider: 'logfare',
+      description: 'FreeCodeGo · free text route',
+    })
+  }
+  for (const model of await host.catalogs.openCodeFreeModels()) {
+    models.set(`opencode:${model.id}`, {
+      id: model.id,
+      displayName: model.name,
+      provider: 'opencode',
+      description: 'OpenCode · public free text route',
+    })
+  }
+  try {
+    const catalog = await host.backendCatalog()
+    for (const model of catalog.models) {
+      if (model.availability !== 'available' || !isSecondModelTextRoute(model)) continue
+      const provider = AGNES_TEXT_MODEL_IDS.has(model.id) || isAgnesMediaModelId(model.id) ? 'agnes' : 'freecodego'
+      const key = `${provider}:${model.id}`
+      if (models.has(key)) continue
+      models.set(key, {
+        id: model.id,
+        displayName: model.displayName,
+        provider,
+        description: model.provider === 'agnes' ? 'Agnes AI · text route' : `FreeCodeGo · ${model.protocol}`,
+      })
+    }
+  } catch { /* public OpenCode routes remain available while signed out */ }
+  try {
+    for (const model of await host.catalogs.listSenseNovaModels('sensenova')) {
+      // Skip routes the catalog itself marks unavailable (e.g. no key yet):
+      // the picker must not offer selections that fail on use.
+      if ((model as LlmModelInfo & { readonly availability?: unknown }).availability === 'unavailable') continue
+      models.set(`sensenova:${model.id}`, {
+        id: model.id,
+        displayName: model.name,
+        provider: 'sensenova',
+        description: 'SenseNova · public-beta free text route',
+      })
+    }
+  } catch { /* SenseNova remains optional when its key or directory is unavailable */ }
+  try {
+    for (const model of await host.catalogs.listNvidiaModels('nvidia')) {
+      if ((model as LlmModelInfo & { readonly availability?: unknown }).availability === 'unavailable') continue
+      models.set(`nvidia:${model.id}`, {
+        id: model.id,
+        displayName: model.name,
+        provider: 'nvidia',
+        description: 'NVIDIA NIM · free tier',
+      })
+    }
+  } catch { /* NVIDIA remains optional when its key or directory is unavailable */ }
+  return [...models.values()].sort((left, right) => left.displayName.localeCompare(right.displayName, 'zh-Hans-CN'))
+}
+
+/** The Agnes catalog routes media ids the text filter lets through (e.g. a
+ * display name without a media word); classify them out the same way the
+ * media defaults do. */
+function isAgnesMediaModelId(id: string): boolean { return agnesMediaCategory(id) !== undefined }
+
+/**
+ * Narrow view of the plugin surface required by the engineering remotes. The
+ * plugin satisfies it through its `engineeringRemotesHost` accessor.
  */
 export interface EngineeringRemotesHost {
   readonly ctx: Context
   readonly engineering: FreeCodeGoEngineeringRegistry
-  readonly advisor: FreeCodeGoAdvisorRuntime
   readonly engineCouncil: FreeCodeGoEngineCouncil
   readonly catalogs: FreeCodeGoManagedCatalogs
   /** Accessors keep instance-level runtime overrides visible. */
@@ -105,146 +213,6 @@ async function engineeringStatusSnapshot(host: EngineeringRemotesHost): Promise<
       claude: { enabled: status.engineeringCouncilClaudeEnabled, available: claude.installed, ...(claude.reason === undefined ? {} : { reason: claude.reason }) },
     },
   }
-}
-
-/** List text-capable managed routes suitable for an independent Advisor call. 
- * @param host - the Host surface this remote call reaches its services through.
- * @returns the advisor Model rows, in backend order.
- */
-export async function advisorModels(host: EngineeringRemotesHost): Promise<readonly FreeCodeGoAdvisorModel[]> {
-  // Start from the live Harness registry. This is the source of truth for
-  // newly added provider/model routes; hand-maintained catalogs below are
-  // only compatibility fallbacks for providers that are temporarily offline.
-  const models = new Map<string, FreeCodeGoAdvisorModel>()
-  const llm = host.ctx.get('llm') as {
-    listProviders?: () => readonly { readonly id: string }[]
-    listModels?: (provider: string) => Promise<readonly LlmModelInfo[]>
-  } | undefined
-  const providerEntries = llm?.listProviders?.() ?? []
-  await Promise.all(providerEntries.map(async (entry) => {
-    const provider = entry.id.trim()
-    if (provider === '' || llm?.listModels === undefined) return
-    try {
-      const directory = await withTimeout(llm.listModels(provider), MODEL_CATALOG_TIMEOUT_MS, `${provider} Advisor model directory`)
-      for (const model of directory) {
-        const metadata = model as LlmModelInfo & { readonly availability?: unknown }
-        // LlmModelInfo carries no protocol field; modalities are the only
-        // reliable signal that a route can hold a text review conversation.
-        if (metadata.availability === 'unavailable' || !isAdvisorTextModel(model) || !isAdvisorTextModalities(model.inputModalities)) continue
-        const modelProvider = model.provider.trim() || provider
-        const key = `${modelProvider}:${model.id}`
-        models.set(key, {
-          id: model.id,
-          displayName: model.name,
-          provider: modelProvider,
-          description: model.description ?? `${modelProvider} · text review route`,
-        })
-      }
-    } catch { /* one slow or credential-gated provider must not hide others */ }
-  }))
-
-  // OpenCode's public routes remain selectable before a FreeCodeGo account
-  // is configured. Managed routes are an additive best-effort lookup.
-  // The logfare auto route only resolves with a configured key: advertising
-  // it without one would offer a route that fails at selection time.
-  if (await host.catalogs.logfareApiKey() !== undefined) {
-    models.set(`logfare:${LOGFARE_AUTO_MODEL.id}`, {
-      id: LOGFARE_AUTO_MODEL.id,
-      displayName: LOGFARE_AUTO_MODEL.name,
-      provider: 'logfare',
-      description: 'FreeCodeGo · free text route',
-    })
-  }
-  for (const model of await host.catalogs.openCodeFreeModels()) {
-    models.set(`opencode:${model.id}`, {
-      id: model.id,
-      displayName: model.name,
-      provider: 'opencode',
-      description: 'OpenCode · public free text route',
-    })
-  }
-  try {
-    const catalog = await host.backendCatalog()
-    for (const model of catalog.models) {
-      if (model.availability !== 'available' || !isAdvisorTextModel(model)) continue
-      const provider = AGNES_TEXT_MODEL_IDS.has(model.id) || isAgnesMediaModelId(model.id) ? 'agnes' : 'freecodego'
-      const key = `${provider}:${model.id}`
-      if (models.has(key)) continue
-      models.set(key, {
-        id: model.id,
-        displayName: model.displayName,
-        provider,
-        description: model.provider === 'agnes' ? 'Agnes AI · text review route' : `FreeCodeGo · ${model.protocol}`,
-      })
-    }
-  } catch { /* public OpenCode routes remain available while signed out */ }
-  try {
-    for (const model of await host.catalogs.listSenseNovaModels('sensenova')) {
-      // Skip routes the catalog itself marks unavailable (e.g. no key yet):
-      // the advisor picker must not offer selections that fail on use.
-      if ((model as LlmModelInfo & { readonly availability?: unknown }).availability === 'unavailable') continue
-      models.set(`sensenova:${model.id}`, {
-        id: model.id,
-        displayName: model.name,
-        provider: 'sensenova',
-        description: 'SenseNova · public-beta free text route',
-      })
-    }
-  } catch { /* SenseNova remains optional when its key or directory is unavailable */ }
-  try {
-    for (const model of await host.catalogs.listNvidiaModels('nvidia')) {
-      if ((model as LlmModelInfo & { readonly availability?: unknown }).availability === 'unavailable') continue
-      models.set(`nvidia:${model.id}`, {
-        id: model.id,
-        displayName: model.name,
-        provider: 'nvidia',
-        description: 'NVIDIA NIM · free tier',
-      })
-    }
-  } catch { /* NVIDIA remains optional when its key or directory is unavailable */ }
-  return [...models.values()].sort((left, right) => left.displayName.localeCompare(right.displayName, 'zh-Hans-CN'))
-}
-
-/** Ask the Advisor to review the latest durable facts of one live session. 
- * @param host - the Host surface this remote call reaches its services through.
- * @param sessionId - the Harness session this operation acts on.
- * @returns the advisor Status.
- */
-export function advisorReviewNow(host: EngineeringRemotesHost, sessionId: string): FreeCodeGoAdvisorStatus {
-  if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('advisor session id is invalid')
-  const agent = host.ctx.get('agents')?.get(SessionId(sessionId))
-  if (agent === undefined) throw new Error(`session "${sessionId}" is not active`)
-  void host.advisor.reviewNow(agent)
-  return host.advisor.status()
-}
-
-/** Request architecture, security, and testing perspectives without steering the main Agent. 
- * @param host - the Host surface this remote call reaches its services through.
- * @param sessionId - the Harness session this operation acts on.
- * @returns the advisor Council Report.
- */
-export function engineeringCouncilReview(host: EngineeringRemotesHost, sessionId: string): Promise<FreeCodeGoAdvisorCouncilReport> {
-  if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('engineering Council session id is invalid')
-  if (!host.engineering.councilEnabled()) throw new Error('Advisor Council is disabled in engineering settings')
-  const agent = host.ctx.get('agents')?.get(SessionId(sessionId))
-  if (agent === undefined) throw new Error(`session "${sessionId}" is not active`)
-  return host.advisor.councilReviewNow(agent)
-}
-
-/** Read the most recent durable Council reports for a live or restored session. 
- * @param host - the Host surface this remote call reaches its services through.
- * @param sessionId - the Harness session this operation acts on.
- * @returns the advisor Council Report rows, in backend order.
- */
-export async function engineeringCouncilReports(host: EngineeringRemotesHost, sessionId: string): Promise<readonly FreeCodeGoAdvisorCouncilReport[]> {
-  if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 256) throw new Error('engineering Council session id is invalid')
-  const live = host.ctx.get('sessions') as { get?(id: string): ({ readonly id: unknown } & HostSessionEvents) | undefined } | undefined
-  const session = live?.get?.(sessionId)
-  if (session !== undefined) return advisorCouncilReportsFromSession(session)
-  const persistence = host.ctx.get('sessionPersistence') as SessionEventsPersistence | undefined
-  if (persistence === undefined) throw new Error(`session "${sessionId}" is not available`)
-  const restored = await readPersistedEvents(persistence, SessionId(sessionId))
-  return advisorCouncilReportsFromSession({ id: sessionId, snapshotEvents: () => restored.events })
 }
 
 /** Start a bounded three-engine engineering council for one live parent Agent. 

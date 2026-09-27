@@ -27,7 +27,7 @@ export interface RegisteredTool {
 const MANIFEST_MODULE = 'tool-manifest.ts'
 
 /** Prefixes that identify a name this plugin registers. */
-const PLUGIN_PREFIXES: readonly string[] = ['engineering_', 'advisor_', 'agnes_', 'freecodego_', 'headroom_']
+const PLUGIN_PREFIXES: readonly string[] = ['engineering_', 'agnes_', 'freecodego_', 'headroom_']
 
 /**
  * Prefixed string literals that are deliberately *not* tool names.
@@ -61,7 +61,7 @@ export const NOT_TOOLS: Readonly<Record<string, string>> = {
  *  - `name: SOME_CONSTANT`, resolved back to that constant's initializer, which is
  *    how a tool whose name is shared with other code is defined;
  *  - `name: 'a_literal',`, the registration shape for a name with **no** plugin
- *    prefix — the shape that made `inspect`, `spill_recall` and `read_document`
+ *    prefix — the shape that made `inspect`, `headroom_retrieve` and `read_document`
  *    reachable while planning because no prefix-driven rule could see them.
  *
  * @returns the names, sorted, each with the first module it was seen in.

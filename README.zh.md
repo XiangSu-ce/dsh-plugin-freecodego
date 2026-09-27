@@ -36,10 +36,12 @@ FreeCodeGo **不是** DeepSeek 的产品，本仓库也不是 DeepSeek 的官方
 - **原生引擎** —— 一个会话可跑在 DeepSeek、Codex 或 Claude 上，各自位于已验证的运行时之后；本插件的 router 是 Harness 里唯一的 `AgentFactory`。
 - **Advisor 评审回路** —— 一个独立的只读评审者，用有界的发现结论去引导当前 Agent。
 - **代码审查** —— 一套 OCR 风格、针对改动本身的审查（工作区、从 merge base 起算的引用范围、或单个提交），带四层规则解析、逐文件覆盖面核算、三种报告格式、高危结论的对抗性复核，以及可选的收尾门禁。
+- **设计包**（自己的总开关控制，默认关）—— 按 composition 方式做画面与视频设计（17 个 Skill 加五个只读工具，用本机已有的浏览器渲染）、可检索的 34 张 UI/UX 目录表、11 篇随包发布的工艺规则、确定性的设计检测、按需取回的 React Bits 组件，以及上游的设计方向 Skill。
 - **工程增强**（由一个总开关控制）—— 多引擎工程评审、多成员团队、CodeGraph / Graphify 代码图谱、按项目持久化的工程记忆、检查点与块级日志、仓库结构图，以及确定性的扫描检查。
 - **上下文与成本纪律** —— Headroom 输出压缩（含代码骨架化）、按需取用的工具 schema（`tool_search`）、缓存冷清除与溢出回溯、模型可见的上下文预算，以及缓存未命中归因。
 - **安全护栏** —— 声明式命令策略、Plan Mode、文件夹信任、同样覆盖原生引擎的凭据路径屏蔽，以及记忆写入时的凭据筛查。
 - **能力扩展** —— MCP server、Skill 根目录（含 skills.sh 安装）、LSP 自动挂载、日历调度规则、声明式 hook 链、媒体生成与音频转写、语音输入、Agent 预设与 persona。
+- **伴侣角色** —— 输入框旁边与侧栏上的那个小人：姿态由会话推导而来（而不是会话自己声明），两条池子按共享时钟轮换**画出来的东西**、从不移动状态，模型可以调 `freecodego_companion_face` 点一个表情，工具调用以失败返回时还会短暂戴上一张难过的脸。同一个角色两个座位，而两者永远一致。
 - **模型菜单控制** —— 聊天选择器显示哪些供应商与模型、原生菜单上的非交互价格/健康标注、跟随持久选择回显的选择器标签，以及不会清空已打开菜单的重连重试。
 - **发行更新** —— 插件读取本仓库的 release，并安装为当前 Harness 构建的那个 bundle。
 
@@ -164,6 +166,7 @@ Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是�
 - **写入路径上的凭据筛查。** 带标签或带厂商前缀的凭据会直接拒绝该条目；只匹配形状的（JWT、裸 `sk-`、PEM 块）会被就地脱敏并保留条目。发现结论永远不返回密钥本身 —— 只有四字符前缀与长度。
 - **整合是分阶段放量，因为它会写入。** 一次整合先取一把带租约的锁（带过期时间的锁文件，所以崩掉的整合可以恢复；而**活着的**租约会被报成 `lease-held` 而不是被重试），读取开始时已存在的那份冻结快照，跑一次不带工具调用的模型调用，然后原子地写入主题文件。因此 `memoryRollout` 是四个阶段而不是一个开关：`off`、`record_only`、`shadow` —— 完整跑完包括模型调用但什么都不提交，操作者可以先读到模型**本来会**写什么 —— 以及 `active`。
 - **`MEMORY.md` 是一份有界的绝对路径索引。** 路径必须是绝对的，因为相对指针要针对某个作用域根解析，而解析错的模型会报告"什么都没找到"而不是"路径坏了"；溢出时整行丢弃并说明丢了多少，因为被截断的描述会让索引声称在描述一条它已经不再描述的记录。
+- **一个主题可以被限定在单个会话内，然后随会话回收。** 整合判定为 `session` 的主题会写进该会话自己的目录而不是持久的 `topics/`，并在会话销毁时连同目录一起删除，索引同步重建，因此不会有指针比它指向的文件活得更久。默认是持久的，因为这两种错误并不对称：被误留的临时记录只是用户还能删掉的一条笔记，而被误回收的持久记录会消失，连它曾说了什么都不剩。
 - **遗忘要凭证据，绝不凭模式。** "忘掉你知道的关于 X 的一切"是这个子系统唯一不能靠把 X 变成一组文件来回答的请求：那是一次相关性判断，判宽了就会以没有撤销的方式删掉记录，而这个存储的全部价值就在于它记得。调用方要把打算删除的字节连同哈希一起交出来，而目录、通配符、哈希不匹配以及另外四种形状都是拒绝而不是警告。
 - **记忆有管理面，遥测是 schema。** 设置面板可以按需整合、重建索引、导出已审核记忆、创建备份、清理过期内容，全部限定在当前打开的工作区会话内。每个遥测事件都由同一个构造器**构造**，它拒绝未知字段、也拒绝自由文本值，因为记忆流水线看得到用户陈述、主题名、关键词与路径，而一个看似无害的 `{ topic }` 字段会把私人笔记的精炼版本永久送进任何收集指标的容器。这种拒绝是抛错而不是丢弃，所以"以为正在收集某指标"会在测试里失败，而不是静悄悄地失败。
 
@@ -183,6 +186,17 @@ Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是�
 - `engineering-eval` 是对插件自身工程机制的确定性、可重跑能力评测 —— 因为"已经追平上游"这种说法若不能重跑，就不是证据。
 - 工程任务是持久的、可本地取消的：Harness 的任务注册表掌管存活运行（稳定 id、`job_output` / `job_list` / `job_kill`、完成通知投递进会话），私有 SQLite 存储掌管审计轨迹并跨进程存活。Host 重启后命令绝不续跑 —— 当时活着的任务会以 `interrupted` 重开。
 
+### 设计包
+
+一个自己的 `Design` 设置区，无条件注册 —— 只在开关打开后才出现的页面，不可能成为打开那个开关的地方。一个总开关（`designEnabled`，默认关）装备这个包，下面挂六个相互独立的能力（`designFeaturesEnabled`）。关着的部分不产生成本：没被选中的 Skill 不会进上下文，未装备的能力不会注册任何工具。
+
+- **HyperFrames**（`hyperframes`）—— 按 composition 方式设计视频与画面。17 个 Skill 按需加载；五个只读工具是交回运行时的接缝。`freecodego_design_keyframes` 列出 composition 到底动画了什么（GSAP tween 与 timeline、CSS `@keyframes`、真正把东西移动起来的变换属性、写字面量的时间轴位置），`freecodego_design_lint` 不渲染就检查结构与确定性 —— 两者都不需要浏览器。`freecodego_design_preview` 把 composition 伺服在 127.0.0.1 上并给出时间轴清单，`freecodego_design_snapshot` 在指定时刻抓一帧 PNG，`freecodego_design_render` 逐帧 seek、等它稳定、拍照，再离线编成 MP4：它是确定性的，不是录屏，大约每秒一帧。渲染驱动的是本机已有的浏览器（优先 Edge）—— 不下载引擎、不需要 ffmpeg、不装 CLI。
+- **UI/UX 目录**（`uiux-catalogue`）—— 34 张精选表、2,385 条建议，背后只有一个检索工具 `freecodego_uiux_search`：点名领域或技术栈，或者只给一句描述让它自己路由。结果带校准过的置信度，低置信度会明确拒答，而不是硬凑一条看起来像答案的规则。离线、只读、无需安装。
+- **Craft**（`craft`）—— 11 篇随包发布的规则手册（104 KB），装的是「不管是谁的品牌，界面都要遵守」的那些规则，通过 `freecodego_design_craft`（`list`、`get`、`resolve`）在任务中途查阅。它是叠在其余能力之上的一层，也会说清自己不是什么：这些规则假设有设计系统提供语义 token，而解析不到的 slug 会被连带「现有列表」一起拒掉，而不是静默丢弃。
+- **Impeccable**（`impeccable`）—— `freecodego_design_detect`：61 条确定性规则，分「生成感」与「工艺质量」两族，规则 id 与上游文档及其 `impeccable ignores` 一致。本机已经装了引擎时全量委托给引擎，包括必须真实渲染才能判定的检查与项目 `DESIGN.md` 校验；没有引擎则用内置子集、只读源码回答。每次结果都写明是谁回答的、跑了哪些规则、上游总数是多少 —— 所以「没查出问题」不会被读成「已经全部检查过」。引擎只被查找，从不下载。
+- **React Bits**（`react-bits`）—— 通过 `freecodego_reactbits`（`search`、`get`、`apply`）使用上游的动画 React 组件。它的许可证（MIT 加 Commons Clause）允许在应用里使用、禁止再分发，所以这里不内置也不缓存：`search` 读登记表，`get` 取回一个变体的源码并附集成体检（缺 `'use client'`、需要一起落盘的样式表、浏览器全局对象、WebGL、未处理 `prefers-reduced-motion`），`apply` 写进调用者点名的目录（必须带 `confirm: true`），且只改两处机械的地方（`'use client'` 与给未处理系统设置的样式表追加 reduced-motion 限制），两处都会列在结果里。这是设计包里唯一需要联网、也是唯一会写工作区的一行。
+- **Taste**（`taste`）—— 13 篇随包发布的设计方向 Skill（约 7.3 万 token，整篇发布而非裁剪）：从一句话 Design Read、三个旋钮（variance、motion、density），到具名设计系统（Fluent、Material 3、Carbon、Polaris、Primer、GOV.UK、USWDS、Radix、shadcn）、风格语言、参考图，以及图转代码。纯文本：没有工具、没有引擎、不联网、不写盘，没选中前什么都不加载。
+
 ### 上下文与成本纪律
 
 这些机制共享一个想法：只写成散文的规则既无法被强制、也无法被评审；而模型看不见的成本，是它无法避免的成本。
@@ -191,7 +205,7 @@ Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是�
 - **代码骨架化**（`headroomCodeSkeletonEnabled`，默认开）。`read`、`read_file`、`view` 的结果被归约为 import、声明、类型成员、签名、装饰器与文档注释。契约是"子序列"：**保留的每一行都是逐字节原文，包括它的 `N: ` 前缀**，只有整段连续的正文行会被替换，且每段由一条点名其覆盖行范围的标记替代 —— 因此锚定在保留行上的 Edit 依然匹配。太小、已被其它压缩器接管、属于散文、是错误结果或缩减不足 25% 的读取会被拒绝处理而不是猜测。在 1,983 个真实仓库源码上实测，骨架平均去掉约 61.5% 的文件字节（中位 58.3%）；重放抽样会话后，重复传输的 token 下降 16.6%。关掉该开关即恢复逐字节读取。
 - **按需取用的工具 schema**（`deferredToolSchemasEnabled`，默认开）。被延迟的工具仍然注册，但暂不提供 schema，因此一次用不到的回合不会为它们付出定义成本。`tool_search` 按需返回定义，并只为自己返回过的工具解除调用限制，所以一个延迟工具在一次发现调用之后与即时工具一样可用。查询形式：`select:A,B` 精确点名，`+term rest` 要求名字里出现该词，裸关键词用于排序，`list:<prefix>`（或 `list:all`）返回不带 schema 的名字。排序用名字与描述上的 BM25F（稀有度相对延迟目录计算、词频饱和、按描述长度归一），而不是子串计数。工具自身的描述刻意保持静态：那里放动态索引会让每次设置变更都作废提示缓存。索引和自己别的输出一样计价，并会说明它丢掉了什么。
 - **缓存冷清除**（`cacheColdClearEnabled`，默认开）。当距上一条主循环 assistant 消息已超过一小时，供应商的提示缓存必然已过期、整段前缀反正会被重写，因此在下一个请求**之前**清除较旧的工具结果。阈值高于所有已公布的 TTL，所以该机制无法制造一次本来不会发生的未命中；按会话标记让清除天然幂等。
-- **溢出与回溯**（`spillRecallEnabled`，默认开）。被清除的结果通过 Harness 的 spill 能力寄放，标记里带定位符而不是死胡同，所以重读内容不再需要重跑工具。`spill_recall` 逐字节分页取回寄放的产物，并返回下一次该请求的偏移量，因此翻阅它不会在文件开头处静默停止。
+- **溢出与回溯**（`spillRecallEnabled`，默认开）。被清除的结果通过 Harness 的 spill 能力寄放，标记里带定位符而不是死胡同，所以重读内容不再需要重跑工具。`headroom_retrieve` 拿着这个定位符逐字节分页取回寄放的产物，并返回下一次该请求的偏移量，因此翻阅它不会在文件开头处静默停止。它与取回压缩原文是同一个工具、同一种调用——`hash=` 标记与定位符标记问的是同一件事：我看到的那个标记里的文本在哪；而手里拿着标记的模型分不出是哪个机制移走了这些字节。
 - **模型可见的上下文预算**（`contextBudgetEnabled`，默认开）。模型会被告知窗口有多满，量化成五档以免每回合重写缓存前缀，并且**追加**在末尾，所以最后一个缓存断点之前的一切仍是命中。估算值会标注为估算；未知窗口如实说明未知；不规定任何阈值，只给条件与对应的补救办法。精确数字由 `engineering_context_budget` 提供，且它是延迟工具，所以这份精度在没人问之前不花钱。
 - **缓存未命中归因与请求形状指纹**（`cacheBreakAttributionEnabled`，默认开）。本地账本记录每回合花了多少，也记录**浪费**了多少：上一轮未被缓存读取的提示字节，按付费价减缓存读取价计价，并标注原因（模型换了、供应商 TTL 过期、前缀本身移动了）。1024 token 及以下的移动视为断点粒度而忽略；从不报告缓存的供应商记为"无法归因"，而不是每回合 100% 未命中。另有一路把每次请求的线上形状哈希下来 —— 系统文本、工具集、**每个工具各自的 schema**、模型、betas、预算档 —— 让下一次缓存读取下降能归因到一个具名变化；曾经移动过前缀的开关会保持"粘住开启"，而不是允许再次翻转。
 - **差分上下文注入。** 注入的常驻上下文被拆成带快照的具名小节：未变的小节**什么都不发**，变了的小节先发替换通知，消失的小节发明确的移除通知（模型只是"看不见了"的指令会被继续遵守），而恢复、压缩或重启之后的 `unknown` 按"仍可能持有"处理并重发通知。因预算被截短的小节报告 `incomplete`，于是"我们看过、确实没有"与"我们不再看了"始终可区分。
@@ -216,10 +230,18 @@ Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是�
 - **Skills**（`skillEnabled`，默认关；starter 根默认开）。启用的根由 Harness 文件系统 Skill provider 发现；skills.sh 安装会原子地把 Host 自有的社区目录注册为启用的自定义根，因此导入进来的单层 `SKILL.md` 包对 DeepSeek 与下一个原生会话立即可见。Claude 通过 Host 桥加载启用的 Skill，Codex 通过 `skills/extraRoots/set` 收到；禁用某项能力会卸载其 provider，从后续的原生会话中移除它。内置库整体经过审计并按根划分：starter 根含十个 Skill、默认开启（四个由模型自行施加的纪律，外加若干条只有被调用时才产生成本的 `/name` 条目），另外 23 个经审计的 Skill —— 含 vendored 的 `mattpocock/skills` 条目 —— 在打开对应开关前保持未挂载。旁边还有 Skill 地图、由已评审记忆生成草稿、冲突检查与 lockfile。
 - **LSP 自动挂载**（`lspEnabled`，默认开）。只有当候选语言服务器可执行文件确实能在 PATH 上解析时，才会挂载核心 LSP 栈；因此没有语言服务器的机器照常启动，而不是在加载阶段报错。
 - **调度与 hook 链。** 调度归 Harness 所有，本插件不另建第二套调度器；它补上的是 Harness 规则集无法表达的日历算术（"每个工作日 09:00"、"每月一号"），通过 `freecodego_schedule_plan` 回答。`hookChainsEnabled`（默认开）加的是基于小事件词汇表的声明式失败恢复规则，带深度守卫与冷却，因为一个会"风暴"的恢复层比没有更糟。
-- **媒体、转写与语音。** 如上所述的图片、视频、音频生成与 Whisper 转写，以及输入框里的语音输入控件（`voiceInputEnabled`），经 Groq Whisper 路由转写。
+- **媒体、转写与语音。** 如上所述的图片、视频、音频生成与 Whisper 转写，以及输入框里的语音输入控件（`voiceInputEnabled`），经 Groq Whisper 路由转写。识别器的接口地址、模型 id 与密钥都可以在插件自己的设置卡片里改，那张卡片还提供一次真实往返来测试这条路由 —— 因为配置再完整也说明不了本机能不能抵达该端点（一个进程不知道的代理后面会被拒绝，而同一个浏览器不会），而这正是那张卡片存在的原因。
 - **网页搜索提供方。** 原生的网页搜索页只能配置接口地址、密钥与单次搜索次数，模型停在 DeepSeek 自己的默认值上 —— 而这正是 FreeCodeGo 安装唯一想改的一项。本插件在该页自身配置的下方加了一份模型列表，取自本插件能路由的目录；选中一行会把该模型的 Anthropic 兼容接口、线上模型 id，以及一把它自己的密钥（`FREECODEGO_WEB_SEARCH_API_KEY`，从不占用提供方自己的引用，因此用户已有的 DeepSeek 密钥保持不动）写入 `web-search-deepseek`。接口地址会按提供方的拼接规则归一化。经本地桥接转发的提供方在重启后会被**自动重建** —— 它的路由 id 与密钥是按进程生成的，所以 Host 会在启动时、第一次搜索发生之前，按记住的 provider 与模型重新解析一次；Host 做不到时（没有挂载密钥或设置服务）页面会在加载时补做。只有本插件没记下 provider/模型的那类绑定，以及重建失败的那次，才会请用户重新选择。
 - **Agent 预设与 persona。** 内置 Agent 预设会安装进 `<DSH_HOME>/.agent-presets/` 并保持同步 —— 不存在时写入，识别到插件自己的版本标记时覆盖，用户手改过则保持不动 —— 于是预设无需改动 Harness 源码、无需重启就出现在模式选择器里。Persona 是 TOML 文件，优先级明确（内联设置 → 项目 `.freecodego/personas/` → `$DSH_HOME/freecodego/personas/` → 内置），带声明式输入/输出契约：必需**输入**缺失会拒绝派生（必需**输出**缺失只告警），并有 `default_isolation` 解析进 worktree 机制。项目层受信任门禁管辖，所以不受信任的检出里的 persona 文件根本不会被打开。
 - **日常维护。** 会话删除（`sessionDeleteEnabled`）有两个入口，共用同一道开关与同一处失败提示：悬停在会话行末尾出现的垃圾桶控件，以及该会话“…”菜单里位于*归档会话*下方的具名*删除会话*行 —— 后者是触摸用户与键盘用户抵达同一动作的唯一路径，从菜单删除会先关闭菜单，失败也走悬停控件用的同一个提示。日志已消失时会幂等地清掉侧边栏里的陈旧行，而活跃会话必须先关闭；伴侣（companion）以角色形象展示所选会话的活动，共用两个座位 —— 侧栏标记与输入框上方的条带 —— 每种状态都有带标签的姿态，而不是要靠猜的形状。
+
+### 伴侣角色
+
+输入框旁边的那个小人 —— 以及侧栏的品牌标记 —— 是**从会话状态推导**出来的，而不是被告知该显示什么。客户端里的一条阶梯读取会话列表、后台任务名册与会话自己的事件日志，每个答案都有一个姿态来表现：休息、思考中、工具在跑、回复在流式输出、回合刚结束、失败、等待用户回答、已休眠。标签与状态文本描述的就是那个状态，所以图形可以变，而文字从不宣称一个会话尚未到达的结果。
+
+有三件事它刻意不做。**它不移动文字：** 两条池子按共享时钟轮换图形 —— 忙碌状态用哪个姿态来表现，以及角色戴哪个眼型（忙碌时 1.5 秒、休息时 4.2 秒，绝不让同一个眼型连着出现两次）—— 于是等待中的会话不再是「窗口开着就一直一个表情」，同一瞬间的两个座位也总画出同一张图。**它不让模型借脸说话：** `freecodego_companion_face` 可以让角色戴上 `neutral`、`happy`、`delighted`、`sad`、`focused`、`sleepy`、`surprised` 中的一个并保持几秒；因为这个调用落在会话的事件窗口里（客户端自己的事件流正是从那里读它），请求会实时出现在转录中，也不会有第二条通道漂移。**它不等谁开口：** 工具结果以失败返回时会短暂换上一张难过的脸，并且会读会话使用的**两种**形状 —— 核心的 `isError` 标记，与 harness 为「命令以非零码退出」自己渲染的那行 `[exit code: N]`。
+
+`prefers-reduced-motion` 会同时冻结两条池子与所有形变。状态、姿态、眼型与表情都会作为 data 属性发布（`data-fcg-state`、`data-fcg-pose`、`data-fcg-face`、`data-fcg-companion-expression`，以及说明它是模型点名的还是会话自己挣来的 `-source`），因为眼睛每一帧都要重画，组件之外原本无法分辨「轮换的脸」与「静止的脸」。
 
 ### 设置界面
 
@@ -271,14 +293,17 @@ Logfare 有 20 行位于训练数据授权之后，选择器会标注而不是�
 | 工程团队 | `engineering_council_review`、`engineering_team_start`、`_status`、`_report`、`_cancel`、`_request_approval`、`_mark_implemented`、`_verify`、`_board`、`_plan`、`_claim`、`_task_update`、`_recover`、`_member_start`、`_member_stop`、`_merge`、`_subagent_start` |
 | 代码审查 | `engineering_code_review`、`engineering_review_rules`、`engineering_review_status`、`engineering_review_report` |
 | Worktree | `engineering_worktree_status`、`_list`、`_enter`、`_exit` |
-| 压缩、取回与复合调用 | `headroom_retrieve`、`inspect`、`read_document`、`spill_recall`、`edit_and_run` |
+| 压缩、取回与复合调用 | `headroom_retrieve`、`inspect`、`read_document`、`edit_and_run` |
+| 伴侣 | `freecodego_companion_face` |
+| 设计（composition） | `freecodego_design_keyframes`、`_lint`、`_preview`、`_snapshot`、`_render` |
+| 设计（知识与检测） | `freecodego_uiux_search`、`freecodego_design_craft`、`freecodego_design_detect`、`freecodego_reactbits` |
 
 </details>
 
 ## 运行要求
 
 - **Node** `^22.19.0 || >=24.0.0`
-- **DeepSeek Harness** `0.1.7-alpha.2`。bundle 里声明了 `freecodego.harnessBaseline`，只对它构建时对应的那条线提供更新。
+- **DeepSeek Harness** `0.1.7-rc.2`。bundle 里声明了 `freecodego.harnessBaseline`，只对它构建时对应的那条线提供更新。
 
 ## 安装
 
@@ -288,11 +313,11 @@ bundle 以 release 资产分发，不走包注册表：
 dsh plugin --profile web add --save-exact <tarball-url>
 ```
 
-例如为 Harness `0.1.7-alpha.2` 构建的那个 bundle：
+例如为 Harness `0.1.7-rc.2` 构建的那个 bundle：
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.2/freecodego-0.1.7-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-rc.2/freecodego-0.1.7-rc.2.tgz
 ```
 
 `--profile web` 就是 `dsh web` 运行的 profile；如果你用别的方式启动 Harness，请换成你自己的 profile 名。新 bundle 需要重启 Host 才会加载。
@@ -307,7 +332,7 @@ pnpm run build
 
 ## 发行与资产命名
 
-每个 release 打 `freecodego-v<version>` 标签，它的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本 bundle 是 `freecodego-0.1.7-alpha.2.tgz`。资产名带的是 **Harness 线**而不是 bundle 版本，所以 hotfix（`v0.1.7-alpha.2.2`）依然能说明自己属于哪条线。资产名写成 bundle 版本的 release 同样能装；一个 release 里只放一个 tarball 时，无论叫什么都会被接受 —— 名字与标签不一致，不该成为让更新永远不出现的理由。
+每个 release 打 `freecodego-v<version>` 标签，它的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本 bundle 是 `freecodego-0.1.7-rc.2.tgz`。资产名带的是 **Harness 线**而不是 bundle 版本，所以 hotfix（`v0.1.7-rc.2`）依然能说明自己属于哪条线。资产名写成 bundle 版本的 release 同样能装；一个 release 里只放一个 tarball 时，无论叫什么都会被接受 —— 名字与标签不一致，不该成为让更新永远不出现的理由。
 
 更新服务读取本仓库的 release，启动后不久检查一次、之后每天一次，并用与用户安装时相同的入口 `dsh plugin add --save-exact <url>` 安装。安装会先把 bundle 落在一个同级 Profile 里，再原子提升；在重启后的 Host 健康之前，上一个 Profile 始终可恢复。
 

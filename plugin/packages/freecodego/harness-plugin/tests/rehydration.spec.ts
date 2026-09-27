@@ -121,6 +121,45 @@ describe('rehydrationText', () => {
     const text = rehydrationText({ todos: [{ content: 'ship it', status: 'pending' }], arcText: '' })
     expect(text).not.toContain('### Goals')
   })
+
+  it('leads with the fields the checkpoint dropped, because their absence is not (none)', () => {
+    // The failure this exists for: a summary that dropped "Pending Jobs" reads to the
+    // resuming model exactly like the `(none)` the summariser was told to write, so the
+    // lost work is read as "there was none". Only this side of the compaction knows the
+    // difference, and it says so before the material the compaction preserved.
+    const text = rehydrationText({
+      todos: [{ content: 'ship it', status: 'pending' }],
+      arcText: '### Goals this session pursued\n\n- [active] migrate billing\n',
+      checkpoint: { present: ['Primary Request and Intent', 'Next Step'], missing: ['Pending Jobs', 'Errors and Fixes'] },
+    })
+    const caveat = text.indexOf('## Fields the checkpoint above dropped')
+    expect(caveat).toBeGreaterThan(-1)
+    expect(caveat).toBeLessThan(text.indexOf('### Goals this session pursued'))
+    expect(text).toContain('It carries: Primary Request and Intent, Next Step.')
+    expect(text).toContain('It does not carry: Pending Jobs, Errors and Fixes.')
+    // The instruction the model needs to act on it, stated rather than implied.
+    expect(text).toContain('An absent field is not the same as')
+    expect(text).toContain('check the conversation below')
+  })
+
+  it('carries no caveat for a checkpoint that kept every field', () => {
+    const text = rehydrationText({
+      todos: [{ content: 'ship it', status: 'pending' }],
+      checkpoint: { present: ['Pending Jobs'], missing: [] },
+    })
+    expect(text).not.toContain('Fields the checkpoint above dropped')
+    // And the text with no checkpoint supplied is the one from before this existed.
+    expect(rehydrationText({ todos: [{ content: 'ship it', status: 'pending' }] })).toBe(text)
+  })
+
+  it('says a checkpoint carried none of the fields rather than listing nothing', () => {
+    const text = rehydrationText({ checkpoint: { present: [], missing: ['Pending Jobs'] } })
+    expect(text).toContain('It carries: none of the fields.')
+    // Nothing else to restore, and the caveat is still the whole body: a session with
+    // no todos and no memory is exactly the one whose only remaining fact is this.
+    expect(text).toContain('<freecodego-freecodego-rehydration>')
+    expect(text).not.toContain('## Active task list')
+  })
 })
 
 describe('the age caveat comes from the shared freshness vocabulary', () => {
@@ -214,6 +253,26 @@ describe('installRehydration', () => {
     ]))
     expect(inject).toHaveBeenCalledOnce()
     expect(String(inject.mock.calls[0]?.[0]?.content?.[0]?.text)).toContain('ship it')
+  })
+
+  it('carries the audit\'s skeleton into the injected body, and only when a field was dropped', async () => {
+    const { ctx, fire, inject } = makeCtx()
+    const skeleton = vi.fn(() => ({ present: ['Next Step'], missing: ['Pending Jobs'] }))
+    installRehydration(ctx, {
+      enabled: () => true,
+      recall: () => ({ projectId: 'p', tokenBudget: 1000, usedTokens: 0, records: [] }),
+      bodies: () => new Map(),
+      checkpointSkeleton: skeleton,
+    })
+    await fire({ type: 'compaction/end', data: { compactionId: 'c1' } }, makeSession([
+      { type: 'todo/write', data: { todos: [{ content: 'ship it', status: 'pending' }] } },
+    ]))
+    // The reader is the session's, so the note and the log line cannot disagree about
+    // which field was dropped.
+    expect(skeleton).toHaveBeenCalledOnce()
+    const body = String(inject.mock.calls[0]?.[0]?.content?.[0]?.text)
+    expect(body).toContain('It does not carry: Pending Jobs.')
+    expect(body).toContain('ship it')
   })
 
   it('folds the conversation arc only when the arc switch is on', async () => {

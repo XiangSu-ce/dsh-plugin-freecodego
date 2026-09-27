@@ -58,6 +58,91 @@ export const CONTEXT_BAND_AT: Readonly<Record<Exclude<ContextBand, 'unknown'>, n
 }
 
 /**
+ * The window the plugin's own fixed size thresholds were chosen for.
+ *
+ * Every threshold in this plugin that says "this payload is large enough to be
+ * worth compressing" or "this is enough to reclaim to be worth clearing" was
+ * picked while looking at a window of this size, and written down as an absolute
+ * number. An absolute number is a different rule on every model: 1,200 characters
+ * is about 0.2% of the window this file's thresholds were measured against, and
+ * about 0.03% of a million-token one, where it asks the compressor to spend a
+ * rewrite on payloads no reader would notice. Naming the reference makes the
+ * scaling explicit instead of leaving each caller to guess which window its own
+ * constant was meant for.
+ */
+export const REFERENCE_WINDOW_TOKENS = 128_000
+
+/**
+ * Scale a threshold chosen for the reference window to the window in use.
+ *
+ * Two rules, and both matter:
+ *
+ * 1. **An unknown window changes nothing.** A model that advertises no window is
+ *    the case the fixed number was always for, so the figure is returned clamped
+ *    but unscaled — a caller cannot invent a denominator, and the behaviour before
+ *    this existed is what remains.
+ * 2. **The bounds are the caller's, not this function's.** A threshold has its own
+ *    floor and ceiling (a compression threshold below the minimum payload worth a
+ *    rewrite is a rewrite for nothing; one above the largest useful payload turns
+ *    the feature off), and only the caller knows which figures those are.
+ *
+ * The scaling is linear in the window on purpose: the questions these thresholds
+ * ask are shares of the window — "does this payload move the needle" — and a
+ * share held constant is what makes the answer the same on every model.
+ *
+ * @param value - the threshold as it was chosen for {@link REFERENCE_WINDOW_TOKENS}.
+ * @param contextWindow - the routed model's advertised window, when it advertises one.
+ * @param bounds - the floor and ceiling this particular threshold may take.
+ * @returns the threshold to apply now, clamped into `bounds`.
+ */
+export function scaleThresholdToWindow(
+  value: number,
+  contextWindow: number | undefined,
+  bounds: { readonly min: number; readonly max: number },
+): number {
+  const bounded = (candidate: number): number => Math.min(bounds.max, Math.max(bounds.min, Math.round(candidate)))
+  if (contextWindow === undefined || !Number.isFinite(contextWindow) || contextWindow <= 0 || !Number.isFinite(value)) return bounded(value)
+  return bounded(value * (contextWindow / REFERENCE_WINDOW_TOKENS))
+}
+
+/**
+ * The slack held back for what no compressor can shrink.
+ *
+ * The response reserve answers "will the reply fit"; this answers a different
+ * question — "how much of what is already in the request is structurally immune
+ * to compaction". Tool definitions, the system text, the rules and the skills are
+ * fixed categories: the compactor can only rewrite transcript, so a window that
+ * reads 95% full of which 30% is tool schemas is not a window where 5% of slack
+ * is really available. Codex's counterpart is a flat 20,000-token constant, which
+ * is the figure this one was chosen at for {@link REFERENCE_WINDOW_TOKENS}.
+ */
+export const CONTEXT_BUFFER_TOKENS = 20_000
+
+/**
+ * The range the window-scaled buffer may take.
+ *
+ * Below the floor the slack does not change a decision (a 2,000-token buffer is
+ * noise next to a 32k window's own granularity); above the ceiling it would hold
+ * back more than a session can usefully keep for itself, and the model would be
+ * told to compact while there was room to work.
+ */
+export const CONTEXT_BUFFER_BOUNDS: { readonly min: number; readonly max: number } = { min: 2_000, max: 60_000 }
+
+/**
+ * The buffer to hold for the window in use.
+ *
+ * Scaled exactly like every other fixed figure in this plugin
+ * ({@link scaleThresholdToWindow}): a share of the window held constant, clamped
+ * into {@link CONTEXT_BUFFER_BOUNDS}, and unchanged when no window is advertised.
+ *
+ * @param contextWindow - the routed model's advertised window, when it advertises one.
+ * @returns the fixed slack to subtract from the usable window.
+ */
+export function contextBufferForWindow(contextWindow: number | undefined): number {
+  return scaleThresholdToWindow(CONTEXT_BUFFER_TOKENS, contextWindow, CONTEXT_BUFFER_BOUNDS)
+}
+
+/**
  * What the budget report is computed from.
  *
  * `measured` travels with the figures rather than being decided at render time,
@@ -76,6 +161,14 @@ export interface ContextBudgetInput {
   readonly measured: boolean
   /** Tokens the reply needs, subtracted from what is left. */
   readonly responseReserve?: number | undefined
+  /**
+   * Fixed slack subtracted *in addition to* the reply reserve — the room no
+   * compactor can hand back. Passed by the caller rather than defaulted here, so
+   * the report keeps stating only the arithmetic it was given and the policy
+   * figure is chosen once, where the window is known
+   * ({@link contextBufferForWindow}).
+   */
+  readonly buffer?: number | undefined
 }
 
 /**
@@ -89,7 +182,9 @@ export interface ContextBudgetReport {
   readonly usedTokens: number
   readonly contextWindow?: number | undefined
   readonly responseReserve: number
-  /** Window minus used minus reserve; `undefined` when the window is unknown. */
+  /** The effective fixed slack held back alongside the reserve; 0 when none. */
+  readonly buffer: number
+  /** Window minus used minus reserve minus buffer; `undefined` when the window is unknown. */
   readonly remainingTokens?: number | undefined
   /** Used divided by the window; `undefined` when the window is unknown. */
   readonly usedFraction?: number | undefined
@@ -106,11 +201,12 @@ export interface ContextBudgetReport {
  * @param usedTokens - current request pressure in tokens.
  * @param contextWindow - the routed model's advertised window, when it advertises one.
  * @param responseReserve - tokens the reply needs, taken out of the usable room.
+ * @param buffer - fixed slack for what cannot be compacted, also out of the usable room.
  * @returns The band, or `unknown` when no usable window is known.
  */
-export function classifyContextPressure(usedTokens: number, contextWindow: number | undefined, responseReserve = 0): ContextBand {
+export function classifyContextPressure(usedTokens: number, contextWindow: number | undefined, responseReserve = 0, buffer = 0): ContextBand {
   if (contextWindow === undefined || !Number.isFinite(contextWindow) || contextWindow <= 0) return 'unknown'
-  const usable = Math.max(1, contextWindow - Math.max(0, responseReserve))
+  const usable = Math.max(1, contextWindow - Math.max(0, responseReserve) - Math.max(0, buffer))
   const fraction = Math.max(0, usedTokens) / usable
   if (fraction >= CONTEXT_BAND_AT.over) return 'over'
   if (fraction >= CONTEXT_BAND_AT.critical) return 'critical'
@@ -131,25 +227,31 @@ export function classifyContextPressure(usedTokens: number, contextWindow: numbe
 export function contextBudgetReport(input: ContextBudgetInput): ContextBudgetReport {
   const usedTokens = Math.max(0, Math.round(input.usedTokens))
   const responseReserve = Math.max(0, Math.round(input.responseReserve ?? 0))
+  const buffer = Math.max(0, Math.round(input.buffer ?? 0))
   const contextWindow = input.contextWindow !== undefined && Number.isFinite(input.contextWindow) && input.contextWindow > 0
     ? Math.round(input.contextWindow)
     : undefined
-  // The reserve is only taken out of room that exists. Subtracting it from a
+  // Reserved room is only taken out of room that exists. Subtracting it from a
   // session already past its window would report the overrun *plus* the reserve
   // as the shortfall, double-counting the same tokens: a 150k request against a
   // 100k window is 50k over whether or not a 20k reply was planned, and the
-  // remaining figure has to say 50k.
-  const effectiveReserve = contextWindow === undefined
-    ? responseReserve
-    : Math.min(responseReserve, contextWindow, Math.max(0, contextWindow - usedTokens))
-  const remainingTokens = contextWindow === undefined ? undefined : contextWindow - usedTokens - effectiveReserve
+  // remaining figure has to say 50k. The reply reserve and the fixed buffer are
+  // two claims on that one finite room, and the order they are answered in is a
+  // decision rather than an implementation detail: the reply reserve is what the
+  // next turn needs to fit, while the buffer is slack against a heuristic, so the
+  // reserve is met first and the slack takes what is left.
+  const room = contextWindow === undefined ? Number.POSITIVE_INFINITY : Math.max(0, contextWindow - usedTokens)
+  const effectiveReserve = Math.min(responseReserve, room)
+  const effectiveBuffer = Math.min(buffer, Math.max(0, room - effectiveReserve))
+  const remainingTokens = contextWindow === undefined ? undefined : contextWindow - usedTokens - effectiveReserve - effectiveBuffer
   return {
     usedTokens,
     ...(contextWindow === undefined ? {} : { contextWindow }),
     responseReserve: effectiveReserve,
+    buffer: effectiveBuffer,
     ...(remainingTokens === undefined ? {} : { remainingTokens }),
     ...(contextWindow === undefined ? {} : { usedFraction: usedTokens / contextWindow }),
-    band: classifyContextPressure(usedTokens, contextWindow, effectiveReserve),
+    band: classifyContextPressure(usedTokens, contextWindow, effectiveReserve, effectiveBuffer),
     measured: input.measured,
   }
 }
@@ -201,7 +303,12 @@ export const CONTEXT_BUDGET_REPLACEMENT_NOTICE = 'This context-budget figure rep
 export function contextBudgetFragment(report: ContextBudgetReport, options: { readonly replaces?: boolean } = {}): string {
   const lines = [`Context budget (${report.band}): ${count(report.usedTokens)} tokens in use${report.measured ? '' : ' (heuristic estimate, not provider usage)'}.`]
   if (report.contextWindow !== undefined && report.remainingTokens !== undefined && report.usedFraction !== undefined) {
-    lines.push(`Window ${count(report.contextWindow)} tokens, ${percent(report.usedFraction)} used, ${count(Math.max(0, report.remainingTokens))} left after reserving ${count(report.responseReserve)} for the reply.`)
+    // The two held-back figures are named separately on purpose: a model told only
+    // the total cannot tell slack it may spend from room its own reply needs.
+    const held = report.buffer > 0
+      ? `reserving ${count(report.responseReserve)} for the reply and holding ${count(report.buffer)} as fixed headroom for tool schemas and instructions`
+      : `reserving ${count(report.responseReserve)} for the reply`
+    lines.push(`Window ${count(report.contextWindow)} tokens, ${percent(report.usedFraction)} used, ${count(Math.max(0, report.remainingTokens))} left after ${held}.`)
   }
   lines.push(remedyFor(report.band))
   if (options.replaces === true) lines.unshift(CONTEXT_BUDGET_REPLACEMENT_NOTICE)
@@ -221,7 +328,10 @@ export function describeContextBudget(report: ContextBudgetReport): string {
   if (report.contextWindow === undefined || report.remainingTokens === undefined || report.usedFraction === undefined) {
     return `${usage}; the routed model advertises no context window, so no remaining figure is available`
   }
-  return `${usage} of ${count(report.contextWindow)} (${percent(report.usedFraction)}), ${count(Math.max(0, report.remainingTokens))} remaining after a ${count(report.responseReserve)}-token reply reserve — ${report.band}`
+  const held = report.buffer > 0
+    ? `a ${count(report.responseReserve)}-token reply reserve and ${count(report.buffer)} of fixed headroom`
+    : `a ${count(report.responseReserve)}-token reply reserve`
+  return `${usage} of ${count(report.contextWindow)} (${percent(report.usedFraction)}), ${count(Math.max(0, report.remainingTokens))} remaining after ${held} — ${report.band}`
 }
 
 /**

@@ -22,8 +22,12 @@
  * ----------
  * Best-effort, exactly like the shipped spill policy: a storage failure leaves the
  * result cleared under the plain marker rather than failing the request. Losing the
- * locator costs a re-read; it never costs correctness. Nothing here decides *what*
- * to clear — that stays in `cache-cold.ts`, where the cache-cold reasoning lives.
+ * locator costs a re-read; it never costs correctness. One attempt per result, and
+ * the caller settles the outcome either way: the plain marker has already been sent
+ * to the provider by the time a second attempt could succeed, so retrying would
+ * rewrite a cached prefix for a locator the model may not need. Nothing here
+ * decides *what* to clear — that stays in `cache-cold.ts`, where the cache-cold
+ * reasoning lives.
  *
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/result-spill
  */
@@ -66,9 +70,10 @@ export interface ClearedResultToSpill {
  *
  * The returned map is keyed by tool-call id and holds only the results that were
  * genuinely parked; a target the backend rejects is simply absent, and the caller
- * falls back to the plain marker for it. That per-result granularity is why this
- * returns a map instead of a boolean: one unwritable artifact must not cost the
- * locators of the ones that succeeded.
+ * falls back to the plain marker for it — once, since absence is an outcome rather
+ * than a pending state (see `CacheColdView.settleMarkers`). That per-result
+ * granularity is why this returns a map instead of a boolean: one unwritable
+ * artifact must not cost the locators of the ones that succeeded.
  *
  * @param store - the mounted spill backend, or `undefined` when the composition has none.
  * @param sessionId - the owning session, so artifacts group under it.

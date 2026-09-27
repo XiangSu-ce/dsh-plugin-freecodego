@@ -101,6 +101,7 @@
       "@deepseek-ai/dsh-api-settings-controller/types": ["./packages/api/settings-controller/src/types.ts"],
       "@deepseek-ai/dsh-api-workspace-controller": ["./packages/api/workspace-controller/src/index.ts"],
       "@deepseek-ai/dsh-api-workspace-controller/client": ["./packages/api/workspace-controller/src/client/index.ts"],
+      "@deepseek-ai/dsh-api-workspace-controller/default-workspace": ["./packages/api/workspace-controller/src/default-workspace.ts"],
       "@deepseek-ai/dsh-api-workspace-controller/types": ["./packages/api/workspace-controller/src/types.ts"],
       "@deepseek-ai/dsh-typert-protocol": ["./packages/typert/protocol/src/index.ts"],
       "@deepseek-ai/dsh-typert-protocol/types": ["./packages/typert/protocol/src/types.ts"],
@@ -246,6 +247,9 @@
       "@deepseek-ai/dsh-client-ui-cordis": ["./packages/extensions/ui-cordis/src"],
       "@deepseek-ai/dsh-client-ui-cordis/client": ["./packages/extensions/ui-cordis/src/client"],
       "@deepseek-ai/dsh-client-test-runtime": ["./packages/test-support/client-runtime/src"],
+      "@deepseek-ai/dsh-client-shortcuts": ["./packages/client/shortcuts/src"],
+      "@deepseek-ai/dsh-client-shortcuts/protocol": ["./packages/client/shortcuts/src/protocol.ts"],
+      "@deepseek-ai/dsh-client-ui-shortcuts": ["./packages/client/ui-shortcuts/src"],
       "@deepseek-ai/dsh-client-ui-layout": ["./packages/client/ui-layout/src"],
       "@deepseek-ai/dsh-client-ui-sidebar": ["./packages/client/ui-sidebar/src"],
       "@deepseek-ai/dsh-client-ui-brand-official": ["./packages/client/ui-brand-official/src"],
@@ -286,6 +290,7 @@
       "@deepseek-ai/dsh-client-ui-trajectory": ["./packages/client/ui-trajectory/src"],
       "@deepseek-ai/dsh-client-ui-workspace": ["./packages/client/ui-workspace/src"],
       "@deepseek-ai/dsh-client-ui-theme": ["./packages/client/ui-theme/src"],
+      "@deepseek-ai/dsh-client-ui-theme/brand-font.css": ["./packages/client/ui-theme/src/styles/brand-font.css"],
       "@deepseek-ai/dsh-client-ui-settings": ["./packages/client/ui-settings/src"],
       "@deepseek-ai/dsh-client-ui-settings-general": ["./packages/client/ui-settings-general/src"],
       "@deepseek-ai/dsh-client-ui-settings-general/types": ["./packages/client/ui-settings-general/src/types.ts"],
@@ -316,6 +321,7 @@
       "@deepseek-ai/dsh-experimental-ptc-runtime-python": ["./packages/experimental/ptc-runtime-python/src"],
       "@deepseek-ai/dsh-util-crypto": ["./packages/util/crypto/src"],
       "@deepseek-ai/dsh-util-values": ["./packages/util/values/src"],
+      "@deepseek-ai/dsh-util-code-language": ["./packages/util/code-language/src"],
       // util/ folders are role-named without the util- prefix their npm names carry,
       // so these aliases stay hand-written like dsh-util-crypto above.
       "@deepseek-ai/dsh-util-time": ["./packages/util/time/src"],
@@ -344,10 +350,19 @@
       // node_modules to the built dist/*.js instead of workspace source.
       "freecodego": ["./packages/freecodego/bundle-latest/src/index.ts"],
       "freecodego/session-events": ["./packages/freecodego/bundle-latest/src/session-events.ts"],
-      "freecodego/agent-team": ["./packages/experimental/agent-team/src/index.ts"],
-      "freecodego/tool-agent-team": ["./packages/experimental/tool-agent-team/src/index.ts"],
-      "freecodego/schedule": ["./packages/schedule/schedule/src/index.ts"],
+      // The plugin half is mounted by the same bare name with a subpath, and it is
+      // the one entry here whose absence is silent rather than fatal: `tsx` finds
+      // the package in node_modules and typechecks and runs the *built* `lib/`,
+      // so an edit under `packages/freecodego/harness-plugin/src` changes nothing
+      // until someone rebuilds. `verify-cordis-config` is what reads this file for
+      // that reason — a source launch that resolves to `lib/` is the failure it
+      // names, not a missing module.
+      "freecodego/harness-plugin": ["./packages/freecodego/harness-plugin/src/index.ts"],
       "freecodego/auto-review": ["./packages/experimental/auto-review/src/index.ts"],
+      // Session history: upstream's tool package, which no upstream bundle mounts
+      // and the `dsh` install contract does not carry. Mounted as this bundle's
+      // own row so it works on an install with nothing else added.
+      "freecodego/tool-session-query": ["./packages/session-query/tool-session-query/src/index.ts"],
       // BEGIN generated package aliases — pnpm run gen-tsconfig-paths
       "@deepseek-ai/dsh-acp": ["./packages/acp/acp/src"],
       "@deepseek-ai/dsh-acp-app": ["./packages/bundle/acp-app/src"],
@@ -416,6 +431,8 @@
       "@deepseek-ai/dsh-llm": ["./packages/llm/llm/src"],
       "@deepseek-ai/dsh-llm/invariant": ["./packages/llm/llm/src/invariant.ts"],
       "@deepseek-ai/dsh-llm-deepseek": ["./packages/llm/llm-deepseek/src"],
+      "@deepseek-ai/dsh-llm-deepseek-account": ["./packages/llm/llm-deepseek-account/src"],
+      "@deepseek-ai/dsh-llm-deepseek-api-key": ["./packages/llm/llm-deepseek-api-key/src"],
       "@deepseek-ai/dsh-llm-mock-server": ["./packages/test-support/llm-mock-server/src"],
       "@deepseek-ai/dsh-llm-pi-ai": ["./packages/llm/llm-pi-ai/src"],
       "@deepseek-ai/dsh-llm-replay": ["./packages/test-support/llm-replay/src"],

@@ -188,6 +188,32 @@ export function parseMarketplaceJson(value: unknown): unknown {
   try { return JSON.parse(value) as unknown } catch { return undefined }
 }
 
+/**
+ * Argument verbs that name an *installation* step rather than a server launch.
+ *
+ * A marketplace `config` payload is untrusted third-party data and upstream
+ * does not schema-check it: `mcp.so`'s `context7-mcp` entry publishes
+ * `{"command":"npx","args":["ctx7","setup"]}`, and `ctx7 setup` is Context7's
+ * OAuth *installer* ("Set up Context7 MCP for your coding agents") — not its
+ * MCP server, which is the URL `https://mcp.context7.com/mcp` or the
+ * `@upstash/context7-mcp` stdio package the payload documents separately.
+ * Installed verbatim, the entry spawns a process that authenticates in a
+ * browser and then never answers the JSON-RPC handshake, so the capability
+ * surface reports "connecting" forever and no later settings write lands.
+ * The gate fails closed: the entry stays addable by hand, where the payload's
+ * own installation notes are visible.
+ */
+const INSTALLER_ARG_VERBS = new Set(['setup', 'install', 'init', 'configure', 'login', 'auth', 'remove', 'uninstall'])
+
+/**
+ * Whether a resolved stdio command launches an installer instead of a server.
+ * @param command - the definition's argv, executable first.
+ * @returns true when any argument names an installation step.
+ */
+export function mcpCommandLooksLikeInstaller(command: readonly string[]): boolean {
+  return command.slice(1).some(argument => INSTALLER_ARG_VERBS.has(argument.replace(/^--?/u, '').toLowerCase()))
+}
+
 /** Build an installable MCP server definition from a marketplace detail record.
  * @param slug - the marketplace slug the server is named from.
  * @param detail - the untrusted detail payload to read the connection from.
@@ -215,7 +241,10 @@ export function marketplaceMcpDefinition(slug: string, detail: Record<string, un
   const command = Array.isArray(config.command)
     ? config.command.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map(item => item.trim())
     : typeof config.command === 'string' && config.command.trim() !== '' ? [config.command.trim(), ...stringArray(config.args)] : []
-  if (command.length === 0) return undefined
+  // An installer argv is not a server: importing it produces an entry that can
+  // never complete the MCP handshake, so it is refused at the same boundary as
+  // a missing transport and stays a manual add.
+  if (command.length === 0 || mcpCommandLooksLikeInstaller(command)) return undefined
   const env = Object.fromEntries(Object.keys(record(config.environment ?? config.env)).map(key => [key, '']))
   return { enabled: true, transport: 'stdio', serverName: marketplaceMcpName(slug), command: command[0]!, args: command.slice(1), env, cwd: typeof config.cwd === 'string' ? config.cwd : '', url: '', headers: {} }
 }

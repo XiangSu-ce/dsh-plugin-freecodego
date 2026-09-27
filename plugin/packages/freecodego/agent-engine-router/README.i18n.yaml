@@ -1,6 +1,37 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/agent-engine-router/README.md
-README.md: 59f3a2c7aad38a59d72f42007fec75abd1acb6fd
-README.zh.md: 38adacda6a5ecc16ad57a853e0829e9b02054c62
+/:
+  en: 0960b1ed6d73aa75
+  zh: cf874390d27ffb4d
+/dsh-freecodego-agent-engine-router:
+  en: 6e75e22fdc9fe39b
+  zh: f9bc6a1c4b83d9ee
+/dsh-freecodego-agent-engine-router/summary:
+  en: 5029fe242bb2ce33
+  zh: f04710c3fbfe7968
+/dsh-freecodego-agent-engine-router/table-of-contents:
+  en: 838c8cca143cd610
+  zh: 108ff0fde79b2a23
+/dsh-freecodego-agent-engine-router/why-this-is-an-extension-not-a-duplicate:
+  en: 5f63eb3c8869b241
+  zh: 6ac3d5ee4a0d8fbe
+/dsh-freecodego-agent-engine-router/routing-and-the-engine-plan:
+  en: 97dd8f045ed9609d
+  zh: 41213a2d0e6d2f11
+/dsh-freecodego-agent-engine-router/native-engines:
+  en: 1ced3e1947a0c960
+  zh: c9009e1d2d370b0e
+/dsh-freecodego-agent-engine-router/model-experience:
+  en: f7c7d4bd83f4b008
+  zh: 661cc7c7a61105c1
+/dsh-freecodego-agent-engine-router/model-experience/kv-cache-effect:
+  en: 60494814f3d25aa3
+  zh: 12ce6f8832d39149
+/dsh-freecodego-agent-engine-router/known-limitations-and-deferred-work:
+  en: 9746879549dd9c41
+  zh: 4689ace664b4cf40
+/dsh-freecodego-agent-engine-router/known-limitations-and-deferred-work/dev-note:
+  en: 76b700dbf15f8d75
+  zh: 4255f34a193ec3a3

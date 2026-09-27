@@ -39,6 +39,7 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/memory/memory-security
  */
 
+import { truncateWithoutSplittingSurrogatePair } from '@deepseek-ai/dsh-output-retention'
 import { describeSecretFindings, scanForSecrets, type SecretFinding } from '../secret-scan.ts'
 
 /** Marker `redactSecretSpans` writes. Recognized so an already-scrubbed entry
@@ -97,17 +98,27 @@ export function sanitizeMemoryIdentifier(value: string, maxLength: number = MAX_
  * character: a JSON encoder writes it as an unpaired escape, every reader shows a
  * replacement glyph, and the damage is visible in the stored body, in the excerpt
  * injected into the prompt, and in the export file the user opens.
+ *
+ * The cut itself belongs to the harness: `@deepseek-ai/dsh-output-retention`
+ * exports `truncateWithoutSplittingSurrogatePair`, written for exactly this and
+ * already the one every core tool uses to cap its own output. This plugin used to
+ * carry a second implementation of it — the same idea, a different comparison —
+ * and a boundary rule stated twice is a rule that can be right in one place and
+ * wrong in the other. Only the *empty* case is answered locally, because the
+ * harness helper returns `text` for a non-positive cap (`text.length <= 0` is
+ * false for a negative one) while every caller here means "keep nothing".
+ *
+ * {@link tailAtCodePointBoundary} is the half that stays local on purpose: the
+ * harness has no tail-side helper at all (`output-retention`'s only boundary export
+ * is the prefix cut), so the newest-part-of-a-message slices this plugin makes are
+ * not a duplicate of anything.
  * @param value - the string to cut.
  * @param maxLength - the maximum number of UTF-16 units to keep.
  * @returns the prefix, ending on a whole code point.
  */
 export function cutAtCodePointBoundary(value: string, maxLength: number): string {
   if (maxLength <= 0) return ''
-  if (maxLength >= value.length) return value
-  const last = value.charCodeAt(maxLength - 1)
-  const splitsPair = last >= 0xd800 && last <= 0xdbff && maxLength < value.length
-    && value.charCodeAt(maxLength) >= 0xdc00 && value.charCodeAt(maxLength) <= 0xdfff
-  return value.slice(0, splitsPair ? maxLength - 1 : maxLength)
+  return truncateWithoutSplittingSurrogatePair(value, maxLength)
 }
 
 /** Keep at most `maxLength` units from the **end**, without starting on the

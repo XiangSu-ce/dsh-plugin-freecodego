@@ -39,7 +39,7 @@
 
 import type { Live } from './types.ts'
 import type {
-  FreeCodeGoAdvisorSettings,
+  FreeCodeGoSecondModelSettings,
   FreeCodeGoAutomationSettings,
   FreeCodeGoCapabilitySettings,
   FreeCodeGoEngineeringSettings,
@@ -221,7 +221,7 @@ export type FreeCodeGoEngineSettings =
   & FreeCodeGoPluginUpdateSettings
   & FreeCodeGoAutomationSettings
   & FreeCodeGoReviewSettings
-  & FreeCodeGoAdvisorSettings
+  & FreeCodeGoSecondModelSettings
 
 /**
  * What a composition may supply: the same document with every setting a plain value.

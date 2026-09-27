@@ -118,7 +118,7 @@ describe('FreeCodeGo sync overlay', () => {
  *
  * Why the rule is needed at all: the synced workspace typechecks and builds as a
  * whole, so upstream's own specs and build configs import helpers under `scripts/`
- * (`gen-tool-catalog`, `project-doc-site`, `libreoffice-engine`, the coverage
+ * (`gen-tool-catalog`, `project-doc-site`, `libreoffice-packages`, the coverage
  * partitions `vitest.config.ts` names). A published clone starts without them --
  * `scripts/*` is gitignored except for the fork's own entries -- so the release run
  * reached `build:official` and died on unresolved imports of files this working copy
@@ -187,6 +187,85 @@ describe('FreeCodeGo sync script sources', () => {
       expect(failed).toBe(true)
       // Nothing was added on the way to the refusal.
       expect(statSync(join(scripts, 'absent-upstream.ts'), { throwIfNoEntry: false })).toBeUndefined()
+    } finally {
+      rmSync(dirname(source), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    }
+  })
+})
+
+/**
+ * A checkout on this host writes a symlink as a regular file holding its target,
+ * because `core.symlinks=false` is the Windows default. `mirrorDirectory` copies
+ * with `dereference: true`, so there was nothing to resolve and the link *text*
+ * landed in the tree -- measured on twelve upstream paths, two of them load-bearing
+ * (`packages/CLAUDE.md` carried the nine bytes `AGENTS.md`; a snapshot fixture the
+ * session suite compares against real output).
+ *
+ * Why the fixture uses `git update-index --cacheinfo`
+ * --------------------------------------------------
+ * The defect is "the index says 120000, the working tree says plain text", and that
+ * pair cannot be built on Windows with `ln -s` at all -- the host refuses. Writing
+ * the index entry directly reproduces the same pair anywhere, without needing the
+ * privilege whose absence causes the bug. The look-alike case is the other half of
+ * the contract: a file whose whole body happens to name a sibling must be left
+ * alone, which is why the repair asks git for the mode instead of testing shape.
+ */
+describe('FreeCodeGo sync symlink repair', () => {
+  function git(args: readonly string[], cwd: string): string {
+    return execFileSync('git', [...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  }
+
+  /** A throwaway checkout whose `apps/CLAUDE.md` is recorded as a link, or merely looks like one. */
+  function gitFixture(options: { readonly recordedAsLink: boolean }): { readonly source: string; readonly root: string } {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-sync-links-'))
+    const source = join(base, 'source')
+    const root = join(base, 'root')
+    mkdirSync(join(source, 'apps'), { recursive: true })
+    mkdirSync(join(source, 'packages/demo'), { recursive: true })
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(source, 'apps/AGENTS.md'), 'the agent instructions\n')
+    writeFileSync(join(source, 'apps/CLAUDE.md'), 'AGENTS.md\n')
+    writeFileSync(join(source, 'packages/demo/package.json'), '{}\n')
+    git(['init', '-q', '.'], source)
+    git(['config', 'user.email', 'fixture@example.invalid'], source)
+    git(['config', 'user.name', 'fixture'], source)
+    git(['add', '-A'], source)
+    if (options.recordedAsLink) {
+      const blob = git(['rev-parse', ':apps/CLAUDE.md'], source)
+      git(['update-index', '--add', '--cacheinfo', `120000,${blob},apps/CLAUDE.md`], source)
+    }
+    git(['commit', '-qm', 'fixture'], source)
+    const commit = git(['rev-parse', 'HEAD'], source)
+    writeFileSync(join(root, 'harness.lock.json'), JSON.stringify({ repository: 'https://example.invalid/harness.git', candidate: { commit } }))
+    writeFileSync(join(root, 'harness.config.json'), JSON.stringify({ repository: 'https://example.invalid/harness.git' }))
+    return { source, root }
+  }
+
+  function sync(source: string, root: string): void {
+    execFileSync(process.execPath, [SYNC_SCRIPT], {
+      env: { ...process.env, HARNESS_SYNC_SOURCE: source, HARNESS_SYNC_ROOT: root, HARNESS_SYNC_COPY_ONLY: '1' },
+      stdio: 'pipe',
+    })
+  }
+
+  it('restores the target bytes of a link the source materialized', () => {
+    const { source, root } = gitFixture({ recordedAsLink: true })
+    try {
+      sync(source, root)
+      // The mirror copied the link text; the repair replaces it with the target's bytes.
+      expect(readFileSync(join(root, 'apps/CLAUDE.md'), 'utf8')).toBe('the agent instructions\n')
+      expect(readFileSync(join(root, 'apps/AGENTS.md'), 'utf8')).toBe('the agent instructions\n')
+    } finally {
+      rmSync(dirname(source), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    }
+  })
+
+  it('leaves a look-alike alone when git does not record it as a link', () => {
+    const { source, root } = gitFixture({ recordedAsLink: false })
+    try {
+      sync(source, root)
+      // Shape is not evidence: this file's body names a sibling, and it is still a file.
+      expect(readFileSync(join(root, 'apps/CLAUDE.md'), 'utf8')).toBe('AGENTS.md\n')
     } finally {
       rmSync(dirname(source), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
     }

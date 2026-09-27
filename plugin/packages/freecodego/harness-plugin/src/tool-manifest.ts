@@ -77,18 +77,11 @@ export interface PluginToolRecord {
 /**
  * Every tool this plugin registers, with what it needs and how Plan Mode treats it.
  *
- * Order is the reading order of the surfaces (advisor, media, engineering,
- * headroom, and the four unprefixed readers), not alphabetical: a diff against
- * this table is meant to be readable next to the module it came from.
+ * Order is the reading order of the surfaces (media, engineering, headroom, and
+ * the four unprefixed readers), not alphabetical: a diff against this table is
+ * meant to be readable next to the module it came from.
  */
 export const PLUGIN_TOOL_MANIFEST: readonly PluginToolRecord[] = [
-  // ── Advisor: findings, and the evidence it reads with the Harness's tools ─
-  // The reviewer's `read`/`glob`/`grep` are the Harness's own tools, dispatched
-  // through its registry, so they are classified there rather than listed here.
-  { name: 'advisor_status', capability: 'read', planMode: 'allow' },
-  { name: 'advisor_review', capability: 'read', planMode: 'allow' },
-  { name: 'advisor_notes', capability: 'read', planMode: 'allow' },
-
   // ── Media and scheduling: output outside the repo ─────────────────────────
   // Generated images, audio and documents are written to the data home rather
   // than into the workspace, which is the same category as saving a memory: they
@@ -103,6 +96,75 @@ export const PLUGIN_TOOL_MANIFEST: readonly PluginToolRecord[] = [
   // Pure arithmetic over the schedule rules: it stores no reminder and creates
   // none, so planning *when* a rule falls is exactly what drafting a plan may do.
   { name: 'freecodego_schedule_plan', capability: 'read', planMode: 'allow' },
+
+  // ── Design: composition work that changes nothing in the workspace ────────
+  // All five are `read` for the same reason the generated-media rows are: what
+  // they produce lands outside the repo (an attachment, a loopback listener, a
+  // JSON answer), and none of them can alter a file the project contains. The
+  // axis this field drives is `verify-on-stop`'s "tools a turn may have changed
+  // the workspace with", and filing a render there would demand verification of
+  // a turn that changed nothing.
+  //
+  // They are registered only while the design pack's own switches are on, which
+  // is a *mount* condition rather than a capability one — the row states what
+  // holding the name needs, not whether the plugin offers it today.
+  { name: 'freecodego_design_keyframes', capability: 'read', planMode: 'allow' },
+  { name: 'freecodego_design_lint', capability: 'read', planMode: 'allow' },
+  {
+    name: 'freecodego_design_preview',
+    capability: 'read',
+    planMode: 'allow',
+    note: 'Serves one composition on 127.0.0.1 for a human to open; the listener holds an in-memory snapshot and is released when the pack stands down, so nothing outside the process is left behind.',
+  },
+  {
+    name: 'freecodego_design_snapshot',
+    capability: 'read',
+    planMode: 'allow',
+    note: 'Launches the machine\'s own browser on a throwaway profile to photograph one frame. It runs a program, but not one the model chooses and not against the workspace — the launch is the plugin\'s fixed Edge/Chrome path.',
+  },
+  {
+    name: 'freecodego_design_render',
+    capability: 'read',
+    planMode: 'allow',
+    note: 'Same launch as the snapshot, for every frame of a sequence; the MP4 lands in the attachment store, not in the project.',
+  },
+
+  // The catalogue reads only its packaged, immutable data and has no workspace
+  // service, so searching it is a read even when the design pack is switched off.
+  { name: 'freecodego_uiux_search', capability: 'read', planMode: 'allow' },
+  // Craft is the same shape of read: eleven vendored rulebooks and their
+  // forward-reference register, all package assets. It holds no workspace service
+  // and no network client, so there is nothing it could change even by accident —
+  // including the slug it was asked for, which is refused rather than dropped.
+  { name: 'freecodego_design_craft', capability: 'read', planMode: 'allow' },
+  {
+    name: 'freecodego_design_detect',
+    capability: 'read',
+    planMode: 'allow',
+    note: 'Reads source through the fs service, and — when this machine already has one — runs its Impeccable engine: a binary this plugin locates on its own (IMPECCABLE_ENGINE, $PATH, ~/.impeccable/bin), never one the model names, and never one this tool downloads. A URL target is fetched by that engine, which is why the tool is a read of the workspace rather than of the network.',
+  },
+
+  // The one design tool that both reads the network and writes the workspace:
+  // upstream's own component registry, fetched on demand because the components'
+  // licence permits using them and forbids redistributing them, so no copy of them
+  // lives in this package. Its `search` and `get` actions only read — no cache, no
+  // install — but `apply` writes files into a directory the caller names, inside
+  // the session working directory, which is a real change to the project and is
+  // filed as one. One row for all three actions, and therefore the strictest of
+  // them: a fence that allowed the reads would allow the write with them, since a
+  // row is what Plan Mode answers by.
+  {
+    name: 'freecodego_reactbits',
+    capability: 'write',
+    planMode: 'refuse',
+    note: '`apply` writes the component\'s files into the project (never outside the session working directory, never over an existing file unless the caller asks, and never anything but the files upstream publishes, altered only by a leading `\'use client\'` and a bounded-motion block). `search` and `get` read only — the network, and nothing on disk. The write is planned and reported: a call without `confirm: true` is refused and lists every path it would have written.',
+  },
+
+  // The companion character's face: the model asks, the client draws. The tool itself
+  // holds no service at all — its whole effect is that the call lands in the Session's
+  // event window, which is where the character reads it. Nothing to change, nothing to
+  // run, and available while planning for the same reason decoration is.
+  { name: 'freecodego_companion_face', capability: 'read', planMode: 'allow' },
 
   // ── Engineering: diagnostics, memory, structure, checkpoints ──────────────
   { name: 'engineering_status', capability: 'read', planMode: 'allow' },
@@ -165,12 +227,6 @@ export const PLUGIN_TOOL_MANIFEST: readonly PluginToolRecord[] = [
 
   // ── Reviews and councils: read-only by construction ───────────────────────
   {
-    name: 'engineering_council_review',
-    capability: 'delegate',
-    planMode: 'allow',
-    note: 'It starts child Agents, but every participant is started read-only, so dispatching one during planning cannot change the workspace.',
-  },
-  {
     name: 'engineering_team_start',
     capability: 'delegate',
     planMode: 'allow',
@@ -218,11 +274,30 @@ export const PLUGIN_TOOL_MANIFEST: readonly PluginToolRecord[] = [
     note: 'Edits a file and runs the command that proves the edit landed; it is also the one tool registered with no plugin prefix, so it is reached by name rather than by prefix.',
   },
 
+  // ── The shell tool's other names, bridged to the one this host registers ──
+  // Both rows are `execute` rather than `read`: what each call carries is a command
+  // that reaches the machine, which is the authority `bash` itself has. They are
+  // `allow` for planning because the refusal still arrives — the command's own
+  // judge (Plan Mode's command branch, the command policy, the sandbox) runs on the
+  // nested dispatch, with the full command text in hand — while refusing the *name*
+  // would refuse `git status` for being spelled `shell`.
+  {
+    name: 'shell',
+    capability: 'execute',
+    planMode: 'allow',
+    note: 'Registered by `shell-alias.ts` as a second name for this host\'s shell tool; Plan Mode judges the command on the nested dispatch rather than by this name.',
+  },
+  {
+    name: 'bash',
+    capability: 'execute',
+    planMode: 'allow',
+    note: 'Registered on a host whose shell tool has another name (Windows ships `pwsh`), so the shell spelling every engine offers exists here too; the command is judged on the nested dispatch, exactly as above.',
+  },
+
   // ── Headroom and the unprefixed readers ───────────────────────────────────
   { name: 'headroom_retrieve', capability: 'read', planMode: 'allow' },
   { name: 'inspect', capability: 'read', planMode: 'allow' },
   { name: 'read_document', capability: 'read', planMode: 'allow' },
-  { name: 'spill_recall', capability: 'read', planMode: 'allow' },
 ]
 
 const BY_NAME = new Map(PLUGIN_TOOL_MANIFEST.map(tool => [tool.name, tool]))

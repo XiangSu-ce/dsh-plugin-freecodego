@@ -227,12 +227,12 @@ export const CURSOR_EVENT_ALIASES: Readonly<Record<string, HookEvent>> = {
  * them are inert on a composition that never registers them, which is why the
  * sibling lists keep them and why the cost of carrying one is nothing.
  *
- * `spill_recall` is deliberately not a reader here. `CREDENTIAL_PATH_TOOLS` lists
- * it because the credential shield has to cover every way a path becomes a file
- * read, but this table answers a different question — which matcher spelling a
- * user's hook means — and no other agent spells "recall a spilled payload" as a
- * read. `grep` is not a reader here for the same reason it is one there: a search
- * has its own family.
+ * The locator form of `headroom_retrieve` is deliberately not a reader here.
+ * `CREDENTIAL_PATH_TOOLS` lists the tool because the credential shield has to cover
+ * every way a path becomes a file read, but this table answers a different question
+ * — which matcher spelling a user's hook means — and no other agent spells "page
+ * through a parked artifact" as a read. `grep` is not a reader here for the same
+ * reason it is one there: a search has its own family.
  */
 const TOOL_FAMILIES: readonly (readonly string[])[] = [
   ['bash', 'shell', 'exec', 'exec_command', 'run_command', 'pwsh'],

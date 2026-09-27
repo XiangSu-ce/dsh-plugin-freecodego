@@ -68,6 +68,23 @@ export const MEMORY_TELEMETRY_SCHEMA = {
     removed: { kind: 'count' },
     durationMs: { kind: 'durationMs' },
   },
+  /**
+   * One session's temporary memory layer coming to an end.
+   *
+   * It reports `topics` and not which topics, on the same rule as every other
+   * event here: a topic name is distilled private text, and `memory.retention`
+   * already reports a deletion the same way.
+   *
+   * The values are the outcomes a reader acts on. `absent` — a session with
+   * nothing temporary, which is every disposal in a deployment that never uses the
+   * scope — is deliberately not among them: it is not an event, and listing it
+   * would invite an emitter to make one per session close.
+   */
+  'memory.reclaim': {
+    outcome: { kind: 'enum', values: ['reclaimed', 'unnamed', 'lease-held', 'failed'] },
+    topics: { kind: 'count' },
+    durationMs: { kind: 'durationMs' },
+  },
 } as const
 
 /**

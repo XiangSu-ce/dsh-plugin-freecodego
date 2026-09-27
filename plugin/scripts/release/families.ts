@@ -509,7 +509,7 @@ class FreeCodeGoFamily extends ReleaseFamily {
    * to be present.
    *
    * A host loads this package through its `exports` subpaths — the patch file
-   * mounts `freecodego/schedule` and its siblings by name — so an export naming a
+   * mounts `freecodego/auto-review` and its siblings by name — so an export naming a
    * file the build did not write is a composition that mounts nothing at load
    * time, long after publication. The declared paths are read from the manifest
    * rather than listed here, so the check cannot drift from what ships.

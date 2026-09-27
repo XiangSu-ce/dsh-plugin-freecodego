@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { truncateWithoutSplittingSurrogatePair } from '@deepseek-ai/dsh-output-retention'
 import { scanForSecrets } from '../src/secret-scan.ts'
 import {
   MEMORY_FRESH_MS,
@@ -10,6 +11,7 @@ import {
 import {
   MEMORY_REDACTION_MARKER,
   containsMemoryRedaction,
+  cutAtCodePointBoundary,
   looksLikeMemorySecretValue,
   sanitizeMemoryIdentifier,
   sanitizeMemoryText,
@@ -54,6 +56,28 @@ describe('memory text normalization', () => {
   it('truncates only when the text exceeds the limit', () => {
     expect(sanitizeMemoryText('abcdef', 3)).toBe('abc')
     expect(sanitizeMemoryText('abc', 3)).toBe('abc')
+  })
+
+  it('takes its boundary rule from the harness instead of carrying a second copy', () => {
+    // `@deepseek-ai/dsh-output-retention` owns "cap text without splitting a
+    // surrogate pair" — every core tool caps its own output through it — so this
+    // package must not keep a parallel implementation that can drift from it. The
+    // samples below are the shapes the two could disagree on: a pair at the cut, a
+    // pair after it, and text that already carries an unpaired half (`\uD83D`
+    // alone, and a high surrogate before an ordinary character). The last of those
+    // is the one the plugin's earlier local rule answered differently, by keeping a
+    // half-character the harness drops.
+    const samples = ['abcdef', 'aaaaa\u{1F600}', '\u{1F600}'.repeat(3), 'a\u{1F600}b', 'a\uD83Db', '\uD83D', '\uDE00x']
+    for (const sample of samples) {
+      for (const limit of [1, 2, 3, 4, 5, 6, 7, sample.length]) {
+        expect(cutAtCodePointBoundary(sample, limit)).toBe(truncateWithoutSplittingSurrogatePair(sample, limit))
+      }
+    }
+    // The one case that stays local: a non-positive cap means "keep nothing" here,
+    // where the harness helper returns its input (it clamps a length, it does not
+    // answer an empty request).
+    expect(cutAtCodePointBoundary('abcdef', 0)).toBe('')
+    expect(cutAtCodePointBoundary('abcdef', -1)).toBe('')
   })
 
   it('never cuts a character in half', () => {

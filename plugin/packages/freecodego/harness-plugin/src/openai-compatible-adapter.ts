@@ -2,7 +2,7 @@
 
 import { attributionHeaders, LlmAdapter, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {
-  GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk,
+  GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk, ToolSchema,
 } from '@deepseek-ai/dsh-llm'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import type {
@@ -96,6 +96,18 @@ export interface OpenAiCompatibleAdapterOptions {
   readonly providerName: string
   readonly listModels: (provider: string) => Promise<readonly LlmModelInfo[]>
   readonly resolveConnection: (model: string, signal?: AbortSignal) => Promise<OpenAiCompatibleConnection>
+  /**
+   * Tool names the provider's free tier requires on every request that already
+   * carries tools. Missing ones are appended as minimal definitions, so a
+   * caller whose tool set is narrower than the provider's fingerprint — a
+   * Plan Mode turn, a subagent scope, or any agent whose deferred/denied
+   * names exclude one of the five — is still served.
+   *
+   * A request that declares no tools at all is left untouched: it is not agent
+   * traffic, and inventing tools for it would offer a model a capability its
+   * caller never granted. See {@link withRequiredAgentTools}.
+   */
+  readonly requireAgentTools?: readonly string[]
   /** Reject selection before it can become the Session's next route. */
   readonly assertSelectable?: (model: string) => Promise<void>
   /** Metadata discovery may resolve unconfigured models to render disabled rows. */
@@ -104,7 +116,17 @@ export interface OpenAiCompatibleAdapterOptions {
   readonly normalizeReasoningEffort?: (effort: string | undefined) => SupportedReasoningEffort | undefined
   /** Selects the request dialect. The gateway uses `thinking`; direct OpenAI-compatible providers use `reasoning_effort`. */
   readonly reasoningWire?: 'gateway' | 'standard'
-  /** Some OpenAI-compatible providers reject the optional stream usage envelope. */
+  /**
+   * Drop the `stream_options.include_usage` envelope from every request.
+   *
+   * The envelope is what makes a provider report its token counts, and a turn
+   * whose provider reported nothing reaches the token ledger as an attempt with
+   * every bucket at zero — the route then reads as permanently unused no matter
+   * how much traffic it serves. So this is an escape hatch for an endpoint whose
+   * refusal is already known, not a per-provider preference: the adapter detects
+   * that refusal itself and retries the request without the envelope, which is
+   * why a working provider must not be opted out of it by hand.
+   */
   readonly includeUsage?: boolean
   /** Default shown in the picker when this route supports optional reasoning. */
   readonly defaultReasoningEffort?: SupportedReasoningEffort
@@ -250,9 +272,12 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
           : { reasoningEffort: ReasoningEffortId(normalizedEffort) }),
     }
     const defaults = { ...(this.config.reasoningWire === undefined ? {} : { reasoningWire: this.config.reasoningWire }), ...(this.config.includeUsage === false ? { includeUsage: false } : {}) }
-    const body = await this.serialize(request, defaults)
+    const serialized = await this.serialize(request, defaults)
+    const body = this.config.requireAgentTools === undefined
+      ? serialized
+      : withRequiredAgentTools(serialized, options.tools, this.config.requireAgentTools)
     const endpoint = `${connection.baseURL.replace(/\/+$/, '')}${connection.endpointPath ?? '/chat/completions'}`
-    const response = await this.post(endpoint, { authorization: `Bearer ${connection.apiKey}`, ...connection.headers }, body, options, (detail) => {
+    const response = await this.postToleratingUsageRefusal(endpoint, { authorization: `Bearer ${connection.apiKey}`, ...connection.headers }, body, options, (detail) => {
       if (normalizedEffort !== undefined && normalizedEffort !== 'off' && isRejectedReasoningParameter(detail)) {
         this.config.onReasoningRejected?.(options.model, normalizedEffort)
       }
@@ -264,6 +289,48 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
       if (options.signal?.aborted) throw new LlmError(`${this.config.providerName} request aborted by caller`, 'ABORTED', { cause: error })
       if (error instanceof LlmError) throw error
       throw new LlmError(`${this.config.providerName} stream failed`, 'TRANSPORT', { cause: error })
+    }
+  }
+
+  /**
+   * POST a body, retrying once without the usage envelope if the endpoint
+   * refuses that optional extension.
+   *
+   * Sending the envelope is a correctness requirement rather than a preference:
+   * without `stream_options.include_usage` a provider reports no token counts at
+   * all, and an attempt whose provider said nothing is recorded with every
+   * bucket at zero — so the route appears in the token panel as never used while
+   * the user is paying for it. Some endpoints answer `400` to the extension
+   * anyway, and that refusal is a body-shape answer that arrived before any
+   * generation: the same request without the field is retried so such a provider
+   * keeps working, and the missing usage is then its own limitation rather than
+   * a silent local choice.
+   *
+   * The refusal has to name the field to qualify. A `400` about anything else is
+   * surfaced unchanged: retrying it would send a request the upstream had
+   * already rejected on purpose.
+   * @param endpoint - the absolute completion endpoint.
+   * @param headers - request headers, already carrying the route's authorization.
+   * @param body - the serialized request body, envelope included unless opted out.
+   * @param options - the caller's request, for its cancellation signal.
+   * @param onBadRequest - the provider's own hook for a `400` it can explain.
+   * @returns the accepted response.
+   */
+  private async postToleratingUsageRefusal(
+    endpoint: string,
+    headers: Readonly<Record<string, string>>,
+    body: Record<string, unknown>,
+    options: GenerateOptions,
+    onBadRequest?: (detail: string) => void,
+  ): Promise<Response> {
+    try {
+      return await this.post(endpoint, headers, body, options, onBadRequest)
+    } catch (error) {
+      // Only a body that actually carried the envelope has one to drop, so an
+      // opted-out route cannot be sent twice here.
+      if (!('stream_options' in body) || !refusesUsageEnvelope(error)) throw error
+      const { stream_options: _refusedEnvelope, ...withoutUsageEnvelope } = body
+      return await this.post(endpoint, headers, withoutUsageEnvelope, options, onBadRequest)
     }
   }
 
@@ -365,6 +432,21 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
 }
 
 /**
+ * Whether an upstream refused the optional `stream_options` usage envelope.
+ *
+ * Both halves are required. `400` is the status a body-shape refusal uses, so
+ * another status is a different failure; and the provider's own words have to
+ * name the field, because a `400` that means something else is a real request
+ * error that must reach the caller instead of being retried.
+ * @param error - the failure the POST raised.
+ * @returns whether dropping the envelope and retrying is the right response.
+ */
+function refusesUsageEnvelope(error: unknown): boolean {
+  if (!(error instanceof LlmError) || error.failure.status !== 400) return false
+  return /stream[_-]?options|include[_-]?usage/iu.test(error.message)
+}
+
+/**
  * Harness 0.1.6 replaced the attachment service's `ImageRequestPolicy` with an
  * `ImageRequestTarget` of explicit width, height, and byte budget, so the pixel
  * ceiling is projected onto each source's geometry here — the construction
@@ -455,4 +537,58 @@ export function redactProviderDetail(value: string): string {
     .replace(/(?:^|[\s"'=&?])(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|token)(?:["'=:\s]+)[a-z0-9._~+/=-]{8,}/gi, '$1<redacted>')      .replace(/\bsk-[A-Za-z0-9._-]{16,}\b/g, 'sk-<redacted>')
     .replace(/[\r\n]+/g, ' ')
     .slice(0, 1_024)
+}
+
+/**
+ * Append minimal definitions for any of `names` a chat-completions body does not
+ * already declare, so the request reads as an agent session upstream.
+ *
+ * OpenCode's free tier refuses (`403 FreeTierError: OpenCode's free tier can
+ * only be used from within OpenCode`) any request that does not look like one of
+ * its own client's agent turns. Two of the three conditions are request
+ * identity, carried by headers; the third is this one, and it is a body
+ * condition: `bash`, `edit`, `glob`, `grep` and `read` must all appear in
+ * `tools`. A caller whose own tool set is narrower — a Plan Mode turn, a
+ * subagent scope, or any agent whose deferred/denied names exclude one of the
+ * five — would otherwise be refused for a reason that has nothing to do with
+ * what it asked for.
+ *
+ * The widening is deliberately one-sided. A body that declares *no* tools is
+ * returned untouched rather than filled in: it is not agent traffic, and
+ * synthesizing tools for it would offer the model a capability its caller never
+ * granted. `memory-dream-model.ts` types `tools` as an empty tuple precisely so
+ * that consolidation cannot call anything, and `prepareAnonymousBody` in the
+ * reference gateway makes the same distinction from the other side.
+ *
+ * Whether an appended tool can actually *run* is the caller's question, not
+ * this one: the Harness derives the wire schema from each agent's tool scope and
+ * refuses a call outside it, so a definition added here buys the request a
+ * shape, not a permission.
+ *
+ * @param body - the serialized chat-completions body.
+ * @param tools - the tools the caller declared, if any.
+ * @param names - the tool names the provider requires on an agent-shaped body.
+ * @returns the body, with the missing definitions appended; the same object when
+ *   the caller declared no tools or already declared every required name.
+ */
+function withRequiredAgentTools(
+  body: Record<string, unknown>,
+  tools: readonly ToolSchema[] | undefined,
+  names: readonly string[],
+): Record<string, unknown> {
+  if (tools === undefined || tools.length === 0) return body
+  const declared = new Set(tools.map(tool => tool.name))
+  const missing = names.filter(name => !declared.has(name))
+  if (missing.length === 0) return body
+  const existing = Array.isArray(body.tools) ? body.tools : []
+  return {
+    ...body,
+    tools: [
+      ...existing,
+      ...missing.map(name => ({
+        type: 'function',
+        function: { name, description: `Agent tool ${name}`, parameters: { type: 'object', properties: {} } },
+      })),
+    ],
+  }
 }

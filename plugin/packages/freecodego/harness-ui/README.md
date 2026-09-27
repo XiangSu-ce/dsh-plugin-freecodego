@@ -70,7 +70,7 @@ The `设置` page carries the code review panel (`ReviewPanel`): the mode (`off`
 
 - **Token usage dashboard** — the local ledger and its redacted usage view, rendered with the shared stacked-bar visuals.
 - **Generated media** — image, video, and audio tool calls get a dedicated tool view, and the media defaults the tools read live in this settings surface.
-- **Voice input** — a composer control that transcribes through the Groq Whisper route (`voiceInputEnabled`).
+- **Voice input** — no microphone of this plugin's own: the Host half registers a cloud recognizer into the Harness's voice-input feature, so its provider picker gains a no-download option, and `voiceInputEnabled` is the switch that offers it.
 - **Plan review** — the current plan is read back with line numbers, line-level remarks are collected, and they are composed into one rework message (the line numbers match the Host's own print, so a remark cannot land on another line).
 - **Session deletion** — clears a stale sidebar row idempotently when the log is already gone, while a live session must be closed first.
 - **Guard, sandbox, and trust** — the guard switches the Host mirrors for the UI (the credential-path and environment-read guard, the native-engine doom-loop guard, LSP auto-mount, post-compaction rehydration), the session's sandbox mode with the mode actually in force read back, and the folder-trust grant/revoke controls beside the project-config report they gate.

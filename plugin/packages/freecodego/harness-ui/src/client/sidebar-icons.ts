@@ -1,6 +1,6 @@
 /** Plugin-owned semantic icon layer for FreeCodeGo settings entries. */
 
-type IconName = 'freecodego' | 'settings' | 'models' | 'plugin' | 'agentPreset' | 'mcp' | 'skills' | 'advisor' | 'engineering' | 'tokenUsage'
+type IconName = 'freecodego' | 'settings' | 'models' | 'plugin' | 'agentPreset' | 'mcp' | 'skills' | 'engineering' | 'design' | 'tokenUsage'
 
 /**
  * The settings entries this layer decorates, keyed by the label the official
@@ -31,8 +31,8 @@ const targets: readonly { readonly name: IconName; readonly labels: readonly str
   { name: 'agentPreset', labels: ['Agent 预设', 'Agent presets', 'Agent Presets'] },
   { name: 'mcp', labels: ['MCP'] },
   { name: 'skills', labels: ['Skills'] },
-  { name: 'advisor', labels: ['Advisor'] },
   { name: 'engineering', labels: ['工程增强', 'Engineering'] },
+  { name: 'design', labels: ['设计', 'Design'] },
   { name: 'tokenUsage', labels: ['Token 消耗', 'Token usage'] },
 ]
 
@@ -44,8 +44,8 @@ const glyphs: Record<IconName, string> = {
   agentPreset: '<rect fill="#2e9787" x="3" y="13" width="8" height="8"/><rect fill="#5bd5bd" x="5" y="15" width="4" height="4"/><rect fill="#3d7fd6" x="21" y="3" width="8" height="8"/><rect fill="#9ed6ff" x="23" y="5" width="4" height="4"/><rect fill="#e46c61" x="21" y="21" width="8" height="8"/><rect fill="#ffc06b" x="23" y="23" width="4" height="4"/><path fill="none" stroke="#34455b" stroke-width="3" d="M11 17h7m0-8v5m0 6v5"/><rect fill="#fff2a4" x="15" y="14" width="6" height="6"/><rect fill="#34455b" x="17" y="16" width="2" height="2"/>',
   mcp: '<path fill="#ef8b32" d="M2 14h8v10H2z"/><path fill="#ffd16a" d="M4 17h4v3H4z"/><path fill="none" stroke="#fff4d6" stroke-width="2" d="M10 19h7m0-8v8m0-8h7m-7 8h7"/><rect fill="#53a7ff" x="24" y="8" width="7" height="7"/><rect fill="#25d5c2" x="24" y="22" width="7" height="7"/>',
   skills: '<path fill="#8463df" d="M3 11h12v16H3z"/><path fill="#b89cff" d="M15 11h14v16H15z"/><path fill="none" stroke="#f0e8ff" stroke-width="2" d="M15 13v14M6 16h6m-6 5h6m12-5h3m-3 5h3"/><path fill="#ffc855" d="M23 2h3v5h5v3h-5v5h-3v-5h-5V7h5z"/>',
-  advisor: '<path fill="#78dcbf" d="M2 7h28v18H17l-5 5v-5H2z"/><path fill="none" stroke="#c8ffeb" stroke-width="2" d="M2 7h28v18H17l-5 5v-5H2z"/><path fill="#1c957d" d="M7 14h18v5H7z"/><rect fill="#fff" x="12" y="15" width="8" height="2"/><rect fill="#17232b" x="15" y="15" width="2" height="2"/><rect fill="#ffc855" x="4" y="3" width="4" height="4"/>',
   engineering: '<path fill="#ff805e" d="M4 4h9v6l-3 3 8 8-5 5-8-8-3 3H0v-9l4-4-3-3z"/><path fill="none" stroke="#ffd2c7" stroke-width="2" d="M4 4h9v6l-3 3 8 8-5 5-8-8-3 3H0v-9l4-4-3-3z"/><rect fill="#4d99f5" x="22" y="4" width="8" height="8"/><rect fill="#4d99f5" x="22" y="22" width="8" height="8"/><path fill="none" stroke="#b9e1ff" stroke-width="2" d="M18 8h4m-4 18h4"/>',
+  design: '<rect fill="#3d7fd6" x="3" y="3" width="16" height="11"/><path fill="none" stroke="#9ed6ff" stroke-width="2" d="M3 3h16v11H3z"/><rect fill="#ffc855" x="3" y="18" width="10" height="11"/><rect fill="#ef6e45" x="17" y="18" width="12" height="11"/><rect fill="#fff2a4" x="22" y="6" width="6" height="6"/><rect fill="#24334b" x="24" y="8" width="2" height="2"/>',
   tokenUsage: '<rect fill="#3d7fd6" x="3" y="18" width="5" height="11"/><rect fill="#5cc8b1" x="11" y="11" width="5" height="18"/><rect fill="#ef9b4a" x="19" y="4" width="5" height="25"/><path fill="none" stroke="#24334b" stroke-width="2" d="M2 30h24"/><rect fill="#fff3a6" x="26" y="7" width="4" height="4"/><path fill="none" stroke="#24334b" stroke-width="2" d="M28 11v14"/>',
 }
 

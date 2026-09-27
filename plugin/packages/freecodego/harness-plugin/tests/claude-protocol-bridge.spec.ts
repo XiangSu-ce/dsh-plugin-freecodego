@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { AttachmentId, type AttachmentStore, type SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
+import { LlmError, ToolCallId, type ContentBlock, type GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { ClaudeProtocolBridge, bridgeRouteIdOf, encodeCodexBridgeRoute } from '../src/claude-protocol-bridge.ts'
 
 const bridges: ClaudeProtocolBridge[] = []
@@ -423,5 +424,153 @@ describe('a stream that fails after it started', () => {
     // so it appears once: a second copy would mean two sources ended one stream.
     expect(body.split('[DONE]')).toHaveLength(2)
     expect(body).toContain('"type":"response.completed"')
+  })
+})
+
+describe('images arriving on the Anthropic route', () => {
+  /** A real 1x1 PNG, so the fixture is an image rather than bytes shaped like one. */
+  const ONE_PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+  /** That PNG's decoded length and leading bytes, which is what proves a decode happened. */
+  const PNG_BYTES = 70
+  const PNG_MAGIC = [137, 80, 78, 71, 13, 10, 26, 10]
+
+  /** A store double that records every commit it is handed. */
+  function recordingStore(saved: SaveImageAttachment[]): AttachmentStore {
+    // Typed as the one member the bridge reads, so a change to `saveImage`'s
+    // shape breaks this file instead of letting the double drift away from it.
+    const double: { saveImage: AttachmentStore['saveImage'] } = {
+      saveImage: (input) => {
+        saved.push(input)
+        return Promise.resolve({
+          attachmentId: AttachmentId(`att-${String(saved.length)}`),
+          mediaType: input.mediaType,
+          bytes: input.data.byteLength,
+          width: 1,
+          height: 1,
+        })
+      },
+    }
+    return double as unknown as AttachmentStore
+  }
+
+  /** A store that refuses every commit the way the real one refuses an oversized batch. */
+  function refusingStore(code: string): AttachmentStore {
+    const double: { saveImage: AttachmentStore['saveImage'] } = {
+      saveImage: () => Promise.reject(Object.assign(new Error('refused by the store'), { code })),
+    }
+    return double as unknown as AttachmentStore
+  }
+
+  /** POST one user turn and return the options the bridge handed to the LLM. */
+  async function sentOptions(store: AttachmentStore | undefined, content: readonly unknown[]): Promise<GenerateOptions | undefined> {
+    let sent: GenerateOptions | undefined
+    const bridge = new ClaudeProtocolBridge({
+      async *stream(input) {
+        sent = input
+        yield { type: 'text-delta', index: 0, text: 'ok' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    }, undefined, store === undefined ? () => undefined : () => store)
+    bridges.push(bridge)
+    const endpoint = await bridge.endpoint('agnes', 'agnes-3.0-flash')
+    await fetch(endpoint.baseURL + '/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': endpoint.apiKey },
+      body: JSON.stringify({ model: 'agnes-3.0-flash', max_tokens: 32, stream: true, messages: [{ role: 'user', content }] }),
+    })
+    return sent
+  }
+
+  /** The image blocks a message list carries, whatever turn they landed in. */
+  function imageBlocks(options: GenerateOptions | undefined): readonly Extract<ContentBlock, { type: 'image' }>[] {
+    return (options?.messages ?? []).flatMap(message => message.content.filter(
+      (block): block is Extract<ContentBlock, { type: 'image' }> => block.type === 'image',
+    ))
+  }
+
+  it('hands the model a durable image block where it used to hand over a sentence', async () => {
+    const saved: SaveImageAttachment[] = []
+    const sent = await sentOptions(recordingStore(saved), [
+      { type: 'text', text: 'what is in this picture?' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: ONE_PIXEL_PNG } },
+    ])
+
+    // The bytes really crossed: the store was handed the decoded image — its PNG
+    // magic number and its full length, not the base64 text that arrived — under
+    // the media type the client declared.
+    expect(saved.map(input => [input.mediaType, input.data.byteLength, Array.from(input.data.slice(0, 8))]))
+      .toEqual([['image/png', PNG_BYTES, PNG_MAGIC]])
+
+    expect(imageBlocks(sent).map(block => [String(block.attachment.attachmentId), block.attachment.mediaType]))
+      .toEqual([['att-1', 'image/png']])
+    // The old behaviour is replaced, not merely supplemented.
+    expect(JSON.stringify(sent?.messages)).not.toContain('not forwarded')
+  })
+
+  it('forwards an image that a tool_result carried, beside the result text', async () => {
+    // The second half of the same defect: a screenshot returned by a tool is a
+    // `tool_result` content part, and that path flattened images too.
+    const saved: SaveImageAttachment[] = []
+    const sent = await sentOptions(recordingStore(saved), [{
+      type: 'tool_result',
+      tool_use_id: 'call_1',
+      content: [
+        { type: 'text', text: 'screenshot attached' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: ONE_PIXEL_PNG } },
+      ],
+    }])
+
+    expect(saved).toHaveLength(1)
+    expect(imageBlocks(sent)).toHaveLength(1)
+    const tool = (sent?.messages ?? []).find(message => message.role === 'tool')
+    // The text survives as its own block; only the image changed shape.
+    expect(tool?.content).toContainEqual({ type: 'text', text: 'screenshot attached' })
+  })
+
+  it('names the reason when the deployment has no attachment storage', async () => {
+    const sent = await sentOptions(undefined, [
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: ONE_PIXEL_PNG } },
+    ])
+
+    const text = JSON.stringify(sent?.messages)
+    expect(text).toContain('no attachment storage')
+    // The sentence this replaces asserted something general and false about the
+    // bridge; a fallback that cannot say why is the defect, not the fallback.
+    expect(text).not.toContain('not forwarded by the FreeCodeGo bridge')
+  })
+
+  it('does not fetch a remote source, and says which source it declined', async () => {
+    const saved: SaveImageAttachment[] = []
+    const sent = await sentOptions(recordingStore(saved), [
+      { type: 'image', source: { type: 'url', url: 'https://example.test/a.png' } },
+    ])
+
+    expect(saved).toHaveLength(0)
+    expect(JSON.stringify(sent?.messages)).toContain('remote URL sources are not fetched')
+  })
+
+  it('reports a storage refusal with the code the store used', async () => {
+    const sent = await sentOptions(refusingStore('IMAGES_TOO_LARGE'), [
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: ONE_PIXEL_PNG } },
+    ])
+
+    const text = JSON.stringify(sent?.messages)
+    // A refused image is a reported loss, not a silent one, and the code is what
+    // tells the model whether resizing would help.
+    expect(text).toContain('IMAGES_TOO_LARGE')
+    expect(text).toContain('not forwarded')
+  })
+
+  it('leaves a text-only result byte-identical to the flattening it replaces', async () => {
+    // The text projection has callers that never touch an image, and this is the
+    // assertion that keeps the image work from changing them.
+    const sent = await sentOptions(undefined, [{
+      type: 'tool_result',
+      tool_use_id: 'call_2',
+      content: [{ type: 'text', text: 'first' }, { type: 'text', text: '' }, { type: 'text', text: 'second' }],
+    }])
+
+    const tool = (sent?.messages ?? []).find(message => message.role === 'tool')
+    expect(tool?.content).toEqual([{ type: 'text', text: 'first\nsecond' }])
   })
 })

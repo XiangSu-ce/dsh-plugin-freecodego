@@ -32,6 +32,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { isUsableSkillName } from './collisions.ts'
 import {
   SKILL_LOCK_FILENAME,
   compareByPath,
@@ -111,11 +112,14 @@ export interface InstallRefusal {
  */
 export function validateSkillName(name: string): { readonly ok: true; readonly name: string } | { readonly ok: false; readonly reason: string } {
   if (typeof name !== 'string' || name.trim() === '') return { ok: false, reason: 'a skill needs a name' }
-  if (name.length > 64) return { ok: false, reason: `the skill name is ${name.length} characters; the limit is 64` }
-  if (name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-    return { ok: false, reason: `"${name}" is not a single directory name` }
+  // Publish and install must agree on the canonical Skill namespace. Besides
+  // preventing different lockfile keys from aliasing one directory on a
+  // case-insensitive filesystem, the lowercase kebab-case grammar rules out
+  // Win32 trailing-dot/space path aliases such as `.. ` before they reach join().
+  if (!isUsableSkillName(name)) {
+    return { ok: false, reason: `"${name}" is not a usable skill name: lowercase letters, digits and dashes only, at most 64 characters, no leading dash` }
   }
-  if (/[\u0000-\u001f<>:"|?*]/u.test(name)) return { ok: false, reason: `"${name}" contains a character no path segment may carry` }
+  if (isReservedDeviceName(name)) return { ok: false, reason: `"${name}" is a reserved device name on Windows` }
   return { ok: true, name }
 }
 
@@ -159,6 +163,15 @@ export function validatePayloadFiles(files: readonly SkillPayloadFile[]): { read
     if (segments.some(segment => segment === '..' || segment === '' || segment === '.')) {
       return { ok: false, reason: `"${file.path}" contains a path segment that would leave the skill root` }
     }
+    // Windows strips trailing dots and spaces from path segments, and common
+    // macOS/Windows filesystems compare names without case sensitivity. A payload
+    // that distinguishes `Foo.md` from `foo.md` (or `name.` from `name`) on the
+    // install machine can therefore overwrite one file while the lock records two.
+    // Refuse Windows-ambiguous suffixes everywhere and compare canonical aliases
+    // rather than only the source spelling below.
+    if (segments.some(segment => /[. ]$/u.test(segment))) {
+      return { ok: false, reason: `"${file.path}" has a path segment ending in a dot or space, which is not portable across filesystems` }
+    }
     // A backslash is a separator on Windows and an ordinary character everywhere
     // else, so splitting on `/` alone would leave `a\..\..\b` as one innocent-looking
     // segment and let `join` resolve it out of the staging root on the one platform
@@ -175,8 +188,9 @@ export function validatePayloadFiles(files: readonly SkillPayloadFile[]): { read
     if (reserved !== undefined) {
       return { ok: false, reason: `"${file.path}" contains "${reserved}", a name this filesystem may resolve to a device rather than a file` }
     }
-    if (seen.has(file.path)) return { ok: false, reason: `"${file.path}" appears twice in the payload` }
-    seen.add(file.path)
+    const canonicalPath = segments.map(segment => segment.normalize('NFC').toLowerCase()).join('/')
+    if (seen.has(canonicalPath)) return { ok: false, reason: `"${file.path}" aliases another path in the payload on a case-insensitive filesystem` }
+    seen.add(canonicalPath)
   }
   return { ok: true }
 }

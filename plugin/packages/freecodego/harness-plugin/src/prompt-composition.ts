@@ -317,6 +317,112 @@ export function buildPromptComposition(input: PromptCompositionInput): PromptCom
 }
 
 /**
+ * One category's quota: what it may occupy, and how far past that it is.
+ *
+ * `quotaTokens` for a fixed category is its own figure, not a target: nothing in
+ * this plugin compresses the system prompt, the tool block or the Skill catalog,
+ * so its remedy is a settings change rather than a compression. Saying that with
+ * a quota that cannot be breached is the honest shape — inventing a fractional
+ * cap would report a breach no mechanism can act on, and a pressure figure that
+ * never turns into a next step is the report this projection exists to replace.
+ */
+export interface PromptCategoryQuota {
+  readonly id: PromptCompositionCategoryId
+  readonly label: string
+  readonly tokens: number
+  /** Share of the snapshot total; `0` when the total was zero. */
+  readonly share: number
+  readonly quotaTokens: number
+  /** Tokens past the quota; always `0` for a fixed category. */
+  readonly overTokens: number
+}
+
+/**
+ * The compression budget a prompt breakdown implies.
+ *
+ * Why a report needs one
+ * ----------------------
+ * `buildPromptComposition` answers *what the prompt is made of*, and a table of
+ * eight rows is a diagnosis, not a decision: nothing in the plugin could act on
+ * "tool definitions are 38% of this request". This projection is the missing
+ * half — it charges the categories no compressor can shrink **first**, and gives
+ * the conversation what is left. That remainder is a real constraint rather than
+ * a restatement of the table: it is the room the transcript and its tool results
+ * may occupy given what the fixed block already costs, so the amount the
+ * transcript is *over* it is exactly what compression has to reclaim.
+ *
+ * Two rules keep it from becoming a second opinion about the window:
+ *
+ * 1. **The usable room comes from `context-budget.ts`, never from here.** This
+ *    module is arithmetic over the breakdown; the band boundaries, the reply
+ *    reserve and the unknown-window case all stay in the one module that owns
+ *    them, and a caller passes the number it computed there.
+ * 2. **An unknown total is not a zero.** A conversation row of zero with a
+ *    measured total of zero is "nothing measured yet", so the quotas come back
+ *    empty rather than reporting a transcript that is somehow under budget.
+ *
+ * @module
+ */
+export interface PromptCompositionQuota {
+  /** Room the prompt may occupy, as the caller computed it. */
+  readonly usableTokens: number
+  /** Tokens the categories no compressor can shrink already cost. */
+  readonly fixedTokens: number
+  /** Tokens the transcript and its tool results cost. */
+  readonly conversationTokens: number
+  /** What the conversation may occupy: the usable room after the fixed block. */
+  readonly conversationQuotaTokens: number
+  /** Tokens the transcript is over its quota by; `0` when it fits. */
+  readonly reclaimTokens: number
+  /** `reclaimTokens` as a fraction of the conversation quota; `undefined` when the quota is zero. */
+  readonly pressure?: number | undefined
+  readonly categories: readonly PromptCategoryQuota[]
+}
+
+/**
+ * Charge the fixed categories first and give the transcript the remainder.
+ *
+ * @param snapshot - the breakdown to attribute; its rows are the only source of
+ *   the figures, so a quota can never disagree with the table it came from.
+ * @param options - the room the prompt may occupy, from `context-budget.ts`.
+ * @returns the per-category quotas and what compression has to reclaim.
+ */
+export function promptCompositionQuota(
+  snapshot: PromptCompositionSnapshot,
+  options: { readonly usableTokens: number },
+): PromptCompositionQuota {
+  const usableTokens = Math.max(0, Math.round(options.usableTokens))
+  const tokensById = new Map(snapshot.categories.map(category => [category.id, Math.max(0, Math.round(category.tokens))]))
+  const shareById = new Map(snapshot.categories.map(category => [category.id, category.share ?? 0]))
+  const fixedTokens = PROPORTIONAL_CATEGORIES.reduce((sum, id) => sum + (tokensById.get(id) ?? 0), 0)
+  const conversationTokens = tokensById.get(RESIDUAL_CATEGORY) ?? 0
+  const conversationQuotaTokens = Math.max(0, usableTokens - fixedTokens)
+  const reclaimTokens = Math.max(0, conversationTokens - conversationQuotaTokens)
+  const pressure = conversationQuotaTokens <= 0 ? undefined : reclaimTokens / conversationQuotaTokens
+  const categories = PROMPT_COMPOSITION_CATEGORIES.map((category) => {
+    const tokens = tokensById.get(category.id) ?? 0
+    const compressible = category.id === RESIDUAL_CATEGORY
+    return {
+      id: category.id,
+      label: LABELS.get(category.id) ?? category.id,
+      tokens,
+      share: shareById.get(category.id) ?? 0,
+      quotaTokens: compressible ? conversationQuotaTokens : tokens,
+      overTokens: compressible ? reclaimTokens : 0,
+    }
+  })
+  return {
+    usableTokens,
+    fixedTokens,
+    conversationTokens,
+    conversationQuotaTokens,
+    reclaimTokens,
+    ...(pressure === undefined ? {} : { pressure }),
+    categories,
+  }
+}
+
+/**
  * Rebuild after a compaction rewrote the summarized conversation.
  *
  * Compaction changes exactly one thing: the conversation collapses into a
@@ -391,6 +497,50 @@ export function describePromptComposition(snapshot: PromptCompositionSnapshot): 
   const conversation = snapshot.categories.find(category => category.id === RESIDUAL_CATEGORY)
   if (snapshot.measured && conversation !== undefined) {
     lines.push('The conversation figure is the residual after the cacheable categories, so it carries their apportionment error; read it as "everything else", not as a measurement of the transcript alone.')
+  }
+  return lines.join('\n')
+}
+
+/**
+ * Render the fixed categories as the panel a reader acts on.
+ *
+ * Why a second rendering rather than more rows in the breakdown: the breakdown
+ * says what the prompt is made of, and eight rows sorted by size answer "what is
+ * big" but not "what can I do about it". Most of what fills a window cannot be
+ * compressed by anything in this plugin — the system prompt, the tool block, the
+ * rules, the Skill catalog, the MCP catalogs and the subagent definitions are
+ * all *settings*. Only the transcript is the compressor's business. This renders
+ * exactly that split, in one place, so a reader sees which side of it each
+ * figure falls on instead of inferring it from a table that treats all eight
+ * rows alike.
+ *
+ * The fixed rows carry no `over` column by construction (see
+ * {@link PromptCategoryQuota}): a breach no mechanism can act on would be a
+ * pressure figure with no next step, so the remedy is stated in words instead —
+ * for a fixed category the next step is a settings change.
+ *
+ * @param quota - the quota projection to render.
+ * @returns the readable panel, one line per row.
+ */
+export function describePromptCompositionQuota(quota: PromptCompositionQuota): string {
+  const lines: string[] = []
+  const fixedShare = quota.usableTokens <= 0 ? undefined : quota.fixedTokens / quota.usableTokens
+  // Both percentages below are shares of the *usable room* and the row percentages
+  // are shares of the prompt, so the header says which denominator it used: a panel
+  // that printed two different bases as bare "27.3%" and "15.4%" would read as an
+  // arithmetic error rather than as two questions.
+  lines.push(`Compression budget: ${count(quota.usableTokens)} usable tokens${fixedShare === undefined ? '' : `, of which ${count(quota.fixedTokens)} (${percent(fixedShare)} of the room) is fixed`}.`)
+  lines.push(`The transcript may occupy ${count(quota.conversationQuotaTokens)} tokens${quota.pressure === undefined ? '' : `, and it is ${count(quota.reclaimTokens)} over that (pressure ${quota.pressure.toFixed(2)})`}.`)
+  const fixed = quota.categories.filter(category => category.id !== RESIDUAL_CATEGORY && category.tokens > 0)
+  if (fixed.length > 0) {
+    lines.push('Fixed — nothing in this plugin compresses these; each one is a settings change:')
+    for (const row of [...fixed].sort((left, right) => right.tokens - left.tokens)) {
+      lines.push(`- ${row.label}: ${count(row.tokens)} tokens (${percent(row.share)} of the prompt)`)
+    }
+  }
+  const conversation = quota.categories.find(category => category.id === RESIDUAL_CATEGORY)
+  if (conversation !== undefined) {
+    lines.push(`- ${conversation.label}: ${count(conversation.tokens)} tokens against a quota of ${count(conversation.quotaTokens)} — the only row compression can reclaim room from.`)
   }
   return lines.join('\n')
 }

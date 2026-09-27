@@ -56,7 +56,7 @@ const DEFAULT_MAX_ROUNDS = 2
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_QUORUM = 2
 const MAX_OUTPUT_CHARS = 6_000
-const READ_ONLY_ALLOW = new Set(['read', 'glob', 'grep', 'engineering_graph_status', 'engineering_graph_search', 'engineering_graph_explain', 'engineering_graph_path', 'engineering_graph_affected', 'engineering_graph_overview', 'engineering_graph_canvas', 'engineering_memory_search', 'engineering_memory_get', 'engineering_memory_timeline', 'advisor_status', 'advisor_notes'])
+const READ_ONLY_ALLOW = new Set(['read', 'glob', 'grep', 'engineering_graph_status', 'engineering_graph_search', 'engineering_graph_explain', 'engineering_graph_path', 'engineering_graph_affected', 'engineering_graph_overview', 'engineering_graph_canvas', 'engineering_memory_search', 'engineering_memory_get', 'engineering_memory_timeline'])
 /** Terminal tasks keep their parent Agent and full report alive; drop them after the polling window. */
 const COUNCIL_TASK_RETENTION_MS = 30 * 60 * 1_000
 

@@ -95,6 +95,28 @@ describe('Trae model menu', () => {
     expect((await menu.resolveModel('trae', 'Doubao-Seed-Evolving')).reasoning).toBeUndefined()
   })
 
+  it('compacts against the window each configuration publishes, not one number for the table', async () => {
+    // The table does publish limits (`context_window_tokens`, keyed by client build
+    // channel), and they are not one size: measured on a real account the spread ran
+    // from 53,192 to 1,000,000 with dev 200000 on the most rows — while the connector
+    // declared a flat 128,000 for all 46. The two numbers below are the defect in
+    // each direction: 200,000 was compacted early, and 53,192 was over-promised,
+    // which lets a conversation grow past what the configuration accepts.
+    serveTable([
+      configRow('glm-5.3', 'GLM-5.3', { context_window_tokens: { dev: 200_000 } }),
+      configRow('solo-small', 'Small', { context_window_tokens: { dev: 53_192, max: 53_192 } }),
+      configRow('solo-silent', 'Silent'),
+    ])
+    const menu = adapter()
+    // `context` is the field the harness reads the window from, so the assertion is
+    // on that path rather than on the adapter's own constant.
+    const windowOf = async (model: string): Promise<number | undefined> => (await menu.resolveModel('trae', model)).context?.contextWindow
+    await expect(windowOf('glm-5.3')).resolves.toBe(200_000)
+    await expect(windowOf('solo-small')).resolves.toBe(53_192)
+    // A configuration that publishes none keeps the connector's own floor.
+    await expect(windowOf('solo-silent')).resolves.toBe(128_000)
+  })
+
   it('hides the model list behind sign-in', async () => {
     serveTable([configRow('glm-5.3', 'GLM-5.3')])
     const empty = new TraeAdapter(new TraeClient({

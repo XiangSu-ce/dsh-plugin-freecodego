@@ -95,6 +95,28 @@ export const WORKSPACE_MUTATING_TOOLS: ReadonlySet<string> = new Set([
   'notebook_write',
   'fs_write',
   'fs_edit',
+  // The shells. A shell is a writer as directly as `write` is — `sed -i`, a
+  // formatter, a codegen script, `npm install`, a `git` command all change the
+  // tree with no file tool in the turn — and it is the tool this module's own
+  // nudge tells the model to run its check with, so a shell-only turn is the
+  // commonest shape of the hole this set exists to close. It was in no list here:
+  // the turn was filed as one that changed nothing, `onTurnStopping` returned at
+  // its first line, and the change went unverified.
+  //
+  // `pwsh` is not optional, for the reason `CLEARABLE_TOOL_KINDS` in `cache-cold.ts`
+  // and the shell branch in `plan-mode.ts` both record: the base `cordis.patch.yml`
+  // disables `tool-bash` on win32 and enables `tool-pwsh`, so on Windows the POSIX
+  // spelling is unreachable and a list naming only `bash` would never fire there.
+  // The inert spellings (`shell`, `exec_command`, `run_command`, `exec`,
+  // `local_shell`) are the ones other agents use; a name with no registration is
+  // free here, which is what the header means by the set leaning long.
+  'bash',
+  'pwsh',
+  'shell',
+  'exec_command',
+  'run_command',
+  'exec',
+  'local_shell',
   // This plugin's own tools: every name whose manifest row is not `read`, read off
   // `tool-manifest.ts`. Absent from the set, such a turn was filed as one that
   // changed nothing and the nudge never fired; the specific holes are
@@ -168,6 +190,18 @@ export interface VerifyOnStopHost {
    * fact as "unchanged" and never a match.
    */
   readonly readChangeRevision: (agentId: string) => Promise<string | undefined>
+  /**
+   * What the conversation's official Team board reports about finished work, when
+   * one exists.
+   *
+   * Optional, and optional on purpose: the Team runtime is an optional bundle, so
+   * a deployment without it has no board and this gate behaves exactly as it did
+   * before. When a board does exist, the line is what turns the nudge from "this
+   * turn changed something" into "your team says this work is finished, and
+   * nothing here measured it" — a claim the model can act on, and one only the
+   * Team's own session events can supply.
+   */
+  readonly readBoardFacts?: ((agentId: string) => string | undefined) | undefined
   /** Deliver the nudge to the agent. */
   readonly inject: (agentId: string, text: string) => void
   /** Diagnostics; the gate never throws into the turn it is observing. */
@@ -217,12 +251,15 @@ function workspaceIdentity(changedPaths: readonly string[], revision: string | u
  * genuinely needs no verification (prose, a comment) must not be argued with —
  * the gate exists to make an omission visible, not to insist.
  *
- * @param input - the changed paths and whatever verification was recorded.
+ * @param input - the changed paths, whatever verification was recorded, and what
+ * the conversation's Team board reports about the work, when one exists.
  * @returns the message to deliver.
  */
 export function buildVerifyOnStopNudge(input: {
   readonly changedPaths: readonly string[]
   readonly evidence: VerifyOnStopEvidence | undefined
+  /** The Team board's own report, placed before the verdict it is evidence about. */
+  readonly board?: string | undefined
 }): string {
   const named = input.changedPaths.slice(0, MAX_NAMED_PATHS)
   const rest = input.changedPaths.length - named.length
@@ -236,6 +273,7 @@ export function buildVerifyOnStopNudge(input: {
       ? 'A verification was recorded, but not for the workspace as it stands now.'
       : `The last verification of this work came back ${input.evidence.verdict.toUpperCase()}.`
   return [
+    ...input.board === undefined || input.board === '' ? [] : [input.board],
     `This turn changed the workspace (${list}) but established nothing about the change. ${recorded}`,
     'A green build is not a verification: the project gate says the workspace still compiles, not that the new behaviour is right.',
     'Run the check that covers these files now, through your shell tool, and read its exit status. A command whose last stage is `true`, `echo`, or a pipe into `tail` reports that stage\'s status, not the check\'s.',
@@ -344,12 +382,20 @@ export class FreeCodeGoVerifyOnStop {
         this.nudgedAt.delete(agentId)
         return
       }
+      // The board is read only on the path that speaks, and never allowed to fail
+      // the turn: it is evidence for the nudge, not a second gate.
+      let board: string | undefined
+      try {
+        board = this.host.readBoardFacts?.(agentId)
+      } catch (error: unknown) {
+        this.host.log(`freecodego: verify-on-stop could not read the Team board: ${String(error)}`)
+      }
       // The latch is keyed by the same identity, and for the same reason: a
       // second edit of an already-modified file is a different fact, so the
       // nudge for it must not be suppressed as a repetition of the first.
       if (this.nudgedAt.get(agentId) === identity) return
       this.nudgedAt.set(agentId, identity)
-      this.host.inject(agentId, buildVerifyOnStopNudge({ changedPaths, evidence }))
+      this.host.inject(agentId, buildVerifyOnStopNudge({ changedPaths, evidence, board }))
     } catch (error: unknown) {
       this.host.log(`freecodego: verify-on-stop could not read the workspace: ${String(error)}`)
     }

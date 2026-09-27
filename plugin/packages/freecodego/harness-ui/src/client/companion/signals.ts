@@ -29,6 +29,7 @@ import type { JobView, JobsSnapshot } from '@deepseek-ai/dsh-api-job-controller/
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { CompanionSignals } from './arbiter.ts'
+import type { ExpressionName } from './eyes/faces.ts'
 
 /**
  * Reading one fact out of the Session list snapshot.
@@ -188,6 +189,27 @@ export interface CompanionObservation {
   readonly noticeKey?: string | undefined
   /** A message or subagent result arrived outside the current turn. */
   readonly notified?: boolean | undefined
+  /**
+   * Identity of the newest expression the model asked the companion to wear.
+   *
+   * Set only for a request this build can draw, so `expressionKey !== undefined`
+   * implies {@link CompanionObservation.expression} is too: a name nothing draws is
+   * dropped by the feed rather than opened as a window over an empty answer.
+   */
+  readonly expressionKey?: string | undefined
+  /** The expression that request named. */
+  readonly expression?: ExpressionName | undefined
+  /**
+   * Identity of the newest tool call that came back a failure, as news.
+   *
+   * The automatic half of the face vocabulary's second source. The model asks with a
+   * tool and its request is an identity; the *session* also has moments worth a face,
+   * and a failed tool call is the first of them — the one instant in a long turn where
+   * "still working" and "this is not cooperating" are different pictures. It arrives
+   * from the same feed (`./activity.ts`) and is treated exactly like the other news: a
+   * different identity opens a window, and the fact staying in the log does not.
+   */
+  readonly toolFailureKey?: string | undefined
 }
 
 /** What the projection remembers between calls. */
@@ -214,6 +236,14 @@ export interface CompanionSignalMemory {
   readonly noticeKey: string | undefined
   /** Until when an outside message is still offered, in milliseconds. */
   readonly noticeUntilMs: number
+  /** The expression already taken up, so only a different request changes the face. */
+  readonly expressionKey: string | undefined
+  /** Until when a requested expression is still worn, in milliseconds. */
+  readonly expressionUntilMs: number
+  /** The tool failure already reacted to, so only a different one reacts again. */
+  readonly toolFailureKey: string | undefined
+  /** Until when that reaction is still worn, in milliseconds. */
+  readonly momentUntilMs: number
 }
 
 /** Quiet time after which the companion powers down. */
@@ -265,6 +295,44 @@ export const START_HOLD_MS = 2_800
 export const NOTICE_HOLD_MS = 3_200
 
 /**
+ * How long an expression the model asked for is worn.
+ *
+ * Longer than every other window here, and deliberately: the others are news about a
+ * turn, while this one is a face, and a face that lasted less than the pose it is
+ * drawn on would read as a glitch rather than as an expression. It outlives the
+ * longest pool interval in the vocabulary (`orbit`'s 3.4s), so a request is never cut
+ * short by the rotation it is sitting in — and it is still bounded, because a mood
+ * that outlives the moment it was about is worse than no mood at all. A caller that
+ * wants the face gone sooner asks for `neutral`, which is a name like any other.
+ */
+export const EXPRESSION_HOLD_MS = 6_000
+
+/**
+ * How long a face the *session* earned is worn.
+ *
+ * Shorter than {@link EXPRESSION_HOLD_MS} on purpose, and the difference is who asked. A
+ * request is a decision — the model stopped, considered, and spent a tool call on it — so
+ * it is allowed to be a mood. A moment is a *reaction*, and the picture this serves is a
+ * worker wincing at a step and carrying on: long enough to be seen over the interval the
+ * face pool is running at (1.5 s while working) plus its own morph, short enough that a
+ * run of failing calls is a succession of winces rather than one long sulk. It is also
+ * short enough to sit inside one tool call's worth of work, which is what keeps it from
+ * looking like a status. While it holds it is what is drawn — a requested mood included,
+ * and the mood comes back when it is over, which is the whole shape of a reaction.
+ */
+export const MOMENT_HOLD_MS = 2_600
+
+/**
+ * The face a failed tool call puts on.
+ *
+ * The vocabulary's own shape for effort gone wrong, and the same outline a *requested*
+ * `sad` draws — one shape, two ways of reaching it, which is the point of keeping the
+ * mapping here rather than in `eyes/faces.ts`: that module owns which name draws which
+ * outline, this one owns what the session is allowed to say on its own.
+ */
+export const TOOL_FAILURE_EXPRESSION: ExpressionName = 'sad'
+
+/**
  * How long a session rests before the character stirs again.
  *
  * The resting character is a living mark, not a still one: a session waiting for its
@@ -310,6 +378,10 @@ export function emptyMemory(nowMs: number): CompanionSignalMemory {
     turnFailureUntilMs: nowMs,
     noticeKey: undefined,
     noticeUntilMs: nowMs,
+    expressionKey: undefined,
+    expressionUntilMs: nowMs,
+    toolFailureKey: undefined,
+    momentUntilMs: nowMs,
   }
 }
 
@@ -317,6 +389,24 @@ export function emptyMemory(nowMs: number): CompanionSignalMemory {
 export interface ProjectedSignals {
   /** What the arbiter should see. */
   readonly signals: CompanionSignals
+  /**
+   * The expression the model asked for and is still wearing, if any.
+   *
+   * Beside the signals rather than among them, because it is not one: the arbiter
+   * answers which *state* a session is in, and this changes only the face that state is
+   * drawn with (`eyes/faces.ts`). A field in `CompanionSignals` would be a field every
+   * rung of the ladder has to know to ignore.
+   */
+  readonly expression: ExpressionName | undefined
+  /**
+   * Which of the two sources that expression came from, or `undefined` for neither.
+   *
+   * Published for the reason `data-fcg-companion-expression` is: a face is the one thing
+   * nothing outside the component can diff, so "the model asked for this" and "the session
+   * put this on" have to be distinguishable by a reader — and by a test, since the two
+   * arrive through different channels and only one of them is a decision.
+   */
+  readonly expressionSource: 'request' | 'moment' | undefined
   /** Memory to pass to the next call. */
   readonly memory: CompanionSignalMemory
 }
@@ -364,6 +454,32 @@ export function projectSignals(
   const turnFailureUntilMs = turnFailureIsNew ? nowMs + FAILURE_HOLD_MS : memory.turnFailureUntilMs
   const noticeIsNew = observation.noticeKey !== undefined && observation.noticeKey !== memory.noticeKey
   const noticeUntilMs = noticeIsNew ? nowMs + NOTICE_HOLD_MS : memory.noticeUntilMs
+  // A request is news like the other three, and read the same way: the newest identity
+  // opens the window and the one already taken up does not. What is worn is the name
+  // currently on the observation, so a second request while the first is still holding
+  // takes the face over immediately rather than being queued behind it.
+  const expressionIsNew = observation.expressionKey !== undefined && observation.expressionKey !== memory.expressionKey
+  const expressionUntilMs = expressionIsNew ? nowMs + EXPRESSION_HOLD_MS : memory.expressionUntilMs
+  const requested = observation.expressionKey !== undefined && nowMs < expressionUntilMs
+    ? observation.expression
+    : undefined
+  // The session's own face, on the same terms and through the same kind of window.
+  const momentIsNew = observation.toolFailureKey !== undefined && observation.toolFailureKey !== memory.toolFailureKey
+  const momentUntilMs = momentIsNew ? nowMs + MOMENT_HOLD_MS : memory.momentUntilMs
+  const moment = observation.toolFailureKey !== undefined && nowMs < momentUntilMs
+    ? TOOL_FAILURE_EXPRESSION
+    : undefined
+  // One answer, decided here and nowhere else. The session's reaction outranks a request
+  // while it holds, and the durations on either side are the argument: a moment is 2.6s of
+  // the instant it was about, a request is a mood that lasts 6s, so a failure under a mood
+  // is a wince the mood comes back from rather than a wince that never happens — which is
+  // what "briefly switch to the failing face" has to mean to be worth having. The two are
+  // never merged: a caller gets one name, which is what keeps a single decision site rather
+  // than a priority every seat has to know.
+  const expression = moment ?? requested
+  const expressionSource: 'request' | 'moment' | undefined = moment !== undefined
+    ? 'moment'
+    : requested === undefined ? undefined : 'request'
   // Powered down is the end of the resting state, not a pose that competes with it:
   // a session left alone stirs a few times and then goes to sleep, rather than
   // stirring forever and never powering down.
@@ -399,6 +515,8 @@ export function projectSignals(
       restlessStep: flourishDue ? period : 0,
       longIdle,
     },
+    expression,
+    expressionSource,
     memory: {
       running: observation.running,
       lastActivityMs,
@@ -411,6 +529,10 @@ export function projectSignals(
       turnFailureUntilMs,
       noticeKey: observation.noticeKey,
       noticeUntilMs,
+      expressionKey: observation.expressionKey,
+      expressionUntilMs,
+      toolFailureKey: observation.toolFailureKey,
+      momentUntilMs,
     },
   }
 }

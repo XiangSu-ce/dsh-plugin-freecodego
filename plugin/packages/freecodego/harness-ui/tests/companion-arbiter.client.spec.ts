@@ -13,17 +13,22 @@ import { describe, expect, it } from 'vitest'
 import { CompanionArbiter, FLOURISHES, IDLE_SIGNALS, type CompanionSignals } from '../src/client/companion/arbiter.ts'
 import {
   COMPLETION_HOLD_MS,
+  EXPRESSION_HOLD_MS,
   FAILURE_HOLD_MS,
   FLOURISH_PERIOD_MS,
   FLOURISH_WINDOW_MS,
   IDLE_AFTER_MS,
+  MOMENT_HOLD_MS,
   NOTICE_HOLD_MS,
   START_HOLD_MS,
+  TOOL_FAILURE_EXPRESSION,
   emptyMemory,
   projectSignals,
   type CompanionObservation,
 } from '../src/client/companion/signals.ts'
 import { STATE_BY_ID, type StateId } from '../src/client/companion/engine/states.ts'
+import { BUSY_FACE_INTERVAL_MS } from '../src/client/companion/eyes/pools.ts'
+import { POSE_POOLS, poseIntervalMs } from '../src/client/companion/poses.ts'
 
 const signals = (over: Partial<CompanionSignals> = {}): CompanionSignals => ({ ...IDLE_SIGNALS, ...over })
 
@@ -254,6 +259,10 @@ describe('companion signals: session facts to activity', () => {
       turnFailureUntilMs: 0,
       noticeKey: undefined,
       noticeUntilMs: 0,
+      expressionKey: undefined,
+      expressionUntilMs: 0,
+      toolFailureKey: undefined,
+      momentUntilMs: 0,
     })
   })
 
@@ -459,5 +468,106 @@ describe('companion signals: session facts to activity', () => {
       .filter((value): value is number => value !== undefined)
     expect(declared).toContain(2.5)
     expect(Math.max(...declared) * 1000).toBeLessThan(COMPLETION_HOLD_MS)
+  })
+
+  it('wears an expression the model asked for, then gives the face back', () => {
+    // A request is decoration, and the window is what makes it one: long enough to be
+    // seen over the pose it is drawn on, and short enough that a mood cannot outlive the
+    // moment it was about. With no window the face would be a setting the session is
+    // stuck in, like the failure this module already had to bound.
+    const asked = observation({ expressionKey: 'call-1', expression: 'happy' })
+    const first = projectSignals(asked, 0, emptyMemory(0))
+    expect(first.expression).toBe('happy')
+    const held = projectSignals(asked, EXPRESSION_HOLD_MS - 1, first.memory)
+    expect(held.expression).toBe('happy')
+    // The same request still on the observation is not news, so the window does not
+    // restart behind it — a model that asked once is not kept waiting on itself.
+    expect(held.memory.expressionUntilMs).toBe(EXPRESSION_HOLD_MS)
+    const expired = projectSignals(asked, EXPRESSION_HOLD_MS, held.memory)
+    expect(expired.expression).toBeUndefined()
+  })
+
+  it('takes a second request over at once, rather than queueing it behind the first', () => {
+    const asked = observation({ expressionKey: 'call-1', expression: 'happy' })
+    const first = projectSignals(asked, 0, emptyMemory(0))
+    const held = projectSignals(asked, 1_000, first.memory)
+    expect(held.expression).toBe('happy')
+    // The identity is the call, so a *different* call moves the face immediately: a face
+    // that waited out the previous hold would be showing a mood the model has replaced.
+    const second = projectSignals(observation({ expressionKey: 'call-2', expression: 'sad' }), 1_000, held.memory)
+    expect(second.expression).toBe('sad')
+    expect(second.memory.expressionUntilMs).toBe(1_000 + EXPRESSION_HOLD_MS)
+  })
+
+  it('winces at a tool call that came back a failure, then carries on', () => {
+    // The session's own face, and a *moment* rather than a level for the reason the
+    // event log gives: the result stays in the window for the rest of the session, so
+    // the identity is what makes it an instant and the window is what makes it pass.
+    const failed = observation({ toolFailureKey: 'result-1' })
+    const first = projectSignals(failed, 0, emptyMemory(0))
+    expect(first.expression).toBe(TOOL_FAILURE_EXPRESSION)
+    expect(first.expressionSource).toBe('moment')
+    expect(first.memory.momentUntilMs).toBe(MOMENT_HOLD_MS)
+    // The same failure still on the observation is not news, so a wince is one wince: a
+    // reader looking at a failed call does not get the face restarted every frame.
+    const held = projectSignals(failed, MOMENT_HOLD_MS - 1, first.memory)
+    expect(held.expressionSource).toBe('moment')
+    expect(held.memory.momentUntilMs).toBe(MOMENT_HOLD_MS)
+    // A reaction, not a mood: past the window the face goes back to the state's own.
+    const after = projectSignals(failed, MOMENT_HOLD_MS, held.memory)
+    expect(after.expression).toBeUndefined()
+    expect(after.expressionSource).toBeUndefined()
+    // And a second failure is a second wince — a run of failing calls is a succession of
+    // them rather than one long sulk, which is the difference the identity buys.
+    const second = projectSignals(observation({ toolFailureKey: 'result-2' }), MOMENT_HOLD_MS, after.memory)
+    expect(second.expression).toBe(TOOL_FAILURE_EXPRESSION)
+    expect(second.memory.momentUntilMs).toBe(MOMENT_HOLD_MS * 2)
+  })
+
+  it('wears a moment over the mood it interrupted, and gives the mood back', () => {
+    // Both channels are live the instant a tool fails under a request, and exactly one
+    // name comes out: the decision is here and nowhere else, so no seat has to know a
+    // priority. The reaction wins while it holds, and the durations on either side are
+    // the argument — 2.6s of the instant it was about against a 6s mood, so a failure
+    // under a mood is a wince the mood comes back from rather than one that never
+    // happens, which is what a brief switch to the failing face has to mean.
+    const both = observation({ expressionKey: 'call-1', expression: 'happy', toolFailureKey: 'result-1' })
+    const wince = projectSignals(both, 1_000, emptyMemory(0))
+    expect(wince.expression).toBe(TOOL_FAILURE_EXPRESSION)
+    expect(wince.expressionSource).toBe('moment')
+    expect(wince.memory.momentUntilMs).toBe(1_000 + MOMENT_HOLD_MS)
+    expect(wince.memory.expressionUntilMs).toBe(1_000 + EXPRESSION_HOLD_MS)
+    // The request was covered, not cancelled: when the wince is over the mood is still
+    // there, which is the difference between a reaction and a mood cut short.
+    const back = projectSignals(both, 1_000 + MOMENT_HOLD_MS, wince.memory)
+    expect(back.expression).toBe('happy')
+    expect(back.expressionSource).toBe('request')
+    // And the mood is still bounded by its own window — being hidden behind a reaction
+    // does not extend it, which is the failure this module already had to bound once.
+    const gone = projectSignals(both, 1_000 + EXPRESSION_HOLD_MS, back.memory)
+    expect(gone.expression).toBeUndefined()
+    expect(gone.expressionSource).toBeUndefined()
+  })
+
+  it('wears a moment long enough to be seen over the face rotation it lands in', () => {
+    // The coupling between this window and the client's eye pools: a wince shorter than
+    // the interval the eyes rotate at would be replaced by the pool's next face before a
+    // reader saw it — the monotony this feature exists to break, in the one instant the
+    // character has something to say about the work. The morph is added because the eyes
+    // arrive over it rather than at once, and it is the longest one the engine declares,
+    // since a failure can land while any pose is on screen.
+    const longestMorph = Math.max(...[...STATE_BY_ID.values()].map(state => state.morph * 1_000))
+    expect(BUSY_FACE_INTERVAL_MS + longestMorph).toBeLessThan(MOMENT_HOLD_MS)
+    // And still shorter than a request, which is the whole distinction between the two:
+    // a decision is allowed to be a mood, a reaction is not.
+    expect(MOMENT_HOLD_MS).toBeLessThan(EXPRESSION_HOLD_MS)
+  })
+
+  it('holds a requested expression past every pose rotation it is drawn on', () => {
+    // The one coupling between this window and the client's pools: an expression shorter
+    // than the interval its pose rotates at would be cut off mid-rotation, which reads as
+    // a flicker rather than as an expression. A pool gaining a longer pose fails here.
+    const intervals = (Object.keys(POSE_POOLS) as StateId[]).map(state => poseIntervalMs(state))
+    expect(Math.max(...intervals)).toBeLessThan(EXPRESSION_HOLD_MS)
   })
 })

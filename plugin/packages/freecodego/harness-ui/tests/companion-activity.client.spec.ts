@@ -16,7 +16,11 @@ import type {
   SessionEventSource,
   SessionListState,
 } from '@deepseek-ai/dsh-api-session-controller/client'
-import { createCompanionActivity, type CompanionActivitySessions } from '../src/client/companion/activity.ts'
+import {
+  COMPANION_FACE_TOOL_NAME,
+  createCompanionActivity,
+  type CompanionActivitySessions,
+} from '../src/client/companion/activity.ts'
 
 /** A source a case publishes into, shaped like the framework's observables. */
 function source<T>(value: T): {
@@ -111,6 +115,8 @@ describe('companion activity: the phases only the event log carries', () => {
       startKey: undefined,
       failureKey: undefined,
       noticeKey: undefined,
+      expressionKey: undefined,
+      expression: undefined,
     })
 
     feed.window('s1').append(entry('tool/call', 4, { turn: 1, step: 1, callId: 'c1', name: 'pwsh', arguments: '{}' }))
@@ -214,6 +220,129 @@ describe('companion activity: the phases only the event log carries', () => {
     expect(activity.getSnapshot().startKey).toBeUndefined()
     feed.window('s2').append(entry('turn/start', 1, { turn: 1 }))
     expect(activity.getSnapshot().startKey).toBe('1')
+    activity.dispose()
+  })
+
+  it('reads an expression request out of the call that carries it', () => {
+    // The model asks with a tool, and the call is the channel: nothing else is written for
+    // a face, so what the character wears is read from the call's own arguments.
+    const feed = sessions()
+    const activity = createCompanionActivity(feed.face)
+    const call = (seq: number, name: string, args: unknown): SessionEventLikeEntry =>
+      entry('tool/call', seq, { turn: 1, step: 1, callId: `c${seq}`, name, arguments: typeof args === 'string' ? args : JSON.stringify(args) })
+
+    feed.window('s1').append(call(1, COMPANION_FACE_TOOL_NAME, { face: 'happy' }))
+    expect(activity.getSnapshot().expressionKey).toBe('1')
+    expect(activity.getSnapshot().expression).toBe('happy')
+
+    // A second request takes the face over, identity and all, so the window restarts.
+    feed.window('s1').append(call(2, COMPANION_FACE_TOOL_NAME, { face: 'focused' }))
+    expect(activity.getSnapshot().expressionKey).toBe('2')
+    expect(activity.getSnapshot().expression).toBe('focused')
+
+    // Every way of not naming a face leaves the reading where it was. The last one is the
+    // one that matters: `constructor` is on every object, and a lookup that walked the
+    // prototype chain would take it as a name this build draws.
+    for (const [seq, name, args] of [
+      [3, 'pwsh', { face: 'happy' }],
+      [4, COMPANION_FACE_TOOL_NAME, { face: 'smug' }],
+      [5, COMPANION_FACE_TOOL_NAME, { face: 'constructor' }],
+      [6, COMPANION_FACE_TOOL_NAME, { face: 7 }],
+      [7, COMPANION_FACE_TOOL_NAME, 'not json'],
+      [8, COMPANION_FACE_TOOL_NAME, '[1,2]'],
+      [9, COMPANION_FACE_TOOL_NAME, '{}'],
+    ] as const) {
+      feed.window('s1').append(call(seq, name, args))
+      expect(activity.getSnapshot().expressionKey, `call ${seq}`).toBe('2')
+      expect(activity.getSnapshot().expression, `call ${seq}`).toBe('focused')
+    }
+
+    // The calls above still counted as work, which is what a call is regardless of what
+    // it asked for.
+    expect(activity.getSnapshot().toolRunning).toBe(true)
+    activity.dispose()
+  })
+
+  it('reads a request whose arguments arrived already parsed', () => {
+    // Two shapes reach this reader and both are read. The wire carries the arguments as
+    // a JSON string, and a host that parsed them on the way in keeps the object, so a
+    // reader that took only one shape would show no face in exactly one of the two —
+    // and it would look like the model never called the tool.
+    const feed = sessions()
+    const activity = createCompanionActivity(feed.face)
+    feed.window('s1').append(entry('tool/call', 1, { turn: 1, step: 1, name: COMPANION_FACE_TOOL_NAME, arguments: { face: 'sad' } }))
+    expect(activity.getSnapshot().expression).toBe('sad')
+    feed.window('s1').append(entry('tool/call', 2, { turn: 1, step: 1, name: COMPANION_FACE_TOOL_NAME, arguments: '{"face":"sleepy"}' }))
+    expect(activity.getSnapshot().expression).toBe('sleepy')
+    // `null` is the one that would crash a reader that only asked `typeof === 'object'`.
+    feed.window('s1').append(entry('tool/call', 3, { turn: 1, step: 1, name: COMPANION_FACE_TOOL_NAME, arguments: null }))
+    expect(activity.getSnapshot().expression).toBe('sleepy')
+    activity.dispose()
+  })
+
+  it('forgets a request when the Session it belonged to is left behind', () => {
+    const feed = sessions()
+    const activity = createCompanionActivity(feed.face)
+    feed.window('s1').append(entry('tool/call', 1, { turn: 1, step: 1, name: COMPANION_FACE_TOOL_NAME, arguments: '{"face":"happy"}' }))
+    expect(activity.getSnapshot().expression).toBe('happy')
+    feed.show('s2')
+    // The face belongs to the session that asked for it: another one opening is a
+    // different character's mood, not this character's carried over.
+    expect(activity.getSnapshot().expression).toBeUndefined()
+    expect(activity.getSnapshot().expressionKey).toBeUndefined()
+    activity.dispose()
+  })
+
+  it('takes a failed tool result as a moment of its own', () => {
+    // A tool that came back an error is the one instant inside a *running* turn where
+    // "still working" and "this is not cooperating" are different pictures, and the
+    // result is where the log says which of the two it is. Its identity is what makes
+    // it a moment rather than a level: the result stays in the window for the rest of
+    // the session, so a reader that asked "is there a failure in here" would wince
+    // forever after the first one.
+    const feed = sessions()
+    const activity = createCompanionActivity(feed.face)
+    // Both shapes a failure arrives in, taken verbatim from a live session's window: the
+    // tool's own `isError`, and a shell tool's nonzero exit rendered into the text (that
+    // one is measured — `pwsh` running a command that does not exist reports
+    // `isError: false` and "[exit code: 1]", so a reader that only looked for the flag
+    // would never wince at a failing command at all).
+    const result = (seq: number, message: unknown): SessionEventLikeEntry =>
+      entry('tool/result', seq, { turn: 1, step: 1, callId: `c${seq}`, message })
+    const text = (value: string): { content: { type: string; text: string }[] } =>
+      ({ content: [{ type: 'text', text: value }] })
+
+    feed.window('s1').append(result(1, { isError: false, ...text('ok') }))
+    expect(activity.getSnapshot().toolFailureKey).toBeUndefined()
+
+    feed.window('s1').append(result(2, { isError: true, ...text('Error: cannot read "E:\\no"') }))
+    expect(activity.getSnapshot().toolFailureKey).toBe('2')
+
+    // A later success is not news: it neither moves the key nor clears it, so the face
+    // it earned is left to its own window instead of being cut short by the next call.
+    feed.window('s1').append(result(3, { isError: false, ...text('done') }))
+    expect(activity.getSnapshot().toolFailureKey).toBe('2')
+
+    // The shape the live run was missing.
+    feed.window('s1').append(result(4, { isError: false, ...text("[stderr]\nnot recognized\n[exit code: 1]") }))
+    expect(activity.getSnapshot().toolFailureKey).toBe('4')
+
+    // And a command that exited 0 is not a failure, marker or not, nor is a payload this
+    // reader cannot use. Everything unreadable has to come out as "no" rather than as an
+    // exception: this runs inside the feed's own subscriber, where a throw is caught and
+    // logged but takes the published snapshot with it.
+    for (const [seq, message] of [
+      [5, { isError: false, ...text('done\n[exit code: 0]') }],
+      [6, { isError: 'yes' }],
+      [7, undefined],
+      [8, null],
+      [9, 'failed'],
+      [10, { isError: false, content: 'no blocks' }],
+      [11, { isError: false, content: [null, 7, { type: 'image', text: '[exit code: 3]' }] }],
+    ] as const) {
+      feed.window('s1').append(result(seq, message))
+      expect(activity.getSnapshot().toolFailureKey, `result ${seq}`).toBe('4')
+    }
     activity.dispose()
   })
 

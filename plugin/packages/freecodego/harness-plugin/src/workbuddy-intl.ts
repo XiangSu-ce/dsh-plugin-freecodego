@@ -99,8 +99,40 @@ const WORKBUDDY_INTL_COOLDOWN_BY_CATEGORY: Readonly<Record<UpstreamStatusCategor
   server: WORKBUDDY_INTL_SHORT_COOLDOWN_MS,
   other: WORKBUDDY_INTL_SHORT_COOLDOWN_MS,
 }
-/** Fallback context ceiling for a route the catalog did not size. */
-const WORKBUDDY_INTL_DEFAULT_CONTEXT = 128_000
+/**
+ * The context window this product actually serves, per the operator (2026-09-25).
+ *
+ * It is a ceiling, not a fallback, and it is deliberately **below** what the
+ * catalog advertises: the live `/v3/config` document gives 9 of 25 routes
+ * `maxInputTokens` 1,000,000 with `maxAllowedSize` 1,000,000 beside an
+ * `contextWindow` of `{"defaultLength":300000,"supportedLengths":[300000,1000000]}`,
+ * and the rest between 176,000 and 272,000. Reading that largest number is what
+ * this connector used to do, and it is the direction that breaks: compaction is
+ * sized against this value, so an over-large window lets a conversation grow past
+ * what the service serves and the route starts refusing mid-session with nothing
+ * local to warn anyone.
+ *
+ * A route that publishes **less** keeps its own smaller number — `hy3` at 192,000
+ * and `fast-model` at 200,000 are real ceilings. That is what {@link workBuddyContextWindow}
+ * is for.
+ */
+const WORKBUDDY_INTL_CONTEXT_WINDOW = 264_000
+
+/**
+ * The window one WorkBuddy route runs at: its own published size when that is
+ * smaller, and this product's real ceiling otherwise.
+ *
+ * A single answer for every route would be wrong in one direction or the other —
+ * the catalog genuinely serves 176,000 for some rows and advertises 1,000,000 for
+ * others — so the two facts are combined rather than chosen between: **the smaller
+ * one wins**, because compaction is sized against this number and only the
+ * over-large direction lets a prompt outgrow the service.
+ * @param published - the catalog's own window for the route, when it stated one.
+ * @returns the window a turn is sized against.
+ */
+export function workBuddyContextWindow(published: number | undefined): number {
+  return published === undefined ? WORKBUDDY_INTL_CONTEXT_WINDOW : Math.min(published, WORKBUDDY_INTL_CONTEXT_WINDOW)
+}
 const WORKBUDDY_INTL_DEFAULT_MAX_TOKENS = 32_000
 /** A credit package counts as expiring soon inside this window. */
 export const WORKBUDDY_CREDIT_EXPIRING_SOON_MS = 7 * 24 * 3_600_000
@@ -1453,6 +1485,10 @@ export class WorkBuddyIntlAdapter extends LlmAdapter {
       id: model.id,
       name: model.displayName,
       description: workBuddyModelDescription(model),
+      // The same number the adapter compacts against, so the card cannot promise
+      // a window the turn will not get.
+      contextWindow: workBuddyContextWindow(model.contextWindow),
+      defaultContextWindow: workBuddyContextWindow(model.contextWindow),
       inputModalities: model.supportsImages ? ['text', 'image'] as const : ['text'] as const,
       ...signedIn
         ? { availability: 'available' as const }
@@ -1471,7 +1507,7 @@ export class WorkBuddyIntlAdapter extends LlmAdapter {
       id: model,
       name: known?.displayName ?? model,
       inputModalities: known?.supportsImages === true ? ['text', 'image'] : ['text'],
-      context: { contextWindow: known?.contextWindow ?? WORKBUDDY_INTL_DEFAULT_CONTEXT },
+      context: { contextWindow: workBuddyContextWindow(known?.contextWindow) },
       defaultMaxTokens: known?.maxTokens ?? WORKBUDDY_INTL_DEFAULT_MAX_TOKENS,
       // The menu shows exactly what the product declares for this route: a route
       // that cannot stop thinking offers no "off", and a route whose product

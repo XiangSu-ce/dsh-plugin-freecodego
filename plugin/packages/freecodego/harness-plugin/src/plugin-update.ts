@@ -57,8 +57,8 @@ const NPM_PACKAGE_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i
 /**
  * A release tag that names a bundle version, with the family prefix optional.
  *
- * `freecodego-v0.1.7-alpha.2.2` is what `release:freecodego` tags and what the
- * publishing workflow creates its release from; `v0.1.7-alpha.2.2` is accepted
+ * `freecodego-v0.1.7-rc.2` is what `release:freecodego` tags and what the
+ * publishing workflow creates its release from; `v0.1.7-rc.2` is accepted
  * because a release created under the bare form is still a release for the same
  * Harness line, and refusing it would hide an installable update. Any other
  * prefix — another family's tag — is not this bundle.
@@ -995,7 +995,7 @@ export async function runDsh(profile: string, args: readonly string[]): Promise<
     let output = ''
     let timedOut = false
     const append = (chunk: Buffer | string): void => { output = `${output}${chunk.toString()}`.slice(-8_000) }
-    const timer = setTimeout(() => { timedOut = true; child.kill() }, DSH_INSTALL_TIMEOUT_MS)
+    const timer = setTimeout(() => { timedOut = true; terminateInstallProcess(child) }, DSH_INSTALL_TIMEOUT_MS)
     child.stdout?.on('data', append)
     child.stderr?.on('data', append)
     child.once('error', (error) => { clearTimeout(timer); reject(error) })
@@ -1010,6 +1010,66 @@ export async function runDsh(profile: string, args: readonly string[]): Promise<
       })
     })
   })
+}
+
+/**
+ * The `taskkill` arguments that walk one process tree.
+ *
+ * A named function rather than a literal at the spawn site so the argv a test
+ * asserts is the argv that runs — the same reason `releaseAssetNames` is one.
+ * @param pid - the root of the tree to end.
+ * @returns the arguments after the executable.
+ */
+export function installTreeKillArgv(pid: number): string[] {
+  return ['/pid', String(pid), '/t', '/f']
+}
+
+/** The child handle a kill needs: its pid and the direct kill as the fallback. */
+export interface TerminableInstall {
+  readonly pid?: number | undefined
+  kill(signal?: NodeJS.Signals | number): boolean
+}
+
+/**
+ * End an install whose deadline expired, children included.
+ *
+ * `child.kill()` reaches the shell this module spawned, and on Windows that is all
+ * it reaches: the shim path goes through `cmd.exe`, which does not `exec`-replace
+ * itself, so the `pnpm` behind it keeps running — and an install past its deadline
+ * would outlive the operation that reported it stopped while still holding the
+ * profile lock. That is the failure the Harness's own plugin-manager fixed in rc.2
+ * (`bound pnpm runs so a silent child cannot hold the profile lock`, then `wait for
+ * a pnpm run its exited operation left behind`), and this path installs into the
+ * same profiles with the same lock, so it needs the same tree kill.
+ *
+ * `taskkill /t` is the only thing that walks the tree, so it is what a timeout uses
+ * there; POSIX shells `exec` a single command, so the direct kill already lands on
+ * it. The shape — fire the tree kill, and fall back to the direct kill on its
+ * `error` — is `hooks/runtime.ts`'s `terminateHookProcess`, kept in step with it
+ * deliberately rather than re-derived here.
+ * @param child - the spawned install command.
+ * @param platform - the platform to decide by; both branches are reachable from a
+ * test through it, and a test that stubbed `process.platform` would be one long
+ * platform-shaped side effect.
+ * @param launch - the spawner, injected so the tree-kill argv can be asserted
+ * without starting a process; production passes the real one.
+ */
+export function terminateInstallProcess(
+  child: TerminableInstall,
+  platform: NodeJS.Platform = process.platform,
+  launch: typeof spawn = spawn,
+): void {
+  if (platform === 'win32' && child.pid !== undefined) {
+    try {
+      // `unref` so a taskkill that outlives its usefulness cannot hold the process
+      // open; its own failure falls back to the child this module does hold.
+      launch('taskkill', installTreeKillArgv(child.pid), { windowsHide: true, stdio: 'ignore' })
+        .once('error', () => { try { child.kill() } catch { /* already gone */ } })
+        .unref()
+      return
+    } catch { /* taskkill unavailable: fall through to the direct kill */ }
+  }
+  try { child.kill() } catch { /* already gone */ }
 }
 
 /** Quote one argv token for a `cmd.exe` `/c` command line. */

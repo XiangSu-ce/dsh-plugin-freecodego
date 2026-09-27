@@ -48,7 +48,7 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/verification-evidence
  */
 
-import { SHELL_INTERPRETERS, commandProgramIndex } from './command-policy.ts'
+import { SHELL_INTERPRETERS, commandProgramIndex, commandSegments, tokenizeCommand } from './command-policy.ts'
 
 /** Which kind of project gate a command belongs to. */
 export type VerificationCommandKind = 'tests' | 'types' | 'lint' | 'build' | 'check-script' | 'not-a-check'
@@ -90,9 +90,6 @@ const MAX_DISPATCH_DEPTH = 4
 const NO_OP_PROGRAMS: ReadonlySet<string> = new Set([
   'echo', 'printf', 'true', ':', 'ls', 'dir', 'cat', 'type', 'pwd', 'date', 'sleep', 'wait', 'test', 'env', 'which', 'whoami',
 ])
-
-/** Programs whose exit status is the *previous* stage's output status, not a check's. */
-const STATUS_FILTERS: ReadonlySet<string> = new Set(['tail', 'head', 'cat', 'tee', 'grep', 'awk', 'sed', 'wc', 'sort', 'uniq', 'cut', 'tr'])
 
 /** Test runners, by the bare program a command starts with. */
 const TEST_PROGRAMS: ReadonlySet<string> = new Set([
@@ -223,15 +220,21 @@ function bareProgram(token: string | undefined): string {
   return name.replace(/\.(?:exe|cmd|bat|ps1|mjs|cjs)$/u, '')
 }
 
+/** Split a shell line into argv-preserving segments, respecting quoted separators.
+ * @param line - the shell line to split.
+ * @returns the non-empty argv segments, in reading order.
+ */
+function shellArgumentSegments(line: string): readonly (readonly string[])[] {
+  return commandSegments(tokenizeCommand(line.replace(/\r\n?/gu, '\n')))
+}
+
 /** Split a shell line on separators and pipes, keeping the segments in reading order.
  * @param line - the shell line to split.
  * @returns the non-empty segments, in reading order.
  */
 export function shellSegments(line: string): readonly string[] {
-  return line
-    .replace(/\r\n?/gu, '\n')
-    .split(/\n|;|&&|\|\||[|&]/u)
-    .map(segment => segment.trim())
+  return shellArgumentSegments(line)
+    .map(segment => segment.join(' ').trim())
     .filter(segment => segment !== '')
 }
 
@@ -373,13 +376,12 @@ function classifyArgv(argv: readonly string[], workspaceRoot: string | undefined
     const flagIndex = argv.findIndex((part, position) => position > 0 && SHELL_LINE_FLAGS.has(part.toLowerCase()))
     if (flagIndex >= 0) {
       const inner = argv.slice(flagIndex + 1).join(' ')
-      const segments = shellSegments(inner)
+      const segments = shellArgumentSegments(inner)
       const last = segments[segments.length - 1]
       if (last === undefined) {
         return { verification: false, kind: 'not-a-check', runner: program, reason: `\`${program} ${argv[flagIndex] ?? ''}\` was given an empty line to run` }
       }
-      const words = last.split(/\s+/u).filter(word => word !== '')
-      return viaWrapper(classifyArgv(words, workspaceRoot, depth + 1), `${program} ${argv[flagIndex] ?? ''}`)
+      return viaWrapper(classifyArgv(last, workspaceRoot, depth + 1), `${program} ${argv[flagIndex] ?? ''}`)
     }
   }
   if (INLINE_INTERPRETERS.has(program)) {
@@ -462,26 +464,28 @@ export function exitStatusIsAttributable(command: readonly string[]): ExitStatus
     return { attribuable: true, reason: `\`${program || '(no program)'}\` reports its own exit status` }
   }
   const inner = argv.slice(flagIndex + 1).join(' ')
-  // A trailing `&` backgrounds the check, so the shell returns immediately with
-  // 0. A trailing `&&` is a separator rather than a background, and shell would
-  // reject the dangling operator anyway, so it must not read as one.
-  const trimmed = inner.replace(/\s+$/u, '')
-  if (!trimmed.endsWith('&&') && /(?:^|[^&])&$/u.test(trimmed)) {
+  // Tokenize before inspecting control operators: a `|` or `&` inside a quoted
+  // inline script is data, not a pipeline or background process. A trailing `&&`
+  // is a dangling conditional, not a background operator.
+  const tokens = tokenizeCommand(inner.replace(/\r\n?/gu, '\n'))
+  if (tokens.at(-1) === '&') {
     return { attribuable: false, reason: 'the line backgrounds the check, so the reported status is the shell\'s, not the check\'s' }
   }
-  const segments = shellSegments(inner)
+  const segments = commandSegments(tokens)
   const last = segments[segments.length - 1]
   if (last === undefined) return { attribuable: true, reason: 'the line is empty, so there is no status to attribute' }
-  const lastProgram = bareProgram(last.split(/\s+/u)[0])
+  const lastProgram = bareProgram(last[commandProgramIndex(last)] ?? last[0])
   // A trailing no-op is *not* re-refused here: `classifyVerificationCommand`
   // already answered `not-a-check` for it, and a caller reaches this function
   // only after that answer came back eligible. Saying it twice would give one
   // line two reasons and make the report harder to act on.
   //
-  // Only a *single* pipe moves the status to the right-hand stage; `||` and `;`
-  // already ended a segment list whose last entry is the one inspected above.
-  if (!inner.includes('||') && /[^|]\|[^|]/u.test(inner) && STATUS_FILTERS.has(lastProgram)) {
-    return { attribuable: false, reason: `the check is piped into \`${lastProgram}\`, so the reported status is the filter's` }
+  // Without a separately established pipe-failure policy, the shell reports the
+  // final pipeline stage's status. That can mask a failing check even when the
+  // final command is not one of the common text filters, or when another command
+  // follows the pipeline with `&&`.
+  if (tokens.includes('|')) {
+    return { attribuable: false, reason: `the check is piped into \`${lastProgram}\`, so the reported status belongs to the pipeline's final stage` }
   }
   return { attribuable: true, reason: 'the last stage of the line is the check itself' }
 }

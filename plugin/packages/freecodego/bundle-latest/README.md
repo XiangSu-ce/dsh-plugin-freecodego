@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.1.7-alpha.2.2`, targeting Harness baseline `0.1.7-alpha.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.1.7-alpha.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
+Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.1.7-rc.2`, targeting Harness baseline `0.1.7-rc.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.1.7-rc.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
 
 ## Table of Contents
 
@@ -32,10 +32,10 @@ Install the release for the Harness baseline you run; each release carries one t
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-alpha.2.2/freecodego-0.1.7-alpha.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-rc.2/freecodego-0.1.7-rc.2.tgz
 ```
 
-`freecodego-0.1.7-alpha.2.tgz` is the bundle for Harness `0.1.7-alpha.2`: substitute the version you run, which the settings page shows beside the installed plugin version. The asset name is the naming contract in `packages/freecodego/AGENTS.md`.
+`freecodego-0.1.7-rc.2.tgz` is the bundle for Harness `0.1.7-rc.2`: substitute the version you run, which the settings page shows beside the installed plugin version. The asset name is the naming contract in `packages/freecodego/AGENTS.md`.
 
 The `dsh` command is provided by the Harness CLI, not this bundle. In a normal terminal install it first with `npm install --global @deepseek-ai/dsh` (and ensure `pnpm` is available). Desktop launches the same command through its private shims and passes the active `DSH_HOME`, so Web and Desktop use one Profile data directory when they select the same Harness home.
 
@@ -84,7 +84,7 @@ TRAE, Cline, WorkBuddy International, Agnes publish no stable roster, so their r
 
 The bundle mounts a four-tool change reviewer. `engineering_code_review` reviews the workspace (staged, unstaged, *and* untracked changes), a ref range measured from its merge base, or one commit against its first parent, and renders the report as `text`, `json`, or `sarif`; `engineering_review_rules` returns what would be reviewed and under which rule with no model call at all; `engineering_review_status` and `engineering_review_report` show what is running and re-render the last result for another reader. Rules resolve in four layers — a rule file passed for the run, the project's own (`.opencodereview/rule.json`, `.dsh/review.json`, or `.freecodego/review.json`), the user's `~/.opencodereview/rule.json`, then the baseline shipped with the plugin — and the first matching layer wins, so a project override replaces the shipped rule rather than merging into it. Coverage is accounted per file: a run cannot finish while a changed file is still unreviewed, and every skip records why it was skipped.
 
-The reviewer spends model calls, so it is opt-in. `reviewMode` is `off`, `record` (findings become durable session events, so a review is answerable later without re-running it), or `gate` (findings at or above `reviewThreshold` are injected back into the turn once `reviewCooldownTurns` has passed, so the Agent has to answer them before it can finish). `reviewDeep` gives each changed file its own read-only child agent, and `reviewEscalation` re-checks high-severity findings with an independent adjudicator that is asked to *refute* them. Reviews run on the plugin's second-model route (`advisorProvider` / `advisorModel`), so a fresh install reviews without extra configuration.
+The reviewer spends model calls, so it is opt-in. `reviewMode` is `off`, `record` (findings become durable session events, so a review is answerable later without re-running it), or `gate` (findings at or above `reviewThreshold` are injected back into the turn once `reviewCooldownTurns` has passed, so the Agent has to answer them before it can finish). `reviewDeep` gives each changed file its own read-only child agent, and `reviewEscalation` re-checks high-severity findings with an independent adjudicator that is asked to *refute* them. Reviews run on the plugin's second-model route (`advisorProvider` / `advisorModel`), so a fresh install reviews without extra configuration; the settings page's **Second-model route** panel edits that route, and every feature that shares it — the reviewer here, the memory recall selector, the memory-consolidation planner, and the action reviewer — moves with it.
 
 <a id="project-memory"></a>
 ## Project Memory

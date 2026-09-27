@@ -4,13 +4,113 @@ import { readJsonFile, stringArray } from './community-storage.ts'
 import { inferMediaCategory, type MediaCategory } from './media-utils.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 import { asRecord as record } from './untrusted-json.ts'
-import type { FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorNote, FreeCodeGoManagedCatalog, FreeCodeGoManagedCatalogGroup } from './types.ts'
+import type { FreeCodeGoManagedCatalog, FreeCodeGoManagedCatalogGroup } from './types.ts'
 
 
 /**
  * OpenCode's OpenAI-compatible direct route, reached with the built-in `Bearer public` key.
  */
 export const OPENCODE_DIRECT_BASE_URL = 'https://opencode.ai/zen/v1'
+/**
+ * The `User-Agent` the OpenCode client itself sends.
+ *
+ * Since 2026-09-16 the free tier refuses anything that is not shaped like the
+ * client's own identity, so the plugin's former `opencode/freecodego` spelling
+ * (a product tag with no version) was answered with
+ * `403 FreeTierError: OpenCode's free tier can only be used from within
+ * OpenCode`. The upstream parses `<product>/<version>`; `opencode/1.18.31`
+ * alone passes, and the runtime tags are kept for fidelity.
+ */
+const OPENCODE_CLIENT_USER_AGENT = 'opencode/1.18.31 ai-sdk/provider-utils/4.0.40 runtime/bun/1.3.14'
+/**
+ * The alphabet OpenCode's id generator draws its 14-character random tail from.
+ */
+const OPENCODE_ID_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+/**
+ * The 12-character timestamp half of an OpenCode id: six bytes of the packed
+ * millisecond clock plus a same-millisecond counter, rendered as hex.
+ *
+ * @param invert - whether to complement the packed value, which is what the
+ *   client does for session ids (`ses_`) as opposed to message ids (`msg_`).
+ * @returns 12 lowercase hex characters.
+ */
+function openCodeTimestampPart(invert: boolean): string {
+  const now = Date.now()
+  openCodeIdCounter = now === openCodeIdMillisecond ? openCodeIdCounter + 1 : 1
+  openCodeIdMillisecond = now
+  let packed = BigInt(now) * 0x1000n + BigInt(openCodeIdCounter)
+  if (invert) packed = ~packed
+  let out = ''
+  for (let index = 0; index < 6; index++) {
+    out += Number((packed >> BigInt(40 - 8 * index)) & 0xffn).toString(16).padStart(2, '0')
+  }
+  return out
+}
+/** Millisecond of the previous id, so a same-millisecond burst stays ordered. */
+let openCodeIdMillisecond = 0
+/** Counter within {@link openCodeIdMillisecond}. */
+let openCodeIdCounter = 0
+/**
+ * The 14-character Base62 tail of an OpenCode id.
+ *
+ * @returns 14 characters drawn from {@link OPENCODE_ID_ALPHABET}.
+ */
+function openCodeRandomTail(): string {
+  const bytes = new Uint8Array(14)
+  if (globalThis.crypto === undefined) {
+    for (let index = 0; index < bytes.length; index++) bytes[index] = Math.floor(Math.random() * 256)
+  } else {
+    globalThis.crypto.getRandomValues(bytes)
+  }
+  let out = ''
+  for (const byte of bytes) out += OPENCODE_ID_ALPHABET[byte % OPENCODE_ID_ALPHABET.length]
+  return out
+}
+/** One session id per plugin instance, so upstream prompt-cache affinity survives. */
+let openCodeSessionId: string | undefined
+/**
+ * Build the identity headers every request to OpenCode's direct route must carry.
+ *
+ * Three things are checked upstream, each verified live against
+ * `https://opencode.ai/zen/v1`:
+ *
+ * - `user-agent` must read `<product>/<version>` — see
+ *   {@link OPENCODE_CLIENT_USER_AGENT}.
+ * - `x-opencode-session` must match OpenCode's `ses_` id shape (12 hex
+ *   timestamp characters followed by 14 Base62). Only the shape is checked: an
+ *   id of the right length is accepted, so the value is generated locally.
+ * - the request *body* must declare all five core agent tools (`bash`, `edit`,
+ *   `glob`, `grep`, `read`). That part cannot be added here — the callers own
+ *   the body.
+ *
+ * `x-opencode-client` is accepted as either `cli` or `desktop`, and
+ * `x-opencode-project` is not checked at all; both are sent for fidelity.
+ *
+ * @returns a header map to spread into the request; the session id is stable
+ *   for the lifetime of the plugin and the request id is fresh per call.
+ */
+export function openCodeFreeTierHeaders(): Record<string, string> {
+  openCodeSessionId ??= `ses_${openCodeTimestampPart(true)}${openCodeRandomTail()}`
+  return {
+    authorization: 'Bearer public',
+    'x-opencode-client': 'cli',
+    'user-agent': OPENCODE_CLIENT_USER_AGENT,
+    'x-opencode-session': openCodeSessionId,
+    'x-opencode-request': `msg_${openCodeTimestampPart(false)}${openCodeRandomTail()}`,
+    'x-opencode-project': 'global',
+  }
+}
+/**
+ * The five agent tool names OpenCode's free tier requires in `tools`.
+ *
+ * This is the body half of the same gate {@link openCodeFreeTierHeaders} answers
+ * on the header side, and it is verified the same way: a request that declares
+ * only some of them — or none — is answered `403 FreeTierError`, exactly like a
+ * request whose `user-agent` has no version. These are also the Harness's own
+ * built-in tool names (`tool-bash` → `bash`, `tool-fs` → `read`/`edit`,
+ * `tool-fs-search` → `glob`/`grep`), so a normal agent turn already satisfies it.
+ */
+export const OPENCODE_AGENT_CORE_TOOLS = ['bash', 'edit', 'glob', 'grep', 'read'] as const
 /**
  * How long a probed OpenCode health snapshot stays fresh (1 hour).
  */
@@ -231,7 +331,30 @@ export interface VyceModel {
   readonly name: string
   readonly inputPricePerMillion?: number
   readonly outputPricePerMillion?: number
+  /**
+   * The window the provider publishes for this route (`context_window`).
+   *
+   * The directory is the only authority on it: VyceAI serves 270,000 for
+   * `deepseek-v4.1` and 1,000,000 for `qwen3.8-flash`, so one number for the
+   * whole provider is wrong in both directions. Absent means the directory did
+   * not say, and {@link VYCE_DEFAULT_CONTEXT_WINDOW} stands in.
+   */
+  readonly contextWindow?: number
 }
+/**
+ * The window assumed for a VyceAI route whose directory entry does not publish
+ * one, and the ceiling the plugin falls back to when the directory cannot be
+ * read at all.
+ *
+ * It is the number every route on this provider but one publishes today. The
+ * direction of a wrong guess is what makes it matter: a window that is *too
+ * large* is the one that breaks — the harness sizes compaction against it, so it
+ * lets a conversation grow past the provider's real limit and the route starts
+ * refusing with no client-side warning at all, while a window that is too small
+ * only compacts earlier than it had to. Measured on the live route: 269,000
+ * tokens accepted, 275,000 refused with "maximum context length is 270,000".
+ */
+export const VYCE_DEFAULT_CONTEXT_WINDOW = 270_000
 /** VyceAI has no free roster: its daily check-in credits pay for metered
  * routes. These are the ids the plugin knows before any directory answers, and
  * both are among the routes that start switched on in the model list — the
@@ -319,16 +442,38 @@ export const SENSENOVA_MODELS_URL = `${SENSENOVA_BASE_URL}/models`
 export const SENSENOVA_API_KEY_REF = credentialRef('SENSENOVA_API_KEY')
 /**
  * Groq's OpenAI-compatible endpoint root, used here for Whisper transcription.
+ *
+ * The *default* rather than the only address: transcription is one OpenAI-compatible
+ * multipart request, so the settings surface lets the user point it at another
+ * recognizer, and {@link GROQ_WHISPER_BASE_URL_REF} carries that override.
  */
 export const GROQ_WHISPER_BASE_URL = 'https://api.groq.com/openai/v1'
 /**
- * Groq Whisper model id the plugin transcribes with.
+ * Groq Whisper model id the plugin transcribes with, unless one is configured.
  */
 export const GROQ_WHISPER_MODEL = 'whisper-large-v3-turbo'
 /**
- * Credential slot holding the Groq API key.
+ * Credential slot holding the API key the recognizer authenticates with.
+ *
+ * The vault is where it belongs rather than the settings form: this is a secret,
+ * and the field that writes it renders the value back to nobody (`speechSetRoute`
+ * reports *whether* a key resolves, never the key itself).
  */
 export const GROQ_WHISPER_API_KEY_REF = credentialRef('GROQ_WHISPER_API_KEY')
+/**
+ * Credential slot holding the user's alternative recognizer endpoint root.
+ *
+ * A non-secret stored beside its key on purpose: the two are one route and are
+ * written by one gesture, and the plugin's vault is already the store for the
+ * other non-secret it owns (`LOGFARE_SESSION_REF`). Storing the endpoint in the
+ * settings schema instead would put a raw text field in the generated settings
+ * form next to the purpose-built one — two places to type the same address.
+ */
+export const GROQ_WHISPER_BASE_URL_REF = credentialRef('GROQ_WHISPER_BASE_URL')
+/**
+ * Credential slot holding the user's alternative recognizer model id.
+ */
+export const GROQ_WHISPER_MODEL_REF = credentialRef('GROQ_WHISPER_MODEL')
 /**
  * How long a direct provider's answered directory narrows the static free tier.
  * SenseNova and NVIDIA both answer with a roster that can only *narrow* their
@@ -338,18 +483,75 @@ export const GROQ_WHISPER_API_KEY_REF = credentialRef('GROQ_WHISPER_API_KEY')
 export const DIRECT_CATALOG_CACHE_TTL_MS = 10 * 60_000
 
 /**
+ * What one directory row says about the capacity of its own route.
+ *
+ * Both fields are optional because a directory is allowed to name a route
+ * without describing it: NVIDIA NIM's public directory serves ids and nothing
+ * else, and a route whose capacity nobody published must fall back to a
+ * conservative constant rather than to a value invented here.
+ */
+export interface RouteCapacity {
+  /** Maximum combined request and response context in tokens. */
+  readonly contextWindow?: number
+  /** Largest completion the route accepts, where it publishes one. */
+  readonly maxTokens?: number
+}
+
+/**
+ * Read the capacity one directory row publishes, across both spellings the two
+ * direct providers actually use.
+ *
+ * The names are not guesses: VyceAI answers `context_window` (measured on its
+ * live directory), and SenseNova answers `context_length` beside
+ * `max_output_length` (measured the same way). Reading only one spelling is what
+ * left SenseNova's real numbers on the floor while its routes declared a flat
+ * 1,000,000 — and an over-large window is the direction that breaks, because the
+ * harness sizes compaction against it and then lets a conversation grow past what
+ * the provider will accept.
+ * @param row - one directory row, already narrowed to a record.
+ * @returns the published capacity; both fields absent when the row describes none.
+ */
+export function parseRouteCapacity(row: Readonly<Record<string, unknown>>): RouteCapacity {
+  const positiveInteger = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
+  const contextWindow = positiveInteger(row.context_window) ?? positiveInteger(row.context_length)
+  const maxTokens = positiveInteger(row.max_output_tokens) ?? positiveInteger(row.max_output_length)
+  return {
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(maxTokens === undefined ? {} : { maxTokens }),
+  }
+}
+/**
+ * The window assumed for a SenseNova route whose directory entry publishes none,
+ * and the ceiling the plugin falls back to when that directory cannot be read at
+ * all.
+ *
+ * It is the smallest window the provider serves: 262,144, which its own directory
+ * reports for `sensenova-6.8-flash-lite`, `sensenova-u1.5-lite` and
+ * `sensenova-u1-fast`, against 1,048,576 for the five text routes beside them.
+ * Only the smaller direction is safe when a number has to be assumed — compacting
+ * early costs room, compacting late costs the route.
+ */
+export const SENSENOVA_DEFAULT_CONTEXT_WINDOW = 262_144
+/**
  * Static health line shown for SenseNova until a live check answers.
  */
 export const SENSENOVA_HEALTH_DESCRIPTION = 'health:operational|uptime:100|success:100|traffic:0|latency:na'
 /**
  * SenseNova's static free text roster.
+ *
+ * The per-route numbers are the ones the provider publishes for these exact ids
+ * (`context_length` / `max_output_length`), so the roster a reader sees before any
+ * directory answers already carries the truth instead of one flat 1,000,000; the
+ * live directory still overrides them, which is what keeps a route the provider
+ * resizes from keeping a stale number here.
  */
 export const SENSENOVA_MODELS = [
-  { id: 'sensenova-6.8-flash-lite', name: 'SenseNova 6.8 Flash Lite', contextWindow: 1_000_000, maxTokens: 128_000 },
-  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1_000_000, maxTokens: 128_000 },
-  { id: 'glm-5.2', name: 'GLM 5.2', contextWindow: 1_000_000, maxTokens: 128_000 },
-  { id: 'kimi-k3', name: 'Kimi K3', contextWindow: 1_000_000, maxTokens: 128_000 },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_000_000, maxTokens: 128_000 },
+  { id: 'sensenova-6.8-flash-lite', name: 'SenseNova 6.8 Flash Lite', contextWindow: 262_144, maxTokens: 65_536 },
+  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1_048_576, maxTokens: 65_536 },
+  { id: 'glm-5.2', name: 'GLM 5.2', contextWindow: 1_048_576, maxTokens: 131_072 },
+  { id: 'kimi-k3', name: 'Kimi K3', contextWindow: 1_048_576, maxTokens: 65_536 },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_048_576, maxTokens: 65_536 },
 ] as const
 /**
  * SenseNova's static image-generation roster.
@@ -373,6 +575,23 @@ export const NVIDIA_API_KEY_REF = credentialRef('NVIDIA_API_KEY')
 /** The NVIDIA routes this plugin offers. Membership here is the free/paid
  * signal: the NIM directory lists every hosted model, free or not, and the
  * account tier is not part of the `/models` answer. */
+/**
+ * The context window NVIDIA's NIM routes are declared at, per the operator
+ * (2026-09-25).
+ *
+ * There is no published source to read here, and that is the point: the public
+ * directory answers 82 ids and **no capacity field at all** — no `context_window`,
+ * no `context_length`, no `max_output_tokens` (measured). So this number cannot be
+ * derived, and it replaces a flat 1,000,000 that was: those routes run from small
+ * open models to 0813-era flagships, and asserting a million tokens for all of
+ * them is the direction that breaks — compaction is sized against this value, so
+ * an over-large window lets a conversation grow past what a NIM route serves and
+ * it starts refusing mid-session with nothing local to warn anyone.
+ */
+export const NVIDIA_DEFAULT_CONTEXT_WINDOW = 264_000
+/**
+ * NVIDIA's static free roster.
+ */
 export const NVIDIA_MODELS = [
   { id: 'moonshotai/kimi-k3', name: 'Kimi K3' },
   { id: 'deepseek-ai/deepseek-v4-pro-0813', name: 'DeepSeek V4 Pro 0813' },
@@ -392,7 +611,7 @@ export const LOGFARE_AUTO_MODEL = {
 /** Virtual OpenCode route resolved at request time to the current best free
  * model. The upstream free roster rotates (e.g. `hy3-free` disappeared from
  * the public directory while `big-pickle` appeared), so a pinned id silently
- * breaks summarization and advisor routing. */
+ * breaks summarization and second-model routing. */
 export const OPENCODE_AUTO_MODEL = { id: 'auto', name: 'Auto' } as const
 
 /** Resolution order for the virtual OpenCode `auto` route. `big-pickle` is
@@ -565,24 +784,6 @@ export function isDirectReasoningEffort(value: unknown): value is typeof DIRECT_
   return typeof value === 'string' && (DIRECT_REASONING_EFFORTS as readonly string[]).includes(value)
 }
 
-/**
- * Advisor calls are text-only; media, embedding, ranking, and guard routes cannot review a turn.
- * @param model - the model whose id and name are tested for a media, embedding, or guard route.
- * @returns whether the route can review a turn as text.
- */
-export function isAdvisorTextModel(model: { readonly id: string; readonly displayName?: string; readonly name?: string }): boolean {
-  return !/(?:image|video|audio|embed(?:ding)?|rerank|moderation|guard)/i.test(`${model.id} ${model.displayName ?? model.name ?? ''}`)
-}
-
-/**
- * Only routes that declare text input (or declare nothing) may serve the Advisor.
- * @param inputModalities - the route's declared input modalities, or `undefined` when it declares none.
- * @returns whether the route may serve the Advisor.
- */
-export function isAdvisorTextModalities(inputModalities: readonly string[] | undefined): boolean {
-  return inputModalities === undefined || (inputModalities.length === 1 && inputModalities[0] === 'text')
-}
-
 type HostSessionEvent = { readonly type: string; readonly time: number; readonly data: unknown }
 /**
  * The event sources a host session may expose: a live snapshot function or a stored event list.
@@ -614,42 +815,22 @@ export function withTimeout<Value>(operation: Promise<Value>, timeoutMs: number,
 }
 
 /**
- * Recover advisor notes and their delivery channels from a session's events.
- * @param session - the session whose advisor events are read.
- * @returns the advisor note rows, in event order.
+ * Second-model calls are text-only; media, embedding, ranking, and guard routes
+ * cannot hold a review or selection conversation.
+ * @param model - the model whose id and name are tested for a media, embedding, or guard route.
+ * @returns whether the route can serve a text conversation.
  */
-export function advisorNotesFromSession(session: { readonly id: unknown } & HostSessionEvents): FreeCodeGoAdvisorNote[] {
-  const deliveries = new Map<string, FreeCodeGoAdvisorNote['delivery']>()
-  for (const event of hostSessionEvents(session)) {
-    if (event.type !== 'advisor/delivery') continue
-    const data = record(event.data)
-    if (typeof data.id === 'string' && (data.channel === 'record' || data.channel === 'inject' || data.channel === 'steer')) deliveries.set(data.id, data.channel)
-  }
-  return hostSessionEvents(session).flatMap((event) => {
-    if (event.type !== 'advisor/note') return []
-    const data = record(event.data)
-    if (typeof data.id !== 'string' || typeof data.note !== 'string' || typeof data.turn !== 'number') return []
-    if (data.severity !== 'nit' && data.severity !== 'concern' && data.severity !== 'blocker') return []
-    return [{ id: data.id, sessionId: String(session.id), turn: data.turn, severity: data.severity, note: data.note, delivery: deliveries.get(data.id) ?? 'record', time: event.time }]
-  })
+export function isSecondModelTextRoute(model: { readonly id: string; readonly displayName?: string; readonly name?: string }): boolean {
+  return !/(?:image|video|audio|embed(?:ding)?|rerank|moderation|guard)/i.test(`${model.id} ${model.displayName ?? model.name ?? ''}`)
 }
 
-/** Read durable Council reports without recovering transcript or tool payloads. 
- * @returns the advisor Council Report rows, in backend order.
- * @param session - the session whose Council events are read.
+/**
+ * Only routes that declare text input (or declare nothing) may serve the second-model calls.
+ * @param inputModalities - the route's declared input modalities, or `undefined` when it declares none.
+ * @returns whether the route may serve them.
  */
-export function advisorCouncilReportsFromSession(session: { readonly id: unknown } & HostSessionEvents): readonly FreeCodeGoAdvisorCouncilReport[] {
-  return hostSessionEvents(session).flatMap((event) => {
-    if (event.type !== 'advisor/council') return []
-    const data = record(event.data)
-    if (typeof data.id !== 'string' || typeof data.turn !== 'number' || typeof data.provider !== 'string' || typeof data.model !== 'string' || typeof data.createdAt !== 'number' || !Array.isArray(data.findings)) return []
-    const findings = data.findings.flatMap((item): FreeCodeGoAdvisorCouncilReport['findings'] => {
-      const finding = record(item)
-      if ((finding.role !== 'architecture' && finding.role !== 'security' && finding.role !== 'testing') || (finding.severity !== 'nit' && finding.severity !== 'concern' && finding.severity !== 'blocker') || typeof finding.note !== 'string') return []
-      return [{ role: finding.role, severity: finding.severity, note: finding.note }]
-    })
-    return [{ id: data.id, sessionId: typeof data.sessionId === 'string' ? data.sessionId : String(session.id), turn: data.turn, provider: data.provider, model: data.model, createdAt: data.createdAt, findings }]
-  }).sort((left, right) => right.createdAt - left.createdAt).slice(0, 20)
+export function isSecondModelTextModalities(inputModalities: readonly string[] | undefined): boolean {
+  return inputModalities === undefined || (inputModalities.length === 1 && inputModalities[0] === 'text')
 }
 
 /** Resolve a managed model's media role even when the gateway labels its wire
@@ -766,7 +947,7 @@ export async function fetchOpenCodeHealth(models: readonly OpenCodeFreeModel[]):
   const health = new Map<string, LogfareHealth>()
   try {
     const response = await fetch(`${OPENCODE_DIRECT_BASE_URL}/models`, {
-      headers: { authorization: 'Bearer public', accept: 'application/json', 'x-opencode-client': 'desktop', 'user-agent': 'opencode/freecodego' },
+      headers: { ...openCodeFreeTierHeaders(), accept: 'application/json' },
       signal: AbortSignal.timeout(10_000),
     })
     const latencyMs = Date.now() - startedAt

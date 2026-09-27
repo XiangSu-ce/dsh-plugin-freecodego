@@ -280,6 +280,13 @@ describe('review gate pass', () => {
     expect(text).toContain('src/app.ts:3')
     expect(text).toContain('src/other.ts:3')
     expect(text).toContain('engineering_review_report')
+    // Naming the tool is not enough. This message is injected unsolicited at stop
+    // time, so it never passed through `tool_search` and cannot lean on the
+    // sentence that result states for the descriptions it returns: a bare name
+    // here points at a schema the session may never have fetched, and the refusal
+    // would name a tool the model had no way to load. This assertion is the one
+    // the case was missing — it passed for as long as the pointer was dead.
+    expect(text).toContain('select:engineering_review_report')
   })
 })
 

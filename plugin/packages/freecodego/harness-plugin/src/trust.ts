@@ -187,6 +187,21 @@ export interface TrustEntry {
  */
 export class FolderTrustStore {
   private cache: FreeCodeGoTrustRecord | undefined
+  /** Serializes reads and read-modify-write operations so concurrent grants cannot clobber one another. */
+  private operationTail: Promise<void> = Promise.resolve()
+
+  /** Run one store operation after earlier operations, without poisoning the queue on failure. */
+  private async serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationTail
+    let release = (): void => undefined
+    this.operationTail = new Promise<void>(resolve => { release = resolve })
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release()
+    }
+  }
 
   /**
    * @param file - absolute path of the record; defaults to the harness home's
@@ -217,7 +232,7 @@ export class FolderTrustStore {
    * @returns the loaded record, cached once a read has actually answered.
    */
   async read(): Promise<FreeCodeGoTrustRecord> {
-    return (await this.load()).record
+    return this.serialize(async () => (await this.load()).record)
   }
 
   /**
@@ -285,15 +300,17 @@ export class FolderTrustStore {
    * @returns the record after the grant.
    */
   async grant(root: string): Promise<FreeCodeGoTrustRecord> {
-    const loaded = await this.load()
-    this.refuseToRewrite(loaded.readable)
-    const current = loaded.record
-    const key = canonicalTrustKey(root)
-    const entries = [
-      ...current.entries.filter(entry => entry.root !== key),
-      { root: key, grantedAt: new Date().toISOString() },
-    ]
-    return await this.write({ version: TRUST_RECORD_VERSION, entries })
+    return this.serialize(async () => {
+      const loaded = await this.load()
+      this.refuseToRewrite(loaded.readable)
+      const current = loaded.record
+      const key = canonicalTrustKey(root)
+      const entries = [
+        ...current.entries.filter(entry => entry.root !== key),
+        { root: key, grantedAt: new Date().toISOString() },
+      ]
+      return await this.write({ version: TRUST_RECORD_VERSION, entries })
+    })
   }
 
   /**
@@ -302,13 +319,15 @@ export class FolderTrustStore {
    * @returns the record after the revoke.
    */
   async revoke(root: string): Promise<FreeCodeGoTrustRecord> {
-    const loaded = await this.load()
-    this.refuseToRewrite(loaded.readable)
-    const current = loaded.record
-    const key = canonicalTrustKey(root)
-    return await this.write({
-      version: TRUST_RECORD_VERSION,
-      entries: current.entries.filter(entry => entry.root !== key),
+    return this.serialize(async () => {
+      const loaded = await this.load()
+      this.refuseToRewrite(loaded.readable)
+      const current = loaded.record
+      const key = canonicalTrustKey(root)
+      return await this.write({
+        version: TRUST_RECORD_VERSION,
+        entries: current.entries.filter(entry => entry.root !== key),
+      })
     })
   }
 

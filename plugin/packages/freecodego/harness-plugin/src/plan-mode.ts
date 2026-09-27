@@ -54,6 +54,7 @@ import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { evaluateCommandPolicy, type CompiledCommandPolicy } from './command-policy.ts'
+import { SHELL_TOOL_NAMES } from './tool-guards.ts'
 import { freeCodeGoDataHome } from './data-home.ts'
 import { pluginToolsWithPlanMode, pluginToolsWithoutPrefix } from './tool-manifest.ts'
 
@@ -163,7 +164,7 @@ export const PLAN_MODE_MUTATING_TOOLS: readonly string[] = [
  * before this becomes its question. `tests/plan-mode.spec.ts` pins the boundary,
  * and reads the query tool names from the package that registers them.
  */
-export const PLAN_MODE_PLUGIN_TOOL_PREFIXES: readonly string[] = ['engineering_', 'advisor_', 'agnes_', 'freecodego_', 'headroom_']
+export const PLAN_MODE_PLUGIN_TOOL_PREFIXES: readonly string[] = ['engineering_', 'agnes_', 'freecodego_', 'headroom_']
 
 /**
  * Plugin tools Plan Mode refuses, read off the manifest's `planMode` column.
@@ -493,12 +494,15 @@ export function planModeRefusal(input: {
       message: `Refused by Plan Mode: "${tool}" is a FreeCodeGo tool that this mode does not classify as safe to run while planning. Classify it in plan-mode.ts (mutating, or allowed) before using it here, then leave Plan Mode to carry it out.`,
     }
   }
-  // The shell spellings this Host can actually register. `pwsh` is not optional:
-  // the base `cordis.patch.yml` disables `tool-bash` on win32 and enables
-  // `tool-pwsh`, so on Windows the POSIX spelling above is unreachable and this
-  // whole branch would never run — the same command refused as `bash` would only
-  // prompt as `pwsh`, which is the weaker answer this mode exists to avoid.
-  if (tool !== 'bash' && tool !== 'shell' && tool !== 'pwsh' && tool !== 'exec_command') return undefined
+  // Whether this call runs a shell command at all. Single source of truth:
+  // `SHELL_TOOL_NAMES` from `tool-guards.ts` is the one vocabulary, and a second
+  // copy is how one tier silently stops enforcing it (this repo's documented smell).
+  // `pwsh` is not optional: the base `cordis.patch.yml` disables `tool-bash` on
+  // win32 and enables `tool-pwsh`, so on Windows the POSIX spelling above is
+  // unreachable and this whole branch would never run — the same command refused as
+  // `bash` would only prompt as `pwsh`, which is the weaker answer this mode exists
+  // to avoid.
+  if (!SHELL_TOOL_NAMES.has(tool)) return undefined
   const command = commandOf(input.args)
   if (command === undefined || command.trim() === '' || input.policy === undefined) return undefined
   const evaluation = evaluateCommandPolicy(input.policy, command)

@@ -48,13 +48,25 @@ export const TRAE_STORE_REF: CredentialRef = credentialRef('TRAE_STORE')
 export const TRAE_PROVIDER_ID = 'trae'
 
 /**
- * The context window advertised for a SOLO configuration.
+ * The context window used for a SOLO configuration that publishes none.
  *
- * The configuration table names models but publishes no limits, and the
- * upstream truncates silently rather than refusing, so this is a floor the
- * connector can defend rather than a measurement: every model the table has
- * offered so far carries at least this much, and a larger claim would let the
- * Harness send a prompt that no SOLO configuration accepts.
+ * This used to be the window for *every* configuration, on the recorded belief
+ * that the table names models but publishes no limits — which is not what the
+ * table does. It publishes `context_window_tokens` per row, keyed by client build
+ * channel: measured on a real account (46 configurations), dev 200000 on 17 rows,
+ * dev 256000 on 6, one row at 1,000,000, one at 816,000, and three at 53,192 /
+ * 120,192 / 128,000; four rows published nothing
+ * (see `traeContextWindow`, which reads it).
+ *
+ * The flat 128,000 was therefore wrong in both directions at once: too small for
+ * the 200,000-and-up majority, so those conversations compacted earlier than they
+ * had to, and too large for the configurations serving 53,192 and 120,192, where
+ * it let a prompt grow past what the configuration accepts — and the upstream
+ * truncates silently rather than refusing.
+ *
+ * What is left here is the fallback for a row that publishes nothing, and it is a
+ * floor the connector can defend rather than a measurement: below every published
+ * value but one.
  */
 const TRAE_DEFAULT_CONTEXT = 128_000
 
@@ -250,7 +262,9 @@ export function traeModelRow(model: TraeModel, realm: TraeRealm = 'cn'): TraeMod
     id: model.id,
     name: model.displayName,
     realm,
-    contextWindow: TRAE_DEFAULT_CONTEXT,
+    // The configuration's own published window, so the row the picker renders and
+    // the window the adapter compacts against are the same number.
+    contextWindow: model.contextWindow ?? TRAE_DEFAULT_CONTEXT,
     maxTokens: TRAE_DEFAULT_MAX_TOKENS,
   }
 }
@@ -658,7 +672,7 @@ export class TraeAdapter extends LlmAdapter {
       id: model,
       name: known?.name ?? TRAE_FALLBACK_MODEL.name,
       inputModalities: ['text'],
-      context: { contextWindow: TRAE_DEFAULT_CONTEXT },
+      context: { contextWindow: known?.contextWindow ?? TRAE_DEFAULT_CONTEXT },
       defaultMaxTokens: TRAE_DEFAULT_MAX_TOKENS,
       // The stream's own `reasoning_content` is passed through as reasoning chunks
       // regardless of what this menu says; the control steers how much thinking is

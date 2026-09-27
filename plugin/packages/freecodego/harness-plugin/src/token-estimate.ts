@@ -12,9 +12,9 @@
  * Every other site in the plugin that needs "roughly how many tokens is this
  * text" imports from here — `action-review`, `cache-cold`,
  * `claude-protocol-bridge`, `deferred-tools`, `engineering-memory`,
- * `engineering-repo-map`, `headroom/smart-crusher`, `prompt-composition` and
- * `side-channel-budget` all priced text locally before this module existed, at
- * four slightly different rules. `tests/token-estimate.spec.ts` enforces that no
+ * `engineering-repo-map`, `headroom/smart-crusher` and `prompt-composition` all
+ * priced text locally before this module existed, at four slightly different
+ * rules. `tests/token-estimate.spec.ts` enforces that no
  * other source file divides a character count by four again.
  *
  * Two functions, because the plugin has two kinds of caller:
@@ -35,13 +35,21 @@
  */
 
 /*
- * Reached through the package's own `./src/*` export subpath, with the explicit
- * extension the token-meter package uses for its internal imports. The root
- * specifier is deliberately avoided: it does not re-export `estimateContent`,
- * and the density constant this file depends on lives beside the heuristic
- * rather than behind the meter service.
+ * Reached through the package's public `./estimate` export. The root specifier
+ * is deliberately avoided: it does not re-export `estimateContent`, and the
+ * density constant this file depends on lives beside the heuristic rather than
+ * behind the meter service.
+ *
+ * `./estimate` rather than the token-meter package's own `src/estimate.ts`: the
+ * `./src/*` export is a development-only alias for internal imports inside that
+ * package, and its published `files` list ships `lib/**` alone. A bundle that
+ * imports through `./src/*` loads in this workspace and fails in every packaged
+ * runtime -- the Desktop application rejected the whole bundle for exactly that
+ * specifier, which took every row it mounts down with it. `./estimate` maps to the
+ * same heuristic under `lib/types/estimate.js`, which is what the published
+ * package actually carries.
  */
-import { estimateContent } from '@deepseek-ai/dsh-token-meter/src/estimate.ts'
+import { estimateContent } from '@deepseek-ai/dsh-token-meter/estimate'
 
 /** Characters per token under the host's fixed-density heuristic. */
 const CHARS_PER_TOKEN = 4

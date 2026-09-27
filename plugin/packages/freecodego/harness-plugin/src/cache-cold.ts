@@ -64,6 +64,7 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/cache-cold
  */
 
+import { scaleThresholdToWindow } from './context-budget.ts'
 import { tokensFromChars } from './token-estimate.ts'
 
 /**
@@ -132,6 +133,44 @@ export const CACHE_COLD_DEFAULTS: CacheColdConfig = {
   cooldownMs: 5 * 60_000,
   maxPerSession: 3,
   minReclaimTokens: 2_000,
+}
+
+/**
+ * The floor and ceiling `minReclaimTokens` may take once scaled to a window.
+ *
+ * The floor keeps a small window's scaling from clearing a handful of tokens for
+ * a cache-break risk that is the same at every size, and the ceiling keeps a
+ * million-token window from demanding a reclaim no conversation ever reaches —
+ * where the rescue would be configured off rather than made proportional.
+ */
+const RECLAIM_TOKEN_BOUNDS = { min: 500, max: 100_000 } as const
+
+/**
+ * The clearing thresholds for one conversation's window.
+ *
+ * `minReclaimTokens` is the one figure here that answers a question about the
+ * window: it says how much has to be reclaimable before a clear is worth taking,
+ * and the cost it is weighed against — the bytes every later request carries and
+ * the cache break the clear risks — scales with the window. The shipped 2,000 is a
+ * share of the plugin's 128k-token reference window and is scaled to the window in
+ * use, so the bar is the same bar on a small model and a large one. Every other threshold
+ * in this config answers a question about *time* or about *how many turns to keep*,
+ * and neither of those moves with a context window.
+ *
+ * A model that advertises no window keeps the shipped configuration unchanged.
+ *
+ * @param contextWindow - the routed model's advertised window, when it advertises one.
+ * @param base - the configuration to scale; the shipped defaults by default.
+ * @returns the configuration to decide with.
+ */
+export function cacheColdConfigForWindow(
+  contextWindow: number | undefined,
+  base: CacheColdConfig = CACHE_COLD_DEFAULTS,
+): CacheColdConfig {
+  return {
+    ...base,
+    minReclaimTokens: scaleThresholdToWindow(base.minReclaimTokens, contextWindow, RECLAIM_TOKEN_BOUNDS),
+  }
 }
 
 /** One result already in the transcript, as the caller can see it. */
@@ -245,7 +284,7 @@ export function evaluateCacheColdTrigger(input: CacheColdInput, config: CacheCol
  *
  * This is the single implementation of the window because three callers must
  * agree on it: the policy counts what it will do, {@link CacheColdView.clearTargets}
- * parks exactly that set, and {@link clearOldToolResults} performs it. A window
+ * parks exactly that set once, and {@link clearOldToolResults} performs it. A window
  * computed twice is a window that can disagree with itself, and the disagreement
  * would be invisible — the plan would report a saving the transform did not make.
  * @param ordered - clearable candidates in ascending transcript order.
@@ -336,21 +375,25 @@ export class CacheColdPolicy {
  * @param input - the conversation facts, minus the state this policy owns.
  * @returns the plan, including the span to replace when it fires.
  */
-  plan(sessionId: string, input: Omit<CacheColdInput, 'clearedCount' | 'lastClearedAt'>): CacheColdPlan {
+  plan(sessionId: string, input: Omit<CacheColdInput, 'clearedCount' | 'lastClearedAt'> & { readonly config?: CacheColdConfig }): CacheColdPlan {
+    // The window-scaled configuration travels with the call rather than with the
+    // policy, because the window is a property of the conversation being measured
+    // and the policy is one object serving every conversation this Host runs.
+    const config = input.config ?? this.config
     const state = this.cleared.get(sessionId)
     const trigger = evaluateCacheColdTrigger({
       ...input,
       ...(state === undefined ? {} : { lastClearedAt: state.at }),
       clearedCount: state?.count ?? 0,
-    }, this.config)
+    }, config)
     if (!trigger.fire) {
       return { fire: false, ...(trigger.refusal === undefined ? {} : { refusal: trigger.refusal }), ...(trigger.gapMs === undefined ? {} : { gapMs: trigger.gapMs }), clearSeqs: [], keptSeqs: [], reclaimedTokens: 0 }
     }
-    const selection = selectResultsToClear(input.candidates, this.config)
+    const selection = selectResultsToClear(input.candidates, config)
     if (selection.clearSeqs.length === 0) {
       return { fire: false, refusal: 'nothing-clearable', ...(trigger.gapMs === undefined ? {} : { gapMs: trigger.gapMs }), ...selection }
     }
-    if (selection.reclaimedTokens < this.config.minReclaimTokens) {
+    if (selection.reclaimedTokens < config.minReclaimTokens) {
       return { fire: false, refusal: 'below-reclaim-floor', ...(trigger.gapMs === undefined ? {} : { gapMs: trigger.gapMs }), ...selection }
     }
     const start = selection.clearSeqs[0]!
@@ -630,13 +673,24 @@ function resultCallId(message: MessageLike): string | undefined {
  *
  * Messages that are not clearable results are returned by reference, so nothing
  * unrelated is rebuilt and the transform costs one pass.
+ *
+ * `only` is what makes a sequence of applications over a *growing* transcript the
+ * same as one application over the transcript it was decided on. Without it
+ * membership is the positional keep window, and the window slides as turns arrive:
+ * each new turn pushes the oldest kept result out of the window, so the second
+ * application clears one more result than the first and the cache break moves with
+ * it. That is the opposite of the property this transform exists to preserve, and
+ * it is invisible to a caller that only ever transforms the transcript it decided
+ * on. A caller holding a decision passes the call ids that decision covered, and
+ * then the answer does not depend on what arrived since.
  * @param messages - the transcript to transform.
- * @param options - the keep window, clearable tools, and marker overrides.
+ * @param options - the keep window, clearable tools, marker overrides, and the
+ *   call ids a decision has covered (absent means "the window decides").
  * @returns the transformed messages and the cleared and kept call ids.
  */
 export function clearOldToolResults(
   messages: readonly MessageLike[],
-  options: { readonly keepRecentResults?: number; readonly clearableTools?: readonly string[]; readonly marker?: string; readonly markers?: ReadonlyMap<string, string> } = {},
+  options: { readonly keepRecentResults?: number; readonly clearableTools?: readonly string[]; readonly marker?: string; readonly markers?: ReadonlyMap<string, string>; readonly only?: ReadonlySet<string> } = {},
 ): { readonly messages: readonly MessageLike[]; readonly clearedCallIds: readonly string[]; readonly reclaimedChars: number; readonly keptCallIds: readonly string[] } {
   const clearable = options.clearableTools ?? CLEARABLE_TOOL_KINDS
   const marker = options.marker ?? CLEARED_RESULT_MARKER
@@ -666,14 +720,25 @@ export function clearOldToolResults(
     eligible.push(current === undefined ? { seq: index } : { seq: index, turn: current })
   }
   const window = clearableWindow(eligible, options.keepRecentResults ?? CACHE_COLD_DEFAULTS.keepRecentResults)
-  if (window.clear.length === 0) {
+  // The window still bounds the answer when a decision is supplied — it is the
+  // intersection of "old enough to clear" and "a decision covered it" — so a
+  // result the transcript no longer presents as old is never cleared on the
+  // strength of a decision made before it moved.
+  const only = options.only
+  const selected = only === undefined
+    ? window.clear
+    : window.clear.filter((entry) => {
+        const callId = resultCallId(messages[entry.seq]!)
+        return callId !== undefined && only.has(callId)
+      })
+  if (selected.length === 0) {
     const keptCallIds = window.keep
       .map(entry => resultCallId(messages[entry.seq]!)!)
       .filter(Boolean)
     return { messages, clearedCallIds: [], reclaimedChars: 0, keptCallIds }
   }
 
-  const clearing = new Set(window.clear.map(entry => entry.seq))
+  const clearing = new Set(selected.map(entry => entry.seq))
   const keptCallIds: string[] = []
   const clearedCallIds: string[] = []
   let reclaimedChars = 0
@@ -751,11 +816,22 @@ function eligibleResults(messages: readonly MessageLike[]): readonly ClearableRe
  * same view for every subsequent call. That is what makes an operation that is
  * only free when the cache is cold safe to keep doing when it is warm again.
  *
+ * "Reproduces the same view" is why the state carries **the call ids each decision
+ * covered** rather than the window to recompute them from. A window is positional,
+ * so over a transcript that grows — which is what a conversation between two
+ * requests is — it slides, and the view would clear one more result per turn: a
+ * fresh cache break on every request, no cooldown, no gap, no reclaim floor, and
+ * no entry in `maxPerSession`. That is precisely the clearing this module refuses
+ * to do while the cache is warm, arriving through the back door. A decision's set
+ * only grows when a decision is made, so the shape stays fixed between them, and
+ * `apply` over a grown transcript is the same answer as over the one it was
+ * decided on.
+ *
  * `apply` returns the input array by reference when no shrink is in effect, so a
  * session that never qualifies pays one array walk and nothing else.
  */
 export class CacheColdView {
-  private readonly active = new Map<string, { readonly keepRecentResults: number; readonly markers: Map<string, string> }>()
+  private readonly active = new Map<string, { readonly keepRecentResults: number; readonly markers: Map<string, string>; readonly decided: ReadonlySet<string> }>()
 
   constructor(private readonly policy: CacheColdPolicy = new CacheColdPolicy()) {}
 
@@ -786,19 +862,29 @@ export class CacheColdView {
  * @param input - the conversation facts the plan is measured from.
  * @returns the decision, with the reclaimed tokens and the number of results to clear.
    */
-  plan(sessionId: string, input: { readonly lastAssistantAt?: number | undefined; readonly now: number; readonly messages: readonly MessageLike[] }): { readonly fire: boolean; readonly refusal?: CacheColdRefusal; readonly gapMs?: number; readonly reclaimTokens: number; readonly clearCount: number } {
+  plan(sessionId: string, input: { readonly lastAssistantAt?: number | undefined; readonly now: number; readonly messages: readonly MessageLike[]; readonly config?: CacheColdConfig }): { readonly fire: boolean; readonly refusal?: CacheColdRefusal; readonly gapMs?: number; readonly reclaimTokens: number; readonly clearCount: number } {
     const eligible = eligibleResults(input.messages)
     const decision = this.policy.plan(sessionId, {
       ...(input.lastAssistantAt === undefined ? {} : { lastAssistantAt: input.lastAssistantAt }),
       now: input.now,
       candidates: eligible,
+      ...(input.config === undefined ? {} : { config: input.config }),
     })
     if (decision.fire) {
       // Keep any markers a previous pass recorded: a plan can fire again after the
       // cooldown, and the results already parked at that point must not be parked
       // twice under two different locators.
       const existing = this.active.get(sessionId)
-      this.active.set(sessionId, { keepRecentResults: this.policy.limits().keepRecentResults, markers: existing?.markers ?? new Map() })
+      // The decision's own call ids, read off the message array the candidates were
+      // numbered against. Unioned with the previous decision's rather than replacing
+      // it: a later pass clears *more* of the transcript, and the results the first
+      // pass already replaced have to stay replaced or the shape would move back.
+      const decided = new Set(existing?.decided ?? [])
+      for (const seq of decision.clearSeqs) {
+        const callId = input.messages[seq] === undefined ? undefined : resultCallId(input.messages[seq]!)
+        if (callId !== undefined) decided.add(callId)
+      }
+      this.active.set(sessionId, { keepRecentResults: this.policy.limits().keepRecentResults, markers: existing?.markers ?? new Map(), decided })
       this.policy.commit(sessionId, input.now)
     }
     return {
@@ -813,10 +899,12 @@ export class CacheColdView {
   /**
    * The results this view is about to replace, with their text, for parking them.
    *
-   * Computed from the same eligibility rules `apply` uses and sliced to the same
-   * keep window, so the caller parks exactly the set that is about to disappear
-   * and never one that survives. Returns nothing while the view is unshrunk —
-   * there is no replacement to justify touching storage.
+   * The decided-but-unparked set, not the current window: `apply` replaces exactly
+   * the call ids a decision covered, so parking the window would park results that
+   * survive — a spill write for bytes nobody is about to lose, and worse, a stored
+   * locator for a result the model still has verbatim. Returns nothing while the
+   * view is unshrunk, and nothing after a parking pass was settled with
+   * {@link settleMarkers} — a target is offered exactly once.
    * @param sessionId - the Harness session this operation acts on.
    * @returns the clearable Result Payload rows, in backend order.
  * @param messages - the transcript the candidates are derived from.
@@ -824,10 +912,8 @@ export class CacheColdView {
   clearTargets(sessionId: string, messages: readonly MessageLike[]): readonly ClearableResultPayload[] {
     const state = this.active.get(sessionId)
     if (state === undefined) return []
-    return clearableWindow(eligibleResults(messages), state.keepRecentResults).clear
-  }
-
-  /** Whether this result already has a marker, so it is never parked a second time. 
+    return eligibleResults(messages).filter(candidate => state.decided.has(candidate.callId) && !state.markers.has(candidate.callId))
+  }  /** Whether this result already has a marker, so it is never parked a second time. 
    * @param sessionId - the Harness session this operation acts on.
    * @param callId - id of the tool call this answer belongs to.
  * @returns whether this result already carries a marker.
@@ -842,8 +928,13 @@ export class CacheColdView {
    * Stored per session and consulted on every later `apply`, because the view is
    * rebuilt on every request and must rebuild the *same* text each time or the
    * cache break moves to the second request.
+   *
+   * The blunt form of {@link settleMarkers}, for a caller that already knows the
+   * marker for every result it is recording. A caller that has just run a parking
+   * pass wants that method instead: it also records the results the pass could not
+   * park, and without them those targets stay in {@link clearTargets} forever.
    * @param sessionId - the Harness session this operation acts on.
- * @param markers - the marker to use, keyed by tool call id.
+   * @param markers - the marker to use, keyed by tool call id.
    */
   recordMarkers(sessionId: string, markers: ReadonlyMap<string, string>): void {
     const state = this.active.get(sessionId)
@@ -852,18 +943,46 @@ export class CacheColdView {
   }
 
   /**
-   * Reproduce the session's view.
+   * Record the outcome of a parking pass: one marker per target, parked or not.
    *
-   * Idempotent by construction: the transform skips results that already carry the
-   * marker, so applying it on every step is the same as applying it once.
+   * Why absence has to be recorded as an outcome rather than left for the next
+   * pass: a target that was not parked is *still* replaced by the plain marker on
+   * this step — that is what `clearOldToolResults` writes when no marker is stored
+   * for a call id — so the transcript the provider receives already has the plain
+   * text in it. A later pass that parked the same result successfully would rewrite
+   * text inside a prefix that has already been sent, which is precisely the cache
+   * break this module waits an hour, and caps itself per conversation, to avoid
+   * paying. Between those two passes every request would also retry the same
+   * failing write and log the same warning, making the log rate a function of a
+   * storage fault that has not changed.
+   *
+   * The cost of settling is bounded and stated by `result-spill.ts`: a lost locator
+   * costs a re-read of the tool, never correctness.
    * @param sessionId - the Harness session this operation acts on.
- * @param messages - the transcript to reproduce.
- * @returns the transformed messages and what changed.
+   * @param callIds - the call ids the pass was run for.
+   * @param parked - the markers the pass produced, keyed by tool call id.
+   */
+  settleMarkers(sessionId: string, callIds: readonly string[], parked: ReadonlyMap<string, string>): void {
+    const state = this.active.get(sessionId)
+    if (state === undefined) return
+    for (const callId of callIds) state.markers.set(callId, parked.get(callId) ?? CLEARED_RESULT_MARKER)
+  }
+
+  /**
+   * Reproduce the session's view.
+   *   * Idempotent by construction, and over a growing transcript rather than only over
+   * a static one: membership is the call ids the decisions covered (`only`), and the
+   * transform skips results that already carry the marker, so applying it on every
+   * step is the same as applying it once no matter how many turns arrived between
+   * them.
+   * @param sessionId - the Harness session this operation acts on.
+   * @param messages - the transcript to reproduce.
+   * @returns the transformed messages and what changed.
    */
   apply(sessionId: string, messages: readonly MessageLike[]): { readonly messages: readonly MessageLike[]; readonly changed: boolean; readonly clearedCallIds: readonly string[]; readonly reclaimedChars: number } {
     const state = this.active.get(sessionId)
     if (state === undefined) return { messages, changed: false, clearedCallIds: [], reclaimedChars: 0 }
-    const applied = clearOldToolResults(messages, { keepRecentResults: state.keepRecentResults, markers: state.markers })
+    const applied = clearOldToolResults(messages, { keepRecentResults: state.keepRecentResults, markers: state.markers, only: state.decided })
     return { messages: applied.messages, changed: applied.clearedCallIds.length > 0, clearedCallIds: applied.clearedCallIds, reclaimedChars: applied.reclaimedChars }
   }
 

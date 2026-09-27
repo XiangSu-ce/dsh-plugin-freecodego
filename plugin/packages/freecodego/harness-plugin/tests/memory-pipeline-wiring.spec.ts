@@ -38,8 +38,8 @@ import {
   type TopicProposal,
 } from '../src/memory/dream.ts'
 import { hashEvidence, type ForgetContext } from '../src/memory/forget.ts'
-import { MEMORY_MANIFEST_FILENAME, renderMemoryManifest } from '../src/memory/manifest.ts'
-import { MEMORY_TOPICS_DIRECTORY, MemoryPipeline, memoryConsolidationCaveat, type MemoryPipelineHost } from '../src/memory/memory-pipeline.ts'
+import { MEMORY_MANIFEST_FILENAME, MEMORY_SESSION_SECTION_HEADING, renderMemoryManifest } from '../src/memory/manifest.ts'
+import { MEMORY_SESSION_DIRECTORY, MEMORY_TOPICS_DIRECTORY, MemoryPipeline, memoryConsolidationCaveat, sessionDirectoryName, type MemoryPipelineHost } from '../src/memory/memory-pipeline.ts'
 import { isCollectableTelemetryValue, type MemoryTelemetryRecord } from '../src/memory/telemetry.ts'
 
 const CWD = '/workspace'
@@ -58,6 +58,11 @@ const topicKey = (slug: string): string => `${TOPICS}/${slug}.md`
 /** The key the index is written under, and the key the lease is written under. */
 const INDEX_KEY = `${HOME}/${MEMORY_MANIFEST_FILENAME}`
 const LEASE_KEY = `${HOME}/${DREAM_LEASE_FILENAME}`
+/** The session whose temporary layer these cases write into, and its directory. */
+const SESSION_ID = 'session-1'
+const SESSION_LAYER = `${HOME}/${MEMORY_SESSION_DIRECTORY}/${SESSION_ID}`
+/** The key a temporary topic is written under, exactly as `commitTopics` builds it. */
+const sessionTopicKey = (slug: string): string => `${SESSION_LAYER}/${MEMORY_TOPICS_DIRECTORY}/${slug}.md`
 /** A record id in the store's own grammar, so a double cannot pass a shape the store would refuse. */
 const OBSERVATION_ID = `mem_${'a'.repeat(32)}`
 
@@ -82,6 +87,11 @@ function memoryIo(initial: Record<string, string> = {}): { io: DreamIo; files: M
         files.set(to, staged)
       },
       remove: path => void files.delete(path),
+      removeTree: (path) => {
+        for (const key of [...files.keys()]) {
+          if (key === path || key.startsWith(`${path}/`)) files.delete(key)
+        }
+      },
     },
   }
 }
@@ -115,6 +125,10 @@ function pipelineHarness(options: {
   const requests: ConsolidationRequest[] = []
   let now = options.now ?? 1_000
   const home = (cwd: string): string => `/home/${cwd.replace(/^\//, '')}`
+  // Assigned immediately after the host is built, and read only from inside a
+  // port: the session layer's path has one definition — the pipeline's — and a
+  // harness that rebuilt it here would let a layout change pass its own tests.
+  let pipeline: MemoryPipeline
   const host: MemoryPipelineHost = {
     stage: () => options.stage,
     home,
@@ -127,6 +141,15 @@ function pipelineHarness(options: {
         .map(key => key.slice(prefix.length, -'.md'.length))
       return [...new Set([...(options.topics ?? []), ...onDisk])].sort()
     },
+    sessionTopics: (cwd, sessionId) => {
+      const directory = pipeline.sessionDirectory(cwd, sessionId)
+      if (directory === undefined) return []
+      const prefix = `${directory}/${MEMORY_TOPICS_DIRECTORY}/`
+      return [...files.keys()]
+        .filter(key => key.startsWith(prefix) && key.endsWith('.md'))
+        .map(key => key.slice(prefix.length, -'.md'.length))
+        .sort()
+    },
     ...(options.plan === undefined ? {} : {
       plan: (request: ConsolidationRequest) => {
         requests.push(request)
@@ -137,7 +160,8 @@ function pipelineHarness(options: {
     now: () => now,
     owner: 'pass-1',
   }
-  return { pipeline: new MemoryPipeline(host), files, records, requests }
+  pipeline = new MemoryPipeline(host)
+  return { pipeline, files, records, requests }
 }
 
 /**
@@ -320,6 +344,203 @@ describe('active commits topics and the index describes what is stored', () => {
   })
 })
 
+describe('a session-scoped topic lives and dies with its session', () => {
+  /** A harness whose pass has just written one temporary topic for `SESSION_ID`. */
+  async function withTemporaryTopic(extraFiles: Record<string, string> = {}): Promise<PipelineHarness> {
+    const harness = pipelineHarness({
+      stage: 'active',
+      observations: [observation()],
+      initialFiles: extraFiles,
+      plan: async () => [topic({ scope: 'session' })],
+    })
+    // A cross-check rather than a restatement: the paths this block asserts are
+    // spelled from the pipeline's own answer, so a layout change cannot pass here
+    // while the reclamation removes a different directory.
+    expect(harness.pipeline.sessionDirectory(CWD, SESSION_ID)).toBe(SESSION_LAYER)
+    await expect(harness.pipeline.consolidate({ cwd: CWD, sessionId: SESSION_ID })).resolves.toMatchObject({ topicsWritten: 1 })
+    return harness
+  }
+
+  it('writes it into the session layer, not the durable archive, and says so in the index', async () => {
+    // Mutation: dropping the `sessionDirectory` argument in `commitTopics` sends
+    // the topic to `topics/`, where the reclamation cannot reach it and the index
+    // lists it as durable — a permanent record of what one task happened to notice.
+    const harness = await withTemporaryTopic()
+    expect(harness.files.has(sessionTopicKey('errors'))).toBe(true)
+    expect(harness.files.get(sessionTopicKey('errors'))).toContain('# Errors')
+    expect(harness.files.has(topicKey('errors'))).toBe(false)
+
+    const index = harness.files.get(INDEX_KEY) ?? ''
+    expect(index).toContain(MEMORY_SESSION_SECTION_HEADING)
+    expect(index).toContain(sessionTopicKey('errors'))
+    expect(index).toContain(`(session ${SESSION_ID})`)
+    // A reader that asked for the durable layer alone is not shown the temporary
+    // one: the scope is per session, and this call has no session.
+    expect(harness.pipeline.writeManifest(CWD).markdown).not.toContain(MEMORY_SESSION_SECTION_HEADING)
+  })
+
+  it('reports the layer a session holds, and says when it cannot hold one at all', async () => {
+    // The status the panel renders. `addressable` is what keeps the panel honest:
+    // a session whose id cannot name a directory holds no temporary memory *by
+    // construction*, which is a different answer from a session that merely holds
+    // none — and only one of the two should offer a 回收 button.
+    const harness = await withTemporaryTopic()
+    expect(harness.pipeline.sessionScope(CWD, SESSION_ID)).toStrictEqual({ sessionId: SESSION_ID, topics: ['errors'], addressable: true })
+    expect(harness.pipeline.sessionScope(CWD, '../escape')).toStrictEqual({ sessionId: '../escape', topics: [], addressable: false })
+    harness.pipeline.reclaimSession(CWD, SESSION_ID)
+    expect(harness.pipeline.sessionScope(CWD, SESSION_ID)).toStrictEqual({ sessionId: SESSION_ID, topics: [], addressable: true })
+  })
+
+  it('counts a session topic as existing, so a pass rewrites rather than duplicates it', async () => {
+    // The request's `existingTopics` is the only thing telling the model what is
+    // already written, and a temporary note written by an earlier pass is part of
+    // that answer — without it the pass pays for a model call that writes a second
+    // topic beside the one the session already has.
+    const harness = pipelineHarness({
+      stage: 'active',
+      observations: [observation()],
+      initialFiles: {
+        [topicKey('durable')]: '# Durable\n\nBody.\n',
+        [sessionTopicKey('earlier')]: '# Earlier\n\nBody.\n',
+      },
+      plan: async () => [],
+    })
+    await harness.pipeline.consolidate({ cwd: CWD, sessionId: SESSION_ID })
+    expect(harness.requests.at(-1)?.existingTopics).toEqual(['durable', 'earlier'])
+  })
+
+  it('reclaims the whole layer when the session ends, and drops its row from the index', async () => {
+    // Mutation: removing the row from the index without removing the file leaves a
+    // temporary topic on disk forever — the accumulation the scope exists to stop —
+    // and removing the file without regenerating the index leaves a pointer to
+    // nothing, the one thing `manifest.ts` says an index may not hold.
+    const harness = await withTemporaryTopic({ [`${SESSION_LAYER}/notes.txt`]: 'not a topic\n' })
+    const result = harness.pipeline.reclaimSession(CWD, SESSION_ID)
+    expect(result).toMatchObject({ outcome: 'reclaimed', topics: 1 })
+    // The unit is the layer, not the list of `.md` files it happened to hold.
+    expect(harness.files.has(sessionTopicKey('errors'))).toBe(false)
+    expect(harness.files.has(`${SESSION_LAYER}/notes.txt`)).toBe(false)
+    expect((harness.files.get(INDEX_KEY) ?? '').includes(sessionTopicKey('errors'))).toBe(false)
+    expect((harness.files.get(INDEX_KEY) ?? '').includes(MEMORY_SESSION_SECTION_HEADING)).toBe(false)
+    // The reclamation is an event, not a secret: it reports how much it removed.
+    expect(harness.records.filter(record => record.event === 'memory.reclaim'))
+      .toMatchObject([{ fields: { outcome: 'reclaimed', topics: 1 } }])
+  })
+
+  it('refuses while a pass holds the lease, and removes nothing', async () => {
+    // Mutation: dropping the lease guard lets the reclamation delete a topic the
+    // pass is renaming into place — the same race `forget.ts` refuses for.
+    const harness = await withTemporaryTopic()
+    harness.files.set(LEASE_KEY, JSON.stringify({ owner: 'pass-9', acquiredAt: 1, expiresAt: 60_000 }))
+    const result = harness.pipeline.reclaimSession(CWD, SESSION_ID)
+    expect(result).toMatchObject({ outcome: 'lease-held' })
+    expect(harness.files.has(sessionTopicKey('errors'))).toBe(true)
+    expect(harness.records.filter(record => record.event === 'memory.reclaim'))
+      .toMatchObject([{ fields: { outcome: 'lease-held' } }])
+  })
+
+  it('reclaims through an expired lease, because that is the crash-recovery path', async () => {
+    // A pass that died still holds a lease file; treating it as held would make one
+    // bad pass leave a temporary layer on disk until someone deleted a file.
+    const harness = await withTemporaryTopic()
+    harness.files.set(LEASE_KEY, JSON.stringify({ owner: 'pass-9', acquiredAt: 1, expiresAt: 999 }))
+    expect(harness.pipeline.reclaimSession(CWD, SESSION_ID)).toMatchObject({ outcome: 'reclaimed', topics: 1 })
+  })
+
+  it('answers absent, and writes nothing at all, when the session has no temporary layer', async () => {
+    // The ordinary case — every disposal in a deployment that never scopes a topic
+    // to one — and the reason it is not an event: one record per session close
+    // would make the log's rate the disposal rate. It must also cost no writes,
+    // which is why the index is compared byte for byte rather than by absence.
+    const harness = pipelineHarness({
+      stage: 'active',
+      observations: [observation()],
+      plan: async () => [topic()],
+    })
+    await harness.pipeline.consolidate({ cwd: CWD, sessionId: SESSION_ID })
+    const before = [...harness.files.entries()]
+    expect(harness.pipeline.reclaimSession(CWD, SESSION_ID)).toStrictEqual({ outcome: 'absent' })
+    expect([...harness.files.entries()]).toStrictEqual(before)
+    expect(harness.records.filter(record => record.event === 'memory.reclaim')).toStrictEqual([])
+  })
+
+  it('can be forgotten on its own, because its archive is still the one that gesture knows', async () => {
+    // The layout decision, asserted rather than assumed: a session topic sits in
+    // `<home>/sessions/<id>/topics/`, whose immediate parent is `topics`, so the
+    // forget gesture's archive list accepts it unchanged. A record the user can see
+    // in the index and cannot delete is the failure this rules out.
+    const harness = await withTemporaryTopic()
+    const bytes = harness.files.get(sessionTopicKey('errors')) ?? ''
+    const forgotten = harness.pipeline.forget(
+      CWD,
+      { path: `${MEMORY_SESSION_DIRECTORY}/${SESSION_ID}/${MEMORY_TOPICS_DIRECTORY}/errors.md`, sha256: hashEvidence(bytes) },
+      inMemoryForgetPorts(harness.files),
+    )
+    expect(forgotten).toMatchObject({ ok: true })
+    expect(harness.files.has(sessionTopicKey('errors'))).toBe(false)
+    expect(harness.files.get(INDEX_KEY)).not.toContain(sessionTopicKey('errors'))
+  })
+
+  it('keeps the rest of the session layer listed when one of its topics is forgotten', async () => {
+    // Mutation: regenerating the index with no session id drops every temporary row
+    // — they are listed only for the session that asks — so forgetting one note
+    // hides the ones still on disk.
+    const harness = pipelineHarness({
+      stage: 'active',
+      observations: [observation()],
+      initialFiles: {
+        [sessionTopicKey('kept')]: '# Kept\n\nBody.\n',
+        [sessionTopicKey('gone')]: '# Gone\n\nBody.\n',
+      },
+      plan: async () => [],
+    })
+    await harness.pipeline.consolidate({ cwd: CWD, sessionId: SESSION_ID })
+    expect(harness.files.get(INDEX_KEY)).toContain(sessionTopicKey('kept'))
+    const forgotten = harness.pipeline.forget(
+      CWD,
+      { path: `${MEMORY_SESSION_DIRECTORY}/${SESSION_ID}/${MEMORY_TOPICS_DIRECTORY}/gone.md`, sha256: hashEvidence(harness.files.get(sessionTopicKey('gone')) ?? '') },
+      inMemoryForgetPorts(harness.files),
+    )
+    expect(forgotten).toMatchObject({ ok: true })
+    const index = harness.files.get(INDEX_KEY) ?? ''
+    expect(index).toContain(sessionTopicKey('kept'))
+    expect(index).not.toContain(sessionTopicKey('gone'))
+  })
+
+  it('refuses a session id that cannot name a directory, on both sides of the scope', async () => {
+    // One rule, two readers: an id that cannot name a directory cannot hold a
+    // temporary layer, so a pass may not write one and a reclamation has none to
+    // find. Mutation: hashing the id instead of refusing it makes the write
+    // succeed here and the reclamation below remove nothing, because the two
+    // would derive different names.
+    for (const unusable of ['../escape', 'a/b', '', '   ', 'con', '.hidden', 'x'.repeat(65)]) {
+      expect(sessionDirectoryName(unusable)).toBeUndefined()
+    }
+    // A trailing dot is the device-name case again, one layer down: Win32 strips
+    // trailing dots and spaces from a path segment, so `abc.` does not merely fail
+    // to create — it *is* `abc`, and the two ids would name one directory. That is
+    // the collision the device-name list exists to prevent, with a worse ending:
+    // one session's layer would sit where the other's is reclaimed from.
+    for (const ambiguous of ['abc.', 'session-1.', 'x.y.']) {
+      expect(sessionDirectoryName(ambiguous)).toBeUndefined()
+    }
+    // A dot *inside* a segment is a different question and is not collateral: Win32
+    // strips only the trailing ones, so these stay distinct names.
+    expect(sessionDirectoryName('a.b')).toBe('a.b')
+    expect(sessionDirectoryName('session-1')).toBe('session-1')
+
+    const harness = pipelineHarness({ stage: 'active', observations: [observation()], plan: async () => [topic({ scope: 'session' })] })
+    const outcome = await harness.pipeline.consolidate({ cwd: CWD, sessionId: '../escape' })
+    expect(outcome).toMatchObject({ outcome: 'completed', topicsWritten: 0 })
+    expect(outcome.problem).toContain('refused')
+    expect(harness.pipeline.reclaimSession(CWD, '../escape')).toMatchObject({ outcome: 'unnamed' })
+    // The refusal is the same on both sides: nothing was written under a derived
+    // name, so the index is the only file a pass leaves behind.
+    expect([...harness.files.keys()]).toStrictEqual([INDEX_KEY])
+    expect(harness.files.get(INDEX_KEY)).not.toContain(MEMORY_SESSION_SECTION_HEADING)
+  })
+})
+
 describe('the lease serialises passes', () => {
   it('a second pass while the first is running is refused, and counted', async () => {
     // Mutation: deleting the `if (!lease.ok)` guard lets the second pass read the
@@ -370,6 +591,11 @@ describe('the lease serialises passes', () => {
       io,
       observations: () => [],
       topics: () => [],
+      // The host port the session scope needs. Stated as the empty answer because
+      // neither case below scopes a topic to a session; without it this fake is not
+      // the host the pipeline is written against, which is what the package's
+      // `tsconfig.test.json` is for (the host aggregate excludes `tests/`).
+      sessionTopics: () => [],
       telemetry: record => { records.push(record) },
       now: () => 2_000,
     })
@@ -535,6 +761,11 @@ describe('forgetting is refused while a dream holds the lease', () => {
       io,
       observations: () => [],
       topics: () => [],
+      // The host port the session scope needs. Stated as the empty answer because
+      // neither case below scopes a topic to a session; without it this fake is not
+      // the host the pipeline is written against, which is what the package's
+      // `tsconfig.test.json` is for (the host aggregate excludes `tests/`).
+      sessionTopics: () => [],
       telemetry: record => { records.push(record) },
       now: () => 2_000,
     })
@@ -716,6 +947,42 @@ describe('the plugin host runs the pipeline it built', () => {
 
     // …and the outcome reached the Host log as a schema-built record.
     expect(harness.logged.some(line => line.includes('memory.dream') && line.includes('"outcome":"completed"'))).toBe(true)
+  })
+
+  it('scopes a temporary topic to its session, and the reclamation disposal runs takes it away', async () => {
+    // The session scope end to end, on a real filesystem: the plan asks for it, the
+    // plugin writes it into the session's own directory, the index says it is
+    // temporary, the Remote the settings panel calls passes the session so the row
+    // shows, and the call the disposal listener makes removes the layer and the row
+    // together. Each half has its own case against injected ports; this is the one
+    // proving the plugin wires them to each other.
+    harness = await pluginHarness({
+      memoryRollout: 'active',
+      completion: JSON.stringify([{ slug: 'retries', title: 'Retries', markdown: 'Bounded and jittered.', sources: [OBSERVATION_ID], scope: 'session' }]),
+    })
+    expect(await harness.plugin.consolidateMemoryForTest(CWD, 'session-1')).toMatchObject({ outcome: 'completed', topicsWritten: 1 })
+
+    const segments = memoryHomeSegments(harness.home)
+    expect(segments).toHaveLength(1)
+    const memoryHome = join(harness.home, 'freecodego', 'engineering', 'memory-home', segments[0]!)
+    const layer = join(memoryHome, MEMORY_SESSION_DIRECTORY, 'session-1')
+    expect(existsSync(join(layer, MEMORY_TOPICS_DIRECTORY, 'retries.md'))).toBe(true)
+    // No durable copy: a temporary topic that also exists under `topics/` is one
+    // the reclamation cannot reach, which is the opposite of temporary.
+    expect(existsSync(join(memoryHome, MEMORY_TOPICS_DIRECTORY, 'retries.md'))).toBe(false)
+    const index = (): string => readFileSync(join(memoryHome, MEMORY_MANIFEST_FILENAME), 'utf8')
+    expect(index()).toContain(MEMORY_SESSION_SECTION_HEADING)
+    expect(index()).toContain('(session session-1)')
+    expect(harness.plugin.engineeringMemoryManifest('session-1').markdown).toContain(MEMORY_SESSION_SECTION_HEADING)
+
+    // What the panel's 回收 button calls, and what the disposal listener runs…
+    expect(harness.plugin.engineeringMemorySessionScope('session-1')).toMatchObject({ sessionId: 'session-1', topics: ['retries'], addressable: true })
+    expect(harness.plugin.engineeringMemorySessionReclaim('session-1')).toMatchObject({ outcome: 'reclaimed', topics: 1 })
+    expect(existsSync(layer)).toBe(false)
+    expect(index()).not.toContain('retries.md')
+    // …and it is on the log like every other memory outcome, so an operator can see
+    // a session's temporary notes end rather than having to trust that they did.
+    expect(harness.logged.some(line => line.includes('memory.reclaim') && line.includes('"outcome":"reclaimed"'))).toBe(true)
   })
 
   it('reports a completed pass caveat, not only a failed pass reason', async () => {

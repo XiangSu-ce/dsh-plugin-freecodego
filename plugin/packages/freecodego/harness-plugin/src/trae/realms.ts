@@ -19,7 +19,7 @@
  * ----------
  * Everything CN-side is the set this connector has been sending since the SOLO
  * channel was added. Everything SG-side is measured from the international
- * clients by the reference implementation (`trae2api-main`, `docs/PROTOCOL.md`,
+ * clients by the reference implementation (`trae2api-main`, its `docs/PROTOCOL`,
  * observed 2026-09-17) except where a field is marked inferred below — those have
  * no observation behind them yet and are the first thing to check if an
  * international sign-in misbehaves.

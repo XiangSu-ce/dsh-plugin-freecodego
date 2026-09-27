@@ -25,6 +25,10 @@ import { SHAPES } from '../src/client/companion/engine/skins.ts'
 import { STATE_BY_ID } from '../src/client/companion/engine/states.ts'
 import { en, zh } from '../src/client/companion/companion-locale.ts'
 import { IDLE_AFTER_MS } from '../src/client/companion/signals.ts'
+import { POSE_POOLS, poseIntervalMs } from '../src/client/companion/poses.ts'
+import { FACE_POOLS, faceIntervalMs } from '../src/client/companion/eyes/pools.ts'
+import { RING_SAMPLES, RINGS } from '../src/client/companion/eyes/rings.ts'
+import { withRings } from '../src/client/companion/eyes/apply.ts'
 import { activityFixture } from './companion-activity.fixture.ts'
 import type { BotFrame } from '../src/client/companion/engine/engine.ts'
 
@@ -375,9 +379,58 @@ function state(over: SessionsStateInput = {}): Fixture {
   }
 }
 
-/** @returns the pose the seat is currently showing. */
+/** @returns the state the seat is currently showing, which the words are about. */
 function pose(container: HTMLElement): string | null {
   return container.querySelector('svg')!.getAttribute('data-fcg-state')
+}
+
+/** @returns the pose that drew it — the state itself unless the state rotates. */
+function drawnPose(container: HTMLElement): string | null {
+  return container.querySelector('svg')!.getAttribute('data-fcg-pose')
+}
+
+/**
+ * @returns the expression the model asked for, as the seat publishes it.
+ *
+ * Distinct from the outline the eyes are drawn with on purpose: this is the request
+ * itself, which is the one thing about a mood that nothing else in the DOM can be
+ * diffed against — the eyes are curves inside a mask, redrawn every frame.
+ */
+function requestedFace(container: HTMLElement): string | null {
+  return container.querySelector('[data-fcg-companion-expression]')!.getAttribute('data-fcg-companion-expression')
+}
+
+/**
+ * @returns which source the worn expression came from: the model or the session.
+ *
+ * The two are different claims about one character, and a reader — or a test — that only
+ * saw the name could not tell a mood the model chose from a reaction the session earned.
+ */
+function faceSource(container: HTMLElement): string | null {
+  return container
+    .querySelector('[data-fcg-companion-expression-source]')!
+    .getAttribute('data-fcg-companion-expression-source')
+}
+
+/**
+ * @returns the outline the eyes are drawn with, as the seat publishes it.
+ *
+ * The name of the ring, not the request above: what is *drawn*, which is what a pool
+ * rotation changes. The paths themselves cannot say it — the body breathes, so every
+ * eye path differs on every frame whether or not the outline moved.
+ */
+function face(container: HTMLElement): string | null {
+  return container.querySelector('svg')!.getAttribute('data-fcg-face')
+}
+
+/**
+ * @returns the eye outlines the seat drew, as the mask's holes after the body.
+ *
+ * Slots are mounted whether or not the frame needs them, so an unused one is the
+ * empty string rather than a missing element.
+ */
+function eyes(container: HTMLElement): (string | null)[] {
+  return [...container.querySelectorAll('mask path')].slice(1).map(path => path.getAttribute('d'))
 }
 
 describe('companion seat: session activity drives the pose', () => {
@@ -464,6 +517,196 @@ describe('companion seat: session activity drives the pose', () => {
     // ...and the completion is still on offer when it expires.
     pump(700)
     expect(pose(view.container)).toBe('burst')
+  })
+
+  it('keeps the words on the state while the drawing rotates under them', () => {
+    // The complaint this answers: a long turn showed one fixed animation from
+    // start to finish, so the picture said "busy" once and then repeated itself.
+    const sessions = state({ current: 's1', byId: { s1: { running: true, blank: false } } })
+    const { container } = setup(sessions)
+    pump()
+    expect(pose(container)).toBe('thinking')
+    const first = drawnPose(container)
+    expect(POSE_POOLS.thinking).toContain(first)
+    // Two intervals, so the assertion does not depend on where in the interval the
+    // frame happened to land: the index has advanced, whatever the phase was.
+    pump(poseIntervalMs('thinking') * 2)
+    expect(drawnPose(container)).not.toBe(first)
+    expect(POSE_POOLS.thinking).toContain(drawnPose(container))
+    // The state — and therefore the label a reader sees beside the drawing — has
+    // not moved. Only the picture did.
+    expect(pose(container)).toBe('thinking')
+  })
+
+  it('draws the eyes the pose wears, and none at all for a pose with no face', () => {
+    const sessions = state({ current: 's1', byId: { s1: { running: true, blank: false } } })
+    const { container } = setup(sessions)
+    pump()
+    expect(pose(container)).toBe('thinking')
+    // Walk the drawing onto the pose that has no face. The shared clock is a process
+    // singleton, so the phase of the pool is whatever the tests before this one left
+    // it at; one interval per pump advances it exactly one pose, so a lap is enough.
+    for (let step = 0; step < POSE_POOLS.thinking.length && drawnPose(container) !== 'thinking'; step++) {
+      pump(poseIntervalMs('thinking'))
+    }
+    expect(drawnPose(container)).toBe('thinking')
+    // Read once it has arrived: the engine morphs the eyes that were there *away*
+    // rather than cutting them, so they are still on screen for a moment.
+    pump(500)
+    expect(eyes(container).every(d => d === '')).toBe(true)
+    // One interval on, the pool has walked to a pose that does have eyes. The state the
+    // words are about has not moved, so nothing but the drawing changed: the eyes
+    // belong to the pose, not to the session.
+    pump(poseIntervalMs('thinking'))
+    expect(pose(container)).toBe('thinking')
+    expect(drawnPose(container)).toBe(POSE_POOLS.thinking[1])
+    // Far enough into the new pose for its own eyes to have faded in.
+    pump(150)
+    const drawn = eyes(container)
+    expect(drawn).toHaveLength(2)
+    for (const d of drawn) {
+      // A ring, not the engine's capsule: one curve per sample, where a capsule is
+      // arcs and lines. This is what tells a seat that the outline reached it.
+      expect(d?.match(/C/gu)).toHaveLength(RING_SAMPLES)
+    }
+  })
+
+  it('keeps a waiting seat\'s face moving while the words on it stand still', () => {
+    // The report this answers, stated as a test: a session sitting at rest wore one
+    // expression for as long as the window stayed open. The state never changes in this
+    // test, so the only thing that can move the outline is the state's face pool — which
+    // is why the outline is published at all, since every eye path differs each frame
+    // anyway (the body breathes, so the box the eye is drawn in moves with it).
+    const { container } = setup(state())
+    pump()
+    expect(pose(container)).toBe('idle')
+    const seen = new Set<string | null>()
+    // Two laps rather than one, and the reason is a measurement rather than caution: a pump
+    // of exactly one interval lands *on* the boundary where the pool's answer changes, so
+    // whether this seat has drawn the new face yet depends on when its frame ran — the first
+    // version of this test asserted a single lap's set equality and failed by one entry
+    // (measured: `['glint','open','oval','tired']`). Two laps asserts what the report was
+    // actually about — every entry arrives, and nothing arrives that is not an entry —
+    // without depending on which side of a frame boundary the sampler landed.
+    for (let step = 0; step < FACE_POOLS.idle.faces.length * 2; step++) {
+      pump(faceIntervalMs('idle'))
+      seen.add(face(container))
+      // The words are the ladder's and the ladder did not move: a rotating face is a
+      // drawing, never a status.
+      expect(pose(container)).toBe('idle')
+    }
+    const pool: readonly string[] = FACE_POOLS.idle.faces
+    for (const name of pool) expect([...seen], `the seat never drew ${name}`).toContain(name)
+    for (const drawn of seen) expect(pool, `the seat drew ${String(drawn)}`).toContain(drawn ?? '')
+  })
+
+  it('wears the expression the model asked for, and leaves the words on the session', () => {
+    // The two vocabularies meet at exactly one place, and this is it: a request drawn on
+    // the eyes changes nothing else. The state — which is what the label and the
+    // accessible text are about — stays the arbiter's answer, and a session fact cannot
+    // be reported by a model, which is why the request is decoration rather than a
+    // status channel.
+    //
+    // Read on a still companion, because the assertion is about *which* outline is
+    // drawn: a moving one breathes, and a breathing body rescales the eye box enough to
+    // change every path under it — an inequality there would pass with the request
+    // ignored entirely, which is how this test was wrong when it was first written.
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    const activity = activityFixture()
+    const { container } = setup(state(), new Set(), activity)
+    pump()
+    expect(pose(container)).toBe('idle')
+    const idle = STATE_BY_ID.get('idle')!
+    // The same frozen instant the seat itself samples, so the expected eye is arithmetic
+    // rather than a snapshot: the engine's own frame, drawn in the requested outline.
+    const still = new BotEngine(RAYON, 'idle').sample(idle.minDuration ?? idle.duration / 2)
+    expect(eyes(container)[0]).toBe(withRings(still, RINGS.open).eyes[0]!.d)
+    expect(requestedFace(container)).toBe('')
+
+    act(() => { activity.publish({ expressionKey: 'call-1', expression: 'happy' }) })
+    pump()
+    // A request is not motion, so a still companion takes it up on the frame it arrives
+    // in and at once — the outline is the requested one, not on its way to it.
+    expect(eyes(container)[0]).toBe(withRings(still, RINGS.smile).eyes[0]!.d)
+    expect(eyes(container)[0]).not.toBe(withRings(still, RINGS.open).eyes[0]!.d)
+    expect(pose(container)).toBe('idle')
+    expect(drawnPose(container)).toBe('idle')
+    // And the request itself is published, which is what a host — or the live run
+    // that confirmed this feature end to end — watches: the drawn outline is what
+    // the assertion above pins, and that is a value nothing outside can name.
+    expect(requestedFace(container)).toBe('happy')
+  })
+
+  it('winces when a tool call came back a failure, and says the session is why', () => {
+    // The second source of a face, and the one the session earns on its own: a tool that
+    // failed is the instant inside a running turn where "still working" and "this is not
+    // cooperating" are different pictures. Read on a still companion for the reason the
+    // request above is — the assertion is about *which* outline is drawn.
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    const activity = activityFixture()
+    const { container } = setup(state(), new Set(), activity)
+    pump()
+    const idle = STATE_BY_ID.get('idle')!
+    const still = new BotEngine(RAYON, 'idle').sample(idle.minDuration ?? idle.duration / 2)
+    expect(eyes(container)[0]).toBe(withRings(still, RINGS.open).eyes[0]!.d)
+    expect(faceSource(container)).toBe('')
+
+    act(() => { activity.publish({ toolFailureKey: 'result-1' }) })
+    pump()
+    const wince = eyes(container)[0]
+    expect(wince).not.toBe(withRings(still, RINGS.open).eyes[0]!.d)
+    // The one shape the vocabulary draws for effort gone wrong, and the same outline a
+    // *requested* `sad` draws: the session reaches a name the model could also have asked
+    // for, rather than a second vocabulary nothing else can be compared against.
+    expect(eyes(container)[0]).toBe(withRings(still, RINGS.frown).eyes[0]!.d)
+    expect(requestedFace(container)).toBe('sad')
+    expect(faceSource(container)).toBe('moment')
+    // And it is a face, not a status: the session is still at rest as far as the words,
+    // the label and the accessible text are concerned.
+    expect(pose(container)).toBe('idle')
+    expect(drawnPose(container)).toBe('idle')
+  })
+
+  it('publishes what was asked for even when it draws the outline already on screen', () => {
+    // The published attributes are the only thing about a face anything outside the
+    // component can read, and several names draw one outline: `neutral` is the resting
+    // eye, which a frozen seat is already wearing. A gate that watched the *outline* would
+    // leave the attributes saying "nothing was asked for" while the model had asked —
+    // and would leave a live probe unable to see the request at all.
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    const activity = activityFixture()
+    const { container } = setup(state(), new Set(), activity)
+    pump()
+    expect(face(container)).toBe('open')
+
+    act(() => { activity.publish({ expressionKey: 'call-1', expression: 'neutral' }) })
+    pump()
+    expect(face(container)).toBe('open')
+    expect(requestedFace(container)).toBe('neutral')
+    expect(faceSource(container)).toBe('request')
+
+    act(() => { activity.publish({ expressionKey: 'call-2', expression: 'sad' }) })
+    pump()
+    expect(face(container)).toBe('frown')
+    // Same name, different source: the session's wince outranks the mood that asked for
+    // the same face, and the reading has to move with it — otherwise the source attribute
+    // would keep crediting the model for a reaction the session had.
+    act(() => { activity.publish({ toolFailureKey: 'result-1' }) })
+    pump()
+    expect(requestedFace(container)).toBe('sad')
+    expect(faceSource(container)).toBe('moment')
   })
 
   it('opens a fresh seat at rest, not asleep, on a clock that has been running', () => {
@@ -593,6 +836,27 @@ describe('companion seat: reduced motion', () => {
     expect(container.querySelector('path')!.getAttribute('d')).toBe(frozen)
   })
 
+  it('holds the drawing still while the words are still, under reduced motion', () => {
+    // What a seat can prove here is stability: a frozen companion republishes only
+    // when the state changes, so the picture cannot advance on its own. Whether the
+    // rotation is *gated* is a property of `poseAt`, asserted in
+    // `./companion-poses.client.spec.ts` — a seat-level version of it would pass
+    // with or without the gate, because this short-circuit masks the difference.
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    const sessions = state({ current: 's1', byId: { s1: { running: true, blank: false } } })
+    const { container } = setup(sessions)
+    pump()
+    expect(pose(container)).toBe('thinking')
+    expect(drawnPose(container)).toBe('thinking')
+    pump(poseIntervalMs('thinking') * 3)
+    expect(drawnPose(container)).toBe('thinking')
+    expect(pose(container)).toBe('thinking')
+  })
+
   it('rests on the engine\u2019s own circle rather than a shape it chose', () => {
     // The seat passes no shape override, which the engine reads as "its own
     // resting profile". That is only identical to the table's `cercle` while that
@@ -640,10 +904,17 @@ describe('companion seat: environment edges', () => {
     const moving = container.querySelector('path')!.getAttribute('d')
     pump(300)
     expect(container.querySelector('path')!.getAttribute('d')).not.toBe(moving)
-    // Switching motion off freezes the pose where it stands.
+    // Switching motion off settles the drawing onto the state's *own* pose rather
+    // than leaving it on whichever pose the rotation had reached: the words and the
+    // picture are then the same in every seat, and a reader who asked for less motion
+    // is not left looking at a frame that only existed mid-turn.
     query.matches = true
     for (const notify of listeners) notify()
+    // The preference arrives through a render, so the frame carrying it can still be
+    // the rotation's; one tick later it is taken up and the pose is reset.
     pump()
+    pump()
+    expect(drawnPose(container)).toBe('thinking')
     const frozen = container.querySelector('path')!.getAttribute('d')
     pump(300)
     expect(container.querySelector('path')!.getAttribute('d')).toBe(frozen)

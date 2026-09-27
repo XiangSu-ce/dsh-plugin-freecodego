@@ -1,6 +1,46 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/freecodego/bundle-latest/README.md
-README.md: 8d10144b93404bd365c74acfd6ed6e37c5b482b6
-README.zh.md: 59610270a1325f0808de361185235bb2ff9a8f06
+/:
+  en: 8859351e0ca49ac5
+  zh: d8040312aa730430
+/freecodego-harness-bundle:
+  en: 68d0519714131dbf
+  zh: a693e8f24c6e5db0
+/freecodego-harness-bundle/summary:
+  en: 96fc011736f154e8
+  zh: 0abe274b37c46858
+/freecodego-harness-bundle/table-of-contents:
+  en: 4e073879c5c1a7d6
+  zh: 784434b4cbce068c
+/freecodego-harness-bundle/install:
+  en: da5d2be3aa61b754
+  zh: d40aa7ba7e976d80
+/freecodego-harness-bundle/free-models:
+  en: 75bc42a206b0ca8b
+  zh: 22d1bcda58da09f2
+/freecodego-harness-bundle/code-review:
+  en: 8f68263e2002cc7c
+  zh: a8686114cc3e9e71
+/freecodego-harness-bundle/project-memory:
+  en: 42181f6425464c04
+  zh: 58b099b4413d21ba
+/freecodego-harness-bundle/agent-teams:
+  en: b6baac895fc56d36
+  zh: 85271ccb0de27a58
+/freecodego-harness-bundle/image-and-video-generation:
+  en: b4fb37151a7b291e
+  zh: 6379c5a17b7dd6e3
+/freecodego-harness-bundle/model-experience:
+  en: efa389e274af6ffe
+  zh: 2101a6c435d892b2
+/freecodego-harness-bundle/model-experience/kv-cache-effect:
+  en: 4b878d2f2903709c
+  zh: 3b3c58c7158b7037
+/freecodego-harness-bundle/known-limitations-and-deferred-work:
+  en: 918063c77a92f545
+  zh: b77f36cd8159f414
+/freecodego-harness-bundle/known-limitations-and-deferred-work/dev-note:
+  en: b3627181a926cd2f
+  zh: 3bf92b09c941b40d

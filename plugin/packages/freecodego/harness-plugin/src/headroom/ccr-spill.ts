@@ -86,9 +86,9 @@ export interface SpillArchiveOptions {
   readonly minBytes?: number
   /**
    * Read an artifact back from its locator. The default treats the locator as a
-   * path, which is what the local backend hands out and what `spill_recall`
-   * already relies on; a backend whose locator is a URI fails this read, is
-   * logged, and still gets its locator named in the refusal.
+   * path, which is what the local backend hands out and what the locator form of
+   * `headroom_retrieve` pages through already; a backend whose locator is a URI
+   * fails this read, is logged, and still gets its locator named in the refusal.
    */
   readonly readArtifact?: (locator: string) => Promise<string>
 }

@@ -12,6 +12,7 @@
 
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
+import type { CompactionSummarySkeleton } from './compaction-fidelity.ts'
 import { conversationArcText, foldConversationArc, type ConversationArcEvent, type ConversationArcMemory } from './memory/memory-facts.ts'
 import { describeMemoryAge, memoryFreshnessNote } from './memory/memory-age.ts'
 import type { FreeCodeGoEngineeringMemoryRecall } from './types.ts'
@@ -88,10 +89,30 @@ export function rehydrationText(input: {
   readonly memoryBodies?: ReadonlyMap<string, string>
   /** Pre-folded arc section, rendered by the caller (memory/memory-facts). */
   readonly arcText?: string
+  /** Which checkpoint fields the summary kept, when the audit has read it. */
+  readonly checkpoint?: CompactionSummarySkeleton
 }): string {
   const lines: string[] = []
-  // The arc leads: goals and decisions are the shortest path back into the
-  // work, and everything after it is evidence supporting them.
+  // The one caveat about the checkpoint itself, and the only section here that is
+  // about the compaction rather than about the work — so it precedes everything the
+  // compaction preserved, including the arc below.
+  // The one thing the checkpoint cannot say about itself. A dropped field is
+  // indistinguishable from the `(none)` the summariser is told to write, so the
+  // model resuming from it reads an omission as "there was no such work" — which is
+  // a fact about the summariser, not about the session, and only this side of the
+  // compaction can tell the two apart.
+  const checkpoint = input.checkpoint
+  if (checkpoint !== undefined && checkpoint.missing.length > 0) {
+    lines.push(
+      '## Fields the checkpoint above dropped',
+      '',
+      `The checkpoint was written to a fixed structure. It carries: ${checkpoint.present.length === 0 ? 'none of the fields' : checkpoint.present.join(', ')}.`,
+      `It does not carry: ${checkpoint.missing.join(', ')}. An absent field is not the same as \"(none)\": the summariser dropped it, so read nothing into its absence and check the conversation below for the work it describes.`,
+      '',
+    )
+  }
+  // The arc leads the restored material: goals and decisions are the shortest path
+  // back into the work, and everything after it is evidence supporting them.
   if (input.arcText !== undefined && input.arcText !== '') {
     lines.push(neutralizeFenceTags(input.arcText, TAG))
   }
@@ -189,6 +210,14 @@ export function installRehydration(ctx: Context, deps: {
    * plan mode.
    */
   readonly planReminder?: (session: { readonly id?: unknown }) => string | undefined | Promise<string | undefined>
+  /**
+   * The checkpoint skeleton the audit already read for this session, when it ran.
+   *
+   * Read from the audit rather than parsed here for the reason the audit exists: one
+   * reader of a summary means the note the model is given and the finding in the log
+   * cannot disagree about which field was dropped.
+   */
+  readonly checkpointSkeleton?: (session: { readonly id?: unknown }) => CompactionSummarySkeleton | undefined
 }): void {
   ctx.on('session/event', async (session, event) => {
     if ((event.type as string) !== 'compaction/end') return
@@ -213,10 +242,12 @@ export function installRehydration(ctx: Context, deps: {
         }))
         arcText = conversationArcText(foldConversationArc(events, arcMemories))
       }
+      const checkpoint = deps.checkpointSkeleton?.(session)
       const text = rehydrationText({
         ...(todos === undefined ? {} : { todos }),
         ...(memory === undefined ? {} : { memory: memory.recall, memoryBodies: memory.bodies }),
         ...(arcText === undefined || arcText === '' ? {} : { arcText }),
+        ...(checkpoint === undefined ? {} : { checkpoint }),
       })
       // Awaited because deciding whether the mode is active reads the Harness's
       // own projection, and a promise treated as a value would silently drop the

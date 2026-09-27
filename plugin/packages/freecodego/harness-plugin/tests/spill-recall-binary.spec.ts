@@ -1,5 +1,5 @@
 /**
- * `spill_recall` over an artifact that is not valid UTF-8.
+ * The locator form of `headroom_retrieve` over an artifact that is not valid UTF-8.
  *
  * The paging interface is byte offsets, and the acceptance property the module
  * states is that concatenating the pages of an artifact reconstructs its bytes

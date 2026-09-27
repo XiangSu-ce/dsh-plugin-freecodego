@@ -97,10 +97,17 @@ export class FreeCodeGoPolicy implements FreeCodeGoSettingsPort {
    *   constructible so consumers never branch on its presence; they branch on
    *   {@link configured} instead.
    * @param writer - the persistence step, absent when no settings service is mounted.
+   * @param onVoiceInputChange - told when {@link FreeCodeGoEngineSettings.voiceInputEnabled}
+   *   actually moved, for the one consumer whose decision does not survive on a
+   *   live read. Every other behaviour here reads its setting at the moment it
+   *   acts, so it needs no notification; a recognizer that either exists or does
+   *   not exist in a service roster is the exception, and it has to hear about
+   *   the write rather than poll for it.
    */
   constructor(
     private readonly config: Config | undefined,
     private readonly writer: FreeCodeGoSettingsWriter | undefined = undefined,
+    private readonly onVoiceInputChange?: () => void,
   ) {}
 
   /** Whether a configuration was available when the plugin was built. */
@@ -133,7 +140,22 @@ export class FreeCodeGoPolicy implements FreeCodeGoSettingsPort {
    *   force every caller to widen a patch it knows is already valid.
    */
   async update(patch: object): Promise<void> {
+    // Read before the write, not twice after it: the resolved document is a live
+    // reference into this plugin's own configuration, so the write is what moves
+    // the value and the previous one is unrecoverable afterwards.
+    const before = this.get()?.voiceInputEnabled
     await this.writer?.update(patch)
+    // Only when it moved. Every capability write carries the whole document, so a
+    // hook that fired on the mere presence of the key would have an unrelated MCP
+    // edit resolve the user's speech credential — and resolving it is the whole
+    // cost of the listener this exists for.
+    if (this.get()?.voiceInputEnabled === before) return
+    // Not awaited, and contained: the hook re-evaluates state derived from
+    // settings, so a listener that throws must not turn a stored patch into a
+    // failed user gesture.
+    try {
+      this.onVoiceInputChange?.()
+    } catch { /* a listener's failure is its own to report */ }
   }
 }
 

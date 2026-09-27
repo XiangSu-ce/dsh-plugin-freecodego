@@ -207,17 +207,21 @@ function handlerEnvironment(base: Readonly<Record<string, string>>, event: HookE
 /**
  * End a handler that has run out of time, children included.
  *
- * `child.kill()` reaches the shell this module spawned, and on Windows that is
- * all it reaches: `cmd.exe` does not `exec`-replace itself, so the `pnpm lint`
- * behind it keeps running — and a hook that ignored its deadline would outlive
- * the turn it was gating while this code reported it stopped. `taskkill /t` is
- * the only thing that walks the tree, so it is what a timeout uses there. POSIX
- * shells `exec` a single command, so the direct kill already lands on it, and
- * SIGKILL is used because a hook past its deadline is not owed a graceful window.
+ * `child.kill()` reaches only the shell this module spawned. On Windows,
+ * `cmd.exe` does not `exec`-replace itself, so the `pnpm lint` behind it keeps
+ * running; on POSIX, a hook can background descendants that outlive the shell.
+ * Both are work that would continue after this runner reports it stopped. The
+ * runner therefore owns a process group on POSIX and kills the whole group, and
+ * uses `taskkill /t` to walk the tree on Windows. SIGKILL is used because a hook
+ * past its deadline is not owed a graceful window.
  * @param child - the spawned shell.
  */
 function terminateHookProcess(child: { pid?: number | undefined; kill(signal?: NodeJS.Signals | number): boolean }): void {
-  if (process.platform === 'win32' && child.pid !== undefined) {
+  if (child.pid === undefined) {
+    try { child.kill('SIGKILL') } catch { /* already gone */ }
+    return
+  }
+  if (process.platform === 'win32') {
     try {
       // `unref` so a taskkill that outlives its usefulness cannot hold the
       // process open; its own failure is the child's problem, not the turn's.
@@ -227,7 +231,10 @@ function terminateHookProcess(child: { pid?: number | undefined; kill(signal?: N
       return
     } catch { /* taskkill unavailable: fall through to the direct kill */ }
   }
-  try { child.kill('SIGKILL') } catch { /* already gone */ }
+  // Detached at spawn time, so every shell child shares the negative-pid process
+  // group. Killing only the shell pid leaks `cmd &` descendants beyond the hook's
+  // timeout/cancellation and leaves side effects running after the caller moved on.
+  try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch { /* already gone */ } }
 }
 
 /**
@@ -265,6 +272,9 @@ export function commandHookRunner(
       windowsHide: true,
       env: { ...process.env, ...extraEnvironment },
       stdio: ['pipe', 'pipe', 'pipe'],
+      // Own a process group on POSIX so timeout/cancellation can stop background
+      // descendants as well as the shell. Windows uses taskkill /t instead.
+      detached: process.platform !== 'win32',
     })
     let stdout = ''
     let stderr = ''

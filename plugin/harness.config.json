@@ -2,6 +2,6 @@
   "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
   "baselineRef": "dsh-v0.1.7-alpha.2",
   "baselineVersion": "0.1.7-alpha.2",
-  "candidateRef": "dsh-v0.1.7-alpha.2",
-  "candidateVersion": "0.1.7-alpha.2"
+  "candidateRef": "dsh-v0.1.7-rc.2",
+  "candidateVersion": "0.1.7-rc.2"
 }

@@ -267,7 +267,8 @@ function hookSignalOf(value: unknown): AbortSignal | undefined {
  * and a bare object spliced into the inbox would have none of them.
  * `plugin` is the honest source — the text came from a file the user wrote, not
  * from the model and not from the user's own typing — and it is the same kind
- * `advisor.ts` and the Host's own hook packages already use.
+ * this plugin's own injected-context writers and the Host's hook packages
+ * already use.
  * @param text - the hook's context text.
  * @returns an identified, frozen user message.
  */

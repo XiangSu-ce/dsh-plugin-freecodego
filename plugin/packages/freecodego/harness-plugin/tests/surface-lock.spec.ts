@@ -11,7 +11,7 @@ import {
 import { tokensFromChars } from '../src/token-estimate.ts'
 
 const groups = [
-  { group: 'tool-schemas', entries: [{ name: 'tool_search', text: '{"name":"tool_search"}' }, { name: 'advisor_review', text: '{"name":"advisor_review"}' }] },
+  { group: 'tool-schemas', entries: [{ name: 'tool_search', text: '{"name":"tool_search"}' }, { name: 'engineering_status', text: '{"name":"engineering_status"}' }] },
   { group: 'injected-guidance', entries: [{ name: 'plan-mode', text: 'You are in PLAN MODE.' }] },
 ]
 

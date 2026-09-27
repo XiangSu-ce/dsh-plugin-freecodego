@@ -248,146 +248,6 @@ const CONTRACTS: Readonly<Record<string, Contract>> = {
     unwritten: ['provider', 'modelId'],
   },
 
-  'advisor/note': {
-    uses: {
-      'harness-plugin/src/advisor.ts': 5,
-      'harness-plugin/src/engineering-eval.ts': 1,
-      'harness-plugin/src/managed-catalog-utils.ts': 1,
-    },
-    writers: [
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `agent.session.append('advisor/note', { id, severity: advice.severity`,
-        fields: ['id', 'severity', 'note', 'turn'],
-      },
-    ],
-    readers: [
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `filter(event => event.type === 'advisor/note').map(event => event.data.id)`,
-        required: ['id'],
-      },
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `candidate.type === 'advisor/note' && !previousIds.has(candidate.data.id)`,
-        required: ['id'],
-      },
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `return event?.type === 'advisor/note' ? event.data : undefined`,
-        whole: true,
-        note: 'returns the record itself as the review result',
-      },
-      {
-        // The same predicate text appears in the `previousIds` reader above; this
-        // is its second occurrence, the one that lists recent notes.
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `.filter(event => event.type === 'advisor/note')`,
-        anchorIndex: 1,
-        whole: true,
-        note: 'lists recent notes, spreading each record',
-      },
-      {
-        file: 'harness-plugin/src/managed-catalog-utils.ts',
-        anchor: `if (event.type !== 'advisor/note') return []`,
-        required: ['id', 'note', 'turn', 'severity'],
-      },
-      {
-        file: 'harness-plugin/src/engineering-eval.ts',
-        anchor: `declared.includes('advisor/note')`,
-        note: 'asserts a session declares this event type; reads no field of it',
-      },
-    ],
-  },
-
-  'advisor/delivery': {
-    uses: { 'harness-plugin/src/advisor.ts': 2, 'harness-plugin/src/managed-catalog-utils.ts': 1 },
-    writers: [
-      { file: 'harness-plugin/src/advisor.ts', anchor: `agent.session.append('advisor/delivery', { id, channel })`, fields: ['id', 'channel'] },
-    ],
-    readers: [
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `if (event.type === 'advisor/delivery') deliveries.set(event.data.id, event.data.channel)`,
-        required: ['id', 'channel'],
-      },
-      {
-        file: 'harness-plugin/src/managed-catalog-utils.ts',
-        anchor: `if (event.type !== 'advisor/delivery') continue`,
-        required: ['id', 'channel'],
-      },
-    ],
-  },
-
-  'advisor/state': {
-    uses: { 'harness-plugin/src/advisor.ts': 3 },
-    writers: [
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `safeAppend(agent.session, 'advisor/state', { state: 'no-model'`,
-        fields: ['state', 'message'],
-      },
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `safeAppend(agent.session, 'advisor/state', { state: 'error'`,
-        fields: ['state', 'message'],
-      },
-    ],
-    readers: [
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `function safeAppend<T extends 'advisor/state' | 'advisor/usage'>`,
-        note: "the write helper's type parameter names the two events it may store, and it reads no field",
-      },
-    ],
-    unread: {
-      fields: ['state', 'message'],
-      why: 'a durable diagnostic for the session log: the review runtime keeps its live status in memory and reads this record back nowhere in this workspace',
-    },
-  },
-
-  'advisor/usage': {
-    uses: { 'harness-plugin/src/advisor.ts': 2 },
-    writers: [
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `safeAppend(agent.session, 'advisor/usage', { provider: route.provider`,
-        fields: ['provider', 'model', 'inputTokens', 'outputTokens'],
-      },
-    ],
-    readers: [
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `function safeAppend<T extends 'advisor/state' | 'advisor/usage'>`,
-        note: 'the same write helper as advisor/state, from the other side of its type parameter',
-      },
-    ],
-    unread: {
-      fields: ['provider', 'model', 'inputTokens', 'outputTokens'],
-      why: 'per-request token accounting for the session log; the runtime budgets side channels in memory, so nothing replays this record',
-    },
-  },
-
-  'advisor/council': {
-    uses: { 'harness-plugin/src/advisor.ts': 1, 'harness-plugin/src/managed-catalog-utils.ts': 1 },
-    writers: [
-      {
-        file: 'harness-plugin/src/advisor.ts',
-        anchor: `agent.session.append('advisor/council', report)`,
-        fields: ['id', 'sessionId', 'turn', 'provider', 'model', 'createdAt', 'findings'],
-        carried: true,
-      },
-    ],
-    readers: [
-      {
-        file: 'harness-plugin/src/managed-catalog-utils.ts',
-        anchor: `if (event.type !== 'advisor/council') return []`,
-        required: ['id', 'turn', 'provider', 'model', 'createdAt', 'findings'],
-        fallbacks: ['sessionId'],
-        whole: true,
-      },
-    ],
-  },
 
   'freecodego/council-task': {
     uses: { 'harness-plugin/src/engine-council.ts': 3, 'harness-plugin/src/engineering-remote-utils.ts': 1 },
@@ -414,7 +274,7 @@ const CONTRACTS: Readonly<Record<string, Contract>> = {
   },
 
   'freecodego/council': {
-    uses: { 'harness-plugin/src/engine-council.ts': 2, 'harness-plugin/src/engineering-eval.ts': 1, 'harness-plugin/src/engineering-remote-utils.ts': 1 },
+    uses: { 'harness-plugin/src/engine-council.ts': 2, 'harness-plugin/src/engineering-remote-utils.ts': 1 },
     writers: [
       {
         file: 'harness-plugin/src/engine-council.ts',
@@ -429,11 +289,6 @@ const CONTRACTS: Readonly<Record<string, Contract>> = {
         anchor: `if (event.type === 'freecodego/council') {`,
         required: ['id'],
         whole: true,
-      },
-      {
-        file: 'harness-plugin/src/engineering-eval.ts',
-        anchor: `declared.includes('freecodego/council')`,
-        note: 'asserts a session declares this event type; reads no field of it',
       },
       {
         file: 'harness-plugin/src/engineering-remote-utils.ts',

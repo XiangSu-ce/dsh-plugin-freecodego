@@ -5,8 +5,10 @@
  * the quoted text is in the archive.
  */
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { archiveTextFrom, auditCompactionFidelity } from '../src/compaction-fidelity.ts'
+import { COMPACTION_SUMMARY_SECTIONS, archiveTextFrom, auditCompactionFidelity, summarySkeleton } from '../src/compaction-fidelity.ts'
 
 const ARCHIVE = [
   'I ran the build and it failed.',
@@ -180,6 +182,27 @@ describe('compaction fidelity', () => {
     expect(() => audit(summary, ARCHIVE, { minQuoteChars: Number.POSITIVE_INFINITY })).not.toThrow()
   })
 
+  it('names the dropped fields beside the faithfulness sentence', () => {
+    // A faithful, incomplete summary: the quotation is in the archive and the
+    // field that said what work was left is gone. One word for both findings would
+    // name neither, and the reader who hears only "faithful" reads the omission as
+    // the `(none)` the summariser was told to write.
+    const summary = [
+      '## Primary Request and Intent',
+      '- fix the build failure in src/client/token-usage-dashboard.tsx',
+      '',
+      '## Next Step',
+      '- re-run the build',
+    ].join('\n')
+    const verdict = audit(summary)
+    expect(verdict.accepted).toBe(true)
+    expect(verdict.sectionsPresent).toEqual(['Primary Request and Intent', 'Next Step'])
+    expect(verdict.sectionsMissing).toContain('Pending Jobs')
+    expect(verdict.note).toContain('Every quoted span')
+    expect(verdict.note).toContain('dropped 6 of the checkpoint')
+    expect(verdict.note).toContain('Pending Jobs')
+  })
+
   it('ignores a non-finite reference rate rather than rejecting everything', () => {
     // `>=` against NaN is false for every input, the empty comparison included, so a
     // NaN rate rejected a summary that cites nothing — the one case the note calls out
@@ -189,5 +212,66 @@ describe('compaction fidelity', () => {
     expect(verdict.referencesChecked).toBe(0)
     expect(verdict.accepted).toBe(true)
     expect(verdict.note).toContain('No verbatim claim to check')
+  })
+})
+
+describe('the checkpoint skeleton', () => {
+  const STRUCTURED = [
+    '## Primary Request and Intent',
+    '- ship the fix',
+    '## Key Technical Concepts',
+    '- (none)',
+    '## Files and Code',
+    '- src/a.ts',
+    '## Errors and Fixes',
+    '- (none)',
+    '## Pending Jobs',
+    '- (none)',
+    '## Current Work',
+    '- the audit',
+    '## Next Step',
+    '- run the suite',
+    '## Critical Context',
+    '- (none)',
+  ].join('\n')
+
+  it('reports every field of the contract as present in a structured summary', () => {
+    const skeleton = summarySkeleton(STRUCTURED)
+    expect(skeleton.missing).toEqual([])
+    expect(skeleton.present).toEqual(COMPACTION_SUMMARY_SECTIONS)
+  })
+
+  it('reads an empty field as declared, because (none) is how the contract writes one', () => {
+    // The distinction the whole check rests on: `(none)` is a claim about the
+    // session, an absent heading is a claim about the summariser.
+    expect(summarySkeleton('## Pending Jobs\n- (none)').present).toContain('Pending Jobs')
+    expect(summarySkeleton('## Pending Jobs').present).toContain('Pending Jobs')
+    expect(summarySkeleton('## Files\n- src/a.ts').missing).toContain('Pending Jobs')
+  })
+
+  it('matches the contract on names rather than on presentation', () => {
+    // A summariser that writes the field at another depth, in another case, or with
+    // the trailing colon prose convention adds has not dropped it.
+    expect(summarySkeleton('### next step:\n- run it').present).toContain('Next Step')
+    expect(summarySkeleton('##   Current   Work  ##\n- the audit').present).toContain('Current Work')
+    // A field named inside a sentence is not a heading, so it does not count.
+    expect(summarySkeleton('The Next Step section was omitted.').present).toEqual([])
+    // An extra heading is the model adding a field, not losing one.
+    expect(summarySkeleton(`${STRUCTURED}\n## Extra\n- more`).missing).toEqual([])
+  })
+
+  it('quotes a structure the pinned Harness actually asks for', () => {
+    // The mirror, asserted rather than trusted: this module checks summaries against
+    // a contract the Harness owns, so a Harness line that changes the structure has to
+    // fail a probe here instead of leaving the audit checking a shape nothing emits.
+    // Read as source text because the instruction is a module-private constant of a
+    // package this one does not depend on at runtime.
+    const source = readFileSync(fileURLToPath(new URL('../../../compaction/compaction-basic/src/summarizer.ts', import.meta.url)), 'utf8')
+    const listed = [...source.matchAll(/^\s*'## (.+)',$/gmu)].map(match => match[1])
+    expect(listed).toEqual([...COMPACTION_SUMMARY_SECTIONS])
+    // And the rule that gives the skeleton its meaning: an empty section is written
+    // out, never dropped. Without it a missing heading would be no finding at all.
+    expect(source).toContain('never drop a section')
+    expect(source).toContain('Write "(none)" for an empty section')
   })
 })

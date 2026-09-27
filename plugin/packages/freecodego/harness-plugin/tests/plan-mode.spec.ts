@@ -459,6 +459,17 @@ describe('where the edit fence actually lives', () => {
     expect(planModeRefusal({ mode: 'plan', tool: 'pwsh', args: { command: 'ls' }, policy })).toBeUndefined()
   })
 
+  it('drives every registered shell spelling through the same policy fence', () => {
+    // `local_shell` (Codex's shell spelling) was the one shell name missing from
+    // Plan Mode's gate before it read from `SHELL_TOOL_NAMES`, so a command refused
+    // as `bash` slipped through un-refused as `local_shell`. Assert every member of
+    // the canonical vocabulary reaches the policy rather than returning undefined.
+    const policy = compileCommandPolicy(BUILT_IN_COMMAND_POLICY)
+    for (const tool of ['bash', 'shell', 'exec_command', 'local_shell', 'pwsh']) {
+      expect(planModeRefusal({ mode: 'plan', tool, args: { command: 'rm -rf /' }, policy })?.reason).toBe('policy')
+    }
+  })
+
   it('takes the mode from upstream when it is composed, and only there', () => {
     // This case used to ask a four-state machine (`plan/plan-state.ts`: `inactive |
     // pending | active | exit-pending`) whether the workspace was frozen. That module

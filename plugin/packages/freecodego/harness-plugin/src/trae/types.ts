@@ -120,4 +120,14 @@ export interface TraeModel {
    * session names while the picker hides it (see `selectableTraeModels`).
    */
   readonly selectable: boolean
+  /**
+   * The window the table publishes for this configuration (`context_window_tokens`).
+   *
+   * Absent means the row published none, which four of the 46 configurations did
+   * on the account this was measured against; those keep the connector's own
+   * fallback. Kept on the parsed row rather than resolved at the adapter, because
+   * the number belongs to the configuration and both the picker and the adapter
+   * have to read the same one.
+   */
+  readonly contextWindow?: number
 }

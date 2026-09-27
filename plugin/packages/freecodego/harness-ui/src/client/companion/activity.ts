@@ -35,6 +35,22 @@
  *   signal. A level boolean over the window could not do this — the window never
  *   drains, so "there is a failed turn in the log" stays true forever.
  *
+ * One more reading, and why it arrives as a call
+ * ---------------------------------------------
+ * The model can ask the companion to wear an expression, and it asks with a tool
+ * (`freecodego_companion_face`). That request reaches this module the way every other
+ * fact here does: the call is written into the Session's event window and its arguments
+ * are part of the entry. So the tool itself writes nothing — there is no second channel
+ * to keep in step with the first, no extra durable event spent on a face, and the
+ * request is legible to the user in the transcript as it happens, which a private side
+ * channel would not be.
+ *
+ * The tool's name is spelled here as well as in the plugin, because the two packages
+ * cannot share a running value: `harness-ui` may import the plugin's *types* and its
+ * browser entry, and the plugin may not import this package at all. The spec beside this
+ * module imports the plugin's declaration and asserts the two spellings are the same —
+ * the tie `companion/palette.ts` uses for its two colours.
+ *
  * Seeding is the one place this module is deliberately approximate. Binding to a
  * Session that already holds a turn (a seat mounting mid-turn, or a switch into one)
  * reads the continuous facts — a tool in flight, a reply being written — back out of
@@ -54,7 +70,9 @@ import type {
 import type { JobsSnapshot } from '@deepseek-ai/dsh-api-job-controller/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { isExpressionName, type ExpressionName } from './eyes/faces.ts'
 import { mainViewSessionId } from './signals.ts'
+import { toolResultFailed } from './tool-outcome.ts'
 
 /**
  * The Session facts only the event log carries.
@@ -78,8 +96,29 @@ export interface CompanionActivity {
   readonly startKey: string | undefined
   /** Identity of the newest turn that ended in failure, or undefined. */
   readonly failureKey: string | undefined
+  /**
+   * Identity of the newest tool call that came back a failure, or undefined.
+   *
+   * A *moment* rather than a level, and the reason is the same one the module note
+   * gives for the other identities: the result stays in the window for the rest of the
+   * session, so a boolean over the window would say "a tool failed at some point"
+   * forever. It is also finer than {@link CompanionActivity.failureKey}: a turn that
+   * ends in failure is the *outcome* of a run, while this is one step inside a run that
+   * is still going — which is the whole difference between "something went wrong" and
+   * "it is working at something that is not cooperating".
+   */
+  readonly toolFailureKey: string | undefined
   /** Identity of the newest message injected from outside the turn, or undefined. */
   readonly noticeKey: string | undefined
+  /**
+   * Identity of the newest expression the model asked for, or undefined.
+   *
+   * Only a request this build can draw is recorded, so the key and the name are set
+   * together and a name nothing draws leaves both as they were.
+   */
+  readonly expressionKey: string | undefined
+  /** The expression that request named. */
+  readonly expression: ExpressionName | undefined
 }
 
 /** The published activity of the Session the main view is showing. */
@@ -115,7 +154,10 @@ export const IDLE_ACTIVITY: CompanionActivity = Object.freeze({
   streaming: false,
   startKey: undefined,
   failureKey: undefined,
+  toolFailureKey: undefined,
   noticeKey: undefined,
+  expressionKey: undefined,
+  expression: undefined,
 })
 
 /** The look of the Session service this source needs; `ctx.sessions` satisfies it. */
@@ -140,7 +182,52 @@ function sameActivity(left: CompanionActivity, right: CompanionActivity): boolea
     && left.streaming === right.streaming
     && left.startKey === right.startKey
     && left.failureKey === right.failureKey
+    && left.toolFailureKey === right.toolFailureKey
     && left.noticeKey === right.noticeKey
+    && left.expressionKey === right.expressionKey
+    && left.expression === right.expression
+}
+
+/**
+ * The tool whose calls carry an expression request.
+ *
+ * The plugin's own name for it, written again here because the two packages cannot share
+ * a value (see the module note). `tests/companion-face-tool.client.spec.ts` imports the
+ * plugin's declaration and fails if the two ever drift.
+ */
+export const COMPANION_FACE_TOOL_NAME = 'freecodego_companion_face'
+
+/**
+ * The expression one call asks for, or undefined.
+ *
+ * Every way of not answering is a plain `undefined` rather than a throw: this reads a
+ * transcript, and a call is not obliged to carry anything readable. A name is accepted
+ * only when the call is this tool's, its arguments parse as an object, and the value is
+ * a name this build draws.
+ *
+ * A string is what the wire carries and an object is what some hosts keep after parsing
+ * it, so both are read — the same tolerance the plugin's own reader of a `tool/call`
+ * event has, and for the same reason: the alternative is a face that silently never
+ * appears in exactly one of the two shapes.
+ * @param data - the call's payload, as the event window supplies it.
+ * @returns the expression to wear, if the call asked for one.
+ */
+function requestedExpression(data: unknown): ExpressionName | undefined {
+  if (typeof data !== 'object' || data === null) return undefined
+  const call = data as { readonly name?: unknown; readonly arguments?: unknown }
+  if (call.name !== COMPANION_FACE_TOOL_NAME) return undefined
+  let parsed: unknown
+  if (typeof call.arguments === 'object' && call.arguments !== null) parsed = call.arguments
+  else if (typeof call.arguments === 'string') {
+    try {
+      parsed = JSON.parse(call.arguments)
+    } catch {
+      return undefined
+    }
+  } else return undefined
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const face = (parsed as { readonly face?: unknown }).face
+  return isExpressionName(face) ? face : undefined
 }
 
 /** The window the reader follows and the identity of the Session it came from. */
@@ -165,7 +252,10 @@ class SessionActivity implements CompanionActivitySource {
   private writing = false
   private startKey: string | undefined
   private failureKey: string | undefined
+  private toolFailureKey: string | undefined
   private noticeKey: string | undefined
+  private expressionKey: string | undefined
+  private expression: ExpressionName | undefined
 
   /**
    * @param sessions - the Session service; its list is what says which Session is
@@ -225,7 +315,10 @@ class SessionActivity implements CompanionActivitySource {
     this.writing = false
     this.startKey = undefined
     this.failureKey = undefined
+    this.toolFailureKey = undefined
     this.noticeKey = undefined
+    this.expressionKey = undefined
+    this.expression = undefined
     if (sessionId !== undefined) {
       const source = this.sessions.binding(sessionId)?.eventSource
       if (source !== undefined) {
@@ -291,12 +384,27 @@ class SessionActivity implements CompanionActivitySource {
         // work that is still happening.
         this.pendingCalls = 0
         break
-      case 'tool/call':
+      case 'tool/call': {
         this.pendingCalls += 1
         this.writing = false
+        // A call is work whatever it asked for, and a request rides on the same entry.
+        // The identity is the call's own sequence, so a *different* call is what moves
+        // the face — repeating the same call is not a new request.
+        const requested = requestedExpression(event.data)
+        if (requested !== undefined) {
+          this.expressionKey = `${event.seq}`
+          this.expression = requested
+        }
         break
+      }
       case 'tool/result':
         this.pendingCalls = Math.max(0, this.pendingCalls - 1)
+        // The identity is the result's own sequence, so a second failure is a second
+        // moment rather than the same one kept alive. A result that succeeded neither
+        // sets a key nor clears one: the face it earned is left to its own window. What
+        // counts as a failure is `./tool-outcome.ts`'s whole subject — the two shapes the
+        // session uses, and why reading only one of them misses most failures.
+        if (toolResultFailed(event.data.message)) this.toolFailureKey = `${event.seq}`
         break
       case 'assistant/message':
         this.writing = false
@@ -358,7 +466,10 @@ class SessionActivity implements CompanionActivitySource {
       streaming: this.writing,
       startKey: this.startKey,
       failureKey: this.failureKey,
+      toolFailureKey: this.toolFailureKey,
       noticeKey: this.noticeKey,
+      expressionKey: this.expressionKey,
+      expression: this.expression,
     }
     if (sameActivity(this.value, next)) return
     this.value = next

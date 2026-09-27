@@ -12,10 +12,9 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { ToolDefinitionShape } from './tool-definition.ts'
-// `toolDefinition` is used below under this name; see the `spill_recall`
-// registration for why the identity wrapper is worth calling.
-import { JSON_TOOL_OUTPUT, toolDefinition as rawTool } from './tool-definition.ts'
+import { JSON_TOOL_OUTPUT } from './tool-definition.ts'
 import { readDocumentToolDefinition } from './read-document.ts'
+import { companionFaceToolDefinition, COMPANION_FACE_TOOL_NAME } from './companion/tool.ts'
 import { createWorktree, realCreatorDeps, type WorktreeCreation } from './worktree/creator.ts'
 import { loadPersonaRoster } from './persona/files.ts'
 import { claudeHookDialectOf, loadHookDocuments, type ClaudeHookDialectOwner } from './hooks/files.ts'
@@ -29,6 +28,7 @@ import { PersonaRuns, loadPersonaInstructions, namedOutputsIn, personaToolDefini
 import { randomUUID, createHash } from 'node:crypto'
 import { SessionWorktrees, worktreeToolDefinitions } from './worktree/tools.ts'
 import { WorktreeRegistry } from './worktree/registry.ts'
+import { speechSetRoute, speechStatus, speechTest, type SpeechRouteHost } from './speech-route.ts'
 import { ContextControl, contextControlToolDefinitions } from './context-control.ts'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -37,7 +37,7 @@ import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoManagedRuntime, FreeCodeGoReceiptDocument } from '@deepseek-ai/dsh-freecodego-api'
-import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoAdvisorCouncilReport, FreeCodeGoAdvisorStatus, FreeCodeGoAdvisorUpdate, FreeCodeGoAdvisorModel, FreeCodeGoAdvisorNote, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
+import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { createUserMessage, type LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import { CodexRuntimeManager, ClaudeRuntimeManager } from '@deepseek-ai/dsh-freecodego-native-runtime-host'
@@ -51,8 +51,9 @@ import type { TraeClient } from './trae-intl.ts'
 import { ClaudeProtocolBridge } from './claude-protocol-bridge.ts'
 import { FreeCodeGoCapabilityRegistry, SERVER_NAME } from './capabilities.ts'
 import { installFreeCodeGoPluginConflictGuard } from './plugin-conflicts.ts'
+import { installStandInWatch } from './stand-in-rows.ts'
+import { installCapabilityRows } from './capability-rows.ts'
 import { FreeCodeGoPluginUpdateService } from './plugin-update.ts'
-import { FreeCodeGoAdvisorRuntime } from './advisor.ts'
 import { FreeCodeGoAgentProgressRuntime } from './agent-progress.ts'
 import { FreeCodeGoEngineCouncil } from './engine-council.ts'
 import { FreeCodeGoSubagentModelRouting } from './subagent-model-routing.ts'
@@ -65,13 +66,13 @@ import {
   type FreeCodeGoAutomationSettingsUpdate,
 } from './automation.ts'
 import { freeCodeGoSessionEventTypes } from './session-events.ts'
-import type { CommunityCatalogPayload, GatewayUsageSnapshot, LocalTokenUsageQuery, LocalTokenUsageSnapshot, FreeCodeGoEngineeringCanvasGraph, FreeCodeGoEngineeringCouncilDecision, FreeCodeGoEngineeringCouncilImplementation, FreeCodeGoEngineeringCouncilJob, FreeCodeGoEngineeringCouncilReport, FreeCodeGoEngineeringCouncilRequest, FreeCodeGoEngineeringCodeGraphProjectStatus, FreeCodeGoEngineeringCodeGraphRuntimePackage, FreeCodeGoEngineeringCodeGraphRuntimeStatus, FreeCodeGoEngineeringGraphProjectStatus, FreeCodeGoEngineeringGraphRuntimePackage, FreeCodeGoEngineeringGraphRuntimeStatus, FreeCodeGoEngineeringMemoryBackup, FreeCodeGoEngineeringMemoryDetail, FreeCodeGoEngineeringMemoryIndex, FreeCodeGoEngineeringMemoryPage, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringMemoryRetentionResult, FreeCodeGoEngineeringMemoryReviewDecision, FreeCodeGoEngineeringMemoryTimeline, FreeCodeGoEngineeringMemoryTrust, FreeCodeGoEngineeringVerificationResult, FreeCodeGoEngineeringVerificationStage, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate } from './types.ts'
+import type { CommunityCatalogPayload, GatewayUsageSnapshot, LocalTokenUsageQuery, LocalTokenUsageSnapshot, FreeCodeGoEngineeringCanvasGraph, FreeCodeGoEngineeringCouncilDecision, FreeCodeGoEngineeringCouncilImplementation, FreeCodeGoEngineeringCouncilJob, FreeCodeGoEngineeringCouncilReport, FreeCodeGoEngineeringCouncilRequest, FreeCodeGoEngineeringCodeGraphProjectStatus, FreeCodeGoEngineeringCodeGraphRuntimePackage, FreeCodeGoEngineeringCodeGraphRuntimeStatus, FreeCodeGoEngineeringGraphProjectStatus, FreeCodeGoEngineeringGraphRuntimePackage, FreeCodeGoEngineeringGraphRuntimeStatus, FreeCodeGoEngineeringMemoryBackup, FreeCodeGoEngineeringMemoryDetail, FreeCodeGoEngineeringMemoryIndex, FreeCodeGoEngineeringMemoryPage, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringMemoryRetentionResult, FreeCodeGoEngineeringMemoryReviewDecision, FreeCodeGoEngineeringMemoryTimeline, FreeCodeGoEngineeringMemoryTrust, FreeCodeGoEngineeringVerificationResult, FreeCodeGoEngineeringVerificationStage, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate } from './types.ts'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
 import { runtimePackageView, setEngineAvailability } from './account-utils.ts'
 import type { MediaRoute, MediaVideoArgs } from './media-utils.ts'
 import { generateAudioWithFallback, generateImageWithFallback, generateVideoWithFallback, gatewayMediaJson, mediaRoute, registerAudioTools, registerGenerationTools, MEDIA_GENERATION_TOOL_NAMES, type ImageGenerationArgs, type MediaGenerationHost, type MediaRequestOptions, type MediaToolRegistration } from './media-generation.ts'
-import { registerAdvisorTools, registerAgnesMediaTools, AGNES_MEDIA_TOOL_NAMES, type AgentToolsDeps } from './agent-tools.ts'
+import { registerEngineeringTools, registerAgnesMediaTools, AGNES_MEDIA_TOOL_NAMES, type AgentToolsDeps } from './agent-tools.ts'
 import { capabilityMarketplace, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, mcpPresetInstall, skillPlacements, skillPresetInstall, skillPresetRemove, type CommunityRemotesHost, type CommunityRemotesState } from './community-remotes.ts'
 import type { PlacementContext } from './skills/placement.ts'
 import { freeCodeGoDataHome, harnessHomeDirectory } from './data-home.ts'
@@ -81,26 +82,28 @@ import { PendingWriteDrain } from './abort-drain.ts'
 import { FreeCodeGoHeadroomRuntime, type HeadroomStats } from './headroom/runtime.ts'
 import { FreeCodeGoDeferredTools, type DeferredToolStatus } from './deferred-tools.ts'
 import { DoomLoopGuard, credentialRealpathDenial, freeCodeGoToolGuard, isCredentialPath } from './tool-guards.ts'
+import { diagnoseShellLoaderFailure } from './shell-loader-failure.ts'
 import { workflowScriptRefusal } from './workflow-static-check.ts'
 import { FolderTrustStore, defaultTrustRecordPath, folderTrustEnabled, repositoryRoot, resolveFolderTrust, seedTrustRecordOnce } from './trust.ts'
 import { startSuspendWatch, type SuspendEvidence } from './system-power.ts'
 import { nativeCallsFromPermission, nativeToolDenial } from './native-tool-guard.ts'
 import { AssistantLoopGuard } from './assistant-loop-guard.ts'
-import { ContextBudgetStore, contextBudgetReport, describeContextBudget, type ContextBudgetReport } from './context-budget.ts'
+import { ContextBudgetStore, contextBudgetReport, contextBufferForWindow, describeContextBudget, type ContextBudgetReport } from './context-budget.ts'
 import { compactionEconomicsView, type CompactionEconomicsView } from './compaction-economics.ts'
-import { archiveTextFrom, auditCompactionFidelity, type CompactionFidelityVerdict } from './compaction-fidelity.ts'
+import { archiveTextFrom, auditCompactionFidelity, type CompactionFidelityVerdict, type CompactionSummarySkeleton } from './compaction-fidelity.ts'
 import {
   characterStartIndex, completeByteLength, DEFAULT_RECALL_MAX_BYTES, DEFAULT_RECALL_MAX_LINES, MAX_RECALL_BYTES, readSpillPageBytes,
 } from './spill-recall.ts'
-import { CacheColdView, describeCacheColdRefusal } from './cache-cold.ts'
+import { CacheColdView, cacheColdConfigForWindow, describeCacheColdRefusal } from './cache-cold.ts'
 import { spillClearedResults, type SpillWriter } from './result-spill.ts'
 import { registerEditAndRunTool, type EditAndRunRegistry } from './edit-and-run.ts'
+import { registerShellAliasTools, type ShellAliasRegistry } from './shell-alias.ts'
 import { RequestShapeLog, describeShapeChange, fingerprintRequest, type ShapeChange } from './request-shape.ts'
-import { buildPromptComposition, buildPromptUsageTree, countCategoryChars, describePromptComposition, refreshPromptCompositionAfterCompaction, type PromptCompositionSnapshot } from './prompt-composition.ts'
-import { collectPromptCompositionSources, collectPromptUsageItems, type PromptEventLike, type PromptHeaderLike as PromptRequestHeaderLike } from './prompt-composition-collect.ts'
+import { buildPromptComposition, buildPromptUsageTree, countCategoryChars, describePromptComposition, describePromptCompositionQuota, promptCompositionQuota, refreshPromptCompositionAfterCompaction, type PromptCompositionSnapshot } from './prompt-composition.ts'
+import { collectPromptCompositionSources, collectPromptUsageItems, messageText, type PromptEventLike, type PromptHeaderLike as PromptRequestHeaderLike, type PromptSectionLike } from './prompt-composition-collect.ts'
 import { installRehydration } from './rehydration.ts'
 import { memorySelectorFor } from './memory/memory-selector.ts'
-import { MEMORY_TOPICS_DIRECTORY, MemoryPipeline, memoryConsolidationCaveat, type MemoryConsolidation } from './memory/memory-pipeline.ts'
+import { MEMORY_TOPICS_DIRECTORY, MemoryPipeline, memoryConsolidationCaveat, type MemoryConsolidation, type MemorySessionScope, type SessionReclaim } from './memory/memory-pipeline.ts'
 import { memoryDreamPlannerFor } from './memory/memory-dream-model.ts'
 import type { DreamIo, MemoryObservation } from './memory/dream.ts'
 import type { ForgetRefusal } from './memory/forget.ts'
@@ -111,6 +114,9 @@ import { buildMemoryTelemetry, type MemoryTelemetryRecord } from './memory/telem
 // `tests/upstream-text-masking.spec.ts` fails the build otherwise.
 import { redactCredentialShapes } from './secret-scan.ts'
 import { HARNESS_AUTO_PRESET, installActionReview } from './action-reviewer.ts'
+import { installReviewCoverage } from './review-coverage.ts'
+import { installFreeCodeGoSpeechProvider, type FreeCodeGoSpeechHandle } from './speech-provider.ts'
+import { FreeCodeGoTeamBoard } from './team-workflow.ts'
 import { ActionReviewState, describeReviewOutcome } from './action-review.ts'
 import { installFreeCodeGoLspMount } from './lsp-mount.ts'
 import { routeEffort, steeringText, classifyTurnFromTail, ERROR_OUTPUT_EVENT_KIND } from './headroom/output-shaper.ts'
@@ -118,7 +124,7 @@ import {
   COUNCIL_MAX_PLAN_CHARS, autoCouncilSkipReason, councilCanReviewPlan,
   councilPeersFor, latestApprovedPlan, latestSessionEngine,
 } from './engineering-remote-utils.ts'
-import { advisorNotesFromSession, hostSessionEvents, type HostSessionEvents } from './managed-catalog-utils.ts'
+import { hostSessionEvents, type HostSessionEvents } from './managed-catalog-utils.ts'
 import { FreeCodeGoManagedCatalogs } from './managed-catalogs.ts'
 import { FreeCodeGoVerifyOnStop } from './verify-on-stop.ts'
 import { loadProjectConfig, PROJECT_CONFIG_RELATIVE_PATH, PROJECT_CONFIG_WHITELIST, type ProjectConfigReport } from './project-config.ts'
@@ -151,8 +157,10 @@ import {
   accountGatewayModelPrices, gatewayModelPrices, localGatewayModelPrices, paymentCancel, paymentChannels, paymentCheckout, paymentConfig, paymentOrder, paymentOrders, paymentPlans,
   paymentReceiptDocument, paymentReceiptEmail, paymentStripeReceiptDocument, paymentVerify, tokenUsageCurrentSession, tokenUsageGateway, tokenUsageLocal, type PaymentRemotesHost,
 } from './payment-remotes.ts'
+import { FreeCodeGoDesignRegistry } from './design/registry.ts'
+import type { FreeCodeGoDesignStatus } from './design/types.ts'
 import {
-  advisorModels, advisorReviewNow, engineeringCouncilReview, engineeringCouncilReports, engineeringTeamStart, engineeringTeamJob, engineeringTeamReports, engineeringTeamDecision,
+  engineeringTeamStart, engineeringTeamJob, engineeringTeamReports, engineeringTeamDecision,
   engineeringTeamVerify, engineeringTeamImplementation, engineeringStatus, engineeringSetEnabled, engineeringSettingsUpdate,
   engineeringLoopStatus, engineeringLoopArm, engineeringLoopStop,
   engineeringMemoryList, engineeringMemorySearch,
@@ -164,6 +172,7 @@ import {
   engineeringGraphProjectStatus, engineeringGraphBuild, engineeringGraphUpdate, engineeringGraphCancel, engineeringGraphCanvas, engineeringGraphClearProject, engineeringSpecExport, engineeringMemoryCwd, type EngineeringRemotesHost,
   engineeringCodeGraphRuntimeStatus, engineeringCodeGraphRuntimePackages, engineeringCodeGraphRuntimeInstall, engineeringCodeGraphRuntimeRemove,
   engineeringCodeGraphProjectStatus, engineeringCodeGraphBuild, engineeringCodeGraphSync, engineeringCodeGraphCancel, engineeringCodeGraphClearProject,
+  secondModelRoutes,
 } from './engineering-remotes.ts'
 import {
   setDefaultEngine, setDefaultModel, catalog, modelAvailability, sessionEngineStatus, sessionDelete, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeInstall,
@@ -187,16 +196,6 @@ import type { FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringLoopStatus, 
 
 const PROCESS_START_TIME = Date.now()
 
-/**
- * The ratio the Harness's basic compaction compacts at.
- *
- * Mirrors `compaction-basic`'s own default (`thresholdRatio = 0.8`, applied as
- * `floor(contextWindow * ratio)` per target). A composition that overrides the
- * ratio makes the figure this plugin derives approximate rather than exact, which
- * is why the side-channel check reports a warning line and never enforces a hard
- * limit — an estimate must not be able to refuse work.
- */
-const HARNESS_COMPACTION_THRESHOLD_RATIO = 0.8
 /**
  * Cap on the per-session views this plugin keeps in memory.
  *
@@ -254,24 +253,12 @@ interface ContextBudgetArgs {
   readonly carried_debt_tokens?: number
 }
 
-/** Arguments of `spill_recall`, as the model supplies them. */
+/** Arguments of the locator form of `headroom_retrieve`, as the model supplies them. */
 interface SpillRecallArgs {
   readonly locator?: string
   readonly offset?: number
   readonly max_bytes?: number
   readonly max_lines?: number
-}
-
-/**
- * What the call card names, so a reader can tell two parked results apart.
- *
- * The last path segment only: a locator is an absolute path under the data home,
- * and the whole thing is noise on a card whose job is recognition.
- */
-function spillRecallTitle(locator: string | undefined): string {
-  if (locator === undefined || locator.trim() === '') return 'Read parked tool result'
-  const segments = locator.replaceAll('\\', '/').split('/')
-  return `Read parked result (${segments.at(-1) ?? locator})`
 }
 
 /**
@@ -370,8 +357,8 @@ export type { ProjectConfigKey, ProjectConfigReadResult, ProjectConfigReport } f
 // half can name them instead of restating the shapes: a hand-copied mirror of
 // `MemoryConsolidation` is exactly the drift this package's contract test
 // exists to catch.
-export type { MemoryConsolidation } from './memory/memory-pipeline.ts'
-export type { MemoryManifest, MemoryManifestEntry } from './memory/manifest.ts'
+export type { MemoryConsolidation, MemorySessionScope, SessionReclaim } from './memory/memory-pipeline.ts'
+export type { MemoryManifest, MemoryManifestEntry, MemoryScope } from './memory/manifest.ts'
 export type { ForgetRefusal, ForgetResult } from './memory/forget.ts'
 import type { OAuthLoginPendingRegistration } from './types.ts'
 export type { OAuthLoginProvider } from './oauth-login.ts'
@@ -407,6 +394,26 @@ function memoryPipelineHome(cwd: string): string {
  * start writing while the first is still working. Only the two codes that mean
  * "there is no file here" are absorbed.
  */
+/**
+ * The `.md` slugs in one topics directory, empty when there is no directory.
+ *
+ * A missing directory is an empty list, not a failure: the first pass for a
+ * workspace has no topics and must still be able to run. Only the two codes that
+ * mean "there is no directory here" are absorbed — a permission error is raised,
+ * because reporting it as "no topics" would make the pass plan against an empty
+ * archive and overwrite nothing, and would make a reclamation report a session
+ * with nothing temporary while its notes sat on disk.
+ */
+function topicSlugsIn(directory: string): readonly string[] {
+  try {
+    return readdirSync(directory).filter(name => name.endsWith('.md')).map(name => name.slice(0, -'.md'.length)).sort()
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return []
+    throw error
+  }
+}
+
 function memoryPipelineIo(): DreamIo {
   return {
     read: (target) => {
@@ -430,6 +437,10 @@ function memoryPipelineIo(): DreamIo {
       renameSync(from, to)
     },
     remove: (target) => { rmSync(target) },
+    // Recursive and forced, unlike `remove` above: this is the reclamation of a
+    // session's whole temporary layer, where "it is already gone" is the desired
+    // end state rather than evidence that someone deleted what the caller read.
+    removeTree: (target) => { rmSync(target, { recursive: true, force: true }) },
   }
 }
 
@@ -458,6 +469,20 @@ const MEMORY_CONSOLIDATION_DEBOUNCE_MS = 15_000
 const PROJECT_CONFIG_TTL_MS = 5_000
 
 /** Registers engine definitions while keeping native engines unavailable until artifacts are supplied. */
+/**
+ * The second-model route a fresh install works on.
+ *
+ * One declaration read by both readers: the schema below, which supplies these
+ * as the defaults, and `secondModelUpdate`, which restores them when a caller
+ * clears a half. Reading them off the schema at runtime was the intent behind the
+ * second reader, but `Schema` exposes no validated-read entry point here — the
+ * loader validates a config document, it does not hand back a defaulted one — so
+ * the choice was a constant or a second copy of the literals. A second copy is
+ * the thing that drifts the moment either default moves.
+ */
+const SECOND_MODEL_DEFAULT_PROVIDER = 'opencode'
+const SECOND_MODEL_DEFAULT_MODEL = 'auto'
+
 export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   // Authentication state is stored only through the Host credential service.
   // Declare it here so construction cannot race the base bundle activation.
@@ -664,6 +689,22 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
      */
     engineeringSkillsEnabled: z.boolean().default(false).volatile(),
     /**
+     * The design pack is off unless it is asked for. It holds the HyperFrames
+     * composition Skills, whose bodies run to tens of thousands of tokens each:
+     * mounting them by default would bill every session for a capability most of
+     * them never reach for. The rest of the pack is cheap by comparison — the
+     * UI/UX catalogue is one read-only search tool over data already in the
+     * package — and it is gated the same way, so that "what this page offers"
+     * and "what this session can do" stay one list.
+     */
+    designEnabled: z.boolean().default(false).volatile(),
+    /**
+     * Which design features the user switched on, by feature id. Persisted as a
+     * list of ids rather than as one boolean per feature so the next design
+     * capability is a line in `design/features.ts`, not a settings migration.
+     */
+    designFeaturesEnabled: z.array(z.string()).default([]).volatile(),
+    /**
      * The starter set is on by default: ten Skills whose value does not depend on
      * adopting a whole methodology. Four are disciplines the model applies on its
      * own (evidence before completion claims, navigation before broad reading,
@@ -788,22 +829,18 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
      */
     rehydrationArcEnabled: z.boolean().default(false).volatile(),
 
-    // Settings — Advisor, review, headroom, deferred tools
-    advisorEnabled: z.boolean().default(true).volatile(),
-    advisorMode: z.union([z.const('async'), z.const('catchup'), z.const('blocker-only')]).default('async').volatile(),
-    // Advisor uses a registered text provider route, not the retired
-    // gateway alias. Existing freecodego/hy3 profiles are normalized by
-    // the Advisor runtime for backward compatibility. The default is
-    // OpenCode's virtual `auto` route: the upstream free roster rotates
-    // (hy3-free left the directory; big-pickle appeared), so the best
-    // free model is resolved live per request instead of pinned.
-    advisorProvider: z.string().default('opencode').volatile(),
-    advisorModel: z.string().default('auto').volatile(),
-    advisorAllowAgentControl: z.boolean().default(true).volatile(),
-    advisorInterruptCooldownTurns: z.number().step(1).min(0).max(20).default(3).volatile(),
-    // Durable Advisor findings also land in project memory as pending
-    // drafts so reviews survive the session (reviewed in memory settings).
-    advisorMemoryDraftsEnabled: z.boolean().default(true).volatile(),
+    // Settings — the second-model route, review, headroom, deferred tools
+    //
+    // The plugin's own model calls — the memory recall selector, the
+    // memory-consolidation planner, the action reviewer, and the review
+    // subsystem's reviewer — all spend requests on this one route rather than
+    // each growing a route of its own. The keys keep their historical
+    // `advisor*` spelling because a profile document is written by users: a
+    // renamed field would silently drop the route of every profile that set
+    // one, and the surviving readers would fall back to the default without
+    // saying so.
+    advisorProvider: z.string().default(SECOND_MODEL_DEFAULT_PROVIDER).volatile(),
+    advisorModel: z.string().default(SECOND_MODEL_DEFAULT_MODEL).volatile(),
     // Stop-time review is opt-in. `off` costs nothing; `record` runs the
     // pass and writes a durable summary; `gate` turns that same pass into
     // a delivery channel that injects findings at or above the threshold.
@@ -890,8 +927,19 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   private credentials: CredentialProvider | undefined
     /** The one accessor behaviour reads go through (see `policy.ts`). */
   private readonly policy: FreeCodeGoPolicy
+  /**
+   * This plugin's recognizer on the Harness's speech roster, while it is
+   * registered. Held so the switch can move the registration instead of leaving
+   * a disabled provider selected until the next Host start.
+   *
+   * Available from construction, before the registry it serves exists: the
+   * Harness's own plugin page can mount the voice bundle at any point in the
+   * Host's life, so the handle is what the switch talks to either way.
+   */
+  private speechProvider: FreeCodeGoSpeechHandle | undefined
   private readonly capabilities: FreeCodeGoCapabilityRegistry
   private readonly engineering: FreeCodeGoEngineeringRegistry
+  private readonly design: FreeCodeGoDesignRegistry
   /**
    * The memory consolidation pipeline: the rollout gate, the dream lease, the
    * curated topics, the `MEMORY.md` index, and the `memory.*` counters.
@@ -905,7 +953,6 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   /** Declarative failure recovery and workspace-local scheduled prompts. */
   private readonly automation: FreeCodeGoAutomationRuntime
   private readonly pluginConflictGuard: ReturnType<typeof installFreeCodeGoPluginConflictGuard>
-  private readonly advisor: FreeCodeGoAdvisorRuntime
   /**
    * One review surface per workspace, assembled on first use.
    *
@@ -1034,6 +1081,20 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    *  that keeps consecutive breakdowns comparable instead of re-scaled noise. */
   private readonly promptCompositions = new Map<string, PromptCompositionSnapshot>()
   /**
+   * The system-prompt sections last read for a conversation.
+   *
+   * Only the async tool path can await an assembly, while the quota push runs
+   * inside a synchronous budget refresh, and both build the same conversation's
+   * snapshot through one store: if the two disagreed about which sections exist,
+   * the stored snapshot would alternate between two attributions of one prompt and
+   * the panel's rows would flicker for no reason the user caused. So the read is
+   * cached per conversation and the synchronous path reuses it — and because a
+   * section is only ever attributed when its exact text is found in the text this
+   * session actually carries, a stale cache entry degrades to "no attribution"
+   * instead of mis-attributing a row.
+   */
+  private readonly systemPromptSections = new Map<string, readonly PromptSectionLike[]>()
+  /**
    * Per-session action-review budget and cursor.
    *
    * Held here rather than left to `installActionReview`'s own default so the
@@ -1041,6 +1102,15 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
    * module has no disposal signal of its own.
    */
   private readonly actionReview = new ActionReviewState()
+  /**
+   * The official Team board reader, shared by the audit listener and the
+   * stop-time gate's evidence.
+   *
+   * Held here for the same reason {@link FreeCodeGoPlugin.actionReview} is: the
+   * module subscribes to no lifecycle event of its own, so the plugin is what
+   * releases a conversation's board when that conversation is gone.
+   */
+  private readonly teamBoard = new FreeCodeGoTeamBoard()
   /**
    * The hook runtime: documents, handler execution, and the fifteen seams.
    *
@@ -1156,7 +1226,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // Harness v0.1.3 rejects a persisted session whose event vocabulary is
     // unknown to the running process. Keep every plugin-owned durable event
     // registered while this plugin is mounted, including historical engine
-    // bindings and Advisor records, so an unmodified Harness can reopen an
+    // bindings, so an unmodified Harness can reopen an
     // existing FreeCodeGo conversation without a core-source patch.
     ctx.effect(() => {
       const known = KNOWN_SESSION_EVENT_TYPES as Set<string>
@@ -1186,7 +1256,18 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       ...(config.claudeRuntimeDirectory === undefined || config.claudeRuntimeDirectory.trim() === '' ? {} : { rootDirectory: config.claudeRuntimeDirectory }),
       engineManifestPath: requireClaudeEngineManifestPath(),
     })
-    this.claudeBridge = new ClaudeProtocolBridge(ctx.get('llm') as { stream(options: import('@deepseek-ai/dsh-llm').GenerateOptions): AsyncIterable<import('@deepseek-ai/dsh-llm').StreamChunk> })
+    this.claudeBridge = new ClaudeProtocolBridge(
+      ctx.get('llm') as { stream(options: import('@deepseek-ai/dsh-llm').GenerateOptions): AsyncIterable<import('@deepseek-ai/dsh-llm').StreamChunk> },
+      // The production idle deadline; only the bridge's own tests pass another.
+      undefined,
+      // A getter, so a store registered after this bridge still gets seen — the
+      // same reason every other seam in this file is a getter. An image arriving
+      // on the Anthropic route becomes a durable attachment through it. No cast:
+      // the attachment package augments `Context` with this service, and a
+      // deployment that never registers it is answered by the bridge's own
+      // `undefined` handling rather than by a type assertion here.
+      () => ctx.get('attachments'),
+    )
     // Getters (not snapshots) keep configureGateway()'s rebuilt clients and
     // instance-level test overrides visible to the catalog runtime.
     this.catalogs = new FreeCodeGoManagedCatalogs({
@@ -1246,7 +1327,13 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.ctx.inject(['settings'], child => {
       child.effect(() => child.settings.configure({ auto: false }, this.ctx.fiber))
     })
-    this.policy = new FreeCodeGoPolicy(this.config, settingsWriter)
+    this.policy = new FreeCodeGoPolicy(this.config, settingsWriter, () => {
+      // The one setting whose change cannot wait for the next read: whether this
+      // plugin's recognizer is in the Harness's speech roster is a registration,
+      // not a per-call lookup, so the switch has to reach it. Other settings are
+      // read where they act and need no notification.
+      void this.speechProvider?.refresh().catch(() => undefined)
+    })
     this.capabilities = new FreeCodeGoCapabilityRegistry(
       ctx,
       this.policy,
@@ -1302,6 +1389,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       void this.projectTierFor(cwd).catch(() => undefined)
     }), 'freecodego: project command policy')
     this.engineering = new FreeCodeGoEngineeringRegistry(ctx, this.policy)
+    this.design = new FreeCodeGoDesignRegistry(ctx, this.policy)
     // Session automation: declarative failure recovery plus workspace-local
     // scheduled prompts. Both are gated by their own settings switches; the
     // rules themselves live in the repository, where a diff can review them.
@@ -1313,10 +1401,15 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.automation.start()
     ctx.effect(() => () => { this.automation.dispose() }, 'freecodego: session automation')
     this.engineering.start()
-    // Semantic memory recall. The selector runs on the configured Advisor route
-    // rather than a route of its own: that route is already the plugin's
-    // "second, small model" setting and is already visible to the user, so a
-    // separate one would be a switch almost nobody would turn on. Its own flag
+    this.design.start()
+    // The UI/UX catalogue tool is registered by the design pack rather than here:
+    // it is a row on the design page, and the switch on that row is what the page
+    // promises controls it. Registering it in this file would leave a tool the
+    // page says is off answering calls.
+    // Semantic memory recall. The selector runs on the plugin's second-model
+    // route rather than a route of its own: that route is already the plugin's
+    // "second, small model" setting, so a separate one would be a switch almost
+    // nobody would turn on. Its own flag
     // (`engineeringMemorySelectorEnabled`, default off) decides whether a search
     // spends a request at all — the route only says which model it would be.
     this.engineering.setMemorySelector(context => memorySelectorFor({
@@ -1342,8 +1435,8 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // restart. The default stage is `off`, so
     // nothing here runs, and nothing here is even scheduled, until someone asks
     // for it — see `memory/rollout.ts` for why `off` may not fall back to
-    // anything. The model is the Advisor route, the same "second, small model"
-    // setting the memory selector above uses, for the same reason.
+    // anything. The model is the second-model route, the same setting the
+    // memory selector above uses, for the same reason.
     this.memoryPipeline = new MemoryPipeline({
       // Raw: `resolveMemoryRollout` is what reports a stage this build does not
       // know, and a value dropped here would make that report unreachable.
@@ -1352,6 +1445,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       io: memoryPipelineIo(),
       observations: cwd => this.memoryObservationsFor(cwd),
       topics: cwd => this.memoryTopicSlugsFor(cwd),
+      sessionTopics: (cwd, sessionId) => this.memorySessionTopicSlugsFor(cwd, sessionId),
       plan: async (request, context) => {
         const planner = memoryDreamPlannerFor({
           provider: this.policy.get()?.advisorProvider ?? '',
@@ -1383,6 +1477,30 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       for (const pending of this.memoryConsolidations.values()) clearTimeout(pending)
       this.memoryConsolidations.clear()
     }, 'freecodego: memory consolidation timers')
+    // The other end of the session scope. A topic the pass scoped to one session is
+    // reclaimed when that session is disposed — which is what "temporary" means
+    // here, and the property that keeps a note about one task out of the project's
+    // permanent memory.
+    //
+    // `session/disposed` rather than `agent/disposed`, and deliberately: one
+    // session can host several agents (a fork, a delegated child), and reclaiming
+    // when the first of them is disposed would delete the layer while the session
+    // it belongs to is still live. The stage is *not* consulted, unlike the trigger
+    // above: this is the cleanup half of records that already exist, and a
+    // deployment that turned the stage down after writing some would otherwise keep
+    // them on disk with nothing left to remove them.
+    //
+    // Wrapped like the other disposal listeners here: teardown must not be able to
+    // fail because an optional layer of one plugin could not remove a directory.
+    ctx.effect(() => ctx.on('session/disposed', (session) => {
+      try {
+        const cwd = session.header.cwd
+        if (cwd === undefined || cwd.trim() === '') return
+        this.memoryPipeline.reclaimSession(cwd, String(session.id))
+      } catch (error) {
+        this.ctx.logger?.warn?.(`freecodego: memory reclamation failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }), 'freecodego: memory reclamation')
     // The doctor's deny-enforcement section reads the same normalized patterns the
     // guard enforces. Injected for the same reason the selector above is: the
     // registry holds no settings source, so a report cannot disagree with what is
@@ -1394,8 +1512,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // every other path — disabled, no route, unreadable arguments, an uncertain or
     // failed reviewer, or an exhausted budget — delegates to `next()`, which is
     // the approval prompt the user already had. Same route and the same reasoning
-    // as the memory selector above: the Advisor route is the plugin's existing
-    // "second, small model" setting, and the opt-in flag decides whether it is used.
+    // as the memory selector above: the second-model route is the plugin's
+    // existing "second, small model" setting, and the opt-in flag decides whether
+    // it is used.
     installActionReview(ctx as unknown as Parameters<typeof installActionReview>[0], {
       enabled: () => this.policy.get()?.engineeringActionReviewEnabled === true,
       route: () => ({
@@ -1424,6 +1543,66 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // Passed positionally so this plugin owns the per-session records and can
     // release them on disposal: the module subscribes to no lifecycle event.
     this.actionReview)
+    // The two gaps the Harness's own Auto gate documents and leaves open: the
+    // outer script transport it excludes on purpose, and its reviewer's failure
+    // outcome, which is a refusal only by shape. Both are answered here only for
+    // a session that gate owns, and only through this plugin's reviewer, so no
+    // action ever carries two verdicts.
+    installReviewCoverage(ctx as unknown as Parameters<typeof installReviewCoverage>[0], {
+      enabled: () => this.policy.get()?.engineeringActionReviewEnabled === true,
+      route: () => ({
+        provider: this.policy.get()?.advisorProvider ?? '',
+        model: this.policy.get()?.advisorModel ?? '',
+      }),
+      llm: this.ctx.llm,
+      harnessOwnsSession: agent => this.harnessOwnsApproval(agent),
+      // One line per observation, at the level the consequence deserves: an allow
+      // is an action that ran without the Harness's reviewer reading it, a refusal
+      // is one someone will ask about, and the rest is the ordinary case.
+      audit: (line) => {
+        if (line.includes('was allowed by')) this.ctx.logger?.info?.(line)
+        else if (line.includes('was refused by')) this.ctx.logger?.warn?.(line)
+        else this.ctx.logger?.debug?.(line)
+      },
+    }, this.actionReview)
+    // The official Team board, read as evidence for the stop-time gate: the
+    // Harness's team runtime reports what it did to the client, and this reads the
+    // same session events so a turn that ends with a team claiming the work is
+    // finished is told that no verification covers it. A reader only — it
+    // registers no tool and no service of its own.
+    this.registerTeamBoard(ctx)
+    // The Harness's own microphone, served by this plugin's cloud recognizer.
+    //
+    // `voiceInputEnabled` is the user's choice about *this plugin's* recognizer,
+    // and it is the switch the capability surface renders: on means the Harness's
+    // own voice input is served by our cloud API (nothing to download), off means
+    // it is served by whatever the composition mounted itself (the bundled local
+    // model and its model download). The Harness speech registry only exists when
+    // the optional voice bundle is mounted, and this provider is registered only
+    // when the switch is on *and* a transcription credential resolves, so this
+    // contributes a recognizer to a composition that asked for speech and can be
+    // served — and leaves the Harness's own recognizers, and their download,
+    // untouched everywhere else. What it buys is the one thing the local
+    // recognizer cannot: a `cloud` provider with no preparation, which is the
+    // shape that never raises the install prompt. Never rejects: every refusal is
+    // logged inside and returns.
+    //
+    // The handle it returns is what makes that switch live: the policy's write
+    // hook calls `refresh()`, so flipping it moves the registration — and the
+    // roster the Harness's 识别服务 picker reads — without a Host restart, and a
+    // withdrawal hands the selection back to a recognizer that is still there
+    // rather than leaving it naming a provider that is gone. Which recognizer is
+    // *selected* stays the user's own gesture in that picker: this plugin
+    // registers itself and does not elect itself.
+    // Readiness is the switch *and* a route that can authenticate, asked through the
+    // route rather than through the key alone: the route is what transcription will
+    // actually use, so a key stored beside an endpoint that no longer parses must not
+    // be reported as a working microphone.
+    this.speechProvider = installFreeCodeGoSpeechProvider(ctx, {
+      canTranscribe: async () => this.policy.get()?.voiceInputEnabled !== false
+        && (await this.catalogs.groqWhisperRoute()).apiKey !== undefined,
+      transcribe: (audioBase64, mimeType, language) => this.groqWhisperTranscribe(audioBase64, mimeType, language),
+    })
     ctx.effect(() => () => this.engineering.dispose(), 'freecodego: engineering enhancement')
     ctx.effect(() => () => { this.doomLoopGuard.clear() }, 'freecodego: doom-loop guard state')
     // The lineage the doom-loop guard shares a chain across. Recorded where the
@@ -1463,6 +1642,17 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.deferredTools.start()
     ctx.effect(() => () => { this.deferredTools.dispose() }, 'freecodego: deferred tool schemas')
     this.pluginConflictGuard = installFreeCodeGoPluginConflictGuard(ctx, this.policy)
+    // The bundle patch's team rows stand down on a *launch-time* bundle selection,
+    // which an install that cannot import the official modules accepts without
+    // ever mounting them. This pass asks the running tree instead, and brings the
+    // fallback back when the official provider is not actually serving.
+    installStandInWatch(ctx)
+    // The optional Harness capabilities this layer mounts are selected rather than
+    // stated (`capability-rows.ts`): their rows are already off when this plugin
+    // mounts, and this pass starts the ones whose packages this install carries and
+    // leaves the rest closed, with a reason, instead of one `did not activate` warning
+    // per row on every boot.
+    installCapabilityRows(ctx)
     // Two refusals on the model's `skill` tool, and both are needed here rather
     // than in the registry: Harness 0.1.6 lets a provider declare one Skill's
     // invocation policy at discovery time and offers no way to revise it, so a
@@ -1508,15 +1698,15 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.registerInspectTool()
     this.registerReviewTools()
     this.registerInspectCommand()
-    this.registerSpillRecallTool()
     this.registerContextBudgetTool()
     this.registerContextControlTools()
     this.registerPromptCompositionTool()
     this.registerReadDocumentTool()
+    this.registerCompanionFaceTool()
     this.registerWorktreeTools()
     this.registerPersonaTools()
     ctx.effect(() => () => { this.contextBudget.clear(); this.contextBudgetReports.clear() }, 'freecodego: context budget bands')
-    ctx.effect(() => () => { this.promptCompositions.clear() }, 'freecodego: prompt composition snapshots')
+    ctx.effect(() => () => { this.promptCompositions.clear(); this.systemPromptSections.clear() }, 'freecodego: prompt composition snapshots')
     ctx.effect(() => () => { this.cacheColdView.clear(); this.requestShapes.clear(); this.lastShapeChange.clear() }, 'freecodego: cache-cold views and request shapes')
     // Warm the mode for a conversation the moment it starts, so the synchronous
     // guard above reads a real mode rather than the default, and so re-entering a
@@ -1579,6 +1769,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       this.requestShapes.forget(key)
       this.lastShapeChange.delete(key)
       this.promptCompositions.delete(key)
+      this.systemPromptSections.delete(key)
       // The shrunk view keeps one marker map per conversation for every tool
       // result it ever parked, so it is released here for the same reason the
       // six views above are: nothing else ever revisits a disposed session.
@@ -1615,7 +1806,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     ctx.on('tools/pre-execute', async (exec, next) => {
       // Symlink- and short-name-aware credential denial. The synchronous guard
       // above answers about the name the model wrote; only a resolution can see
-      // that `docs/notes.md` is a link to `.ssh/id_rsa`. Denying here (rather
+      // that `documentation/notes.md` is a link to `.ssh/id_rsa`. Denying here (rather
       // than throwing) keeps the refusal inside the same monotonic denial the
       // model already knows how to read, while leaving the sync guard's ordering
       // untouched. Fail-open: an unresolvable path is left to the lexical tier.
@@ -1657,6 +1848,19 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         await this.engineering.hunkRecord(exec.callId, sessionCwd(exec))
       } catch { /* advisory only: attribution must never fail a tool call */ }
       return next()
+    })
+    // …and the one result on this seam that has to be *answered* rather than
+    // observed: a Windows shell the loader killed before it ran the command
+    // (0xC0000142 STATUS_DLL_INIT_FAILED), whose result reads as a bare exit code
+    // with no output. It names no input a guard above could have refused — the
+    // cause is on the host — so the diagnosis travels with the result instead
+    // (`shell-loader-failure.ts`, which owns every branch of that decision, so this
+    // seam stays one call and no failure of its own). `next()` runs first because
+    // the edit belongs *after* the hook seam's content decision, not in place of
+    // it: the plugin adds to a result, it does not overrule the seam it shares.
+    ctx.on('tools/post-execute', async (exec, result, next) => {
+      const decision = await next()
+      return diagnoseShellLoaderFailure(exec.name, result.content, decision, this.ctx.logger)
     })
     // A cancelled or failed turn is the moment the plugin's own writes are
     // racing its teardown: the engine has stopped driving, nothing will await
@@ -1700,6 +1904,10 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       // there is nothing else to restore, which is exactly the case of a young
       // session that has been in plan mode the whole time.
       planReminder: session => this.planModeCompactionReminder(session),
+      // The skeleton the audit read while the replaced history still existed. Read
+      // from that verdict rather than parsed again here, so the note the model is
+      // given and the line in the log cannot disagree about which field was dropped.
+      checkpointSkeleton: session => this.compactionSkeletonFor(session),
     })
     // Probe-based LSP stack: mounts dsh-lsp + lsp-stdio + tool-lsp only when
     // language servers resolve on PATH; boot never depends on tooling.
@@ -1708,18 +1916,6 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       void this.lspMount?.status().catch(() => undefined)
       return () => { this.lspMount = undefined }
     }, 'freecodego: LSP probe')
-    this.advisor = new FreeCodeGoAdvisorRuntime(ctx, this.policy, {
-      // Durable Advisor findings become pending project-memory drafts; the user
-      // reviews them in the existing memory settings surface.
-      saveMemoryDraft: (cwd, advice) => {
-        if (this.policy.get()?.advisorMemoryDraftsEnabled === false) return
-        this.engineering.saveDraftFromAdvisor(cwd, advice)
-      },
-      // The Advisor is the plugin's own side channel, so its prompt is the one it
-      // is best placed to measure. Reusing the stored context report keeps this
-      // from adding a second meter pass to every turn.
-      sideChannelBudget: agent => this.sideChannelBudget(agent as unknown as ContextBudgetAgent),
-    })
     this.agentProgress = new FreeCodeGoAgentProgressRuntime(ctx)
     ctx.effect(() => () => { this.agentProgress.dispose() }, 'freecodego: delegated Agent progress')
     this.engineCouncil = new FreeCodeGoEngineCouncil(this.policy, () => this.defaultAgentOptions())
@@ -1812,10 +2008,18 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         const key = planModeSessionKey(agent as { readonly id?: unknown } | undefined)
         const messages = (decision as { readonly messages?: readonly unknown[] }).messages ?? []
         const lastAssistantAt = this.lastAssistantAt(agent as unknown as ContextBudgetAgent)
+        // The reclaim floor is the one clearing threshold that answers a question
+        // about the window, so it is scaled to this conversation's. Read from the
+        // report the turn already stored rather than measured again here: this path
+        // runs before every request, and a second meter pass to re-derive a figure
+        // the last turn settled on would be paid on every turn for no new fact. No
+        // stored report (the first request of a session) leaves the shipped
+        // defaults in force, which is what this decision used before it scaled.
         const plan = this.cacheColdView.plan(key, {
           ...(lastAssistantAt === undefined ? {} : { lastAssistantAt }),
           now: Date.now(),
           messages: messages as readonly { readonly role?: unknown; readonly content?: unknown }[],
+          config: cacheColdConfigForWindow(this.contextBudgetReports.get(key)?.contextWindow),
         })
         if (plan.fire) {
           this.ctx.logger.info(`freecodego: clearing ${plan.clearCount} old tool result(s) (~${plan.reclaimTokens} tokens) because the prompt cache is live cold`)
@@ -1823,18 +2027,21 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
           this.ctx.logger.debug?.(`freecodego: cache-cold clear not taken: ${describeCacheColdRefusal(plan.refusal)}`)
         }
         // Park what is about to be cleared, so the marker can carry a locator
-        // instead of a dead end. This runs when the view is active rather than only
-        // when `plan` fires, because results enter the cleared window over time as
-        // the conversation grows — each one needs parking exactly once, and
-        // `hasMarker` is what keeps a later step from parking it again.
+        // instead of a dead end. A target is offered exactly once — the pass runs
+        // when the view is active, `clearTargets` returns the results no pass has
+        // settled yet, and the outcome is recorded either way below. Recorded,
+        // because a target that could not be parked is not a result to try again
+        // next request: the plain marker goes into the transcript on this step, so a
+        // later success would rewrite a prefix the provider has already accepted,
+        // and every request in between would pay the same failing write.
         const view = messages as readonly { readonly role?: unknown; readonly content?: unknown }[]
         const targets = this.cacheColdView.clearTargets(key, view)
-          .filter(target => !this.cacheColdView.hasMarker(key, target.callId))
         if (targets.length > 0) {
           const store = this.spillStore()
           // A missing backend is a degraded mode, not a failure, but it is worth
           // saying out loud: without it the marker is a dead end, and a silent
-          // version of that is indistinguishable from parking being broken.
+          // version of that is indistinguishable from parking being broken. Once
+          // per batch, because the batch is settled below and never offered again.
           if (store === undefined) this.ctx.logger.debug?.(`freecodego: ${targets.length} cleared tool result(s) cannot be parked for retrieval because this composition mounted no spill backend`)
           const markers = await spillClearedResults(
             store,
@@ -1842,7 +2049,7 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
             targets,
             (target, error) => { this.ctx.logger.warn(`freecodego: could not park cleared ${target.tool} result for retrieval, it will be cleared unrecoverably: ${redactCredentialShapes(String(error))}`) },
           )
-          this.cacheColdView.recordMarkers(key, markers)
+          this.cacheColdView.settleMarkers(key, targets.map(target => target.callId), markers)
         }
         const applied = this.cacheColdView.apply(key, view)
         if (!applied.changed) return decision
@@ -1906,8 +2113,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
         this.ctx.logger.warn(`freecodego: automatic engineering council failed: ${redactCredentialShapes(String(error))}`)
       }
     })
-    this.registerAdvisorTools()
+    this.registerEngineeringTools()
     this.registerEditAndRunComposite()
+    this.registerShellAliases()
     this.pluginUpdates = new FreeCodeGoPluginUpdateService({
       settings: this.policy,
       ...(config.updatePackageName === undefined ? {} : { packageName: config.updatePackageName }),
@@ -1976,7 +2184,18 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // oversized log/JSON tool results reach the model compressed while the
     // durable log keeps the lossless value; the model can pull originals back
     // through the registered headroom_retrieve tool.
-    this.headroom = new FreeCodeGoHeadroomRuntime(ctx, this.policy)
+    // The locator form of the retrieval tool is served from here: reading a parked
+    // artifact is a filesystem read behind the credential guard, and both of those
+    // live with the plugin that owns the policy. The runtime gets one call that
+    // answers a page and keeps the tool list at one retrieval entry.
+    this.headroom = new FreeCodeGoHeadroomRuntime(ctx, this.policy, {
+      readParkedPage: async request => await this.recallSpill({
+        locator: request.locator,
+        ...(request.offset === undefined ? {} : { offset: request.offset }),
+        ...(request.maxBytes === undefined ? {} : { max_bytes: request.maxBytes }),
+        ...(request.maxLines === undefined ? {} : { max_lines: request.maxLines }),
+      }),
+    })
     // Second on the `tools/post-execute` waterfall, after the hook seams registered
     // above — see the note there. Reordering these two lines changes which listener
     // has the last word on a hook that replaces tool output.
@@ -1991,6 +2210,32 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     ctx.effect(() => () => { this.subagentModelRouting.dispose() }, 'freecodego: automatic Subagent model routing')
     this.registerVerifyOnStop(ctx)
     this.registerReviewGate(ctx)
+  }
+
+  /**
+   * Wire the official Team board reader (`team-workflow.ts`).
+   *
+   * `session/event` is the whole seam, and deliberately: the Team's state is
+   * recorded on its Lead's log as `team/member` and `team/task` events, so the
+   * reader depends on a durable vocabulary rather than on a service interface, a
+   * tool name, or a method signature. A deployment without the Team runtime emits
+   * none of them and this module does nothing at all.
+   */
+  private registerTeamBoard(ctx: Context): void {
+    ctx.effect(() => ctx.on('session/event', (_session, event) => {
+      try {
+        const line = this.teamBoard.observe(event as { readonly type: string, readonly data: unknown })
+        if (line !== undefined) this.ctx.logger?.info?.(line)
+      } catch (error: unknown) {
+        // A board this module could not fold is not a reason to fail the session
+        // event that carries it: the Harness's own team runtime already validated
+        // it, and this reader is an observer.
+        this.ctx.logger?.debug?.(`freecodego: team board could not read an event: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }), 'freecodego: team board reader')
+    ctx.effect(() => ctx.on('session/disposed', (session) => {
+      this.teamBoard.forget(String(session.id))
+    }), 'freecodego: team board state')
   }
 
   /**
@@ -2035,6 +2280,10 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       // verification measured from the state the turn ends with. Same module that
       // owns the change reader, so the two are one notion of the workspace.
       readChangeRevision: async (agentId) => await readWorkspaceRevision(workspaceOf(agentId)),
+      // The Team board's own report, when this conversation has a team. Keyed by
+      // agent id like the rest of this gate, which is the same value the team's
+      // `teamId` carries: a team's id is its Lead session's id.
+      readBoardFacts: agentId => this.teamBoard.boardEvidence(agentId),
       inject: (agentId, text) => {
         const agent = agents.get(agentId)
         if (typeof agent?.inject !== 'function') return
@@ -2231,52 +2480,6 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     return setDefaultModel(this.engineRemotesHost, model)
   }
 
-  /** Return browser-safe aggregate status for the Host-managed Advisor. 
-   * @returns the advisor Status.
-   */
-  @Remote('advisorStatus')
-  advisorStatus(): FreeCodeGoAdvisorStatus {
-    return this.advisor.status()
-  }
-
-  /** Persist a partial Advisor configuration update. 
-   * @returns the advisor Status.
-   * @param input - the partial Advisor configuration to merge.
-   */
-  @Remote('advisorUpdate')
-  async advisorUpdate(input: FreeCodeGoAdvisorUpdate): Promise<FreeCodeGoAdvisorStatus> {
-    return this.advisor.update(input)
-  }
-
-  /** List text-capable managed routes suitable for an independent Advisor call. 
-   * @returns the advisor Model rows, in backend order.
-   */
-  @Remote('advisorModels')
-  async advisorModels(): Promise<readonly FreeCodeGoAdvisorModel[]> {
-    return advisorModels(this.engineeringRemotesHost)
-  }
-
-  /** Recent durable notes for currently live sessions; transcript data stays Host-owned. 
-   * @returns the advisor Note rows, in backend order.
-   */
-  @Remote('advisorNotes')
-  advisorNotes(): readonly FreeCodeGoAdvisorNote[] {
-    const sessions = this.ctx.get('sessions') as { list?: () => readonly ({ readonly id: unknown } & HostSessionEvents)[] } | undefined
-    return (sessions?.list?.() ?? [])
-      .flatMap(advisorNotesFromSession)
-      .sort((left, right) => right.time - left.time)
-      .slice(0, 40)
-  }
-
-  /** Ask the Advisor to review the latest durable facts of one live session. 
-   * @param sessionId - the Harness session this operation acts on.
-   * @returns the advisor Status.
-   */
-  @Remote('advisorReviewNow')
-  advisorReviewNow(sessionId: string): FreeCodeGoAdvisorStatus {
-    return advisorReviewNow(this.engineeringRemotesHost, sessionId)
-  }
-
   /** Read one workspace's review surface: its settings, its runs, and its last report. 
    * @param sessionId - the Harness session this operation acts on.
    * @returns the review Status.
@@ -2304,24 +2507,6 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   @Remote('reviewUpdate')
   async reviewUpdate(sessionId: string, patch: FreeCodeGoReviewUpdate): Promise<FreeCodeGoReviewStatus> {
     return reviewUpdate(this.reviewRemotesHost, sessionId, patch)
-  }
-
-  /** Request architecture, security, and testing perspectives without steering the main Agent. 
-   * @param sessionId - the Harness session this operation acts on.
-   * @returns the advisor Council Report.
-   */
-  @Remote('engineeringCouncilReview')
-  engineeringCouncilReview(sessionId: string): Promise<FreeCodeGoAdvisorCouncilReport> {
-    return engineeringCouncilReview(this.engineeringRemotesHost, sessionId)
-  }
-
-  /** Read the most recent durable Council reports for a live or restored session. 
-   * @param sessionId - the Harness session this operation acts on.
-   * @returns the advisor Council Report rows, in backend order.
-   */
-  @Remote('engineeringCouncilReports')
-  async engineeringCouncilReports(sessionId: string): Promise<readonly FreeCodeGoAdvisorCouncilReport[]> {
-    return engineeringCouncilReports(this.engineeringRemotesHost, sessionId)
   }
 
   /** Expose the user-owned provider match to the engine router. 
@@ -2426,6 +2611,34 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   @Remote('engineeringSetEnabled')
   async engineeringSetEnabled(enabled: boolean): Promise<FreeCodeGoEngineeringStatus> {
     return engineeringSetEnabled(this.engineeringRemotesHost, enabled)
+  }
+
+  /** Browser-safe design pack state, including one row per design capability.
+   * @returns the design Status.
+   */
+  @Remote('designStatus')
+  async designStatus(): Promise<FreeCodeGoDesignStatus> {
+    return this.design.status()
+  }
+
+  /** Enable or disable the whole design pack. Feature choices are kept, so this
+   *  switch stands the pack down without discarding what the user picked.
+   * @param enabled - whether the pack is switched on.
+   * @returns the design Status.
+   */
+  @Remote('designSetEnabled')
+  async designSetEnabled(enabled: boolean): Promise<FreeCodeGoDesignStatus> {
+    return this.design.setEnabled(enabled)
+  }
+
+  /** Enable or disable one design capability.
+   * @param id - the design feature id.
+   * @param enabled - whether that capability is switched on.
+   * @returns the design Status.
+   */
+  @Remote('designFeatureSetEnabled')
+  async designFeatureSetEnabled(id: string, enabled: boolean): Promise<FreeCodeGoDesignStatus> {
+    return this.design.setFeatureEnabled(id, enabled)
   }
 
   /** Persist an explicitly bounded engineering settings patch. 
@@ -2625,7 +2838,39 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
    */
   @Remote('engineeringMemoryManifest')
   engineeringMemoryManifest(sessionId: string): MemoryManifest {
-    return this.memoryPipeline.writeManifest(engineeringMemoryCwd(this.engineeringRemotesHost, sessionId))
+    return this.memoryPipeline.writeManifest(engineeringMemoryCwd(this.engineeringRemotesHost, sessionId), sessionId)
+  }
+
+  /**
+   * What the current session has recorded as temporary memory.
+   *
+   * The curated archive has two layers, and the session one is invisible in the
+   * store the list above reads: those topics live as files under the session's own
+   * directory and are removed when it is disposed. Without this, a user cannot tell
+   * a session that remembered nothing from one whose notes were reclaimed.
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the session Scope.
+   */
+  @Remote('engineeringMemorySessionScope')
+  engineeringMemorySessionScope(sessionId: string): MemorySessionScope {
+    return this.memoryPipeline.sessionScope(engineeringMemoryCwd(this.engineeringRemotesHost, sessionId), sessionId)
+  }
+
+  /**
+   * Reclaim the current session's temporary memory, now.
+   *
+   * The same call the disposal listener makes, as a gesture: it lets a user end the
+   * layer early, and it makes the scope inspectable without closing the session it
+   * belongs to. The outcome is returned verbatim rather than collapsed into a
+   * success message, because `absent` (nothing temporary), `lease-held` (a pass is
+   * writing) and `unnamed` are answers, and the one a user needs to see is the one
+   * that is not "done".
+   * @param sessionId - the Harness session this operation acts on.
+   * @returns the replay of the reclamation.
+   */
+  @Remote('engineeringMemorySessionReclaim')
+  engineeringMemorySessionReclaim(sessionId: string): SessionReclaim {
+    return this.memoryPipeline.reclaimSession(engineeringMemoryCwd(this.engineeringRemotesHost, sessionId), sessionId)
   }
 
   /**
@@ -3266,14 +3511,21 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
    * an empty archive and overwrite nothing.
    */
   private memoryTopicSlugsFor(cwd: string): readonly string[] {
-    const directory = path.join(memoryPipelineHome(cwd), MEMORY_TOPICS_DIRECTORY)
-    try {
-      return readdirSync(directory).filter(name => name.endsWith('.md')).map(name => name.slice(0, -'.md'.length)).sort()
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === 'ENOENT' || code === 'ENOTDIR') return []
-      throw error
-    }
+    return topicSlugsIn(path.join(memoryPipelineHome(cwd), MEMORY_TOPICS_DIRECTORY))
+  }
+
+  /**
+   * The temporary topics one session has curated for itself.
+   *
+   * The directory comes from the pipeline rather than being rebuilt here from
+   * `MEMORY_SESSION_DIRECTORY` and a name rule: the layout is what
+   * `reclaimSession` deletes and what `writeManifest` lists, and a host port that
+   * spelled it itself would be a third opinion about where a session's layer lives.
+   */
+  private memorySessionTopicSlugsFor(cwd: string, sessionId: string): readonly string[] {
+    const directory = this.memoryPipeline.sessionDirectory(cwd, sessionId)
+    if (directory === undefined) return []
+    return topicSlugsIn(path.join(directory, MEMORY_TOPICS_DIRECTORY))
   }
 
   /**
@@ -3340,6 +3592,7 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     return await this.memoryPipeline.consolidate(sessionId === undefined ? { cwd } : { cwd, sessionId })
   }
 
+
   /** All guard/quality toggles in one snapshot for the settings UI. 
    * @returns the guard Settings Status.
    */
@@ -3353,7 +3606,6 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
       lspEnabled: settings?.lspEnabled !== false,
       rehydrationEnabled: settings?.rehydrationEnabled !== false,
       rehydrationArcEnabled: settings?.rehydrationArcEnabled === true,
-      advisorMemoryDraftsEnabled: settings?.advisorMemoryDraftsEnabled !== false,
       commandPolicyEnabled: settings?.commandPolicyEnabled !== false,
       planModeEnabled: settings?.planModeEnabled !== false,
       contextBudgetEnabled: settings?.contextBudgetEnabled !== false,
@@ -3882,7 +4134,7 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
         // Resolved per call rather than cached with the workspace's port: the deep
         // reviewer opens a child in the calling agent's session, and one workspace's
         // port is shared by every session in it. The setting is read here for the
-        // same reason the advisor's route is — a toggle takes effect on the next
+        // same reason the second-model route is — a toggle takes effect on the next
         // review instead of on the next reload.
         deepReviewer: agent => this.deepReviewerFor(agent),
       }).map(tool => tools.register(tool))
@@ -4116,6 +4368,45 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
       // landed leaves a tool that is callable but never *chosen* — the prompt line
       // is what makes the model reach for it over `read`.
       this.ctx.logger.warn(`freecodego: read_document did not finish registering, so it may be callable without its prompt line; the harness read still serves text formats: ${redactCredentialShapes(String(error))}`)
+    }
+  }
+
+  /**
+   * The tool the model asks the companion character to wear an expression with.
+   *
+   * Always on, and the only tool here that has nothing to switch off: it reads nothing,
+   * writes nothing, and needs no host service. What it does is put a request into the
+   * Session's event window, which is where the character's own client reads it
+   * (`harness-ui`'s `companion/activity.ts`) — so this half is a schema and a prompt line,
+   * and everything that draws is on the other side of that window.
+   */
+  private registerCompanionFaceTool(): void {
+    const tools = this.toolRegistry()
+    if (tools?.register === undefined) return
+    try {
+      const dispose = tools.register(companionFaceToolDefinition())
+      const cleanup = typeof dispose === 'function' ? dispose : () => { dispose.dispose?.() }
+      this.ctx.effect(() => () => { cleanup() }, 'freecodego: companion face tool')
+      // Advertising it is not optional: a tool the model does not know about is a tool that
+      // never gets called. The line states the one thing a caller must not get wrong —
+      // that this is a face and not a status channel.
+      //
+      // The tool is in `deferred-tools.ts`'s `ALWAYS_IMMEDIATE` for the reason this line
+      // exists: `freecodego_` is a deferred prefix, and a name in prompt text whose schema
+      // is withheld is un-followable — measured, not assumed, in the two live turns that
+      // carried this instruction, ended on a missing file, and called nothing because there
+      // was no schema to call. The set is what keeps the pointer and the surface together;
+      // `tool-reachability.spec.ts` is what fails the build if either side moves alone.
+      const systemPrompt = (this.ctx as unknown as { get(name: string): unknown }).get('systemPrompt') as { section?: (section: { readonly name: string; readonly order: number; readonly text: string }) => () => void } | undefined
+      systemPrompt?.section?.({
+        name: 'freecodego: companion face guidance',
+        order: 9520,
+        text: `The small character beside the composer has a face, and ${COMPANION_FACE_TOOL_NAME} is the only thing that sets it: call it when a step of work ends in a way worth seeing, so the character is showing something rather than nothing. Delighted or happy when something landed, sad when an attempt failed, surprised when the result was not the expected one, focused when a long piece of attention is starting, sleepy for a slog that drags on. Once per outcome, not once per message — a face on the work, not a running commentary. It is a face and not a status channel: the text beside the character is derived from the session and stays that way, so a call cannot report progress however it is worded.`,
+      })
+    } catch (error) {
+      // Diagnostic only: a session is unaffected either way, and the character draws its
+      // own face from the session whether or not this tool exists.
+      this.ctx.logger.warn(`freecodego: ${COMPANION_FACE_TOOL_NAME} was not registered: ${redactCredentialShapes(String(error))}`)
     }
   }
 
@@ -4462,51 +4753,14 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   }
 
   /**
-   * Read a parked tool result back in byte-exact pages.
+   * Serve one page of a parked artifact — the locator form of `headroom_retrieve`.
    *
-   * The locator in a cleared-result marker is already readable with the file
-   * tools, and that is exactly the problem: `read` answers with a line-limited
-   * window and no statement of how much is left, so a model retrieving a 200KB
-   * artifact either reads it whole — re-spending what the clear reclaimed — or
-   * reads its start and never learns there was more. This tool answers with the
-   * bytes served, the offset to ask for next, and whether it was the last page,
-   * so paging is exact and its end is knowable.
-   */
-  private registerSpillRecallTool(): void {
-    const tools = this.toolRegistry()
-    if (tools?.register === undefined) return
-    try {
-      const dispose = tools.register(rawTool({
-        name: 'spill_recall',
-        description: 'Read a parked tool result back, in pages the size you ask for. The locator comes from a cleared-result marker (the text was too large to keep in context and was written to disk instead). Each answer reports the bytes and lines it served, the exact nextOffset to pass back as offset, and eof — so page until eof rather than re-reading from the start. Prefer this over read/grep on a locator: this one tells you how much is left.',
-        parameters: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['locator'],
-          properties: {
-            locator: { type: 'string', description: 'The parked artifact path named in the cleared-result marker.' },
-            offset: { type: 'integer', minimum: 0, description: 'Byte offset to start at. Pass the previous page\'s nextOffset to continue. An offset that lands inside a multi-byte character is moved back to that character\'s first byte, and the offset field of the answer reports the byte that was really served.' },
-            max_bytes: { type: 'integer', minimum: 1, maximum: MAX_RECALL_BYTES, description: `Bytes to serve at most (default ${DEFAULT_RECALL_MAX_BYTES}, hard ceiling ${MAX_RECALL_BYTES}).` },
-            max_lines: { type: 'integer', minimum: 1, description: `Whole lines to serve at most (default ${DEFAULT_RECALL_MAX_LINES}).` },
-          },
-        },
-        output: JSON_TOOL_OUTPUT,
-        execute: async (args: SpillRecallArgs | undefined) => this.recallSpill(args),
-        presentCall: (args: SpillRecallArgs | undefined) => ({ card: 'generic', title: spillRecallTitle(args?.locator) }),
-      }))
-      const cleanup = typeof dispose === 'function' ? dispose : () => { dispose.dispose?.() }
-      this.ctx.effect(() => () => { cleanup() }, 'freecodego: spill recall tool')
-    } catch (error) {
-      // Diagnostic only: a failure to register must not take the plugin down. But
-      // a parked result is only retrievable through this tool, so its absence
-      // turns every cleared result into a dead end the model cannot even ask
-      // about — the marker names a locator and nothing serves it.
-      this.ctx.logger.warn(`freecodego: spill_recall was not registered, so parked results cannot be read back: ${redactCredentialShapes(String(error))}`)
-    }
-  }
-
-  /**
-   * Serve one page of a parked artifact.
+   * Reached through the one retrieval tool rather than a tool of its own, because a
+   * model holding a marker cannot tell which mechanism removed the bytes: a hash
+   * marker comes from the compressor and a locator marker from a cleared result,
+   * and "where is the text I was shown a marker for" is one question. Two tools
+   * meant two entries in the tool list, two schemas, and a model that had to guess
+   * which of them owned the marker it was holding.
    *
    * Read from the filesystem, not from the spill service: the locator the local
    * backend hands out *is* the path, which is what makes the artifact readable at
@@ -4676,15 +4930,34 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
    * compaction after the fact is not something a listener on an append event can
    * do, and pretending otherwise would be worse than reporting it.
    */
+  /**
+   * The checkpoint skeleton the fidelity audit recorded for this session.
+   *
+   * `undefined` when the audit never ran (disabled, or the replaced events were
+   * not readable from this session log) and when the summary carries every field
+   * the contract names — the second is also "nothing to tell the model", which is
+   * why the empty case is answered here rather than by the caller.
+   */
+  private compactionSkeletonFor(session: { readonly id?: unknown }): CompactionSummarySkeleton | undefined {
+    const verdict = this.compactionFidelity.get(planModeSessionKey({ id: session.id ?? undefined }))
+    if (verdict === undefined || verdict.sectionsMissing.length === 0) return undefined
+    return { present: verdict.sectionsPresent, missing: verdict.sectionsMissing }
+  }
+
   private auditCompactionSummary(session: Session, event: { readonly data?: unknown }): void {
     if (this.policy.get()?.compactionFidelityEnabled === false) return
     try {
       const data = event.data as { readonly summary?: unknown; readonly shadowedSeqs?: unknown } | undefined
-      const summary = typeof data?.summary === 'string' ? data.summary : undefined
+      // Read through the shared block reader: the Harness commits the replacement as
+      // content blocks (`summary: ContentBlock[]`), and this used to require a string,
+      // so every real event returned early and the audit had never run once. The
+      // project's breakdown reads the same field the same way, which is the reason the
+      // reader is shared instead of narrowed differently here.
+      const summary = messageText(data?.summary)
       const seqs = Array.isArray(data?.shadowedSeqs)
         ? data.shadowedSeqs.filter((value): value is number => typeof value === 'number')
         : []
-      if (summary === undefined || seqs.length === 0) return
+      if (summary === '' || seqs.length === 0) return
       const wanted = new Set(seqs)
       const archive: string[] = []
       for (const entry of hostSessionEvents(session)) {
@@ -4712,6 +4985,13 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
       if (!verdict.accepted) {
         const first = verdict.misses[0]
         this.ctx.logger.warn(`freecodego: compaction summary is not faithful to the history it replaced — ${verdict.note}${first === undefined ? '' : ` First miss (${first.kind}): ${first.text}`}`)
+      }
+      // A second line, and only when something was dropped: a summary can be
+      // perfectly faithful and still be missing the field that said what work was
+      // left. Reporting it as unfaithfulness would name the wrong defect, and
+      // staying silent is how a dropped "Pending Jobs" is read as `(none)`.
+      if (verdict.sectionsMissing.length > 0) {
+        this.ctx.logger.debug?.(`freecodego: compaction summary dropped ${verdict.sectionsMissing.length} checkpoint field(s) the summariser was told to keep: ${verdict.sectionsMissing.join(', ')}`)
       }
     } catch (error) {
       // An audit that can break a session is worse than the omission it reports.
@@ -4788,13 +5068,44 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
           const agent = exec?.agent
           if (agent === undefined) return { available: false, note: 'This call has no session to measure.' }
           const measured = this.measureContextBudget(agent)
+          // Read (and remember) the sections before the breakdown, so the MCP and
+          // tool-guidance rows are attributed on this snapshot and on every later
+          // one this conversation builds from the cache.
+          await this.cacheSystemPromptSections(agent)
           const snapshot = this.promptCompositionFor(agent, measured)
           if (snapshot === undefined) return { available: false, note: 'This composition exposes neither a session log nor a request header, so the prompt cannot be broken down.' }
           const collected = collectPromptUsageItems(this.promptCompositionEvents(agent))
           const tree = buildPromptUsageTree(snapshot, collected.items)
+          // The same split the compressor acts on, from the same snapshot and the
+          // same usable room the budget fragment reported. Only computed when the
+          // window is known: a quota derived from an unknown window would be the
+          // second opinion about "how full is it" that this plugin's context
+          // modules are arranged not to have.
+          const quota = measured?.contextWindow === undefined
+            ? undefined
+            : promptCompositionQuota(snapshot, { usableTokens: measured.contextWindow - measured.responseReserve - measured.buffer })
           return {
             available: true,
-            summary: describePromptComposition(snapshot),
+            summary: quota === undefined
+              ? describePromptComposition(snapshot)
+              : `${describePromptComposition(snapshot)}\n\n${describePromptCompositionQuota(quota)}`,
+            // Which rows compression can act on, and which are settings changes.
+            // The breakdown alone treats all eight rows alike, so a reader can
+            // see that Skills is large without seeing that no compressor will
+            // ever shrink it.
+            ...(quota === undefined ? {} : {
+              fixedCategories: quota.categories
+                .filter(category => category.id !== 'conversation')
+                .map(category => ({ id: category.id, label: category.label, tokens: category.tokens, share: category.share })),
+              quota: {
+                usableTokens: quota.usableTokens,
+                fixedTokens: quota.fixedTokens,
+                conversationTokens: quota.conversationTokens,
+                conversationQuotaTokens: quota.conversationQuotaTokens,
+                reclaimTokens: quota.reclaimTokens,
+                ...(quota.pressure === undefined ? {} : { pressure: quota.pressure }),
+              },
+            }),
             measured: snapshot.measured,
             totalTokens: snapshot.totalTokens,
             categories: snapshot.categories.map(category => ({ id: category.id, label: category.label, tokens: category.tokens, chars: category.chars, share: category.share })),
@@ -4853,6 +5164,47 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     this.promptCompositions.set(key, refreshPromptCompositionAfterCompaction(previous, summaryChars))
   }
 
+  /**
+   * Read and remember this conversation's system-prompt sections.
+   *
+   * The rendered system prompt is its sections joined with blank lines and carries
+   * no markers, so the only classification that exists is the one held one level up,
+   * on the assembly — and the assembly is asynchronous. Reading it here is what lets
+   * an MCP server's own instructions be named as MCP rather than as system text.
+   *
+   * A missing registry, an assembly that throws, or a composition that contributes
+   * no non-empty section all answer `undefined`, which leaves the breakdown exactly
+   * as it was before sections were read at all.
+   * @param agent - the calling agent, which is also the scope key `agent-loop` assembles with.
+   * @returns the non-empty sections in assembly order, or `undefined` when unreadable.
+   */
+  private async cacheSystemPromptSections(agent: ContextBudgetAgent): Promise<void> {
+    const sections = await this.readSystemPromptSections(agent)
+    const key = planModeSessionKey(agent as { readonly id?: unknown } | undefined)
+    if (sections === undefined) this.systemPromptSections.delete(key)
+    else this.systemPromptSections.set(key, sections)
+  }
+
+  private async readSystemPromptSections(agent: ContextBudgetAgent): Promise<readonly PromptSectionLike[] | undefined> {
+    const service = (this.ctx as unknown as { get(name: string): unknown }).get('systemPrompt') as {
+      assemble?: (context: { readonly agent?: unknown; readonly scope?: unknown }) => Promise<{ readonly sections?: readonly { readonly name?: unknown; readonly text?: unknown }[] }>
+    } | undefined
+    if (typeof service?.assemble !== 'function') return undefined
+    try {
+      // The agent is both the scope key and the context's subject, which is the
+      // context `agent-loop` assembles the request with (`assembleContextFor`).
+      const assembly = await service.assemble({ agent, scope: agent })
+      const sections = (assembly.sections ?? []).flatMap((section) => {
+        if (typeof section.name !== 'string' || typeof section.text !== 'string' || section.text === '') return []
+        return [{ name: section.name, text: section.text }]
+      })
+      return sections.length === 0 ? undefined : sections
+    } catch (error) {
+      this.ctx.logger.warn(`freecodego: the system-prompt sections could not be read, so the prompt breakdown will not attribute MCP or tool guidance separately: ${redactCredentialShapes(String(error))}`)
+      return undefined
+    }
+  }
+
   private promptCompositionEvents(agent: ContextBudgetAgent): readonly PromptEventLike[] {
     const session = agent?.session as { readonly snapshotEvents?: () => readonly PromptEventLike[] } | undefined
     if (typeof session?.snapshotEvents !== 'function') return []
@@ -4874,7 +5226,10 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     const header = typeof session?.requestHeader === 'function' ? session.requestHeader() : undefined
     if (header === undefined && typeof session?.snapshotEvents !== 'function') return undefined
     const key = planModeSessionKey(agent as { readonly id?: unknown } | undefined)
-    const sources = collectPromptCompositionSources(header, this.promptCompositionEvents(agent))
+    const sections = this.systemPromptSections.get(key)
+    const sources = collectPromptCompositionSources(header, this.promptCompositionEvents(agent), {
+      ...(sections === undefined ? {} : { systemSections: sections }),
+    })
     const snapshot = buildPromptComposition({
       sources,
       ...(measured === undefined ? {} : { measuredPromptTokens: measured.usedTokens, ...(measured.contextWindow === undefined ? {} : { contextWindow: measured.contextWindow }) }),
@@ -4882,23 +5237,6 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     })
     this.promptCompositions.set(key, snapshot)
     return snapshot
-  }
-
-  /**
-   * The conversation's pressure and its compaction threshold, for a side channel.
-   *
-   * Prefers the report this session already has (written when its turn settled)
-   * over a fresh measurement, so the invariant costs no second meter pass on the
-   * common path. `undefined` when either half is unknown: a channel judged
-   * against a threshold nobody can name would be reported as safe by default.
-   */
-  private sideChannelBudget(agent: ContextBudgetAgent): { readonly mainLoopTokens: number; readonly compactionThresholdTokens: number } | undefined {
-    const report = this.contextBudgetReports.get(planModeSessionKey(agent as { readonly id?: unknown } | undefined)) ?? this.measureContextBudget(agent)
-    if (report === undefined || report.contextWindow === undefined) return undefined
-    return {
-      mainLoopTokens: report.usedTokens,
-      compactionThresholdTokens: Math.floor(report.contextWindow * HARNESS_COMPACTION_THRESHOLD_RATIO),
-    }
   }
 
   /**
@@ -4931,6 +5269,14 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
       ...(contextWindow === undefined ? {} : { contextWindow }),
       measured,
       ...(typeof reserve === 'number' && Number.isFinite(reserve) && reserve > 0 ? { responseReserve: reserve } : {}),
+      // The fixed slack is scaled from the window here rather than defaulted inside
+      // the report, so the report states only the arithmetic it was handed and the
+      // one figure that has to be chosen against a window is chosen where the
+      // window is known (`contextBufferForWindow`). An unadvertised window holds
+      // nothing back: a threshold survives without a window because it still judges
+      // a payload, while slack only means something against a denominator, and a
+      // held-back figure nobody could apply is a claim rather than a reserve.
+      buffer: contextWindow === undefined ? 0 : contextBufferForWindow(contextWindow),
     })
   }
 
@@ -4984,6 +5330,16 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     if (report === undefined) return
     const key = planModeSessionKey(agent as { readonly id?: unknown } | undefined)
     this.contextBudgetReports.set(key, report)
+    // The window is pushed on its own, before the quota and outside every gate
+    // below it, because it is a different fact with a different lifetime: the
+    // payload threshold scales with the window the conversation is *on*, which is
+    // known on every settled turn, while a quota only exists in the bands where
+    // pressure means something. Pushing the window inside the quota left the
+    // threshold unscaled whenever there was room to spare and made it jump up at
+    // the band boundary — the one direction a conversation running out of room
+    // cannot use. `cache-cold` reads the same figure from this same stored report.
+    this.headroom.setContextWindow(report.contextWindow)
+    this.pushCompressionQuota(agent, report)
     const plan = this.contextBudget.plan(key, report)
     if (!plan.changed) return
     if (typeof agent?.inject !== 'function') return
@@ -4992,6 +5348,69 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
       content: [{ type: 'text', text: `<context-budget>\n${plan.text}\n</context-budget>` }],
     }))
     this.contextBudget.commit(key, plan.band)
+  }
+
+  /**
+   * Turn the prompt breakdown into the compressor's quota.
+   *
+   * The breakdown knows what the prompt is made of and the compressor knows how
+   * to shrink one payload, and until now neither could see the other: the only
+   * number connecting them was the compressor's own static threshold. This is the
+   * wire — `prompt-composition.ts` charges the categories no compressor can
+   * shrink and hands back what the transcript is over, and the runtime accepts a
+   * weaker saving for exactly as long as that is true. While the transcript fits,
+   * the configured `headroomMinSavingsRatio` is the whole answer, byte for byte
+   * the behaviour this plugin had before quotas existed.
+   *
+   * Bounded on purpose: the snapshot walks the session log, so it is built only in
+   * the bands where a quota can mean anything (`tight` and above). Every other
+   * band pushes `undefined`, including `unknown`, where no window is advertised and
+   * a fraction would be invented rather than computed.
+   *
+   * It shares the measurement with the budget fragment instead of taking its own,
+   * so `contextBudgetEnabled: false` also means no quota. That coupling is the
+   * honest one: a quota derived from a window nobody measures would be a second
+   * opinion about how full the context is, which is the one thing this plugin's
+   * context modules are arranged not to have.
+   */
+  private pushCompressionQuota(agent: ContextBudgetAgent, report: ContextBudgetReport): void {
+    if (report.contextWindow === undefined || report.band === 'ample' || report.band === 'comfortable' || report.band === 'unknown') {
+      this.headroom.setCompressionQuota(undefined)
+      return
+    }
+    if (this.policy.get()?.promptCompositionEnabled === false) {
+      this.headroom.setCompressionQuota(undefined)
+      return
+    }
+    const snapshot = this.promptCompositionFor(agent, report)
+    if (snapshot === undefined) {
+      this.headroom.setCompressionQuota(undefined)
+      return
+    }
+    // The same usable room the band was classified against, buffer included: a
+    // quota computed against a larger room than the one the fragment reports
+    // would ask the compressor to reclaim tokens the model was never told about.
+    const quota = promptCompositionQuota(snapshot, { usableTokens: report.contextWindow - report.responseReserve - report.buffer })
+    // The window is deliberately not part of this payload: it travels on its own
+    // (`setContextWindow` above), because it is known in every band while this
+    // signal only exists under pressure, and a threshold read off this one would
+    // rise at the band boundary.
+    // The fixed rows travel with the overage so the panel can name them: the
+    // transcript's quota is `usable - fixed`, and a reader who is told only the
+    // overage has no way to see that the room went to a block compression cannot
+    // touch. Largest first, and without the transcript row — the panel shows that
+    // one through `quotaTokens` / `quotaOverTokens`, so repeating it here would be
+    // two spellings of one figure.
+    const fixedCategories = quota.categories
+      .filter(category => category.id !== 'conversation' && category.tokens > 0)
+      .sort((left, right) => right.tokens - left.tokens)
+      .map(category => ({ id: category.id, label: category.label, tokens: category.tokens }))
+    this.headroom.setCompressionQuota({
+      overTokens: quota.reclaimTokens,
+      quotaTokens: quota.conversationQuotaTokens,
+      fixedTokens: quota.fixedTokens,
+      fixedCategories,
+    })
   }
 
   /**
@@ -5073,6 +5492,59 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     return this.automation.effectiveSettings()
   }
 
+  /** The stored second-model route, for the settings panel that edits it.
+   * @returns the second Model Status.
+   */
+  @Remote('secondModelStatus')
+  secondModelStatus(): FreeCodeGoSecondModelStatus {
+    const settings = this.policy.get()
+    const provider = (settings?.advisorProvider ?? '').trim()
+    const model = (settings?.advisorModel ?? '').trim()
+    return { provider, model, routeReady: provider !== '' && model !== '' }
+  }
+
+  /** Store a partial second-model route update; omitted fields keep their value.
+   *
+   * An empty string stores the schema default rather than a blank route: a blank
+   * route would flip `routeReady` off for every consumer while the schema default
+   * (`opencode` / `auto`) is the answer a fresh install already works on. The
+   * default is read from the schema itself rather than restated here, so a future
+   * default change moves both.
+   * @param patch - the route halves to change.
+   * @returns the second Model Status.
+   */
+  @Remote('secondModelUpdate')
+  async secondModelUpdate(patch: FreeCodeGoSecondModelUpdate): Promise<FreeCodeGoSecondModelStatus> {
+    if (!this.policy.configured) throw new Error('this composition has no settings service, so the second-model route cannot be saved')
+    const update: Record<string, unknown> = {}
+    if (typeof patch.advisorProvider === 'string') update.advisorProvider = patch.advisorProvider.trim()
+    if (typeof patch.advisorModel === 'string') update.advisorModel = patch.advisorModel.trim()
+    // An empty half means "back to the default": store the same value a fresh
+    // install holds rather than a blank, which would turn `routeReady` off for
+    // every consumer while the default is an answer that already works.
+    const defaults = {
+      advisorProvider: SECOND_MODEL_DEFAULT_PROVIDER,
+      advisorModel: SECOND_MODEL_DEFAULT_MODEL,
+    } as const
+    for (const key of ['advisorProvider', 'advisorModel'] as const) {
+      if (update[key] === '') update[key] = defaults[key]
+    }
+    if (Object.keys(update).length > 0) await this.policy.update(update)
+    return this.secondModelStatus()
+  }
+
+  /** Every text route this install can spend the plugin's own calls on.
+   *
+   * Lives on the engineering-remotes host because that is where both seams it
+   * needs already exist (the live LLM registry and the managed catalogs); see
+   * `secondModelRoutes` there for the ordering rules.
+   * @returns the second Model Route directory.
+   */
+  @Remote('secondModelRoutes')
+  async secondModelRoutes(): Promise<readonly FreeCodeGoSecondModelRoute[]> {
+    return secondModelRoutes(this.engineeringRemotesHost)
+  }
+
   /** Update any subset of the guard/quality toggles. 
    * @returns the guard Settings Status.
    * @param patch - the guard and quality toggles to update.
@@ -5082,7 +5554,7 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     const settings = this.policy
     if (settings === undefined) throw new Error('FreeCodeGo settings are not configured')
     const update: Record<string, unknown> = {}
-    for (const key of ['envReadGuardEnabled', 'doomLoopGuardEnabled', 'lspEnabled', 'rehydrationEnabled', 'rehydrationArcEnabled', 'advisorMemoryDraftsEnabled', 'commandPolicyEnabled', 'planModeEnabled', 'contextBudgetEnabled', 'cacheColdClearEnabled', 'cacheBreakAttributionEnabled', 'assistantLoopGuardEnabled', 'promptCompositionEnabled'] as const) {
+    for (const key of ['envReadGuardEnabled', 'doomLoopGuardEnabled', 'lspEnabled', 'rehydrationEnabled', 'rehydrationArcEnabled', 'commandPolicyEnabled', 'planModeEnabled', 'contextBudgetEnabled', 'cacheColdClearEnabled', 'cacheBreakAttributionEnabled', 'assistantLoopGuardEnabled', 'promptCompositionEnabled'] as const) {
       const value = patch[key]
       if (typeof value === 'boolean') update[key] = value
     }
@@ -5649,11 +6121,12 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   }
 
   /** Public, credential-free community catalog used by the embedded settings page. 
+   * @param refresh - whether the caller asked for the published directory rather than the saved snapshot.
    * @returns the community Catalog Payload.
    */
   @Remote('communityCatalog')
-  async communityCatalog(): Promise<CommunityCatalogPayload> {
-    return communityCatalog(this.communityHost)
+  async communityCatalog(refresh?: boolean): Promise<CommunityCatalogPayload> {
+    return communityCatalog(this.communityHost, refresh === true ? { refresh: true } : {})
   }
 
   /** Resolve only verified repository artwork; never synthesize a plugin identity. 
@@ -6208,6 +6681,34 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
 @Remote('nvidiaSetKey')
   async nvidiaSetKey(value: string): Promise<FreeCodeGoNvidiaStatus> {
     return nvidiaSetKey(this.accountRemotesHost, value)
+  }
+
+  /**
+   * Read the recognition route the microphone would use.
+   * @returns the browser-safe projection, key included as a boolean.
+   */
+@Remote('speechStatus')
+  async speechStatus(): Promise<FreeCodeGoSpeechStatus> {
+    return speechStatus(this.speechRouteHost)
+  }
+
+  /**
+   * Store the recognition route, and bring the registration in line with it.
+   * @param input - the fields saved; omitted fields keep their stored value.
+   * @returns the route as it stands after the write.
+   */
+@Remote('speechSetRoute')
+  async speechSetRoute(input: FreeCodeGoSpeechRouteInput): Promise<FreeCodeGoSpeechStatus> {
+    return speechSetRoute(this.speechRouteHost, input)
+  }
+
+  /**
+   * Post one silent probe recording through the stored recognizer route.
+   * @returns the outcome, the status when one arrived, and the route it used.
+   */
+@Remote('speechTest')
+  async speechTest(): Promise<FreeCodeGoSpeechTest> {
+    return speechTest(this.speechRouteHost)
   }
 
   // ============================================================================
@@ -6865,9 +7366,9 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
   private refreshManagedCatalogInBackground(): void { this.catalogs.refreshManagedCatalogInBackground() }
   private refreshGatewayHealthInBackground(): void { this.catalogs.refreshGatewayHealthInBackground() }
 
-  /** Expose the independent review loop to every Agent through Harness tools. */
-  private registerAdvisorTools(): void {
-    registerAdvisorTools(this.agentToolsDeps())
+  /** Expose the engineering council workflow to every Agent through Harness tools. */
+  private registerEngineeringTools(): void {
+    registerEngineeringTools(this.agentToolsDeps())
   }
 
   /**
@@ -6893,10 +7394,26 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
     if (dispose !== undefined) this.ctx.effect(() => dispose, 'freecodego: edit_and_run composite tool')
   }
 
+  /**
+   * Register the shell tool's other names (`shell`, `bash`) when this host lacks them.
+   *
+   * The same registry requirement as the composite above, for the same reason: an alias
+   * answers by dispatching the delegate through `ctx.tools.execute`, so a service that
+   * can only register has nothing for the alias to hand the command to. The module owns
+   * every branch — which names are missing, what each call forwards, what a refusal
+   * says — so this seam stays one call.
+   */
+  private registerShellAliases(): void {
+    const registry = this.ctx.get('tools') as Partial<ShellAliasRegistry> | undefined
+    if (registry === undefined || typeof registry.get !== 'function' || typeof registry.execute !== 'function') return
+    for (const dispose of registerShellAliasTools({ ctx: this.ctx, registry: registry as ShellAliasRegistry })) {
+      this.ctx.effect(() => dispose, 'freecodego: shell alias tool')
+    }
+  }
+
   private agentToolsDeps(): AgentToolsDeps {
     return {
       ...this.coreDeps,
-      advisor: this.advisor,
       engineering: this.engineering,
       engineCouncil: this.engineCouncil,
       onVerificationRecorded: (agentId, verdict) => { void this.verifyOnStop?.recordVerification(agentId, verdict) },
@@ -7089,6 +7606,24 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
     return restoreDurableAccount(this.accountRemotesHost)
   }
 
+  /**
+   * The plugin surface the speech-route card reads and writes through.
+   *
+   * The write ends with `refresh`, which is what makes storing a key the same gesture
+   * as enabling the feature: the roster and the selection move with it, without the
+   * user hunting for a second control.
+   */
+  private get speechRouteHost(): SpeechRouteHost {
+    return {
+      credentials: this.credentials,
+      catalogs: this.catalogs,
+      voiceInputEnabled: () => this.policy.get()?.voiceInputEnabled !== false,
+      registered: () => this.speechProvider?.roster().registered === true,
+      selected: () => this.speechProvider?.roster().selected ?? '',
+      refresh: () => this.speechProvider?.refresh() ?? Promise.resolve(),
+    }
+  }
+
   private get accountRemotesHost(): AccountRemotesHost {
     return {
       ...this.coreDeps,
@@ -7197,7 +7732,6 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
     return {
       ...this.coreDeps,
       engineering: this.engineering,
-      advisor: this.advisor,
       engineCouncil: this.engineCouncil,
       backendCatalog: () => this.backendCatalog(),
     }

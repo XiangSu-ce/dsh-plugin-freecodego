@@ -18,8 +18,9 @@
  * name an id it was not shown, and that case is caught by the caller.
  *
  * Candidate text is model-written and therefore **untrusted**. It is fenced with a
- * per-call nonce and labelled as data, the same treatment the advisor applies to
- * watchdog files: stored prose must not be able to arrive as an instruction.
+ * per-call nonce and labelled as data, the same treatment the consolidation
+ * planner applies to its observations (`memory-dream-model.ts`): stored prose must
+ * not be able to arrive as an instruction.
  *
  * Failure is the caller's business
  * -------------------------------
@@ -111,8 +112,8 @@ export function createMemorySelector(options: MemorySelectorOptions): MemorySele
  * The user message: the query, then the candidates fenced under a fresh nonce.
  *
  * The nonce is regenerated per call, so stored text cannot pre-empt the fence by
- * containing the closing tag — the same reason the advisor salts its transcript
- * fence.
+ * containing the closing tag — the same reason the consolidation planner salts its
+ * observation fence.
  */
 function selectorPrompt(query: string, excerpts: readonly MemoryRecallExcerpt[], limit: number): string {
   const nonce = randomBytes(8).toString('hex')

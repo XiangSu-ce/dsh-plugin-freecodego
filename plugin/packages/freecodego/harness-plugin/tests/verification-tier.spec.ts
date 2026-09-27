@@ -102,7 +102,7 @@ describe('tier selection', () => {
 describe('change metadata from a diff', () => {
   it('counts paths and flags sensitive families', () => {
     const meta = changeMetadataFromDiff({
-      changedPaths: ['src/auth/session.ts', 'docs/notes.md'],
+      changedPaths: ['src/auth/session.ts', 'documentation/notes.md'],
       linesChanged: 120,
       testCoverage: 'partial',
       securityPaths: ['auth', 'secret'],
@@ -157,12 +157,25 @@ describe('change metadata from a diff', () => {
 })
 
 describe('coverage inferred from changed paths', () => {
-  it('reads a test-file change as coverage and the absence of one as none', () => {
-    expect(testCoverageFromChangedPaths(['src/a.ts', 'src/a.spec.ts'])).toBe('full')
+  it('never infers full coverage from the presence of any test-file change', () => {
+    // A test path says that tests changed, not that they cover every source path
+    // in this diff. In particular, an unrelated test must not unlock the light
+    // tier and thereby cause the automatically selected plan to skip tests.
+    expect(testCoverageFromChangedPaths(['src/a.ts', 'src/a.spec.ts'])).toBe('partial')
+    expect(testCoverageFromChangedPaths(['src/a.ts', 'tests/unrelated.spec.ts'])).toBe('partial')
     expect(testCoverageFromChangedPaths(['src/a.ts'])).toBe('none')
-    // `partial` is never inferred: a path list cannot tell a half-covered change
-    // from a covered one, and guessing it would move the tier on a fiction.
     expect(testCoverageFromChangedPaths([])).toBe('none')
+  })
+
+  it('does not select the light tier for a small change with a test-file edit', () => {
+    const changedPaths = ['src/a.ts', 'tests/unrelated.spec.ts']
+    const meta = changeMetadataFromDiff({
+      changedPaths,
+      linesChanged: 8,
+      testCoverage: testCoverageFromChangedPaths(changedPaths),
+    })
+    expect(selectVerificationTier(meta).tier).toBe('standard')
+    expect(selectVerificationTier(meta).stages).toContain('tests')
   })
 
   it('recognises the test conventions in use here', () => {

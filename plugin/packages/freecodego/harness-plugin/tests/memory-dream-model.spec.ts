@@ -100,6 +100,28 @@ describe('createMemoryDreamPlanner', () => {
     await expect(planner(REQUEST)).rejects.toThrow('consolidation topic 0 has no sources array of observation ids')
   })
 
+  it('reads a declared session scope, and leaves a plan that declares none alone', async () => {
+    // The default lives in the plan, not in the parse: an absent field is not
+    // rewritten to `project`, so a topic the model never scoped stays exactly the
+    // shape it was, and the durable default is applied once, by the writer.
+    const scoped = { ...TOPIC, scope: 'session' }
+    const { planner } = plannerWith(() => completed(JSON.stringify([scoped])))
+    await expect(planner(REQUEST)).resolves.toEqual([scoped])
+    const bare = plannerWith(() => completed(JSON.stringify([TOPIC])))
+    const [read] = await bare.planner(REQUEST)
+    expect(read).not.toHaveProperty('scope')
+  })
+
+  it('refuses a scope this build does not know instead of picking one', async () => {
+    // Where guessing costs the most: reading `task` as `project` keeps a record
+    // the pass called temporary, and reading it as `session` reclaims one the pass
+    // called durable. Either way the plan and the result would disagree silently.
+    for (const scope of ['task', 'SESSION', 'session ', 7, null, true]) {
+      const { planner } = plannerWith(() => completed(JSON.stringify([{ ...TOPIC, scope }])))
+      await expect(planner(REQUEST)).rejects.toThrow('consolidation topic 0 declares a scope that is neither "project" nor "session"')
+    }
+  })
+
   it('throws on an empty field rather than writing a topic with no title', async () => {
     const { planner } = plannerWith(() => completed(JSON.stringify([{ ...TOPIC, title: '   ' }])))
     await expect(planner(REQUEST)).rejects.toThrow('consolidation topic 0 has no title')

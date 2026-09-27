@@ -5,11 +5,22 @@ import { StreamWriter } from './stream-writer.ts'
 import { withIdleDeadline } from './stream-deadline.ts'
 import { classifyProviderError } from './provider-error-classify.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
+import type { AttachmentStore, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import { createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, FinishReason, GenerateOptions, Message, StreamChunk, TokenUsage, ToolSchema } from '@deepseek-ai/dsh-llm'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 
 type LlmRuntime = { stream(options: GenerateOptions): AsyncIterable<StreamChunk> }
+
+/**
+ * Reads the Host's attachment store at call time rather than at construction.
+ *
+ * A getter, not a snapshot, for the reason every other seam in this plugin uses
+ * one: the store is a Host service that may be registered after this bridge is
+ * built, and `undefined` is a real answer — a deployment without attachment
+ * storage is a deployment whose bridge cannot forward an image.
+ */
+type AttachmentResolver = () => AttachmentStore | undefined
 type BridgeReasoningEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type Route = { readonly provider: string; readonly model: string; readonly reasoningEffort?: BridgeReasoningEffort; readonly dynamicOpenAiRoute?: boolean; readonly createdAt: number }
 const ROUTE_TTL_MS = 24 * 60 * 60 * 1000
@@ -87,7 +98,20 @@ export class ClaudeProtocolBridge {
   private readonly routes = new Map<string, Route>()
   private readyPromise: Promise<void> | undefined
 
-  constructor(private readonly llm: LlmRuntime, private readonly streamIdleMs: number = DEFAULT_STREAM_IDLE_MS) {}
+  /**
+   * @param llm - the Host's streaming LLM runtime every route is served from.
+   * @param streamIdleMs - idle deadline for one bridge stream; the default is the
+   * production value, and only tests pass anything else.
+   * @param resolveAttachments - the Host's attachment store, read per request.
+   * Required for image forwarding: an inbound Anthropic image arrives as inline
+   * base64 and becomes a durable attachment reference here, and a deployment
+   * that resolves to `undefined` reports that instead of forwarding.
+   */
+  constructor(
+    private readonly llm: LlmRuntime,
+    private readonly streamIdleMs: number = DEFAULT_STREAM_IDLE_MS,
+    private readonly resolveAttachments: AttachmentResolver = () => undefined,
+  ) {}
 
   /** Start the local bridge listener, resolving once it is accepting connections. */
   start(): Promise<void> {
@@ -192,7 +216,13 @@ export class ClaudeProtocolBridge {
     const attachSignal = (options: GenerateOptions): GenerateOptions => ({ ...options, signal: abort.signal })
     if (isAnthropicCountTokens !== null) {  this.json(res, 200, { input_tokens: estimateAnthropicInputTokens(body) }); return }
     const resolvedRoute = isOpenAI === null ? route : resolveOpenAiRoute(route, body)
-    const input = attachSignal(isOpenAI === null ? toGenerateOptions(resolvedRoute, body) : toResponsesGenerateOptions(resolvedRoute, body))
+    // The Anthropic route is the one whose content blocks name inline image
+    // bytes, so its request body is rewritten asynchronously before the turn
+    // reaches the LLM; the Responses route has no such blocks to store.
+    const generateOptions = isOpenAI === null
+      ? await toGenerateOptions(resolvedRoute, body, this.resolveAttachments)
+      : toResponsesGenerateOptions(resolvedRoute, body)
+    const input = attachSignal(generateOptions)
     if (body.stream === false) {
       const chunks = await collect(this.llm.stream(input))
       const failure = chunks.find((chunk): chunk is Extract<StreamChunk, { type: 'finish' }> => chunk.type === 'finish' && chunk.reason.kind === 'error')
@@ -426,8 +456,12 @@ function resolveOpenAiRoute(route: Route, body: Record<string, unknown>): Route 
   }
 }
 
-function toGenerateOptions(route: Route, body: Record<string, unknown>): GenerateOptions {
-  const messages = Array.isArray(body.messages) ? body.messages.flatMap(value => anthropicMessages(value)) : []
+async function toGenerateOptions(route: Route, body: Record<string, unknown>, resolve: AttachmentResolver): Promise<GenerateOptions> {
+  const messages: Message[] = []
+  // Sequential rather than a `Promise.all`: each image is committed to the store
+  // in the order the client sent it, so the references a replayed turn cites
+  // keep that order as well.
+  if (Array.isArray(body.messages)) for (const value of body.messages) messages.push(...await anthropicMessages(value, resolve))
   const system = anthropicSystem(body.system)
   const tools = Array.isArray(body.tools) ? body.tools.map((value) => { const item = value as Record<string, unknown>; return { name: String(item.name ?? 'tool'), description: String(item.description ?? ''), parameters: (item.input_schema ?? {}) as Record<string, unknown> } satisfies ToolSchema }) : undefined
   return {
@@ -511,9 +545,65 @@ function toResponsesGenerateOptions(route: Route, body: Record<string, unknown>)
   }
 }
 
-const BRIDGE_IMAGE_PLACEHOLDER = '[image attachment: not forwarded by the FreeCodeGo bridge]'
+/**
+ * The block that stands in for an image the bridge could not hand to the store.
+ *
+ * `reason` is spelled out rather than collapsed into one sentence because the
+ * reasons are not interchangeable: a deployment with no attachment storage, a
+ * `url` source this listener does not fetch, and bytes the store refused are
+ * three different facts, and the model reading the placeholder is the only
+ * party positioned to act on the difference. The sentence this replaces — that
+ * the bridge does not forward images — stopped being true the moment it did.
+ */
+function unforwardedImage(reason: string, declared?: string): ContentBlock {
+  return { type: 'text', text: `[image attachment${declared === undefined ? '' : ` (${declared})`}: not forwarded — ${reason}]` }
+}
 
-function anthropicMessages(value: unknown): Message[] {
+/** The `code` of a storage refusal, when the thrower carries one. */
+function refusalCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object') return undefined
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' ? code : undefined
+}
+
+/**
+ * Commit one inbound Anthropic image block and return the harness block that
+ * carries it.
+ *
+ * The wire offers two source shapes and only one is storable here: `base64`
+ * carries the bytes, while `url` names a resource the provider would fetch and
+ * this loopback listener deliberately does not. The declared media type is
+ * passed through rather than screened against a list written in this file —
+ * the store owns that vocabulary (`validateImageBatch`) and additionally checks
+ * the declaration against the decoded bytes, so a copy here would be the one
+ * that drifts from the authority. A refusal is reported, never swallowed.
+ * @param part - one Anthropic `image` content block.
+ * @param resolve - the Host's attachment store, read at call time.
+ * @returns the durable image block, or text naming why there is none.
+ */
+async function bridgeImageBlock(part: Record<string, unknown>, resolve: AttachmentResolver): Promise<ContentBlock> {
+  const source = part.source
+  if (source === null || typeof source !== 'object') return unforwardedImage('the block carries no source')
+  const fields = source as { type?: unknown; media_type?: unknown; data?: unknown }
+  const declared = typeof fields.media_type === 'string' ? fields.media_type : undefined
+  if (fields.type !== 'base64') {
+    const shape = typeof fields.type === 'string' ? fields.type : 'unknown'
+    return unforwardedImage(fields.type === 'url' ? 'remote URL sources are not fetched by the bridge' : `unsupported source type ${shape}`, declared)
+  }
+  if (typeof fields.data !== 'string' || fields.data === '') return unforwardedImage('the source carries no base64 data', declared)
+  if (declared === undefined) return unforwardedImage('the source declares no media type')
+  const attachments = resolve()
+  if (attachments === undefined) return unforwardedImage('this deployment has no attachment storage', declared)
+  try {
+    const bytes = new Uint8Array(Buffer.from(fields.data, 'base64'))
+    return { type: 'image', attachment: await attachments.saveImage({ data: bytes, mediaType: declared as ImageMediaType }) }
+  } catch (error) {
+    const code = refusalCode(error)
+    return unforwardedImage(`attachment storage refused it${code === undefined ? '' : ` (${code})`}`, declared)
+  }
+}
+
+async function anthropicMessages(value: unknown, resolve: AttachmentResolver): Promise<Message[]> {
   const item = value as Record<string, unknown>
   const role = item.role === 'assistant' ? 'assistant' : 'user'
   const content = Array.isArray(item.content) ? item.content : [{ type: 'text', text: String(item.content ?? '') }]
@@ -536,14 +626,16 @@ function anthropicMessages(value: unknown): Message[] {
       flushTurn()
       messages.push(createToolResultMessage({
         callId: callId(String(part.tool_use_id ?? 'tool')),
-        content: [{ type: 'text', text: toolResultText(part.content) }],
+        content: await toolResultContent(part.content, resolve),
         isError: part.is_error === true,
       }))
       continue
     }
     if (part.type === 'text') { blocks.push({ type: 'text', text: String(part.text ?? '') }); continue }
     if (part.type === 'tool_use') { blocks.push({ type: 'tool-call', id: callId(String(part.id ?? randomUUID())), name: String(part.name ?? 'tool'), arguments: JSON.stringify(part.input ?? {}) }); continue }
-    if (part.type === 'image') { blocks.push({ type: 'text', text: BRIDGE_IMAGE_PLACEHOLDER }); continue }
+    // An image is the one part a provider receives as bytes, so it is committed
+    // to the store here and travels the rest of the way as a durable reference.
+    if (part.type === 'image') { blocks.push(await bridgeImageBlock(part, resolve)); continue }
     // `thinking` and anything else (including a malformed part) maps to nothing.
   }
   flushTurn()
@@ -553,18 +645,36 @@ function anthropicMessages(value: unknown): Message[] {
   return messages
 }
 
-/** Flatten Anthropic tool_result content (string or block array) to plain text. */
-function toolResultText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content.map((block) => {
-      const part = block as Record<string, unknown>
-      if (part.type === 'text' && typeof part.text === 'string') return part.text
-      if (part.type === 'image') return BRIDGE_IMAGE_PLACEHOLDER
-      return JSON.stringify(part)
-    }).filter(text => text !== '').join('\n')
+/**
+ * Project Anthropic tool_result content (string or block array) into result
+ * blocks.
+ *
+ * Text parts keep the rendering they have always had — empty parts dropped, the
+ * rest joined with a newline into one block — and an image part interrupts that
+ * run to become a block of its own. A result made only of text therefore
+ * produces exactly the blocks the flattening this replaces produced, including
+ * the single empty block a degenerate result has always carried.
+ * @param content - the `content` field of one `tool_result` block.
+ * @param resolve - the Host's attachment store, read at call time.
+ * @returns the blocks the tool-role message carries.
+ */
+async function toolResultContent(content: unknown, resolve: AttachmentResolver): Promise<ContentBlock[]> {
+  if (typeof content === 'string') return [{ type: 'text', text: content }]
+  if (!Array.isArray(content)) return [{ type: 'text', text: JSON.stringify(content ?? '') }]
+  const blocks: ContentBlock[] = []
+  const text: string[] = []
+  const flush = (): void => { if (text.length > 0) blocks.push({ type: 'text', text: text.splice(0).join('\n') }) }
+  for (const block of content) {
+    const part = block as Record<string, unknown>
+    if (part.type === 'text' && typeof part.text === 'string') { if (part.text !== '') text.push(part.text); continue }
+    if (part.type === 'image') { flush(); blocks.push(await bridgeImageBlock(part, resolve)); continue }
+    const rendered = JSON.stringify(part)
+    if (rendered !== '') text.push(rendered)
   }
-  return JSON.stringify(content ?? '')
+  flush()
+  // A result whose parts all rendered to nothing keeps the one empty text block
+  // it has always carried, rather than becoming a result with no content.
+  return blocks.length === 0 ? [{ type: 'text', text: '' }] : blocks
 }
 
 async function collect(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> { const chunks: StreamChunk[] = []; for await (const chunk of stream) chunks.push(chunk); return chunks }

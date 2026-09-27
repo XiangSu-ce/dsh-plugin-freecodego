@@ -106,7 +106,7 @@ export interface ScanExcludeRule {
  * Deliberately NOT here, and registered rather than forgotten: the reconciliation
  * half of the ledger. {@link ScanSelection.selected} seals what must be accounted
  * for, but nothing in this plugin records a per-file *scan* outcome yet — the
- * council and advisor reports carry findings, not the set of files they covered
+ * council reports carry findings, not the set of files they covered
  * (`FreeCodeGoEngineeringCouncilFinding` has prose `evidence` and no paths). An
  * `unaccountedScanPaths(selection, accountedFor)` reader over the sealed
  * denominator is the obvious next shape and is not written here, because this

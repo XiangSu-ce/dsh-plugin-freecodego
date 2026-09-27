@@ -3,7 +3,7 @@
  *
  * Why a *policy* module and not a reviewer
  * ----------------------------------------
- * Our `advisor.ts` reviews an answer that already exists. A Guardian reviews a
+ * A review pass grades an answer that already exists. A Guardian reviews a
  * *pending action* — the thing that is about to touch the machine — and Codex's
  * implementation is mostly policy rather than prompting:
  *

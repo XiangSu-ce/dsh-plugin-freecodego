@@ -260,7 +260,7 @@ describe('engineering verification verdict', () => {
       probes: [ran({ command: ['sh', '-c', 'npm test | tail -20'] })],
     })
     expect(result.verdict).toBe('unverified')
-    expect(result.unmet.join(' ')).toContain('filter')
+    expect(result.unmet.join(' ')).toContain('pipeline\'s final stage')
   })
 
   it('refuses a probe masked by a trailing no-op', () => {

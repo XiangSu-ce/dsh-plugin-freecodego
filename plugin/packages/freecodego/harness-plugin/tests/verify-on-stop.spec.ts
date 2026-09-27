@@ -302,33 +302,41 @@ describe('verify-on-stop gate', () => {
     // Pinned literally, so extending the set is a visible edit rather than a
     // comment that went stale. The *harness* half is a union rather than a
     // derivation on purpose: `plan-mode.ts` answers a narrower question — what a
-    // planning turn may call — and `write_file` is refused there while a shell may
-    // still write, so deriving these spellings from that list would import a
-    // boundary that belongs to that caller. The plugin half is
-    // derived from the manifest, and `tool-manifest.spec.ts` holds the other
-    // direction (nothing that needs authority may be absent here).
+    // planning turn may call — and the two lists disagree by design (a shell is
+    // judged there by the command policy, not by its name), so deriving these
+    // spellings from that list would import a boundary that belongs to that
+    // caller. The plugin half is derived from the manifest, and
+    // `tool-manifest.spec.ts` holds the other direction (nothing that needs
+    // authority may be absent here).
     expect([...WORKSPACE_MUTATING_TOOLS].sort()).toStrictEqual([
       'apply_patch',
+      'bash',
       'create_file',
       'delete_file',
       'edit',
       'edit_and_run',
       'engineering_checkpoint_restore',
-      'engineering_council_review',
       'engineering_hunk_revert',
       'engineering_subagent_start',
       'engineering_team_start',
       'engineering_team_verify',
       'engineering_worktree_enter',
       'engineering_worktree_exit',
+      'exec',
+      'exec_command',
+      'freecodego_reactbits',
       'fs_edit',
       'fs_write',
+      'local_shell',
       'move_file',
       'multi_edit',
       'notebook_edit',
       'notebook_write',
+      'pwsh',
       'ralph',
+      'run_command',
       'send_message',
+      'shell',
       'spawn_teammate',
       'str_replace',
       'str_replace_editor',
@@ -353,6 +361,31 @@ describe('verify-on-stop gate', () => {
     await harness.service.onTurnStopping('agent-1')
     expect(harness.reads()).toBe(1)
     expect(harness.injected).toHaveLength(1)
+  })
+
+  it('nudges a turn that changed the workspace only through the shell', async () => {
+    // The same hole as `multi_edit`, one layer out and the easiest of all to
+    // miss: the shell is the tool this module's own nudge tells the model to run
+    // its check with, and it is a writer — `sed -i`, a formatter, a codegen
+    // script, `npm install` and a `git` command all change the tree without any
+    // file tool being called. No shell spelling was in the set, so such a turn
+    // was filed as one that changed nothing and `onTurnStopping` returned at its
+    // first line.
+    //
+    // Every spelling the deployment can register is walked, for the reason the
+    // delegation test below gives: the hole is per-name. `pwsh` is not optional —
+    // the base `cordis.patch.yml` disables `tool-bash` on win32 and enables
+    // `tool-pwsh`, so on Windows the POSIX spelling is unreachable and a list
+    // that names only `bash` would never fire there. `CLEARABLE_TOOL_KINDS` in
+    // `cache-cold.ts` records that same pair as load-bearing; this set is the one
+    // whose omission costs a real edit going unverified.
+    for (const tool of ['bash', 'pwsh', 'shell', 'exec_command', 'run_command', 'exec', 'local_shell']) {
+      const harness = gate({ changedPaths: ['src/a.ts'] })
+      harness.service.noteToolCall('agent-1', tool)
+      await harness.service.onTurnStopping('agent-1')
+      expect(harness.reads(), tool).toBe(1)
+      expect(harness.injected, tool).toHaveLength(1)
+    }
   })
 
   it('nudges a turn that changed the workspace only by delegating', async () => {

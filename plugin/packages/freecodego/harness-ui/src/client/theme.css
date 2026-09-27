@@ -70,6 +70,16 @@ body {
      themes (the account sign-in submit) need a foreground that does not. */
   --fcg-text-on-brand-fixed: var(--dsw-static-neutral-bluish-00);
 
+  /* ── Companion ────────────────────────────────────────────────────────
+     The one value the companion's fixed palette needs from the theme. The
+     character is black-bodied with light eyes in both themes (see
+     `companion/palette.ts`), so on a light surface it needs nothing — and on a
+     dark one the only thing that separates a black body from a black page is a
+     rim of light. Kept here rather than in the component so the value can be
+     tuned by eye without touching the drawing, and so it stays in the one file
+     that already owns light/dark. */
+  --fcg-companion-halo: none;
+
   /* ── Brand & state (semantic, theme-following) ────────────────────── */
   --fcg-brand: var(--dsw-static-deepseek-500);
   --fcg-brand-strong: var(--dsw-static-deepseek-600);
@@ -100,4 +110,7 @@ body[data-ds-dark-theme] {
   --fcg-shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.6);
   --fcg-danger-subtle: var(--dsw-static-red-900);
   --fcg-brand-subtle: var(--dsw-static-deepseek-800);
+  /* A soft light rim: the first shadow is the hairline, the second the glow that
+     gives the body an edge without looking like a stroke. */
+  --fcg-companion-halo: drop-shadow(0 0 1px rgba(255, 255, 255, 0.45)) drop-shadow(0 0 6px rgba(255, 255, 255, 0.2));
 }

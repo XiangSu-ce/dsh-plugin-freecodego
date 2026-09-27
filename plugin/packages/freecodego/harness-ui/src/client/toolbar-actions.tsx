@@ -3,7 +3,6 @@ import type { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { IconGlobeOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './toolbar-actions.module.css'
-import { VoiceInputButton } from './voice-input.tsx'
 
 export interface LanguageActionProps {
   readonly locale: LocaleRuntime
@@ -29,14 +28,7 @@ export interface EngineActionProps {
   // an explicit undefined.
   readonly sessionId?: string | undefined
   readonly useSession?: <T>(selector: (snapshot: { readonly blank: boolean }) => T) => T
-  readonly voiceInputEnabled?: () => Promise<boolean>
-  readonly voiceTranscribe?: (audioBase64: string, mimeType: string, language?: string) => Promise<{ readonly ok: boolean; readonly value?: { readonly text: string } }>
   readonly t: TranslateNS<'settings.freecodego'>
-}
-
-export interface VoiceInputActionProps {
-  readonly voiceInputEnabled?: () => Promise<boolean>
-  readonly voiceTranscribe?: (audioBase64: string, mimeType: string, language?: string) => Promise<{ readonly ok: boolean; readonly value?: { readonly text: string } }>
 }
 
 export function EngineAction({ catalog, setDefaultEngine, sessionId, useSession, t }: EngineActionProps): ReactNode {
@@ -123,12 +115,6 @@ export function EngineAction({ catalog, setDefaultEngine, sessionId, useSession,
       <button type="button" onClick={() => { setNotice(false) }} aria-label={t('engineSwitchDismiss')}>×</button>
     </div> : null}
   </div>
-}
-
-/** Place voice capture immediately before the model selector in the trailing
- * composer controls, rather than beside the engine selector. */
-export function VoiceInputAction({ voiceInputEnabled, voiceTranscribe }: VoiceInputActionProps): ReactNode {
-  return voiceInputEnabled === undefined ? null : <VoiceInputButton isEnabled={voiceInputEnabled} transcribe={voiceTranscribe} />
 }
 
 export function EngineExecutionBadge({ sessionId, status, t }: {

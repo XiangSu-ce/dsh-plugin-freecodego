@@ -177,8 +177,16 @@ function providerAccent(provider: string): string {
  * in this set was configured by the user (a custom third-party API route), so
  * the plugin cannot know whether its routes are free or metered — neither
  * badge may be asserted for them. The gateway also always sorts first: it is
- * the house provider, while user providers belong below the built-ins. */
-const BUILTIN_PROVIDER_IDS = new Set(['freecodego', 'prem', 'vyce', 'opencode', 'openrouter', 'logfare', 'sensenova', 'nvidia', 'agnes', 'workbuddy', 'cline', 'trae', 'empero'])
+ * the house provider, while user providers belong below the built-ins.
+ *
+ * The set is the client-side mirror of `registerKnownAdapter` in
+ * `harness-plugin/src/managed-catalogs.ts`, and it is hand-maintained, which is
+ * how Qoder and Kilo went missing: both register an adapter of their own and
+ * publish `×0 · free` rows, yet neither was ever added here — so their groups
+ * sank below every built-in *and* had their native FREE lane stripped, as if a
+ * user had configured them. Adding a provider to the plugin means adding it
+ * here; `native-model-menu-badges.client.spec.ts` pins the two that were lost. */
+const BUILTIN_PROVIDER_IDS = new Set(['freecodego', 'prem', 'vyce', 'opencode', 'openrouter', 'logfare', 'sensenova', 'nvidia', 'agnes', 'workbuddy', 'cline', 'trae', 'qoder', 'kilo', 'empero'])
 
 function isUserProvider(provider: string | undefined): boolean {
   return provider !== undefined && !BUILTIN_PROVIDER_IDS.has(provider)
@@ -527,6 +535,80 @@ function modelMenuSections(menu: Element): HTMLElement[] {
     .filter(section => section.closest('[role="menu"]') === menu)
 }
 
+/**
+ * Read the picker directory, treating a throwing reader as "no snapshot".
+ *
+ * The decorator resolves that directory through the main view's Session, and a
+ * Session the resolver cannot name throws (`ModelDirectoryResolver#directoryFor`:
+ * "resolved no scope"). That is reachable for a beat while a new conversation is
+ * being created — exactly when this decorator is asked to decorate — and the
+ * exception used to abort the whole pass: it escaped into `guarded`, which reports
+ * once and decorates nothing, leaving the menu in whatever half-applied state the
+ * pass had already written (including sections whose rows had been hidden).
+ *
+ * Decoration is best-effort by contract — a menu must open, collapse and select
+ * with no snapshot at all — so an unreadable directory answers undefined and the
+ * pass leaves the picker exactly as the official component drew it.
+ * @param read - the options' snapshot reader.
+ * @returns the snapshot, or undefined when no directory could be read.
+ */
+function snapshotOrUndefined(read: () => NativeModelDirectorySnapshot | undefined): NativeModelDirectorySnapshot | undefined {
+  try {
+    return read()
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The section the picker itself says is in use.
+ *
+ * The menu marks the selected row `aria-checked`, and that is the fact the user
+ * is looking at, so it outranks the directory snapshot. The two can disagree: the
+ * decorator's snapshot is resolved through the main view's Session, which is still
+ * the *previous* Session for a beat after a new conversation is created. Deciding
+ * the collapsed default from a stale snapshot collapses the section actually in
+ * use, and when that snapshot's provider has no section in this menu at all, every
+ * section is "not the active one" and the whole list collapses shut — the state
+ * that reads as "the model list is gone".
+ * @param menu - the open menu, whose checked row is the picker's own answer.
+ * @param snapshot - the directory snapshot the decoration is using.
+ * @returns the active provider id, or undefined when neither the menu nor the snapshot names one.
+ */
+function activeProviderInMenu(menu: HTMLElement, snapshot: NativeModelDirectorySnapshot): string | undefined {
+  const checked = menu.querySelector('section[role="group"] button[role="menuitemradio"][aria-checked="true"]')
+  const checkedGroup = checked === null ? null : checked.closest<HTMLElement>('section[role="group"]')
+  const fromChecked = checkedGroup === null ? undefined : providerForGroup(snapshot, checkedGroup)
+  if (fromChecked !== undefined) return fromChecked
+  const named = snapshot.current?.provider
+  if (named === undefined) return undefined
+  return modelMenuSections(menu).some(section => providerForGroup(snapshot, section) === named) ? named : undefined
+}
+
+/**
+ * Stamp one section with its collapse state.
+ *
+ * The state lives on the section (one CSS line hides every row under it) and is
+ * mirrored on the heading's `aria-expanded` and chevron, which is what the user
+ * reads. Both the synchronizing pass and the toggle itself write it through here,
+ * so a heading still opens on a pass where no directory could be read.
+ *
+ * The heading is an argument rather than a second lookup of the section's
+ * `aria-labelledby`: every caller has already resolved it (the synchronizing pass
+ * skips a section whose heading is not an element, and the toggle hangs off that
+ * very element), so a lookup here could only answer the same thing or nothing.
+ * @param group - the picker section to stamp.
+ * @param heading - the section's heading, already resolved by the caller.
+ * @param collapsed - whether the section's model rows are hidden.
+ */
+function applyGroupCollapsed(group: HTMLElement, heading: HTMLElement, collapsed: boolean): void {
+  group.dataset.fcgProviderCollapsed = String(collapsed)
+  const expanded = String(!collapsed)
+  if (heading.getAttribute('aria-expanded') !== expanded) heading.setAttribute('aria-expanded', expanded)
+  const chevron = heading.querySelector<HTMLElement>('[data-fcg-provider-chevron]')
+  if (chevron !== null) chevron.dataset.open = expanded
+}
+
 /** Rank one picker group: the FreeCodeGo gateway is always the first visual
  * section, built-in direct providers follow in DOM order, and user-configured
  * third-party providers sink below every built-in. Unknown (unresolvable)
@@ -618,6 +700,7 @@ function syncModelMenuGroups(
   availability?: () => ReadonlyMap<string, ModelAvailability>,
 ): void {
   const sections = modelMenuSections(menu)
+  const active = activeProviderInMenu(menu, snapshot)
   for (const group of sections) {
     const provider = providerForGroup(snapshot, group)
     if (provider === undefined) continue
@@ -646,23 +729,23 @@ function syncModelMenuGroups(
     // gone: there is no second provider left to file under the gateway, so the
     // heading is always a real collapse toggle.
     //
-    // The default is collapsed — with one exception, the provider that owns the
-    // selected model. Collapsing everything makes the picker open as a list of
+    // The default is collapsed — with two exceptions. The provider that owns the
+    // selected model stays open, because it is the one the user is looking at.
+    // And when no provider can be named as the active one at all, *nothing* is
+    // collapsed: collapsing everything makes the picker open as a list of
     // provider names with no models under any of them, which reads as "the model
     // list is gone" even though every heading is a working toggle (that is the
-    // complaint the fully-expanded default used to answer). Expanding the active
-    // provider keeps the models on screen the moment the picker opens while the
-    // other ten stay out of the way, which is what the collapsed default was
-    // asked for in the first place. `collapsedGroups` starts empty, so this
-    // decides only the state nobody chose; a toggle the user performs is
-    // remembered per provider for as long as the menu is mounted.
-    const collapsed = collapsedGroups.get(provider) ?? provider !== snapshot.current?.provider
-    group.dataset.fcgProviderCollapsed = String(collapsed)
+    // complaint the fully-expanded default used to answer). A long list is a much
+    // cheaper mistake than an empty-looking menu, and the ambiguous case is
+    // reachable — see {@link activeProviderInMenu}. `collapsedGroups` starts
+    // empty, so this decides only the state nobody chose; a toggle the user
+    // performs is remembered per provider for as long as the menu is mounted.
+    const collapsed = collapsedGroups.get(provider) ?? (active !== undefined && provider !== active)
     heading.hidden = false
     heading.dataset.fcgProviderToggle = provider
     if (heading.getAttribute('role') !== 'button') heading.setAttribute('role', 'button')
     if (heading.tabIndex !== 0) heading.tabIndex = 0
-    if (heading.getAttribute('aria-expanded') !== String(!collapsed)) heading.setAttribute('aria-expanded', String(!collapsed))
+    applyGroupCollapsed(group, heading, collapsed)
     const headingTitle = collapsed
       ? language === 'zh' ? '展开此提供商模型' : 'Expand provider models'
       : language === 'zh' ? '收起此提供商模型' : 'Collapse provider models'
@@ -687,6 +770,8 @@ function syncModelMenuGroups(
       chevron.append(svg)
       heading.append(chevron)
     }
+    // The chevron's own state is written by `applyGroupCollapsed` above, which
+    // runs before the chevron may exist on the first pass; stamp it here too.
     chevron.dataset.open = String(!collapsed)
   }
 }
@@ -778,7 +863,7 @@ function installStyle(): void {
 }
 
 function decorate(options: NativeModelMenuBadgesOptions, collapsedGroups: CollapseState, menuWidthPins: MenuWidthPins, groupOrder: GroupOrderState): void {
-  const snapshot = options.snapshot()
+  const snapshot = snapshotOrUndefined(options.snapshot)
   if (snapshot === undefined) return
   const visibility = options.visibility?.() ?? EMPTY_MODEL_PICKER_VISIBILITY
   decorateModelTrigger(snapshot)
@@ -931,8 +1016,16 @@ export function installNativeModelMenuBadges(options: NativeModelMenuBadgesOptio
       const provider = heading.dataset.fcgProviderToggle
       if (provider === undefined) return
       const collapsed = collapsedGroups.get(provider) ?? group.dataset.fcgProviderCollapsed === 'true'
-      collapsedGroups.set(provider, !collapsed)
-      const snapshot = options.snapshot()
+      const next = !collapsed
+      collapsedGroups.set(provider, next)
+      // The decision is applied to the section before the snapshot is read: the
+      // directory can be unreadable at that moment (see `snapshotOrUndefined`),
+      // and a heading whose click does nothing leaves every model behind it
+      // unreachable — which is what "cannot select any model" feels like from
+      // outside. The full pass then only adds what the snapshot knows (accents,
+      // dots, row labels).
+      applyGroupCollapsed(group, heading, next)
+      const snapshot = snapshotOrUndefined(options.snapshot)
       if (snapshot !== undefined) syncModelMenuGroups(menu, snapshot, collapsedGroups, options.language(), options.availability)
       refresh()
     })

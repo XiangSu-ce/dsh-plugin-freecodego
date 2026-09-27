@@ -56,7 +56,6 @@ import { buildLocalTokenUsageSnapshot, type LocalTokenUsageQuery } from './token
 import { isUnsafeVerificationScript, scriptForStage } from './engineering-quality.ts'
 import { compareVersions } from './plugin-update.ts'
 import { CcrStore, computeKey } from './headroom/ccr.ts'
-import { advisorBackoffActive, advisorBackoffTurns, advisorDeliveryChannel } from './advisor.ts'
 import { agnesMediaCategory } from './agnes.ts'
 import { bundleReleaseForHarness } from './plugin-update.ts'
 import { inspectExternalEngineeringAsset } from './engineering.ts'
@@ -113,7 +112,6 @@ import { narrowTurnScope, turnChangePaths } from './review/turn-scope.ts'
 import type { ReviewGroup } from './review/grouping.ts'
 import type { ReviewModelPort } from './review/model.ts'
 import { resolveReviewTarget, type ReviewableFile, type ReviewGitPort } from './review/targets.ts'
-import type { AdvisorSeverity } from './advisor.ts'
 import type { FreeCodeGoEngineeringEvalCase, FreeCodeGoManagedCatalog, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringEvalSuite } from './types.ts'
 
 /** Await real time. Cache cases reason about elapsed wall-clock, not fake timers. */
@@ -765,88 +763,6 @@ const USAGE_CASES: readonly CaseSpec[] = [
   },
 ]
 
-const ADVISOR_CASES: readonly CaseSpec[] = [
-  {
-    id: 'advisor.backoff-grows-then-caps',
-    suite: 'advisor',
-    claim: 'Repeated upstream failures back off further each time, up to a hard ceiling.',
-    measure: () => {
-      // Calls the production function, so a change to the schedule fails here
-      // rather than silently altering how long a dead upstream is retried.
-      const sequence = [2, 3, 4, 5, 6].map(advisorBackoffTurns)
-      const expected = [2, 4, 6, 8, 10]
-      const monotone = sequence.every((value, index) => index === 0 || value >= sequence[index - 1]!)
-      // Capped at 10 forever after, so a permanently dead upstream costs one
-      // probe per 10 turns rather than one per turn.
-      const capped = [7, 20, 999].every(failures => advisorBackoffTurns(failures) === 10)
-      // Below the threshold there is no backoff at all: a single transient
-      // failure must not delay the next review.
-      const belowThreshold = [0, 1].every(failures => advisorBackoffTurns(failures) === 0)
-      return {
-        observed: sequence.join(',') === expected.join(',') && monotone && capped && belowThreshold ? 1 : 0,
-        required: 1,
-        detail: `delays=${sequence.join(',')} monotone=${monotone} capped=${capped} below-threshold=${belowThreshold}`,
-      }
-    },
-  },
-  {
-    id: 'advisor.backoff-skips-retries-inside-window',
-    suite: 'advisor',
-    claim: 'Inside the backoff window a periodic review is skipped, but an explicit one still runs.',
-    measure: () => {
-      const skipped = (force: boolean, failures: number, turn: number, until: number): boolean =>
-        advisorBackoffActive(failures, turn, until, force)
-      const cases: readonly (readonly [string, boolean])[] = [
-        ['periodic inside window',  skipped(false, 3, 5, 9)],
-        ['periodic after window', ! skipped(false, 3, 9, 9)],
-        ['user-forced inside window', ! skipped(true, 3, 5, 9)],
-        ['healthy session', ! skipped(false, 1, 5, 9)],
-      ]
-      const correct = cases.filter(([, passed]) => passed).length
-      return { observed: correct / cases.length, required: 1, detail: `${correct}/${cases.length} backoff decisions correct` }
-    },
-  },
-  {
-    id: 'advisor.steer-eligibility',
-    suite: 'advisor',
-    claim: 'Steering requires a concrete concern, remaining budget, and an expired cooldown.',
-    measure: () => {
-      const canSteer = (severity: AdvisorSeverity, steerCount: number, turn: number, cooldownUntil: number): boolean =>
-        advisorDeliveryChannel({ severity, mode: 'async', allowAgentControl: true, steerCount, turn, cooldownUntilTurn: cooldownUntil }) === 'steer'
-      const cases: readonly (readonly [string, boolean])[] = [
-        ['concern, fresh',  canSteer('concern', 0, 10, 0)],
-        ['blocker, fresh',  canSteer('blocker', 4, 10, 0)],
-        ['nit never steers', ! canSteer('nit', 0, 10, 0)],
-        ['budget exhausted', ! canSteer('concern', 5, 10, 0)],
-        ['inside cooldown', ! canSteer('concern', 0, 5, 9)],
-        ['cooldown elapsed',  canSteer('concern', 0, 9, 9)],
-      ]
-      const correct = cases.filter(([, passed]) => passed).length
-      return { observed: correct / cases.length, required: 1, detail: `${correct}/${cases.length} steer decisions correct` }
-    },
-  },
-  {
-    id: 'advisor.blocker-only-mode-records-only',
-    suite: 'advisor',
-    claim: 'In blocker-only mode a concern is recorded instead of delivered, and a blocker still steers.',
-    measure: () => {
-      // Delivery is disabled when either agent control is off or the mode is
-      // blocker-only and the finding is not a blocker; the channel then falls to
-      // `record`, which is how a user asks for silence without losing evidence.
-      const channel = (severity: AdvisorSeverity, mode: 'async' | 'catchup' | 'blocker-only', allowControl: boolean, steerCount: number, turn: number, cooldownUntil: number): string =>
-        advisorDeliveryChannel({ severity, mode, allowAgentControl: allowControl, steerCount, turn, cooldownUntilTurn: cooldownUntil })
-      const cases: readonly (readonly [string, string])[] = [
-        ['blocker-only concern', channel('concern', 'blocker-only', true, 0, 10, 0)],
-        ['blocker-only blocker', channel('blocker', 'blocker-only', true, 0, 10, 0)],
-        ['control off', channel('concern', 'async', false, 0, 10, 0)],
-        ['budget spent', channel('concern', 'async', true, 5, 10, 0)],
-      ]
-      const expected = ['record', 'steer', 'record', 'inject']
-      const correct = cases.filter(([, actual], index) => actual === expected[index]).length
-      return { observed: correct / cases.length, required: 1, detail: cases.map(([name, actual], index) => `${name}→${actual}${actual === expected[index] ? '' : ` (want ${expected[index]})`}`).join('; ') }
-    },
-  },
-]
 
 const PROGRESS_CASES: readonly CaseSpec[] = [
   {
@@ -2428,7 +2344,10 @@ const EVENT_CASES: readonly CaseSpec[] = [
       // A missing type makes the Host refuse to reopen any session containing
       // it, which is precisely the failure this registration exists to prevent.
       const complete = missing.length === 0 && declared.length > 0
-      const meaningful = declared.includes('freecodego/council') && declared.includes('advisor/note')
+      // Names no type of its own: a literal here would count as a *use site* in
+      // the contract table, which reads the source text. The shape is what is
+      // checked instead — a gutted table would still leave the vocabulary empty.
+      const meaningful = declared.filter(type => type.startsWith('freecodego/')).length >= 2
       return { observed: complete && meaningful ? 1 : 0, required: 1, detail: `declared=${declared.length} missing=${missing.length} ${missing.slice(0, 3).join(',')}` }
     },
   },
@@ -4004,7 +3923,7 @@ const ALL_CASES: readonly CaseSpec[] = [
   ...COUNCIL_CASES, ...SPEC_CASES, ...MEDIA_CASES, ...REHYDRATION_CASES,
   ...WIRE_CASES, ...CONFLICT_CASES, ...USAGE_CASES,
   ...QUALITY_CASES, ...VERSION_CASES, ...CACHE_CASES,
-  ...ADVISOR_CASES, ...PROGRESS_CASES,
+  ...PROGRESS_CASES,
   ...AGNES_CASES, ...UPDATE_CASES, ...ASSET_CASES, ...SKILL_CASES,
   ...COMPRESSOR_CASES, ...CATALOG_CASES, ...BUCKET_CASES, ...BRIDGE_CASES,
   ...RUNTIME_CASES, ...MEDIA_CHAIN_CASES, ...CATALOG_MERGE_CASES, ...PARSER_CASES,

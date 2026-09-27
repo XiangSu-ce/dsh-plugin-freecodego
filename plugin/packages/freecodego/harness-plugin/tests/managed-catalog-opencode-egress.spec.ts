@@ -138,3 +138,97 @@ describe('opencode free-tier egress refusal', () => {
     expect(isOpenCodeFreeTierRefusal(200, freeTierBody)).toBe(false)
   })
 })
+
+/**
+ * The refusal above is what an egress that fails the check reads. This pins the
+ * check itself, so a later refactor cannot quietly walk the route back into it.
+ *
+ * Since 2026-09-16 the free tier admits only requests that look like OpenCode's
+ * own client, and the request identity is the half the plugin owns:
+ *
+ * - `user-agent` must read `<product>/<version>`. The plugin's former
+ *   `opencode/freecodego` — a product tag with no version — was answered with
+ *   `403 FreeTierError` on every free model, while `opencode/1.18.31` passed.
+ * - `x-opencode-session` must match OpenCode's `ses_` id shape: 12 hex
+ *   timestamp characters followed by 14 Base62. Only the shape is checked, so
+ *   the value is generated locally rather than echoed from the client.
+ *
+ * The third condition — the body must declare the five core agent tools
+ * (`bash`, `edit`, `glob`, `grep`, `read`) — belongs to the caller that builds
+ * the body, not to this identity, and is not asserted here.
+ */
+describe('opencode free-tier request identity', () => {
+  it('sends a versioned User-Agent and an OpenCode-shaped session id', async () => {
+    let sent: Record<string, string> | undefined
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { headers?: Record<string, string> }) => {
+      if (String(url).includes('/models')) return new Response(JSON.stringify({ data: freeRows }), { status: 200, headers: { 'content-type': 'application/json' } })
+      sent = init?.headers ?? {}
+      // The reply is not what this pin is about; any completed stream will do.
+      return new Response('data: [DONE]\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    }))
+
+    const adapter = registeredOpenCodeAdapter()
+    try {
+      for await (const _chunk of adapter.stream(request)) { /* drain */ }
+    } catch { /* the stub's reply is irrelevant to the headers under test */ }
+
+    // The completion must have been attempted, or there are no headers to read.
+    expect(sent).toBeDefined()
+    const headers = sent ?? {}
+    // A product tag with no version is exactly what the upstream refuses.
+    expect(headers['user-agent']).toMatch(/^opencode\/\d/)
+    expect(headers['x-opencode-session']).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
+    expect(headers['x-opencode-request']).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
+    expect(headers['authorization']).toBe('Bearer public')
+    expect(headers['x-opencode-project']).toBe('global')
+  })
+
+  it('appends the core agent tools a narrow caller did not declare, and leaves a tool-less caller alone', async () => {
+    const bodies: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { body?: string }) => {
+      if (String(url).includes('/models')) return new Response(JSON.stringify({ data: freeRows }), { status: 200, headers: { 'content-type': 'application/json' } })
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      return new Response('data: [DONE]\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    }))
+
+    const adapter = registeredOpenCodeAdapter()
+    const failures: unknown[] = []
+    const drain = async (options: Record<string, unknown>): Promise<void> => {
+      try {
+        // Bound on purpose: the connector's `stream` reads its own config, so a
+        // detached reference fails before the request is ever built.
+        for await (const _chunk of adapter.stream(options as typeof request)) { /* drain */ }
+      } catch (error) {
+        // A request that never reached the stub is a failure of this pin, not a
+        // detail of it: record it rather than let it read as an empty body.
+        failures.push(error)
+      }
+    }
+
+    // The Advisor reviewer's own tool set, which is narrower than the free
+    // tier's fingerprint: it offers no `bash` and no `edit`.
+    await drain({
+      ...request,
+      tools: [
+        { name: 'read', description: 'Read a file', parameters: { type: 'object' } },
+        { name: 'glob', description: 'Find files', parameters: { type: 'object' } },
+        { name: 'grep', description: 'Search files', parameters: { type: 'object' } },
+      ],
+    })
+    // A caller that deliberately sends no tools must stay that way.
+    await drain({ ...request, tools: [] })
+
+    expect(failures.map(error => String(error))).toEqual([])
+    expect(bodies.length).toBe(2)
+    const namesOf = (body: Record<string, unknown>): string[] =>
+      (Array.isArray(body.tools) ? body.tools : [])
+        .map(entry => String((entry as { readonly function?: { readonly name?: unknown } }).function?.name ?? ''))
+        .sort()
+    // The three the caller declared survive, and the two it did not are added —
+    // otherwise the upstream answers 403 for a reason the caller never raised.
+    expect(namesOf(bodies.at(0) ?? {})).toEqual(['bash', 'edit', 'glob', 'grep', 'read'])
+    // Nothing is invented for a request that declared nothing: an added
+    // definition would offer the model a capability its caller never granted.
+    expect(namesOf(bodies.at(1) ?? {})).toEqual([])
+  })
+})

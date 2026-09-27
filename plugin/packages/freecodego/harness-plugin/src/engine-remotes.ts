@@ -44,7 +44,7 @@ import { normalizeWireProtocol, SUPPORTED_WIRE_PROTOCOLS } from './openai-compat
 import { AGNES_TEXT_MODEL_IDS } from './engineering-remotes.ts'
 import { enrichCatalogChoices, mergeCatalogModels, parseGroupPin } from './model-catalog.ts'
 import {
-  KILO_GATEWAY_BASE_URL, KILO_ANONYMOUS_API_KEY, KILO_MODEL_PREFIX, LOGFARE_AUTO_MODEL, LOGFARE_MODEL_PREFIX, MODEL_CATALOG_TIMEOUT_MS, OPENCODE_AUTO_MODEL, openCodeAutoPreference, OPENCODE_DIRECT_BASE_URL,
+  KILO_GATEWAY_BASE_URL, KILO_ANONYMOUS_API_KEY, KILO_MODEL_PREFIX, LOGFARE_AUTO_MODEL, LOGFARE_MODEL_PREFIX, MODEL_CATALOG_TIMEOUT_MS, OPENCODE_AUTO_MODEL, openCodeAutoPreference, OPENCODE_DIRECT_BASE_URL, openCodeFreeTierHeaders,
   VYCE_MODEL_PREFIX,
   withTimeout,
 } from './managed-catalog-utils.ts'
@@ -913,7 +913,7 @@ export function codexSystemPrompt(host: EngineRemotesHost, _provider: string, _m
       // inventory actually carries it. The sentence used to assert it
       // unconditionally, which is a name the model cannot call wherever the
       // subagent package is absent.
-      : `Harness and third-party plugin tools available through the FreeCodeGo MCP bridge: ${harnessTools}.${capabilities.harnessTools.some(candidate => candidate.name === 'list_subagent_models') ? ' Use list_subagent_models before assigning specialized child models.' : ''} Use Advisor tools when an independent review would improve the result.`,
+      : `Harness and third-party plugin tools available through the FreeCodeGo MCP bridge: ${harnessTools}.${capabilities.harnessTools.some(candidate => candidate.name === 'list_subagent_models') ? ' Use list_subagent_models before assigning specialized child models.' : ''}`,
     // Derived, not restated: this line used to name all three tools
     // unconditionally, so a Codex session was told to call tools its own Agent
     // could not see. The Claude prompt above had already been fixed for exactly
@@ -1069,10 +1069,7 @@ export async function directConnection(host: EngineRemotesHost, model: string | 
       connection: {
         baseURL: OPENCODE_DIRECT_BASE_URL,
         model: openCodeModel.upstreamId,
-        headers: {
-          'x-opencode-client': 'desktop',
-          'user-agent': 'opencode/freecodego',
-        },
+        headers: openCodeFreeTierHeaders(),
       },
       runtime: { openAIToken: 'public', routeKeys: [] },
     }

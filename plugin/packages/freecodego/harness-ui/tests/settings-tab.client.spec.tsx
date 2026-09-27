@@ -2,9 +2,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-ui-renderer/src/client/bind.ts'
-import { AutomationSettingsPanel, backendDefaultGroupName, CARD_CHANNEL_METHODS, categoryLabel, checkinSummary, createRequestEpochGate, describePaymentError, DeviceSessionManager, isCardChannel, isFreePricingRow, orderSettlementCurrency, PaymentReceiptManager, orderReceiptAvailable, orderReceiptStamp, stripeReceiptOffered, SandboxModePanel, selectedChannelDescription, splitPricingRows, EngineeringEvalPanel, EngineeringMemoryPanel, engineeringTeamState, engineeringVerificationLine, FreeCodeGoSettingsBoundary, FreeCodeGoSettingsTab, modelCategoryOf, modelGroupLabel, modelGroupRows, paymentLimitText, pricingGroupName, pricingGroupRate, pricingRowKey, pricingRows, PluginConflictNotice, severityTone, AdvisorSettingsSection, SkillSettingsSection } from '../src/client/settings-tab.tsx'
+import { AutomationSettingsPanel, backendDefaultGroupName, CARD_CHANNEL_METHODS, categoryLabel, checkinSummary, createRequestEpochGate, describePaymentError, DeviceSessionManager, isCardChannel, isFreePricingRow, orderSettlementCurrency, PaymentReceiptManager, orderReceiptAvailable, orderReceiptStamp, stripeReceiptOffered, SecondModelPanel, SandboxModePanel, selectedChannelDescription, splitPricingRows, EngineeringEvalPanel, EngineeringMemoryPanel, engineeringTeamState, engineeringVerificationLine, FreeCodeGoSettingsBoundary, FreeCodeGoSettingsTab, modelCategoryOf, modelGroupLabel, modelGroupRows, paymentLimitText, pricingGroupName, pricingGroupRate, pricingRowKey, pricingRows, PluginConflictNotice, SkillSettingsSection, McpSettingsSection } from '../src/client/settings-tab.tsx'
 import { formatMoney, roundUpCurrency } from '../src/client/money-format.ts'
-import type { GatewayModelPrice } from '../src/client/settings-tab.tsx'
+import type { CapabilitySnapshot, GatewayModelPrice } from '../src/client/settings-tab.tsx'
 import type { FreeCodeGoDeviceSessions } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { CommunityPluginsPage } from '../src/client/community-plugins.tsx'
@@ -596,24 +596,13 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     }
   })
 
-  it('keeps only the Advisor switch on the general settings page', async () => {
-    const advisorSnapshot = {
-      enabled: true,
-      mode: 'async' as const,
-      provider: 'freecodego',
-      model: 'reviewer-small',
-      routeReady: true,
-      reviewTools: ['read', 'glob', 'grep'] as const,
-      allowAgentControl: false,
-      interruptCooldownTurns: 3,
-      activeSessions: 0,
-      queuedReviews: 0,
-      noteCount: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      watchdogFiles: [],
-      sideChannelWarnings: ['advisor: this side channel is at 140% of the compaction threshold'],
-    }
+  it('states the speech route, and saves all three fields in one call', async () => {
+    const capabilities = vi.fn().mockResolvedValue({ ok: true as const, value: { mcpEnabled: true, skillEnabled: true, mcpServers: [], skillRoots: [], mcpTools: [], skills: [] } })
+    const capabilitiesSetEnabled = vi.fn().mockResolvedValue({ ok: true as const, value: { mcpEnabled: true, skillEnabled: true, mcpServers: [], skillRoots: [], mcpTools: [], skills: [] } })
+    // The state the old page could not report: the switch is on, and the plugin still
+    // cannot dictate — which is what left the microphone asking for a local model.
+    const speechStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, hasKey: false, baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', custom: false, registered: false, selected: 'sensevoice-local' } })
+    const speechSetRoute = vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, hasKey: true, baseUrl: 'https://asr.example.com/v1', model: 'sensevoice-small', custom: true, registered: true, selected: 'freecodego' } })
     render(<FreeCodeGoSettingsTab
       {...hostStandardProps}
       close={vi.fn()}
@@ -623,28 +612,187 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
       login={vi.fn()}
       logout={vi.fn()}
-      advisorStatus={vi.fn().mockResolvedValue({ ok: true as const, value: advisorSnapshot })}
-      advisorUpdate={vi.fn().mockResolvedValue({ ok: true as const, value: advisorSnapshot })}
-      advisorModels={vi.fn().mockResolvedValue({ ok: true as const, value: [] })}
-      advisorNotes={vi.fn().mockResolvedValue({ ok: true as const, value: [] })}
       communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
       communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
       communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
       communityInstall={vi.fn()}
       language="zh"
+      capabilities={capabilities}
+      capabilitiesSetEnabled={capabilitiesSetEnabled}
+      speechStatus={speechStatus}
+      speechSetRoute={speechSetRoute}
       useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
       t={(key: string) => key as never}
     />)
     await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
     fireEvent.click(screen.getByText('设置'))
-    expect(screen.getByRole('checkbox', { name: '启用 Advisor' })).toBeTruthy()
-    // The side-channel invariant is surfaced next to the switch, because the one
-    // party who can act on it (compact before the reviewer overflows) is reading
-    // this page rather than the log.
-    expect(screen.getByText('advisor: this side channel is at 140% of the compaction threshold')).toBeTruthy()
-    expect(screen.queryByText('审查模式')).toBeNull()
-    expect(screen.queryByText('保存 Advisor 配置')).toBeNull()
+    await waitFor(() => { expect(screen.getByText(/未配置密钥/)).toBeTruthy() })
+    fireEvent.change(screen.getByLabelText('语音识别接口地址'), { target: { value: 'https://asr.example.com/v1' } })
+    fireEvent.change(screen.getByLabelText('语音识别模型'), { target: { value: 'sensevoice-small' } })
+    fireEvent.change(screen.getByLabelText('语音识别 API Key'), { target: { value: 'other-key' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => {
+      expect(speechSetRoute).toHaveBeenCalledWith({ baseUrl: 'https://asr.example.com/v1', model: 'sensevoice-small', apiKey: 'other-key' })
+    })
+    // The answer is the write's, not the caller's guess: the card reports the
+    // takeover the Host just performed.
+    await waitFor(() => { expect(screen.getByText('已接管')).toBeTruthy() })
   })
+
+  it('saves the endpoint without clearing a key that was left alone', async () => {
+    // The two writes have to be distinguishable: the route reads an *absent* field as
+    // unchanged and an empty string as a clear, so a save that always carried the key
+    // field would delete a stored key the first time someone changed the endpoint —
+    // which is what the field's own placeholder invites them to do.
+    const speechStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, hasKey: true, baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', custom: false, registered: true, selected: 'freecodego' } })
+    const speechSetRoute = vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, hasKey: true, baseUrl: 'https://asr.example.com/v1', model: 'whisper-large-v3-turbo', custom: true, registered: true, selected: 'freecodego' } })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      speechStatus={speechStatus}
+      speechSetRoute={speechSetRoute}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
+    fireEvent.click(screen.getByText('设置'))
+    // The placeholder is what tells the user the field may be left empty, so it is part
+    // of this contract rather than decoration.
+    await waitFor(() => { expect(screen.getByLabelText('语音识别 API Key').getAttribute('placeholder')).toMatch(/已配置/u) })
+    fireEvent.change(screen.getByLabelText('语音识别接口地址'), { target: { value: 'https://asr.example.com/v1' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    // No `apiKey` key at all — not an empty string.
+    await waitFor(() => {
+      expect(speechSetRoute).toHaveBeenCalledWith({ baseUrl: 'https://asr.example.com/v1', model: 'whisper-large-v3-turbo' })
+    })
+    expect(speechSetRoute.mock.calls[0]?.[0]).not.toHaveProperty('apiKey')
+    // And clearing is the button that says so, which is why it is the one that sends an
+    // empty string.
+    fireEvent.click(screen.getByRole('button', { name: '清除密钥' }))
+    await waitFor(() => { expect(speechSetRoute).toHaveBeenLastCalledWith({ apiKey: '' }) })
+  })
+
+  it('tests the route on demand, and says which way it failed', async () => {
+    // The state the card could not previously describe: every configuration fact is
+    // true — key, switch, route — and the host still reaches nothing at the endpoint,
+    // because this process does not know about the proxy the browser uses. The card's
+    // own sentence has to name that possibility rather than blame the key.
+    const speechStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, hasKey: true, baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', custom: false, registered: true, selected: 'freecodego' } })
+    const speechTest = vi.fn().mockResolvedValue({ ok: true as const, value: { ok: false, reason: 'forbidden' as const, status: 403, baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', detail: 'Forbidden' } })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      speechStatus={speechStatus}
+      speechSetRoute={vi.fn()}
+      speechTest={speechTest}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
+    fireEvent.click(screen.getByText('设置'))
+    await waitFor(() => { expect(screen.getByText(/已接管麦克风/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: '测试' }))
+    await waitFor(() => { expect(speechTest).toHaveBeenCalledTimes(1) })
+    await waitFor(() => { expect(screen.getByText(/被拒绝（HTTP 403）/)).toBeTruthy() })
+    expect(screen.getByText(/HTTPS_PROXY/)).toBeTruthy()
+  })
+
+  it('names the missing key rather than "HTTP undefined" when the probe has no status', async () => {
+    // The Host answers `unauthorized` with no HTTP status in exactly one case: no key
+    // resolves, so no request was ever sent. The card's sentence has to be about the
+    // vault then — a status that never existed renders as the literal word `undefined`,
+    // which is the kind of answer a user cannot act on. It is reachable through this
+    // button because the status and the probe are two separate reads: a key cleared in
+    // between leaves the button enabled against a Host that no longer has one.
+    const speechStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, hasKey: true, baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', custom: false, registered: true, selected: 'freecodego' } })
+    const speechTest = vi.fn().mockResolvedValue({ ok: true as const, value: { ok: false, reason: 'unauthorized' as const, baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', detail: 'No speech recognizer key is configured' } })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      speechStatus={speechStatus}
+      speechSetRoute={vi.fn()}
+      speechTest={speechTest}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
+    fireEvent.click(screen.getByText('设置'))
+    await waitFor(() => { expect(screen.getByText(/已接管麦克风/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: '测试' }))
+    await waitFor(() => { expect(screen.getByText(/没有可用的识别密钥/)).toBeTruthy() })
+    // The failure this guards: the same sentence built around a status that never came.
+    expect(screen.queryByText(/undefined/u)).toBeNull()
+  })
+
+  it('refuses to test a route the user has typed but not saved', async () => {
+    // The probe answers about the route as *stored*, so testing before saving would
+    // report on the previous endpoint while the reader takes it for the new one.
+    const speechStatus = vi.fn().mockResolvedValue({ ok: true as const, value: { enabled: true, hasKey: true, baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo', custom: false, registered: true, selected: 'freecodego' } })
+    const speechTest = vi.fn()
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      speechStatus={speechStatus}
+      speechSetRoute={vi.fn()}
+      speechTest={speechTest}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
+    fireEvent.click(screen.getByText('设置'))
+    // The type parameter rather than a cast: `queryByRole` is generic, so this reads
+    // `disabled` off a button without asserting a type the query already knows.
+    const button = await waitFor(() => screen.getByRole<HTMLButtonElement>('button', { name: '测试' }))
+    expect(button.disabled).toBe(false)
+    fireEvent.change(screen.getByLabelText('语音识别模型'), { target: { value: 'sensevoice-small' } })
+    await waitFor(() => { expect(screen.getByRole<HTMLButtonElement>('button', { name: '测试' }).disabled).toBe(true) })
+    expect(speechTest).not.toHaveBeenCalled()
+  })
+
 
   it('localizes payment channels and renders live gateway model tariffs', async () => {
     render(<FreeCodeGoSettingsTab
@@ -2542,6 +2690,18 @@ describe('headroom panel controls', () => {
     codeSkeletonCompressions: 0,
     protectedCount: 0, ccrEntries: 1, ccrBytes: 400, retrievals: 0, retrieveMisses: 0,
     ccrWriteRefusals: 0,
+    // The quota trio the panel reads back with the same `acceptMaxRatio` the
+    // waterfall enforces: `quotaTokens: 0` is the unmeasured state the panel
+    // spells out, so the default fixture is "no budget reported yet".
+    // `acceptRatio` and `configuredAcceptRatio` are equal here, which is the state
+    // they are in whenever no quota is acting: the panel reads them as a *pair*, so a
+    // fixture with only one of them is a fixture for a deployment that cannot exist.
+    quotaTokens: 0, quotaOverTokens: 0, acceptRatio: 1, configuredAcceptRatio: 1,
+    // The fixed side of the same subtraction. `[]` and not `undefined`: the panel
+    // maps over it directly, so an absent list is a crash rather than a blank row
+    // — which is exactly what this fixture shipped once and what these two lines
+    // exist to pin.
+    quotaFixedTokens: 0, quotaFixedCategories: [],
     provenance: 'test-provenance', ...over,
   })
   // The update remote must resolve a RemoteResult: the panel chains `.then`
@@ -2682,6 +2842,28 @@ describe('headroom panel controls', () => {
     expect(details?.textContent).toContain('表格')
   })
 
+  it('leaves the accept-ratio chip unlit while no quota is loosening the bar', async () => {
+    // The two figures are equal whenever no quota acts, because the effective bar *is*
+    // the configured one then — and the configured one here is deliberately not the
+    // shipped default: a chip measured against 0.85 from its own side would light up
+    // for a deployment that simply typed a lenient bar, and claim pressure where the
+    // conversation has none.
+    await renderPanel({ quotaTokens: 12_000, quotaOverTokens: 4_000, acceptRatio: 0.95, configuredAcceptRatio: 0.95 })
+    const chip = [...document.querySelectorAll('[class*="statChip"]')].find(element => (element.textContent ?? '').includes('当前接受门槛'))
+    expect(chip?.className).toContain('statChipIdle')
+  })
+
+  it('lights the accept-ratio chip when a quota has loosened the bar', async () => {
+    // The comparison is one way round because the quota is: `acceptMaxRatio` relaxes
+    // the bar toward the floor that keeps a rewrite worth its cache write, and never
+    // tightens it. A strict configured bar whose effective value has risen to 0.85 is
+    // exactly the state the chip is for — and one where any fixed reference figure
+    // reports "no pressure" instead.
+    await renderPanel({ quotaTokens: 12_000, quotaOverTokens: 4_000, acceptRatio: 0.85, configuredAcceptRatio: 0.70 })
+    const chip = [...document.querySelectorAll('[class*="statChip"]')].find(element => (element.textContent ?? '').includes('当前接受门槛'))
+    expect(chip?.className).not.toContain('statChipIdle')
+  })
+
   it('marks the compressors that fired apart from the ones that never ran', async () => {
     await renderPanel()
     const chips = [...document.querySelectorAll('[class*="statChip"]')]
@@ -2725,6 +2907,60 @@ describe('headroom panel controls', () => {
     const chips = [...document.querySelectorAll('[class*="statChip"]')]
     const fired = chips.filter(chip => !/statChipIdle/.test(chip.className)).map(chip => chip.textContent)
     expect(fired.some(text => text?.startsWith('代码骨架'))).toBe(true)
+  })
+
+  it('shows the compression quota that is gating acceptance', async () => {
+    // The three figures the waterfall is being held to: what the transcript may
+    // occupy, how far over that it is, and the saving the running compressor
+    // must reach. A user watching compression happen without them sees a lever
+    // move with no readout of the number that decided it.
+    await renderPanel({ quotaTokens: 12_000, quotaOverTokens: 4_000, acceptRatio: 0.31 })
+    const chips = [...document.querySelectorAll('[class*="statChip"]')].map(chip => chip.textContent ?? '')
+    expect(chips.some(text => text.includes('会话压缩配额') && text.includes('12,000'))).toBe(true)
+    expect(chips.some(text => text.includes('超出配额') && text.includes('4,000'))).toBe(true)
+    expect(chips.some(text => text.includes('当前接受门槛') && text.includes('0.31'))).toBe(true)
+  })
+
+  it('names the fixed categories a quota cannot reclaim room from', async () => {
+    // The overage alone reads as "compression is behind", which is the wrong next
+    // step when the room went to a tool block: that one is a schema to defer or a
+    // pack to turn off. The panel has to say which rows those are, largest first,
+    // and say the total with them so the chips are not a list of unrelated
+    // numbers.
+    await renderPanel({
+      quotaTokens: 12_000, quotaOverTokens: 4_000, quotaFixedTokens: 25_000,
+      quotaFixedCategories: [
+        { id: 'tools', label: 'Tool definitions', tokens: 21_000 },
+        { id: 'skills', label: 'Skills', tokens: 4_000 },
+      ],
+    })
+    const chips = [...document.querySelectorAll('[class*="statChip"]')].map(chip => chip.textContent ?? '')
+    expect(chips.some(text => text.includes('固定开销（压缩动不了）') && text.includes('25,000'))).toBe(true)
+    // Localized by id, not by the English label the host minted.
+    expect(chips.some(text => text.includes('工具定义') && text.includes('21,000'))).toBe(true)
+    expect(chips.some(text => text.includes('Skills 技能') && text.includes('4,000'))).toBe(true)
+    expect(chips.findIndex(text => text.includes('工具定义'))).toBeLessThan(chips.findIndex(text => text.includes('Skills 技能')))
+  })
+
+  it('reports the fixed block as unmeasured rather than as zero', async () => {
+    // Same reason as the quota beside it: a "0" would be a measurement nobody
+    // took, and no rows is the honest rendering of "nothing was measured yet".
+    await renderPanel()
+    const chips = [...document.querySelectorAll('[class*="statChip"]')].map(chip => chip.textContent ?? '')
+    expect(chips.some(text => text.includes('固定开销（压缩动不了）') && text.includes('未测量'))).toBe(true)
+    expect(chips.some(text => text.includes('工具定义'))).toBe(false)
+  })
+
+  it('reports the quota as unmeasured rather than as zero', async () => {
+    // Zero is both "not over quota" and "never measured", which is why the quota
+    // and the excess are rendered together: a panel printing 0 for both would
+    // assert a measurement nobody took, and the default fixture is exactly the
+    // composition where no budget has been pushed yet.
+    await renderPanel()
+    const quota = [...document.querySelectorAll('[class*="statChip"]')]
+      .map(chip => chip.textContent ?? '')
+      .find(text => text.includes('会话压缩配额'))
+    expect(quota).toContain('未测量')
   })
 
   it('says plainly when no compressor has fired yet', async () => {
@@ -2894,100 +3130,7 @@ describe('deferred tool panel controls', () => {
   })
 })
 
-describe('review finding severity', () => {
-  it('maps both engine vocabularies onto real tones', () => {
-    // Council findings say info/warning/blocker; advisor notes say
-    // nit/concern/blocker. An earlier version knew neither vocabulary and
-    // sent every value to `unknown`, so severity never coloured anything.
-    expect(severityTone('blocker')).toBe('blocker')
-    expect(severityTone('warning')).toBe('warning')
-    expect(severityTone('info')).toBe('info')
-    expect(severityTone('concern')).toBe('warning')
-    expect(severityTone('nit')).toBe('info')
-  })
 
-  it('never returns unknown for a value either engine actually emits', () => {
-    // The two closed sets, taken from engine-council SEVERITY_RANK and
-    // AdvisorSeverity. Any of them falling through to `unknown` means the
-    // finding renders without its severity colour.
-    for (const value of ['info', 'warning', 'blocker', 'nit', 'concern']) {
-      expect(severityTone(value), value).not.toBe('unknown')
-    }
-  })
-
-  it('normalizes case and surrounding space from free-form engine output', () => {
-    expect(severityTone(' BLOCKER ')).toBe('blocker')
-    expect(severityTone('Warning')).toBe('warning')
-  })
-
-  it('falls back to unknown rather than guessing at an unrecognised word', () => {
-    expect(severityTone('catastrophic')).toBe('unknown')
-    expect(severityTone('')).toBe('unknown')
-  })
-})
-
-describe('advisor standalone page layout', () => {
-  const base = {
-    enabled: true, mode: 'async', provider: 'opencode', model: 'big-pickle',
-    routeReady: true, allowAgentControl: true, interruptCooldownTurns: 3,
-    reviewTools: ['read', 'glob', 'grep'], activeSessions: 0, queuedReviews: 0,
-    noteCount: 0, inputTokens: 0, outputTokens: 0, watchdogFiles: [],
-  }
-  const renderAdvisor = async () => {
-    render(<AdvisorSettingsSection
-      {...hostStandardProps}
-      close={vi.fn()}
-      advisorStatus={vi.fn().mockResolvedValue({ ok: true as const, value: base })}
-      advisorUpdate={vi.fn().mockResolvedValue({ ok: true as const, value: base })}
-      advisorModels={vi.fn().mockResolvedValue({ ok: true as const, value: [] })}
-      advisorNotes={vi.fn().mockResolvedValue({ ok: true as const, value: [] })}
-      advisorReviewNow={vi.fn() as never}
-      currentSessionId={() => undefined}
-    />)
-    await screen.findByText('审查模式')
-  }
-
-  it('pairs mode, model, and cooldown in one grid instead of stacked rows', async () => {
-    await renderAdvisor()
-    // Three fields of the same logical group now share one grid container.
-    const grid = document.querySelector('[class*="advisorFormGrid"]')
-    expect(grid).toBeTruthy()
-    expect(grid!.querySelectorAll('select, input[type="number"], [class*="advisorModelTrigger"]').length).toBe(3)
-  })
-
-  it('keeps the model trigger a two-line button with the provider beneath', async () => {
-    await renderAdvisor()
-    const trigger = screen.getByText('big-pickle').closest('button')
-    expect(trigger).toBeTruthy()
-    expect(trigger?.querySelector('strong')?.textContent).toBe('big-pickle')
-    expect(trigger!.querySelector('small')?.textContent).toContain('opencode')
-  })
-
-  it('moves the advisory-control switch into a card rather than an inline checkbox', async () => {
-    await renderAdvisor()
-    const card = document.querySelector('[aria-label="允许 Advisor 主动投递建议给 Agent"]')?.closest('label')
-    expect(card?.className).toContain('toggleCard')
-    expect(card?.textContent).toContain('关闭时仍会持久化审查建议')
-  })
-
-  it('sits the save action beside the evidence note in one footer row', async () => {
-    await renderAdvisor()
-    const foot = document.querySelector('[class*="advisorFoot"]')
-    expect(foot).toBeTruthy()
-    // The old layout floated the save button on its own; now the evidence
-    // note and the one decision that finalises it share the row.
-    expect(foot!.querySelector('[class*="advisorEvidence"]')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '保存 Advisor 配置' }).closest('[class*="advisorFoot"]')).toBeTruthy()
-  })
-
-  it('tells the user an all-zero panel is waiting, not broken', async () => {
-    await renderAdvisor()
-    expect(screen.getAllByText('本次已审查会话').length).toBeGreaterThan(0)
-    // The status card and the notes panel each explain their own zero; the
-    // status card's line is the one about automatic triggering.
-    expect(screen.getAllByText(/尚未审查任何回合。Advisor 在每次主 Agent 回合结束时自动触发/).length).toBeGreaterThan(0)
-  })
-})
 
 describe('DeviceSessionManager', () => {
   const sessions = (): FreeCodeGoDeviceSessions => ({
@@ -3633,6 +3776,111 @@ describe('payment channel limit line', () => {
   })
 })
 
+describe('mcp capability page', () => {
+  // Typed as the page's own snapshot rather than a literal, so a case can add the
+  // optional host-reported lists (`mountErrors`, `trustRefusals`) the page reads.
+  const snapshot: CapabilitySnapshot = {
+    mcpEnabled: true,
+    skillEnabled: false,
+    voiceInputEnabled: true,
+    sessionDeleteEnabled: true,
+    modelCategories: {},
+    mcpServers: [
+      { id: 'srv-1', enabled: true, transport: 'stdio' as const, serverName: 'github', command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], cwd: '', url: '', headers: {} as Readonly<Record<string, string>>, env: { GITHUB_TOKEN: 'x' } as Readonly<Record<string, string>> },
+    ],
+    skillRoots: [],
+    mcpTools: [],
+    skills: [],
+  }
+  // The MCP page and the Skill page share one injected prop set, so the MCP half
+  // has to supply the Skill remotes it never reads.
+  type McpSectionProps = Parameters<typeof McpSettingsSection>[0]
+  const unsetSkill = {
+    skillRootSave: vi.fn(), skillRootRemove: vi.fn(), skillInvocationSet: vi.fn(), skillDetail: vi.fn(),
+    engineeringStatus: vi.fn(), engineeringSettingsUpdate: vi.fn(),
+  } as unknown as Pick<McpSectionProps, 'skillRootSave' | 'skillRootRemove' | 'skillInvocationSet' | 'skillDetail' | 'engineeringStatus' | 'engineeringSettingsUpdate'>
+
+  const renderMcp = async (overrides: { readonly save?: (...args: never[]) => unknown; readonly inventory?: typeof snapshot } = {}) => {
+    const capabilities = vi.fn().mockResolvedValue({ ok: true as const, value: overrides.inventory ?? snapshot })
+    const mcpSave = overrides.save ?? vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })
+    const marketplace = vi.fn().mockResolvedValue({ ok: true as const, value: { kind: 'mcp', total: 0, offset: 0, limit: 12, query: '', categories: [], items: [] } })
+    render(<McpSettingsSection
+      {...hostStandardProps}
+      {...unsetSkill}
+      close={vi.fn()}
+      capabilities={capabilities as never}
+      mcpSave={mcpSave as never}
+      mcpRemove={vi.fn() as never}
+      capabilityMarketplace={marketplace as never}
+      mcpPresetInstall={vi.fn() as never}
+      language="zh"
+    />)
+    await screen.findByText('github')
+    return { capabilities, mcpSave }
+  }
+
+  it('renders the add/edit form above the community recommendations, not at the page bottom', async () => {
+    await renderMcp()
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+
+    const submit = await screen.findByRole('button', { name: '保存变更' })
+    const form = submit.closest('form')!
+    const heading = screen.getByText('社区 MCP 推荐')
+    // The form used to be the section's last child, so reaching the fields it
+    // had just opened meant scrolling past every recommendation card.
+    expect(form.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('opens the JSON editor on the server being edited and saves it as an update', async () => {
+    const { mcpSave } = await renderMcp()
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    fireEvent.click(screen.getByRole('button', { name: 'JSON 编辑' }))
+
+    const editor = screen.getByRole('textbox') as HTMLTextAreaElement
+    // Seeded from the server under edit, so the draft is a complete document.
+    expect(editor.value).toContain('"github"')
+    expect(editor.value).toContain('@modelcontextprotocol/server-github')
+
+    fireEvent.change(editor, { target: { value: JSON.stringify({ mcpServers: { github: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github', '--readonly'], env: { GITHUB_TOKEN: 'y' } } } }) } })
+    fireEvent.click(screen.getByRole('button', { name: '保存变更' }))
+
+    await waitFor(() => { expect(mcpSave).toHaveBeenCalledTimes(1) })
+    // The carried id is what makes this an update; without it the same name
+    // would be added a second time.
+    expect(mcpSave).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'srv-1',
+      serverName: 'github',
+      args: ['-y', '@modelcontextprotocol/server-github', '--readonly'],
+      env: { GITHUB_TOKEN: 'y' },
+    }))
+  })
+
+  it('renders a trust refusal as a refused badge, not as connecting', async () => {
+    // Round 47 fixed the engine side (`capabilities.ts`) to record MCP installer
+    // entries in `trustRefusals` keyed `mcp:${id}`, but the settings page only read
+    // `mountErrors`, so a refused installer rendered as "正在连接" forever. The page
+    // now reads `trustRefusals` too and must surface the refusal, not a retry.
+    // `renderMcp` resolves on `findByText('github')`, so the refused server is
+    // spelled `github` (its name is irrelevant to the refusal path).
+    await renderMcp({
+      inventory: {
+        ...snapshot,
+        mcpServers: [
+          { id: 'srv-1', enabled: true, transport: 'stdio' as const, serverName: 'github', command: 'npx', args: ['ctx7', 'setup'], cwd: '', url: '', headers: {}, env: {} },
+        ],
+        trustRefusals: [{ id: 'mcp:srv-1', message: 'not mounted: this entry launches an installer (npx ctx7 setup), not an MCP server; replace it with the server\'s own URL or launch command' }],
+        mountErrors: [],
+      },
+    })
+    expect(screen.getByText('已拒绝')).toBeTruthy()
+    expect(screen.queryByText('正在连接')).toBeNull()
+    expect(screen.queryByText('挂载失败')).toBeNull()
+    expect(screen.getByText(/npx ctx7 setup/)).toBeTruthy()
+  })
+})
+
 describe('skill library page', () => {
   const snapshot = {
     mcpEnabled: false,
@@ -3940,6 +4188,72 @@ describe('skill library page', () => {
   })
 })
 
+describe('SecondModelPanel', () => {
+  const status = { provider: 'opencode', model: 'auto', routeReady: true }
+  const routes = [
+    { id: 'auto', displayName: 'Auto', provider: 'opencode', description: 'OpenCode · public free text route' },
+    { id: 'kimi-k2', displayName: 'Kimi K2', provider: 'freecodego', description: 'FreeCodeGo · chat' },
+  ]
+
+  it('renders the stored route as the selected row, not the first directory row', async () => {
+    // `kimi-k2` sorts before `auto` in some locales; a picker that fell back to
+    // the first row would show a selection the Host is not using.
+    render(<SecondModelPanel status={vi.fn().mockResolvedValue({ ok: true as const, value: status }) as never} update={vi.fn() as never} routes={vi.fn().mockResolvedValue({ ok: true as const, value: routes }) as never} language="en" />)
+
+    const picker = await screen.findByLabelText('Second-model route') as HTMLSelectElement
+    expect(picker.value).toBe('opencode:auto')
+  })
+
+  it('sends the chosen pair as the update', async () => {
+    const update = vi.fn().mockResolvedValue({ ok: true as const, value: { provider: 'freecodego', model: 'kimi-k2', routeReady: true } })
+    render(<SecondModelPanel status={vi.fn().mockResolvedValue({ ok: true as const, value: status }) as never} update={update as never} routes={vi.fn().mockResolvedValue({ ok: true as const, value: routes }) as never} language="en" />)
+
+    const picker = await screen.findByLabelText('Second-model route') as HTMLSelectElement
+    fireEvent.change(picker, { target: { value: 'freecodego:kimi-k2' } })
+
+    await waitFor(() => { expect(update).toHaveBeenCalledWith({ advisorProvider: 'freecodego', advisorModel: 'kimi-k2' }) })
+  })
+
+  it('renders an off-directory stored route as itself and offers the manual form seeded with it', async () => {
+    const offDirectory = { provider: 'my-gateway', model: 'my-model', routeReady: true }
+    render(<SecondModelPanel status={vi.fn().mockResolvedValue({ ok: true as const, value: offDirectory }) as never} update={vi.fn() as never} routes={vi.fn().mockResolvedValue({ ok: true as const, value: routes }) as never} language="en" />)
+
+    const picker = await screen.findByLabelText('Second-model route') as HTMLSelectElement
+    expect(picker.value).toBe('')
+    expect((screen.getByText('my-gateway · my-model'))).toBeDefined()
+  })
+
+  it('reports a refusal and re-reads the route still in force', async () => {
+    const reads = vi.fn().mockResolvedValue({ ok: true as const, value: status })
+    const update = vi.fn().mockResolvedValue({ ok: false as const, error: { message: 'route refused' } })
+    render(<SecondModelPanel status={reads as never} update={update as never} routes={vi.fn().mockResolvedValue({ ok: true as const, value: routes }) as never} language="en" />)
+
+    const picker = (await screen.findByLabelText('Second-model route')) as HTMLSelectElement
+    const readsBefore = reads.mock.calls.length
+    fireEvent.change(picker, { target: { value: 'freecodego:kimi-k2' } })
+
+    expect((await screen.findByRole('alert')).textContent).toContain('route refused')
+    await waitFor(() => { expect(reads.mock.calls.length).toBeGreaterThan(readsBefore) })
+  })
+
+  it('saves the manual pair and resets to the default when both fields are emptied', async () => {
+    const update = vi.fn().mockResolvedValue({ ok: true as const, value: { provider: '', model: '', routeReady: false } })
+    render(<SecondModelPanel status={vi.fn().mockResolvedValue({ ok: true as const, value: status }) as never} update={update as never} routes={vi.fn().mockResolvedValue({ ok: true as const, value: routes }) as never} language="en" />)
+
+    const summary = await screen.findByText('Configure an off-directory route')
+    fireEvent.click(summary)
+    const provider = screen.getByPlaceholderText('opencode') as HTMLInputElement
+    const model = screen.getByPlaceholderText('auto') as HTMLInputElement
+    fireEvent.change(provider, { target: { value: ' my-gateway ' } })
+    fireEvent.change(model, { target: { value: ' my-model ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save route' }))
+
+    // Trimmed: a whitespace-padded pair would be a route the Host resolves but
+    // the directory keys differently.
+    await waitFor(() => { expect(update).toHaveBeenCalledWith({ advisorProvider: 'my-gateway', advisorModel: 'my-model' }) })
+  })
+})
+
 describe('AutomationSettingsPanel', () => {
   const settings = { hookChainsEnabled: true, hookChainsMaxDepth: 2, hookChainsCooldownMs: 30_000, scheduledTasksEnabled: true }
 
@@ -4169,6 +4483,99 @@ describe('project memory search and recall preview', () => {
   })
 })
 
+describe('the session temporary memory block', () => {
+  type MemoryPanelProps = Parameters<typeof EngineeringMemoryPanel>[0]
+  const stubs: Pick<MemoryPanelProps, 'timeline' | 'get' | 'review' | 'remove' | 'purge' | 'exportReviewed' | 'backup' | 'retentionSweep' | 'consolidate' | 'manifest'> = {
+    timeline: vi.fn(), get: vi.fn(), review: vi.fn(), remove: vi.fn(), purge: vi.fn(),
+    exportReviewed: vi.fn(), backup: vi.fn(), retentionSweep: vi.fn(),
+    consolidate: vi.fn(), manifest: vi.fn(),
+  }
+  const noRecords = vi.fn().mockResolvedValue({ ok: true as const, value: { records: [] } })
+  const scopeOf = (topics: readonly string[], addressable = true) => vi.fn().mockResolvedValue({
+    ok: true as const,
+    value: { sessionId: 'session-1', topics, addressable },
+  })
+  // jsdom's `confirm` is a not-implemented stub that answers undefined, which is
+  // falsy — so without this every destructive assertion below would pass by never
+  // calling the Host, and the test would measure the opposite of what it says.
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('counts the session layer and reclaims it through the Host', async () => {
+    // The layer is files under the session's own directory rather than rows in the
+    // store the list reads, so nothing else on this panel can show it: the count is
+    // the only way a user tells "nothing remembered" from "already reclaimed".
+    const scope = scopeOf(['retries', 'flaky-tests'])
+    const reclaim = vi.fn().mockResolvedValue({ ok: true as const, value: { outcome: 'reclaimed' as const, topics: 2 } })
+    render(<EngineeringMemoryPanel enabled={true} currentSessionId={() => 'session-1'} list={noRecords as never} {...stubs} sessionScope={scope as never} reclaimSession={reclaim as never} />)
+
+    expect(await screen.findByText('当前会话临时记忆')).toBeTruthy()
+    expect(scope).toHaveBeenCalledWith('session-1')
+    expect(screen.getByText(/2 条；会话结束时自动回收/)).toBeTruthy()
+    expect(screen.getByText('retries')).toBeTruthy()
+
+    // It deletes files, so the confirmation is the gate — and a declined one has to
+    // stop before the Host, not after it.
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    fireEvent.click(screen.getByRole('button', { name: '立即回收' }))
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(reclaim).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
+    fireEvent.click(screen.getByRole('button', { name: '立即回收' }))
+    await waitFor(() => { expect(reclaim).toHaveBeenCalledWith('session-1') })
+    expect(await screen.findByText(/已回收当前会话的 2 条临时记忆/)).toBeTruthy()
+  })
+
+  it('reports a refusal verbatim instead of as a success', async () => {
+    // `lease-held`, `absent` and `unnamed` are answers rather than failures, and a
+    // panel that collapsed them into "done" would leave the notes on disk with no
+    // way to find out why.
+    const reclaim = vi.fn().mockResolvedValue({ ok: true as const, value: { outcome: 'lease-held' as const, problem: 'a consolidation pass holds this workspace lease' } })
+    vi.stubGlobal('confirm', () => true)
+    render(<EngineeringMemoryPanel enabled={true} currentSessionId={() => 'session-1'} list={noRecords as never} {...stubs} sessionScope={scopeOf(['retries']) as never} reclaimSession={reclaim as never} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '立即回收' }))
+    expect(await screen.findByText(/暂不能回收：a consolidation pass holds this workspace lease/u)).toBeTruthy()
+  })
+
+  it('says why a session cannot hold temporary memory instead of offering the gesture', async () => {
+    render(<EngineeringMemoryPanel enabled={true} currentSessionId={() => 'session-1'} list={noRecords as never} {...stubs} sessionScope={scopeOf([], false) as never} reclaimSession={vi.fn() as never} />)
+
+    expect(await screen.findByText('这个会话的 id 不能作为目录名，因此无法保存临时记忆。')).toBeTruthy()
+    // A button here could only ever answer `unnamed`, which is not a gesture.
+    expect(screen.queryByRole('button', { name: '立即回收' })).toBeNull()
+  })
+
+  it('drops a reclamation report when the panel moves to another session', async () => {
+    // The line says "this session's", so it may not outlive the session it
+    // describes. The panel is rendered under the active conversation and that id
+    // changes in place, so an outcome that is kept as a bare string keeps claiming
+    // the reclamation happened to whichever session is on screen now.
+    let current = 'session-1'
+    const scope = vi.fn().mockResolvedValue({ ok: true as const, value: { sessionId: 'session-1', topics: ['retries'], addressable: true } })
+    const reclaim = vi.fn().mockResolvedValue({ ok: true as const, value: { outcome: 'reclaimed' as const, topics: 2 } })
+    vi.stubGlobal('confirm', () => true)
+    const view = render(<EngineeringMemoryPanel enabled={true} currentSessionId={() => current} list={noRecords as never} {...stubs} sessionScope={scope as never} reclaimSession={reclaim as never} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '立即回收' }))
+    expect(await screen.findByText(/已回收当前会话的 2 条临时记忆/)).toBeTruthy()
+
+    current = 'session-2'
+    view.rerender(<EngineeringMemoryPanel enabled={true} currentSessionId={() => current} list={noRecords as never} {...stubs} sessionScope={scope as never} reclaimSession={reclaim as never} />)
+    await waitFor(() => { expect(scope).toHaveBeenCalledWith('session-2') })
+    expect(screen.queryByText(/已回收当前会话的 2 条临时记忆/)).toBeNull()
+  })
+
+  it('leaves the block out entirely when the Host predates the Remote', async () => {
+    const list = vi.fn().mockResolvedValue({ ok: true as const, value: { records: [{ id: 'a', title: 'memory a', kind: 'decision' as const, trust: 'captured' as const, projectId: 'proj', createdAt: 1_700_000_000_000, detailTokens: 30 }] } })
+    render(<EngineeringMemoryPanel enabled={true} currentSessionId={() => 'session-1'} list={list as never} {...stubs} />)
+
+    expect(await screen.findByText('memory a')).toBeTruthy()
+    expect(screen.queryByText('当前会话临时记忆')).toBeNull()
+  })
+})
+
 describe('EngineeringEvalPanel', () => {
   const report = (over: Record<string, unknown> = {}) => ({ version: 1 as const, suites: ['guards'] as const, cases: [], passed: 46, total: 46, score: 1, ok: true, checkedAt: 1_700_000_000_000, ...over })
 
@@ -4211,66 +4618,6 @@ describe('EngineeringEvalPanel', () => {
   })
 })
 
-describe('advisor manual review', () => {
-  const base = {
-    enabled: true, mode: 'async', provider: 'opencode', model: 'big-pickle',
-    routeReady: true, allowAgentControl: true, interruptCooldownTurns: 3,
-    reviewTools: ['read', 'glob'], activeSessions: 0, queuedReviews: 0,
-    noteCount: 0, inputTokens: 0, outputTokens: 0, watchdogFiles: [],
-  }
-  const renderAdvisor = (sessionId: string | undefined) => {
-    const advisorReviewNow = vi.fn().mockResolvedValue({ ok: true as const, value: base })
-    render(<AdvisorSettingsSection
-      {...hostStandardProps}
-      close={vi.fn()}
-      advisorStatus={vi.fn().mockResolvedValue({ ok: true as const, value: base })}
-      advisorUpdate={vi.fn().mockResolvedValue({ ok: true as const, value: base })}
-      advisorModels={vi.fn().mockResolvedValue({ ok: true as const, value: [] })}
-      advisorNotes={vi.fn().mockResolvedValue({ ok: true as const, value: [] })}
-      advisorReviewNow={advisorReviewNow as never}
-      currentSessionId={() => sessionId}
-    />)
-    return advisorReviewNow
-  }
-
-  it('reviews the current session on demand', async () => {
-    const review = renderAdvisor('session-1')
-    await screen.findByText('审查模式')
-
-    fireEvent.click(screen.getByRole('button', { name: '立即复核当前会话' }))
-
-    await waitFor(() => { expect(review).toHaveBeenCalledWith('session-1') })
-    expect(await screen.findByText(/已触发；建议会在复核完成后出现/)).toBeTruthy()
-  })
-
-  it('asks for an open session instead of calling the Host with no id', async () => {
-    const review = renderAdvisor(undefined)
-    await screen.findByText('审查模式')
-
-    fireEvent.click(screen.getByRole('button', { name: '立即复核当前会话' }))
-
-    expect(await screen.findByText('先在左侧打开一个会话，再手动复核。')).toBeTruthy()
-    expect(review).not.toHaveBeenCalled()
-  })
-
-  it('reports a review the Host refused', async () => {
-    const advisorReviewNow = vi.fn().mockResolvedValue({ ok: false as const, error: { message: 'advisor route is not ready' } })
-    render(<AdvisorSettingsSection
-      {...hostStandardProps}
-      close={vi.fn()}
-      advisorStatus={vi.fn().mockResolvedValue({ ok: true as const, value: base })}
-      advisorUpdate={vi.fn().mockResolvedValue({ ok: true as const, value: base })}
-      advisorModels={vi.fn().mockResolvedValue({ ok: true as const, value: [] })}
-      advisorNotes={vi.fn().mockResolvedValue({ ok: true as const, value: [] })}
-      advisorReviewNow={advisorReviewNow as never}
-      currentSessionId={() => 'session-1'}
-    />)
-    await screen.findByText('审查模式')
-    fireEvent.click(screen.getByRole('button', { name: '立即复核当前会话' }))
-
-    expect((await screen.findByRole('alert')).textContent).toContain('advisor route is not ready')
-  })
-})
 
 describe('checkout quoting', () => {
   /** Digits only, so a case does not depend on the host's locale or symbol. */

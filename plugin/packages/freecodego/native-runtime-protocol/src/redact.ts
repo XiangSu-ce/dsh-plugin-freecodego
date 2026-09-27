@@ -150,6 +150,10 @@ export const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   { id: 'gcp-api-key', source: '\\bAIza[0-9A-Za-z_-]{35}\\b', flags: 'gu' },
   { id: 'google-oauth-access', source: '\\bya29\\.[0-9A-Za-z_-]{20,}(?![0-9A-Za-z_-])', flags: 'gu' },
   { id: 'stripe-secret-key', source: '\\bsk_live_[0-9A-Za-z]{20,}\\b', flags: 'gu' },
+  // Groq's key, adopted at the same time as the Host's rule of the same id: it is the
+  // provider this plugin transcribes through, so a worker that logged the request it
+  // sent would otherwise print a live key into a transcript the model reads.
+  { id: 'groq-api-key', source: '\\bgsk_[A-Za-z0-9]{40,}(?![A-Za-z0-9_-])', flags: 'gu' },
   { id: 'npm-token', source: '\\bnpm_[A-Za-z0-9]{36}\\b', flags: 'gu' },
   { id: 'pypi-token', source: '\\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])', flags: 'gu' },
   { id: 'anthropic-api-key', source: '\\bsk-ant-(?:api|admin)[0-9]{2}-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])', flags: 'gu' },

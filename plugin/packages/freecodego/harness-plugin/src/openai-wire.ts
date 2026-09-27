@@ -157,6 +157,11 @@ function requestWithMessages(
       : { thinking: { type: 'enabled' }, reasoning_effort: effort === 'xhigh' ? 'max' : effort }
   return {
     model: options.model, messages, stream: true,
+    // The usage envelope is what makes a provider report token counts at all.
+    // Without it a completed turn reaches the token ledger as an attempt with no
+    // numbers, and the route reads as unused however much traffic it served, so
+    // it is sent unless a caller says this endpoint already refused it. The
+    // adapter also drops it and retries when an endpoint refuses it in flight.
     ...(defaults.includeUsage === false ? {} : { stream_options: { include_usage: true } }),
     ...reasoning,
     ...(tools === undefined || tools.length === 0 ? {} : { tools }),

@@ -41,7 +41,7 @@ export const OAUTH_LOGIN_POLL_REQUEST_TIMEOUT_MS = 10_000
  *
  * `Math.random` was the only non-cryptographic source used for a credential
  * handle anywhere in this plugin — every other correlation or secret identifier
- * (`advisor`, `action-reviewer`, `capabilities`, the memory store) draws from
+ * (`action-reviewer`, `capabilities`, the memory store) draws from
  * `node:crypto` — and this string is the *sole* key that the public poll
  * endpoint resolves an issued token pair with, so its unpredictability is what
  * keeps one client from being handed another client's pair. The value stays a

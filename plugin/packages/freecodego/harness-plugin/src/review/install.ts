@@ -11,17 +11,19 @@
  * reader who wants to know *how a review is assembled* reads one file instead of
  * scrolling for it.
  *
- * The route is shared with the advisor, deliberately
- * -------------------------------------------------
+ * Why the route is shared rather than a pair of its own
+ * ----------------------------------------------------
  * Reviews use the plugin's second-model route (`advisorProvider`/`advisorModel`)
- * rather than a new pair of settings. Both are "the model this plugin calls on its
- * own behalf", the advisor's pair is already the one a user configures and the UI
- * already edits, and a second pair would be a second place for the same intent to
- * be set and disagree. A dedicated review route is a reasonable future change,
- * but only once there is a reason for the two to differ.
+ * rather than a new pair of settings. It is "the model this plugin calls on its own
+ * behalf", and it is already the pair every other caller uses — the memory recall
+ * selector, the consolidation planner, and the action reviewer — so a second pair
+ * would be a second place for the same intent to be set and disagree. A dedicated
+ * review route is a reasonable future change, but only once there is a reason for
+ * these callers to differ.
  *
- * The default route is the same virtual OpenCode route the advisor defaults to,
- * so a fresh install reviews out of the box instead of failing on the first call.
+ * The default route is the same virtual OpenCode route the other callers default
+ * to, so a fresh install reviews out of the box instead of failing on the first
+ * call.
  * The route is resolved per request, so a settings change takes effect without a
  * reload.
  *

@@ -233,17 +233,6 @@ describe('evaluation sensitivity', () => {
     expect(store.get(key)).toBeUndefined()
   })
 
-  it('the advisor cases read the production decision functions, not a copied formula', async () => {
-    const { advisorBackoffTurns, advisorDeliveryChannel } = await import('../src/advisor.ts')
-    // These must be the same functions the runtime calls. If the loop ever
-    // inlines its own copy again, the case below stops describing real behaviour.
-    expect(advisorBackoffTurns(2)).toBe(2)
-    expect(advisorBackoffTurns(1)).toBe(0)
-    expect(advisorBackoffTurns(9_999)).toBe(10)
-    expect(advisorDeliveryChannel({ severity: 'nit', mode: 'async', allowAgentControl: true, steerCount: 0, turn: 9, cooldownUntilTurn: 0 })).toBe('inject')
-    expect(advisorDeliveryChannel({ severity: 'blocker', mode: 'blocker-only', allowAgentControl: true, steerCount: 0, turn: 9, cooldownUntilTurn: 0 })).toBe('steer')
-  })
-
   it('the progress stall case is bounded by both state and quiet time', async () => {
     const { CcrStore: _unused } = await import('../src/headroom/ccr.ts')
     void _unused

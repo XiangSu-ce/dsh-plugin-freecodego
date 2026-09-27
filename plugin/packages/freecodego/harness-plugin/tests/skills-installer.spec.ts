@@ -57,10 +57,11 @@ const NEW = '9876543210fedcba9876543210fedcba98765432'
 
 describe('screening', () => {
   test('a name that is not a single directory name is refused', () => {
-    for (const name of ['..', '../evil', 'a/b', 'a\\b', '', '   ', '.']) {
+    for (const name of ['..', '../evil', 'a/b', 'a\\b', '', '   ', '.', 'Demo', 'has space', '-leading', 'name.', 'name ']) {
       expect(validateSkillName(name).ok, `${JSON.stringify(name)} must be refused`).toBe(false)
     }
     expect(validateSkillName('code-reviewer').ok).toBe(true)
+    expect(validateSkillName('NUL').ok).toBe(false)
   })
 
   test('a file that would leave the skill root is refused, before anything is written', () => {
@@ -80,10 +81,22 @@ describe('screening', () => {
     expect(validatePayloadFiles([{ path: 'scripts\\run.sh', contents: 'x' }]).ok).toBe(false)
   })
 
-  test('the same path twice is refused rather than silently keeping the last one', () => {
-    const result = validatePayloadFiles([{ path: 'a.md', contents: '1' }, { path: 'a.md', contents: '2' }])
-    expect(result.ok).toBe(false)
-    expect(!result.ok && result.reason).toContain('twice')
+  test('paths that alias on common case-insensitive filesystems are refused', () => {
+    const sameCase = validatePayloadFiles([{ path: 'a.md', contents: '1' }, { path: 'a.md', contents: '2' }])
+    expect(sameCase.ok).toBe(false)
+    expect(!sameCase.ok && sameCase.reason).toContain('aliases')
+
+    const caseAlias = validatePayloadFiles([{ path: 'Docs/Guide.md', contents: '1' }, { path: 'docs/guide.md', contents: '2' }])
+    expect(caseAlias.ok).toBe(false)
+    expect(!caseAlias.ok && caseAlias.reason).toContain('aliases')
+
+    // NFC-equivalent spellings are also one filename on common macOS volumes.
+    const unicodeAlias = validatePayloadFiles([{ path: 'café.md', contents: '1' }, { path: 'café.md', contents: '2' }])
+    expect(unicodeAlias.ok).toBe(false)
+    expect(!unicodeAlias.ok && unicodeAlias.reason).toContain('aliases')
+
+    expect(validatePayloadFiles([{ path: 'name./a.md', contents: 'x' }]).ok).toBe(false)
+    expect(validatePayloadFiles([{ path: 'name /a.md', contents: 'x' }]).ok).toBe(false)
   })
 
   test('a name the filesystem resolves to a device is refused', () => {
