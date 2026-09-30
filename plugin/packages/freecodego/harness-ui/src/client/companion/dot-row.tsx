@@ -36,10 +36,10 @@
  *   mark beside text, so four extra pixels of width move nothing; the row's leading
  *   box in the transcript is 16px, which a 14px face sits inside with the same
  *   breathing room the 10px dot had.
- * - **A row that paints a sweep keeps the dot as the row's mark.** The other
- *   direction of the hand-off in `./step-row.tsx`: a row with a band puts the
- *   character at the band's leading edge, and a row whose only in-flight mark is the
- *   dot puts it in the dot's slot. Neither happens twice in one row.
+ * - **The dot is a running row's only in-flight mark now.** The row-band seat that
+ *   used to draw the character at a running row's sweep leading edge is gone:
+ *   upstream removed the row sweeps, so every running row's in-flight mark is the
+ *   dot, and this seat places the character in the dot's own slot.
  * - **Only the conversation's own chrome.** The dot is also the shell's in-flight
  *   mark away from the conversation — a plugin fiber loading in the settings pages
  *   draws one — and the character does not speak for those: it is the *agent's*

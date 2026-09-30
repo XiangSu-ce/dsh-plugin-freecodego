@@ -389,11 +389,36 @@ export const LOGFARE_MODELS_URL = `${LOGFARE_BASE_URL}/models`
  */
 export const LOGFARE_STATUS_URL = `${LOGFARE_BASE_URL}/status?hours=1`
 /**
- * Logfare account-registration endpoint.
+ * Logfare sign-in endpoint.
+ *
+ * Signing in is the only account entry point this plugin can drive itself.
+ * Registration is gated on a short-lived HttpOnly cookie that only upstream's
+ * own browser Discord flow issues — `POST /auth/register` answers
+ * `403 Verify that you are in the Logfare Discord server` without it, for every
+ * body including an empty one — so the Host signs in to the account the web page
+ * created instead of creating one, and a new account is always made on that page.
  */
-export const LOGFARE_REGISTER_URL = `${LOGFARE_BASE_URL}/auth/register`
+export const LOGFARE_LOGIN_URL = `${LOGFARE_BASE_URL}/auth/login`
+/**
+ * Sentinel a caller throws when upstream suspends an account until Discord is linked.
+ *
+ * Carried as a leading token rather than only prose so the settings surface can
+ * distinguish "link Discord" from every other refusal and offer the one action
+ * that clears it. Upstream sends the same fact two ways — a
+ * `discord_migration_required` error type and a plain message naming `/migrate`
+ * — so the token is what the clients match on, not the wording.
+ */
+export const LOGFARE_DISCORD_MIGRATION_REQUIRED = 'LOGFARE_DISCORD_MIGRATION_REQUIRED'
+/**
+ * The Discord invite upstream requires membership of before an account is verified.
+ */
+export const LOGFARE_DISCORD_INVITE = 'https://discord.gg/QvuwEPNzDj'
 /**
  * Logfare endpoint that reads or sets the training-data preference.
+ *
+ * Still the premium switch: upstream's own consent page says opting in unlocks
+ * premium models and opting out revokes that access, while the separate
+ * eval-dataset preference beside it never changes access either way.
  */
 export const LOGFARE_TRAINING_PREFERENCE_URL = `${LOGFARE_BASE_URL}/auth/training-preference`
 /**
@@ -412,6 +437,15 @@ export const LOGFARE_STATUS_TIMEOUT_MS = 30_000
  * Timeout for one Logfare training-preference call.
  */
 export const LOGFARE_TRAINING_TIMEOUT_MS = 30_000
+/**
+ * How long one Logfare account reading is reused (30 seconds).
+ *
+ * Short on purpose. The settings surface reads it on every status refresh, the
+ * directory read reads it again, and the one event that changes it — the user
+ * clearing the Discord gate in another window — has to become visible without a
+ * restart.
+ */
+export const LOGFARE_ACCOUNT_CACHE_TTL_MS = 30_000
 /**
  * Desktop-browser User-Agent the Logfare site answers to on non-API pages.
  */
@@ -1063,11 +1097,20 @@ export function logfareSupportsChat(model: LogfareModel): boolean {
 }
 
 /**
- * Whether a Logfare route may train on its traffic, treating the auto alias as training-enabled.
+ * Whether a Logfare route is still held behind the training-data consent.
+ *
+ * The directory answers `premium_unlocked` for the key that asked, so the flag
+ * already says whether *this* account may use the route. A route it has unlocked
+ * is therefore not gated for it, and labelling it as gated is not cosmetic: the
+ * picker reads this label as the price (`tag:training` is a paid tag) and as a
+ * lock badge, so an unlocked account was shown its own free premium models as
+ * paid and unselectable, and the visibility controls started those rows hidden.
+ * Only a route the account has not unlocked carries the label.
  * @param model - the route to test.
- * @returns whether the route uses training data.
+ * @returns whether the route is gated behind the training-data consent.
  */
 export function logfareUsesTrainingData(model: LogfareModel): boolean {
+  if (model.premiumUnlocked) return false
   return logfareModelKey(model.id) === 'auto' || model.requiresTrainingOptIn
 }
 
@@ -1159,6 +1202,36 @@ export function splitSetCookie(value: string): readonly string[] {
  * @param fallback - the message used when the body carries none.
  * @returns the error message, with any credential-shaped text redacted.
  */
+/**
+ * Whether an account-API refusal is upstream's Discord-link gate.
+ *
+ * Upstream moved every account read behind a linked Discord account: a profile
+ * read answers `403 {"type":"discord_migration_required"}` for an account that
+ * registered before that gate existed, and the consent call answers with a
+ * message naming `/migrate`. Both are one user-visible fact, so they are
+ * recognised together rather than matched message by message.
+ * @param status - the HTTP status the account call answered with.
+ * @param detail - the message `logfareResponseError` rendered.
+ * @returns whether the refusal is the Discord-link gate.
+ */
+export function isLogfareDiscordMigrationRefusal(status: number, detail: string): boolean {
+  if (status !== 403) return false
+  return /migration_required|link your discord account|logfare discord server/iu.test(detail)
+}
+
+/**
+ * Render one Logfare account-API failure, carrying the Discord-link gate as a sentinel.
+ * @param response - the refused response.
+ * @param fallback - the caller's own description of the call.
+ * @returns the message to throw; prefixed with the sentinel when Discord must be linked.
+ */
+export async function logfareAccountError(response: Response, fallback: string): Promise<string> {
+  const detail = await logfareResponseError(response, fallback)
+  return isLogfareDiscordMigrationRefusal(response.status, detail)
+    ? `${LOGFARE_DISCORD_MIGRATION_REQUIRED}: ${detail}`
+    : detail
+}
+
 export async function logfareResponseError(response: Response, fallback: string): Promise<string> {
   const body = await response.text().catch(() => '')
   if (body === '') return `${fallback} (HTTP ${response.status})`

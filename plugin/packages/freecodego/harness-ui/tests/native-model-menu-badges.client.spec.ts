@@ -46,21 +46,26 @@ describe('native model menu badges', () => {
     })
     await new Promise(resolve => requestAnimationFrame(resolve))
     const rows = document.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]')
-    // Pricing and health are not rendered in the picker: a "free" tag beside a
-    // row the user is already choosing says nothing actionable, and the rolling
-    // probe values are stale by the time a selection is made. A multiplier is
-    // kept because it does convey cost.
-    // FREE and the route multiplier are owned by the official picker row;
-    // this decorator no longer duplicates them.
+    // Health is never rendered: the rolling probe values are stale by the time
+    // a selection is made. A rate is different — it states what the route costs,
+    // which is a decision input — so it renders as the row's trailing badge,
+    // right-aligned at the row's edge. A free route carries no number to print
+    // and gets no badge at all, rather than a zero that reads like a price.
     expect(rows[0]?.textContent).not.toContain('FREE')
     expect(rows[0]?.textContent).not.toContain('×0')
     expect(rows[0]?.textContent).not.toContain('正常')
     expect(rows[0]?.textContent).not.toContain('18ms')
-    expect(rows[1]?.textContent).not.toContain('×1.5')
-    expect(rows[1]?.textContent).not.toContain('异常')
-    expect(rows[1]?.textContent).not.toContain('1200ms')
     expect(rows[0]?.getAttribute('role')).toBe('menuitemradio')
     expect(rows[0]?.querySelector('[data-fcg-model-menu-badges]')).toBeNull()
+    expect(rows[1]?.textContent).not.toContain('异常')
+    expect(rows[1]?.textContent).not.toContain('1200ms')
+    expect(rows[1]?.querySelector<HTMLElement>('[data-fcg-model-menu-badge="multiplier"]')?.textContent).toBe('×1.5')
+    {
+      // The badge lane is the row's last child, so the rate sits at the right
+      // edge after the copy column instead of under the model name.
+      const row = rows[1]!
+      expect(row.lastElementChild?.getAttribute('data-fcg-model-menu-badges')).toBe('true')
+    }
     dispose()
   })
 
@@ -318,7 +323,7 @@ describe('native model menu badges', () => {
 
   it('points a training-data hold at the consent switch, not at the key field', async () => {
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="logfare"><div id="logfare">Logfare</div><button type="button" role="menuitemradio" title="Logfare Auto"><span class="optionCopy">Logfare Auto</span></button></section></div>'
-    const availability = new Map([['logfare\u0000logfare-auto', { available: false, reason: 'LOGFARE_PREMIUM_OPT_IN_REQUIRED' }]])
+    const availability = new Map([['logfare\u0000logfare-auto', { available: false, reason: 'LOGFARE_ACCOUNT_NOT_ACTIVATED' }]])
     const snapshot = () => ({ groups: [{ id: 'logfare', name: 'Logfare', models: [
       { id: 'logfare-auto', name: 'Logfare Auto', description: 'logfare · ×0 · tag:training' },
     ] }] })
@@ -336,7 +341,7 @@ describe('native model menu badges', () => {
       await new Promise(resolve => requestAnimationFrame(resolve))
       const row = document.querySelector<HTMLButtonElement>('button[role="menuitemradio"]')
       expect(row?.disabled).toBe(true)
-      expect(row?.getAttribute('title')).toContain('训练数据授权')
+      expect(row?.getAttribute('title')).toContain('同意训练数据')
       expect(row?.getAttribute('title')).not.toBe('此模型当前不可用')
     } finally {
       dispose()
@@ -350,7 +355,7 @@ describe('native model menu badges', () => {
     try {
       await new Promise(resolve => requestAnimationFrame(resolve))
       const row = document.querySelector<HTMLButtonElement>('button[role="menuitemradio"]')
-      expect(row?.getAttribute('title')).toContain('training-data consent')
+      expect(row?.getAttribute('title')).toContain('agree to training data')
     } finally {
       english()
     }
@@ -523,9 +528,13 @@ describe('native model menu badges', () => {
     const gatewayName = gatewayRow.querySelector<HTMLElement>('[data-fcg-model-visible-label], [class*=modelName]')!
     const gatewayGroup = gatewayRow.querySelector<HTMLElement>('[data-fcg-model-group]')
     expect(gatewayName.textContent).toBe('claude sonnet 5')
-    // The group line carries the group's rate: the name says which line the row
-    // bills through, the rate says what that line costs.
-    expect(gatewayGroup?.textContent).toBe('Claude-AWS · ×0.1')
+    // The group line names the billing group and stops there; the rate travels
+    // in the row's trailing badge lane, at the row's right edge, which is where
+    // the setup badge already sits — on the group line it read as part of the
+    // group's name and sat against the left edge.
+    expect(gatewayGroup?.textContent).toBe('Claude-AWS')
+    expect(gatewayRow.querySelector<HTMLElement>('[data-fcg-model-menu-badge="multiplier"]')?.textContent).toBe('×0.1')
+    expect(gatewayRow.lastElementChild?.getAttribute('data-fcg-model-menu-badges')).toBe('true')
     // The tooltip keeps the full identity, so hover still names the group.
     expect(gatewayRow.title).toBe('claude sonnet 5 · Claude-AWS')
     // Another provider's label is untouched end to end.
@@ -535,10 +544,11 @@ describe('native model menu badges', () => {
     dispose()
   })
 
-  it('leaves the rate off a gateway group line the Host could not rate', async () => {
+  it('leaves the badge off a gateway row the Host could not rate', async () => {
     // The Host composes `倍率未知` when the backend never reported a rate, and
-    // that string carries no `×` token — so the group line stays the group name
-    // rather than gaining a placeholder that reads like a price.
+    // that string carries no `×` token — so the row gains no rate badge rather
+    // than a placeholder that reads like a price, and the group line stays the
+    // group name.
     document.body.innerHTML = '<div role="menu"><section role="group" aria-labelledby="m-freecodego"><div id="m-freecodego">FreeCodeGo</div><button type="button" role="menuitemradio" title="glm-5.3 · Claude-AWS"><span class="optionCopy"><span class="modelName">glm-5.3 · Claude-AWS</span></span></button></section></div>'
     const dispose = install({
       language: () => 'zh',
@@ -549,6 +559,7 @@ describe('native model menu badges', () => {
     await new Promise(resolve => requestAnimationFrame(resolve))
     const row = document.querySelector<HTMLElement>('button[title="glm-5.3 · Claude-AWS"]')!
     expect(row.querySelector<HTMLElement>('[data-fcg-model-group]')?.textContent).toBe('Claude-AWS')
+    expect(row.querySelector('[data-fcg-model-menu-badge="multiplier"]')).toBeNull()
     dispose()
   })
 
@@ -849,6 +860,59 @@ describe('native model menu badges', () => {
     const row = document.querySelector<HTMLButtonElement>('button[role="menuitemradio"]')!
     expect(row.querySelector('[class*="optionMeta"]')?.childElementCount).toBe(0)
     expect(row.textContent).not.toContain('FREE')
+    dispose()
+  })
+
+  it('resolves a 0.2.0 MenuGroup section whose heading id carries no provider id', async () => {
+    // The 0.2.0 picker replaced the hand-built `${reactId}-${group.id}` heading
+    // with the `MenuGroup` primitive: the heading is now an instance-owned
+    // `useId()` and its label is a plain text node, and `role="menu"` moved off
+    // the outer surface onto the scrolling groups container. So neither the id
+    // suffix nor the display name resolves a group the picker (or this plugin)
+    // renames — only the rows it renders do.
+    document.body.innerHTML = '<div role="group" aria-label="Model">'
+      + '<div class="searchRow_hash"><input role="searchbox"></div>'
+      + '<div class="groups_hash scrollable" role="menu" aria-label="Model">'
+      + '<section role="group" aria-labelledby=":r1:" data-menu-group="" class="group_hash">'
+      + '<span aria-hidden="true" data-menu-group-start="" class="start_hash"></span>'
+      + '<div id=":r1:" data-menu-group-heading="" class="heading_hash">账户</div>'
+      + '<button type="button" role="menuitemradio" aria-checked="true" title="DeepSeek Chat"><span class="optionCopy_hash"><span class="modelName_hash">DeepSeek Chat</span></span></button>'
+      + '</section>'
+      + '<section role="group" aria-labelledby=":r2:" data-menu-group="" class="group_hash">'
+      + '<span aria-hidden="true" data-menu-group-start="" class="start_hash"></span>'
+      + '<div id=":r2:" data-menu-group-heading="" class="heading_hash">FreeCodeGo</div>'
+      + '<button type="button" role="menuitemradio" title="GLM-5.3"><span class="optionCopy_hash"><span class="modelName_hash">GLM-5.3</span></span></button>'
+      + '</section>'
+      + '</div></div>'
+    const dispose = install({
+      language: () => 'zh',
+      snapshot: () => ({
+        current: { provider: 'deepseek-account', model: 'deepseek-chat' },
+        groups: [
+          { id: 'deepseek-account', name: 'DeepSeek Account', models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat', description: 'DeepSeek Account · ×1' }] },
+          { id: 'freecodego', name: 'FreeCodeGo', models: [{ id: 'glm', name: 'GLM-5.3', description: 'FreeCodeGo · ×0.04' }] },
+        ],
+      }),
+    })
+    await new Promise(resolve => requestAnimationFrame(resolve))
+    const headings = document.querySelectorAll<HTMLElement>('[data-fcg-provider-toggle]')
+    // Both sections resolve even though the heading text disagrees with the
+    // directory name (`账户` vs `DeepSeek Account`).
+    expect([...headings].map(heading => heading.dataset.fcgProviderToggle).sort())
+      .toEqual(['deepseek-account', 'freecodego'])
+    expect([...headings].map(heading => heading.getAttribute('role'))).toEqual(['button', 'button'])
+    // The ordering attribute lands on the very element that has `role="menu"`,
+    // which is the shape the injected CSS has to match (it previously required
+    // a `[role="menu"]` ancestor and silently dropped the ordering here).
+    const container = document.querySelector<HTMLElement>('[role="menu"]')!
+    expect(container.dataset.fcgGroupOrdered).toBe('true')
+    const sections = [...container.querySelectorAll<HTMLElement>(':scope > section[role="group"]')]
+    const effective = [...sections]
+      .sort((left, right) => Number(left.style.order) - Number(right.style.order))
+      .map(section => section.getAttribute('aria-labelledby'))
+    // The gateway stays first; the renamed built-in account route is treated as
+    // a user provider (it is not in the plugin's built-in set) and sinks last.
+    expect(effective).toEqual([':r2:', ':r1:'])
     dispose()
   })
 

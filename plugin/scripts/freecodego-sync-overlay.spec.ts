@@ -94,10 +94,27 @@ describe('FreeCodeGo sync overlay', () => {
 
   it('targets a path the sync actually writes into the synced tree', () => {
     const suspicious = copies
-      .filter(entry => !entry.to.endsWith('.spec.ts'))
+      // Both test shapes the tree runs: unit specs and the Playwright end-to-end
+      // specs. A template that lands as neither would be copied and forgotten.
+      .filter(entry => !/\.(?:spec|e2e)\.ts$/u.test(entry.to))
       .map(entry => entry.to)
-    // A template that does not land as a spec would be copied and forgotten.
     expect(suspicious).toStrictEqual([])
+  })
+
+  it('retains every fork-only spec that lives under a mirrored directory', () => {
+    // `apps/` is mirrored exactly, so these have no upstream counterpart and the
+    // sweep deletes them on every sync unless the overlay copy below puts them
+    // back. Named here so dropping one from the copy list fails the gate instead
+    // of quietly costing the fork a test.
+    const targets = copies.map(entry => entry.to)
+    expect(targets).toEqual(expect.arrayContaining([
+      'apps/web/tests/freecodego-capabilities.e2e.ts',
+      'apps/web/tests/freecodego-design.e2e.ts',
+      'apps/web/tests/freecodego-root-engines.e2e.ts',
+      'apps/web/tests/freecodego-teams.e2e.ts',
+      'apps/web/tests/freecodego-voice.e2e.ts',
+      'apps/desktop/tests/freecodego-desktop-bundle.spec.ts',
+    ]))
   })
 
   it('keeps every template out of gitignore, so a clone can sync', () => {

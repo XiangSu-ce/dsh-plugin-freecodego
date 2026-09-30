@@ -9,12 +9,13 @@ kind: "package-bundle"
 
 ## 概述
 
-面向 DeepSeek Harness `freecodego@0.1.7-rc.2.3` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.1.7-rc.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.1.7-rc.2`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
+面向 DeepSeek Harness `freecodego@0.2.0-rc.2` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.2.0-rc.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.2.0-rc.2`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
 
 ## 目录
 
 - [安装](#install)
 - [免费模型](#free-models)
+- [私钥网关免费模型](#antseed-free-models)
 - [代码审查](#code-review)
 - [项目记忆](#project-memory)
 - [Agent Teams](#agent-teams)
@@ -32,10 +33,10 @@ kind: "package-bundle"
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-rc.2.3/freecodego-0.1.7-rc.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2/freecodego-0.2.0-rc.2.tgz
 ```
 
-`freecodego-0.1.7-rc.2.tgz` 就是面向 Harness `0.1.7-rc.2` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
+`freecodego-0.2.0-rc.2.tgz` 就是面向 Harness `0.2.0-rc.2` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
 
 `dsh` 命令由 Harness CLI 提供，不来自本 bundle。普通终端里请先用 `npm install --global @deepseek-ai/dsh` 安装它（并确保 `pnpm` 可用）。桌面端通过自己的私有 shim 运行同一条命令并传入当前 `DSH_HOME`，因此 Web 与桌面端选择同一个 Harness home 时共用同一份 Profile 数据目录。
 
@@ -54,19 +55,20 @@ gh workflow run release-freecodego.yml --ref freecodego-v<version>
 ## 免费模型
 
 <!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
-下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-09-28 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
+下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-09-30 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
 
 | 提供商 | 免费模型 | 目录 |
 |---|---|---|
-| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`longcat-2.5-preview-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 82 行中的 14 行；公开，无需登录 |
-| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stealth/space-bunny-alpha`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free` | 394 行中的 18 行；公开，每个出口 IP 每小时 200 次 |
-| **Logfare** | 对话 `claude-fable-5-1`、`claude-opus-4.6`、`claude-opus-5`、`deepseek-v3.2`、`deepseek-v4.1-flash`、`gemini-3.8-flash`、`gemma-4-26b`、`glm-5`、`glm-5.3`、`glm-5.3-flash`、`gpt-5.6-sol`、`gpt-6-astra`、`gpt-6-sol`、`grok-4.6`、`kimi-k2.5`、`kimi-k2.6`、`kimi-k2.7-code`、`kimi-k3`、`logfare/auto`、`mimo-v2.6-pro`、`moondream3.1`、`qwen-3.8-27b`、`space-bunny-alpha`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`flux-2-pro`、`gpt-image-2`、`mai-image-2.5`、`mai-image-2.6-flash`、`muse-image`、`sdxl-lightning`；视频 `grok-imagine-video`、`kling-v3.0-pro`、`seedance-2.0-fast`、`sora-2-pro`、`veo-3.1`；音频 `melotts`、`whisper-large-v3-turbo`；其他路由 `aleph-2`、`aura-2-en`、`hailuo-3-max`、`krea-2-medium-turbo`、`lucid-origin`、`nano-banana-2`、`nova-3`、`phoenix-1.0`、`wan-3.0-prime` | 50 行；42 行需要训练数据授权，其余 8 行不需要 |
+| **私钥网关** | 选择器里实时读到的免费路由 | 无需注册，也无需 API Key |
+| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`longcat-2.5-preview-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 84 行中的 14 行；公开，无需登录 |
+| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-sante:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stealth/space-bunny-alpha`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free` | 397 行中的 17 行；公开，每个出口 IP 每小时 200 次 |
+| **Logfare** | 对话 `claude-opus-5-5`、`deepseek-v3.2`、`gemma-4-26b`、`glm-5`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`logfare/auto`、`qwen-3.8-27b`、`space-bunny-alpha`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`flux-2-pro`、`gpt-image-2`、`sdxl-lightning`；音频 `whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nano-banana-2`、`nova-3`、`phoenix-1.0` | 24 行；16 行需要训练数据授权，其余 8 行不需要 |
 | **Qoder** | `Qwen 3.8 Flash`（路由 `qmodel_38flash`） | 免费 flash 路由，另有每日签到活动 |
-| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（82 行）中 | 调用需要 API key；核对于 2026-09-28 |
+| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（81 行）中 | 调用需要 API key；核对于 2026-09-30 |
 | **SenseNova** | `deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k3`、`sensenova-6.8-flash-lite` | 名单随 bundle 内置；需要 API key |
 | **TRAE** | 其目录列出的那些行 | 免费额度每日重置，按账号 |
-| **Cline** | 目录标记 `×0 · 官方免费模型` 的那些行 | 账号池 |
-| **WorkBuddy 国际版** | 积分包标记 `x0` 的那些行 | 设备登录，可放多个账号 |
+| **Cline** | 目录标记 `×0 · 官方免费模型` 的那些行 —— 其中包含 `deepseek-v4.1-flash` | 账号池 |
+| **WorkBuddy 国际版** | 积分包标记 `x0` 的那些行 —— `deepseek-v4.1-flash` 在其推广窗口内也算一个 | 设备登录，可放多个账号 |
 | **Agnes** | 对话与图片/视频行 | 控制面账号 |
 | **VyceAI** | 没有免费名单 | 每日签到额度支付其计量行 |
 | **Groq** | `whisper-large-v3-turbo` | 仅转写，不是对话路由 |
@@ -75,9 +77,16 @@ gh workflow run release-freecodego.yml --ref freecodego-v<version>
 
 TRAE、Cline、WorkBuddy 国际版、Agnes 不公布固定名单，因此它们的行在到达时计数，而不在此列名。
 
-Logfare 有 42 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+Logfare 有 16 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+
+`deepseek-v4.1-flash` 在这里还通过上面两个账号池免费提供：Cline 把它留在免费那一半，WorkBuddy 国际版则在推广期内覆盖它。
 
 <!-- generated:free-models:end -->
+
+<a id="antseed-free-models"></a>
+## 私钥网关免费模型
+
+私钥网关让用户无需注册、也无需申请 API Key 就能直接用上免费模型：它的身份本身就是一把 secp256k1 私钥，其 EVM 地址同时充当 peerId 和钱包地址。「账号与提供商」页面为它准备了一张卡片：点击下载会把钉死版本的运行时取进 Harness home，随后 Host 生成一个身份存进凭证库——不写 `~/.antseed`，私钥只生成一次、永不轮换，且只在用户明确点「导出私钥」时才回到浏览器。会话级网关开关会拉起运行时，并把它的目录发布在 `http://127.0.0.1:8390/v1`，所以只有在开关打开时，免费文本模型才会以 `antseed` 出现在选择器里，免费生图模型也只在这时才能在「概览」里选为默认生图模型，经由同一个端点上的 `/v1/images/generations` 生成。这个开关刻意不做持久化——重启后会再问一次——而且只接免费路由：运行时启动时带着一个零价格上限，由它自己的路由器强制执行，把任何高于该上限的报价直接丢掉，所以集成里没有充值、没有支付通道，即使之后钱包里有了余额也不可能通过它被扣款。因为上游默认的信誉门槛在路由上是硬门槛、而它的模型目录又完全不看这个门槛，运行时还会在自身根目录下的配置文件里钉死自己的路由偏好（信誉门槛为 0、优先免费报价），所以卡片列出的模型不会在请求时被拒；而端口已被其他进程占用时它会直接拒绝启动而不是复用，因为不是本插件启动的 buyer，就不是它能交出身份的那个 buyer。这里的「免费」指这个模型当下正被免费提供，所以目录只是一份快照，不是平台赠送的额度；卡片上的刷新会在不移动开关的前提下重新读取它。
 
 <a id="code-review"></a>
 ## 代码审查

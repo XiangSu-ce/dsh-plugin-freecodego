@@ -2,10 +2,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-ui-renderer/src/client/bind.ts'
-import { AutomationSettingsPanel, backendDefaultGroupName, CARD_CHANNEL_METHODS, categoryLabel, checkinSummary, createRequestEpochGate, describePaymentError, DeviceSessionManager, isCardChannel, isFreePricingRow, orderSettlementCurrency, PaymentReceiptManager, orderReceiptAvailable, orderReceiptStamp, stripeReceiptOffered, SecondModelPanel, SandboxModePanel, selectedChannelDescription, splitPricingRows, EngineeringEvalPanel, EngineeringMemoryPanel, engineeringTeamState, engineeringVerificationLine, FreeCodeGoSettingsBoundary, FreeCodeGoSettingsTab, modelCategoryOf, modelGroupLabel, modelGroupRows, paymentLimitText, pricingGroupName, pricingGroupRate, pricingRowKey, pricingRows, PluginConflictNotice, SkillSettingsSection, McpSettingsSection } from '../src/client/settings-tab.tsx'
+import { AutomationSettingsPanel, backendDefaultGroupName, CARD_CHANNEL_METHODS, categoryLabel, checkinSummary, createRequestEpochGate, describePaymentError, DeviceSessionManager, isCardChannel, isFreePricingRow, orderSettlementCurrency, PaymentReceiptManager, orderReceiptAvailable, orderReceiptStamp, stripeReceiptOffered, SecondModelPanel, SandboxModePanel, selectedChannelDescription, splitPricingRows, EngineeringEvalPanel, EngineeringMemoryPanel, engineeringTeamState, engineeringVerificationLine, FreeCodeGoSettingsBoundary, FreeCodeGoSettingsTab, modelCategoryOf, modelGroupLabel, modelGroupRows, paymentLimitText, pricingGroupName, pricingGroupRate, pricingRowKey, pricingRows, PluginConflictNotice, SkillSettingsSection, McpSettingsSection, withAntSeedMediaModels } from '../src/client/settings-tab.tsx'
 import { formatMoney, roundUpCurrency } from '../src/client/money-format.ts'
 import type { CapabilitySnapshot, GatewayModelPrice } from '../src/client/settings-tab.tsx'
-import type { FreeCodeGoDeviceSessions } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { FreeCodeGoAntSeedStatus, FreeCodeGoDeviceSessions } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { CommunityPluginsPage } from '../src/client/community-plugins.tsx'
 
@@ -173,6 +173,60 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     const rebuilt = await screen.findByText(/预算内省略 2 条/u)
     expect(rebuilt.textContent).toContain('索引已截断')
     expect(screen.getByText(/- alpha — a topic/u)).toBeTruthy()
+  })
+
+  it('publishes AntSeed free image models as image routes, and only those', () => {
+    // The adapter keeps image rows out of the Harness model list on purpose, so
+    // this catalog pass is the only door they have into the image pickers — and
+    // the protocol it stamps is what files them under 生图 whether or not the id
+    // happens to contain a word like "flux".
+    const catalog = { catalogRevision: 'test', models: [] } as never
+    const antseed: FreeCodeGoAntSeedStatus = {
+      installed: true, running: true, gatewayEnabled: true, hasIdentity: true,
+      port: 8390, version: '0.1.165', paidModels: 39,
+      models: [
+        { id: 'flux-2-pro', name: 'FLUX 2 Pro', kind: 'images' },
+        { id: 'gpt-oss-120b', name: 'gpt-oss 120b', kind: 'text' },
+      ],
+    }
+
+    const merged = withAntSeedMediaModels(catalog, antseed)
+
+    // The chat model is not duplicated here: it is already in the Harness list,
+    // and a second row would offer the same route twice.
+    expect(merged.models).toHaveLength(1)
+    expect(merged.models[0]).toEqual({
+      id: 'antseed/flux-2-pro',
+      displayName: 'FLUX 2 Pro',
+      provider: 'antseed',
+      providerName: 'Private Key Gateway',
+      protocol: 'image_generation',
+      availability: 'available',
+      compatibleEngines: [],
+      choices: [{ routeKey: 'antseed/flux-2-pro', label: 'Private Key Gateway', availability: 'available', compatibleEngines: [] }],
+    })
+    expect(modelCategoryOf(merged.models[0]!)).toBe('image')
+    // A closed gateway answers with no rows at all, and nothing to read at all is
+    // the same case: neither may put a route in the picker.
+    expect(withAntSeedMediaModels(catalog, { ...antseed, models: [] }).models).toHaveLength(0)
+    expect(withAntSeedMediaModels(catalog, undefined).models).toHaveLength(0)
+  })
+
+  it('leaves a catalog row another source already published for the same route', () => {
+    // Keyed the way the ladder keys a route, so a second pass over the same
+    // model replaces the row instead of listing it twice.
+    const existing = {
+      id: 'antseed/flux-2-pro', displayName: 'From the gateway', provider: 'antseed', protocol: 'image_generation',
+      availability: 'available', compatibleEngines: [], choices: [],
+    }
+    const antseed: FreeCodeGoAntSeedStatus = {
+      installed: true, running: true, gatewayEnabled: true, hasIdentity: true, port: 8390, version: '0.1.165', paidModels: 0,
+      models: [{ id: 'flux-2-pro', name: 'FLUX 2 Pro', kind: 'images' }],
+    }
+    const merged = withAntSeedMediaModels({ catalogRevision: 'test', models: [existing] } as never, antseed)
+
+    expect(merged.models).toHaveLength(1)
+    expect(merged.models[0]?.displayName).toBe('FLUX 2 Pro')
   })
 
   it('uses a persisted manual category override ahead of a model protocol', () => {
@@ -435,6 +489,68 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     expect(panel.textContent).toContain('生效中')
     expect(panel.textContent).toContain('已失效')
     expect(panel.textContent).toContain('1 条记录在当前运行树中仍然生效。')
+  })
+
+  it('declares thinking levels for custom APIs by default, and turning the switch off reaches the setting', async () => {
+    // The declaration is additive, so the default is on; what this pins is that the
+    // switch is offered at all and that flipping it writes the field the Host reads
+    // (`customApiReasoningEnabled`) rather than a local preference nothing consumes.
+    const customApiReasoningSet = vi.fn().mockResolvedValue(undefined)
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'freecodego', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      customApiReasoningSet={customApiReasoningSet}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
+    fireEvent.click(screen.getByText('设置'))
+    const toggle = await screen.findByLabelText('自定义 API 的思考程度') as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+    fireEvent.click(toggle)
+    await waitFor(() => { expect(customApiReasoningSet).toHaveBeenCalledWith(false) })
+  })
+
+  it('puts the custom-API thinking switch back when the write is refused', async () => {
+    // The switch holds its own optimistic value, so a refusal has to walk it back: a
+    // checkbox left showing a preference the document never took is the one failure
+    // mode of the optimistic update.
+    const customApiReasoningSet = vi.fn().mockRejectedValue(new Error('settings write refused'))
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'freecodego', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      customApiReasoningSet={customApiReasoningSet}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
+    fireEvent.click(screen.getByText('设置'))
+    const toggle = await screen.findByLabelText('自定义 API 的思考程度') as HTMLInputElement
+    fireEvent.click(toggle)
+    await waitFor(() => { expect(customApiReasoningSet).toHaveBeenCalledWith(false) })
+    await waitFor(() => { expect((screen.getByLabelText('自定义 API 的思考程度') as HTMLInputElement).checked).toBe(true) })
   })
 
   it('keeps automatic plugin conflict repair enabled by default and saves the switch', async () => {
@@ -842,6 +958,271 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     fireEvent.click(screen.getByText('账号与提供商'))
     expect(screen.getByText('SenseNova')).toBeTruthy()
     expect(screen.queryByRole('link', { name: '查看文档' })).toBeNull()
+  })
+
+  it('opens the accounts page on the gateway card that needs nothing but a download', async () => {
+    // Every other card here wants a credential before it does anything, and this
+    // one is the page's own free route: it is first so that the models a user can
+    // have for no key and no sign-in are the first thing they meet. The order is
+    // a property of the render, not of the stylesheet, because the DOM order is
+    // what a screen reader reads first and what this asserts.
+    const view = render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      antSeedStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: false, running: false, gatewayEnabled: false, hasIdentity: false, port: 8390, version: '0.1.165', models: [] } })}
+      traeStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const, accounts: [] } }) as never}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('账号与提供商'))
+
+    // Each provider card carries its provider name as the section's label, so the
+    // labels in document order are the page's order.
+    const cards = Array.from(view.container.querySelectorAll('section[aria-label]'))
+      .map(node => node.getAttribute('aria-label') ?? '')
+    expect(cards[0]).toBe('私钥网关')
+    // The key-gated providers still follow it rather than disappearing with it.
+    expect(cards).toContain('Trae')
+    expect(cards.indexOf('Trae')).toBeGreaterThan(cards.indexOf('私钥网关'))
+  })
+
+  it('offers the repair when the vault holds a key the plugin cannot read', async () => {
+    // A value the vault cannot parse blocks the switch, and the plugin refuses to
+    // write a new key over it because the value may name a wallet. The card is
+    // the only place that can say so — and the replace gesture has to be offered
+    // in this state too, since `hasIdentity: false` alone would read as "no
+    // identity yet" and hide the one thing that fixes the state.
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      antSeedStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: true, running: false, gatewayEnabled: false, hasIdentity: false, identityUnreadable: true, port: 8390, version: '0.1.165', models: [] } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('账号与提供商'))
+
+    expect(await screen.findByText(/凭证库里的私钥无法读取/u)).toBeTruthy()
+    expect(screen.getByText('私钥无法读取，请先替换私钥')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '替换私钥' })).toBeTruthy()
+    // Export stays hidden: there is nothing readable to hand back, and an export
+    // of nothing would read as a wiped wallet.
+    expect(screen.queryByRole('button', { name: '导出私钥' })).toBeNull()
+  })
+
+  it('explains an AntSeed runtime whose files went missing instead of leaving it at the download prompt', async () => {
+    // The status reports a reason of its own once the completion marker is there
+    // and the package is not, and this card is that reason's only surface: without
+    // the sentence the state reads exactly like a fresh install, and the user's
+    // next move — download again — is the one it already looked like.
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      antSeedStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: false, running: false, gatewayEnabled: false, hasIdentity: false, port: 8390, version: '0.1.165', models: [], reason: 'KEY_GATEWAY_RUNTIME_INCOMPLETE' } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('账号与提供商'))
+
+    expect(await screen.findByText('私钥网关')).toBeTruthy()
+    expect(await screen.findByText('运行时文件不完整，请重新下载。')).toBeTruthy()
+  })
+
+  it('says an AntSeed buyer stopped rather than promising models it can no longer discover', async () => {
+    // An open gateway over a process that died: the switch is still on in memory,
+    // so the card is the only place that can tell the user the node is gone — and
+    // "discovering free models…" would be a promise nothing is working on.
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      antSeedStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: true, running: false, gatewayEnabled: true, hasIdentity: true, peerId: 'ab'.repeat(20), port: 8390, version: '0.1.165', models: [] } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('账号与提供商'))
+
+    expect(await screen.findByText('服务已停止，请重新开启网关')).toBeTruthy()
+    expect(await screen.findByText('网关开着，但服务已经停止。关闭网关再打开即可重启。')).toBeTruthy()
+  })
+
+  it('counts the priced models it filtered out instead of showing them as free', async () => {
+    // AntSeed serves paid models from the same directory the free ones arrive
+    // from, so the roster is free-only and a short one has to say why: without
+    // the count it would read as a network with little to offer rather than as
+    // one where the rest is billed.
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      antSeedStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: true, running: true, gatewayEnabled: true, hasIdentity: true, peerId: 'ab'.repeat(20), port: 8390, version: '0.1.165', paidModels: 39, models: [{ id: 'glm-5.3-flash', name: 'glm-5.3-flash', kind: 'text' }] } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('账号与提供商'))
+
+    expect(await screen.findByText('免费模型 1 个，已过滤 39 个收费模型')).toBeTruthy()
+  })
+
+  it('says no model is free rather than still discovering when only priced ones were found', async () => {
+    // The other empty state: the buyer answered and advertised models, none of
+    // which is free. "Discovering…" would leave the user waiting for something
+    // that is not coming.
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      antSeedStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: true, running: true, gatewayEnabled: true, hasIdentity: true, port: 8390, version: '0.1.165', paidModels: 40, models: [] } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('账号与提供商'))
+
+    expect(await screen.findByText('没有免费模型：40 个模型都在收费')).toBeTruthy()
+  })
+
+  it('replaces the identity behind a confirmation, and never reads the key back', async () => {
+    // The card is the only place a key can be changed, and the address it names
+    // is a wallet: the panel is behind one click, the gesture behind a second,
+    // and the key travels one way — the status the card re-renders from never
+    // carries it, so what the user sees afterwards is the new address alone.
+    const pasted = 'cd'.repeat(32)
+    const antSeedSetIdentity = vi.fn().mockResolvedValue({ ok: true as const, value: { installed: true, running: false, gatewayEnabled: false, hasIdentity: true, peerId: 'cd'.repeat(20), port: 8390, version: '0.1.165', models: [] } })
+    const antSeedGenerateIdentity = vi.fn().mockResolvedValue({ ok: true as const, value: { installed: true, running: false, gatewayEnabled: false, hasIdentity: true, peerId: 'ef'.repeat(20), port: 8390, version: '0.1.165', models: [] } })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      antSeedStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: true, running: false, gatewayEnabled: true, hasIdentity: true, peerId: 'ab'.repeat(20), port: 8390, version: '0.1.165', models: [] } })}
+      antSeedSetIdentity={antSeedSetIdentity}
+      antSeedGenerateIdentity={antSeedGenerateIdentity}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('账号与提供商'))
+    expect(await screen.findByText(`身份（peerId）：${'ab'.repeat(20)}`)).toBeTruthy()
+    // Nothing to replace with until the user opens the panel.
+    expect(screen.queryByLabelText('要替换为的私钥')).toBeNull()
+
+    fireEvent.click(screen.getByText('替换私钥'))
+    fireEvent.change(await screen.findByLabelText('要替换为的私钥'), { target: { value: pasted } })
+    fireEvent.click(screen.getByText('确认替换'))
+
+    await waitFor(() => { expect(antSeedSetIdentity).toHaveBeenCalledWith(pasted) })
+    expect(await screen.findByText(`身份（peerId）：${'cd'.repeat(20)}`)).toBeTruthy()
+    expect(screen.queryByLabelText('要替换为的私钥')).toBeNull()
+
+    // The other spelling of the same gesture: no key to paste, so the Host makes
+    // one — and the address on the card moves with it.
+    fireEvent.click(screen.getByText('替换私钥'))
+    fireEvent.click(screen.getByText('生成新私钥'))
+
+    await waitFor(() => { expect(antSeedGenerateIdentity).toHaveBeenCalledTimes(1) })
+    expect(await screen.findByText(`身份（peerId）：${'ef'.repeat(20)}`)).toBeTruthy()
+  })
+
+  it('says nothing was replaced when the Host refuses the pasted key', async () => {
+    // A refused key is an error the user can act on, and the address on the card
+    // must stay the one that is still stored rather than looking changed.
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      antSeedStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: true, running: false, gatewayEnabled: true, hasIdentity: true, peerId: 'ab'.repeat(20), port: 8390, version: '0.1.165', models: [] } })}
+      antSeedSetIdentity={vi.fn().mockRejectedValue(new Error('The private key must be 32 bytes (64 hexadecimal characters)'))}
+      antSeedGenerateIdentity={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    fireEvent.click(await screen.findByText('账号与提供商'))
+    fireEvent.click(await screen.findByText('替换私钥'))
+    fireEvent.change(await screen.findByLabelText('要替换为的私钥'), { target: { value: 'nope' } })
+    fireEvent.click(screen.getByText('确认替换'))
+
+    expect(await screen.findByText('The private key must be 32 bytes (64 hexadecimal characters)')).toBeTruthy()
+    expect(await screen.findByText(`身份（peerId）：${'ab'.repeat(20)}`)).toBeTruthy()
   })
 
   it('signs in across the whole row, with no second column of marketing copy', async () => {

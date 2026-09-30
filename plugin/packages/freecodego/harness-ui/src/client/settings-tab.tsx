@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type FormEvent, type ReactNode 
 import { decideMediaDefault } from './media-default-preference.ts'
 import { formatAmountInCurrency, formatMoney, roundUpCurrency } from './money-format.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareLoginRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoAntSeedStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, InjectFace, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
@@ -11,7 +11,7 @@ import { CapabilityDetailModal, SkillDetailModal } from './capability-detail.tsx
 import { PROMPT_CATEGORY_ZH, capabilityText, hasLocalizedSkillDescription, localizedSkillDescription, skillPageText, type SkillPageText } from './capability-locale.ts'
 import { CommunityPluginsPage } from './community-plugins.tsx'
 import { PaymentDialog, orderStateLabel, safeCheckoutUrl, type PaymentDialogOrder } from './payment-dialog.tsx'
-import { ProviderCard, ProviderGlyph } from './provider-card.tsx'
+import { ProviderCard, ProviderGlyph, type ProviderStatusTone } from './provider-card.tsx'
 import { ProviderModelVisibility, type ProviderPickerModel } from './provider-model-visibility.tsx'
 
 /**
@@ -128,6 +128,46 @@ function withNativeMediaModels(catalog: ManagedCatalog, nativeModels: readonly N
       choices: [{ routeKey: id, label: model.providerName, availability: 'available', compatibleEngines: [] }],
     }
     byRoute.set(`${model.provider.toLowerCase()}\u0000${id.toLowerCase()}`, entry)
+  }
+  return { ...catalog, models: [...byRoute.values()] }
+}
+
+/**
+ * Publish the gateway's free image models as media routes.
+ *
+ * The plugin's model adapter deliberately keeps them out of the Harness model
+ * list: an image row is generated media, and offering it as a chat route would
+ * present a model that cannot answer a conversation. They reach the media
+ * pickers through this catalog instead, where the row carries
+ * `image_generation` — so the category page files it under 生图 because the
+ * protocol says so, not because its name happens to contain a word like "flux".
+ *
+ * The list is the gateway's own answer, which is empty while the switch is shut,
+ * so a closed gateway adds no route and needs no separate check here. It is also
+ * already filtered to models priced at zero for a picture, which is a shorter
+ * list than the network's image directory: that directory prices a picture per
+ * picture while showing `0` on both token fields, so most of it costs money.
+ * @param catalog - the catalog the page is reading.
+ * @param antseed - the gateway status, when this page has read one.
+ * @returns the catalog with the buyer's free image models appended.
+ */
+export function withAntSeedMediaModels(catalog: ManagedCatalog, antseed: FreeCodeGoAntSeedStatus | undefined): ManagedCatalog {
+  const rows = antseed?.models.filter(row => row.kind === 'images') ?? []
+  if (rows.length === 0) return catalog
+  const byRoute = new Map(catalog.models.map(model => [`${model.provider.toLowerCase()}\u0000${model.id.toLowerCase()}`, model]))
+  for (const row of rows) {
+    const id = mediaSelectionId('antseed', row.id)
+    const entry: ManagedCatalog['models'][number] = {
+      id,
+      displayName: row.name,
+      provider: 'antseed',
+      providerName: 'Private Key Gateway',
+      protocol: 'image_generation',
+      availability: 'available',
+      compatibleEngines: [],
+      choices: [{ routeKey: id, label: 'Private Key Gateway', availability: 'available', compatibleEngines: [] }],
+    }
+    byRoute.set(`antseed\u0000${id.toLowerCase()}`, entry)
   }
   return { ...catalog, models: [...byRoute.values()] }
 }
@@ -413,7 +453,7 @@ export interface CapabilitySkillFile { readonly path: string; readonly bytes: nu
 /** Body and companion files for the Skill detail dialog, loaded on demand. */
 export interface CapabilitySkillDetail extends CapabilitySkillEntry { readonly content: string; readonly files: readonly CapabilitySkillFile[]; readonly file?: { readonly path: string; readonly bytes: number; readonly content: string } }
 
-export interface CapabilitySnapshot { readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean; readonly modelCategories?: Readonly<Record<string, ModelCategory>>; readonly mcpServers: readonly CapabilityMcpServer[]; readonly skillRoots: readonly CapabilitySkillRoot[];  readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly CapabilitySkillEntry[]; readonly skillInvocationOverrides?: Readonly<Record<string, boolean>> | undefined; readonly mountErrors?: readonly { readonly id: string; readonly message: string }[]; readonly trustRefusals?: readonly { readonly id: string; readonly message: string }[] }
+export interface CapabilitySnapshot { readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean; readonly customApiReasoningEnabled?: boolean; readonly modelCategories?: Readonly<Record<string, ModelCategory>>; readonly mcpServers: readonly CapabilityMcpServer[]; readonly skillRoots: readonly CapabilitySkillRoot[];  readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly CapabilitySkillEntry[]; readonly skillInvocationOverrides?: Readonly<Record<string, boolean>> | undefined; readonly mountErrors?: readonly { readonly id: string; readonly message: string }[]; readonly trustRefusals?: readonly { readonly id: string; readonly message: string }[] }
 interface MarketplaceMcpItem { readonly id: string; readonly kind: 'mcp'; readonly title: string; readonly description: string; readonly category: string; readonly sourceUrl: string; readonly iconUrl?: string; readonly author?: string; readonly popularity: number; readonly installed: boolean; readonly installable: boolean; readonly requiresConfiguration?: boolean }
 interface MarketplaceMcpPage { readonly kind: 'mcp'; readonly total: number; readonly offset: number; readonly limit: number; readonly items: readonly MarketplaceMcpItem[] }
 /** Durable phase of a goal, mirrored from the Host boundary type. */
@@ -860,12 +900,28 @@ interface Injected {
   readonly vyceStatus?: () => Promise<RemoteResult<FreeCodeGoVyceStatus>>
   readonly vyceSetKey?: (value: string) => Promise<RemoteResult<FreeCodeGoVyceStatus>>
   readonly logfareStatus?: () => Promise<RemoteResult<FreeCodeGoLogfareStatus>>
-  readonly logfareRegister?: (input: FreeCodeGoLogfareRegistrationRequest) => Promise<RemoteResult<FreeCodeGoLogfareStatus>>
+  readonly logfareLogin?: (input: FreeCodeGoLogfareLoginRequest) => Promise<RemoteResult<FreeCodeGoLogfareStatus>>
   readonly logfareSetTrainingOptIn?: (enabled: boolean) => Promise<RemoteResult<FreeCodeGoLogfareStatus>>
   readonly sensenovaStatus?: () => Promise<RemoteResult<FreeCodeGoSenseNovaStatus>>
   readonly sensenovaSetKey?: (value: string) => Promise<RemoteResult<FreeCodeGoSenseNovaStatus>>
   readonly nvidiaStatus?: () => Promise<RemoteResult<FreeCodeGoNvidiaStatus>>
   readonly nvidiaSetKey?: (value: string) => Promise<RemoteResult<FreeCodeGoNvidiaStatus>>
+  /**
+   * Private key gateway: the runtime's install and switch state, plus the identity.
+   *
+   * All optional, like every other provider's remotes: a Host that predates this
+   * integration does not render the card at all, rather than rendering one whose
+   * buttons cannot work. The export is its own Remote because the key is a
+   * wallet, and the status that every render reads must not carry it; the two
+   * replacement remotes are separate from it because reading a key and stranding
+   * the address it names are not the same decision.
+   */
+  readonly antSeedStatus?: () => Promise<RemoteResult<FreeCodeGoAntSeedStatus>>
+  readonly antSeedInstall?: () => Promise<RemoteResult<FreeCodeGoAntSeedStatus>>
+  readonly antSeedSetGateway?: (enabled: boolean) => Promise<RemoteResult<FreeCodeGoAntSeedStatus>>
+  readonly antSeedRevealIdentity?: () => Promise<RemoteResult<{ readonly privateKeyHex: string; readonly peerId: string }>>
+  readonly antSeedSetIdentity?: (privateKeyHex: string) => Promise<RemoteResult<FreeCodeGoAntSeedStatus>>
+  readonly antSeedGenerateIdentity?: () => Promise<RemoteResult<FreeCodeGoAntSeedStatus>>
   readonly useConnectionEpoch: SnapshotSelectorHook<number>
   readonly paymentPlans?: () => Promise<RemoteResult<readonly PaymentPlan[]>>
   /** Limits and the publishable Stripe key the in-plugin card form needs. */
@@ -955,7 +1011,7 @@ interface Injected {
   /** Remember the chosen Skill destination, or clear it when no axes are named. */
   readonly skillPlacementPrefer?: (placement?: FreeCodeGoSkillPlacement) => Promise<RemoteResult<CapabilitySnapshot>>
   readonly capabilities?: () => Promise<RemoteResult<CapabilitySnapshot>>
-  readonly readLocalCapabilities?: () => Promise<{ readonly voiceInputEnabled: boolean; readonly sessionDeleteEnabled: boolean }>
+  readonly readLocalCapabilities?: () => Promise<{ readonly voiceInputEnabled: boolean; readonly sessionDeleteEnabled: boolean; readonly customApiReasoningEnabled: boolean }>
   readonly capabilitiesSetEnabled?: (input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }) => Promise<RemoteResult<CapabilitySnapshot>>
   /**
    * The microphone's route: which recognizer, at which address, with which model.
@@ -977,6 +1033,14 @@ interface Injected {
   readonly speechTest?: () => Promise<RemoteResult<FreeCodeGoSpeechTest>>
   /** Direct native Settings write used for local UI switches when older Remote descriptors are present. */
   readonly setLocalCapability?: (key: 'voiceInputEnabled' | 'sessionDeleteEnabled', value: boolean) => Promise<void>
+  /**
+   * Declare reasoning levels for the user's own third-party API models.
+   *
+   * A direct settings write, not a Remote call: the Host reads the value from its
+   * own live configuration and re-runs the declaration pass on this document's
+   * change event, so the switch has no second entry point to keep in step.
+   */
+  readonly customApiReasoningSet?: (enabled: boolean) => Promise<void>
   readonly setModelCategoryDirect?: (key: string, category: ModelCategory) => Promise<void>
   readonly modelCategorySet?: (input: { readonly key: string; readonly category?: ModelCategory }) => Promise<RemoteResult<CapabilitySnapshot>>
   readonly pluginConflictStatus?: () => Promise<RemoteResult<FreeCodeGoPluginConflictStatus>>
@@ -2702,7 +2766,7 @@ export function EngineeringSettingsSection({ engineeringStatus, engineeringSetEn
   </section>
 }
 
-type ReadyState = { status: 'ready'; catalog: Catalog; managedCatalog: ManagedCatalog; account: AccountState; paymentConfig?: PaymentConfigSnapshot; vyce?: FreeCodeGoVyceStatus; logfare?: FreeCodeGoLogfareStatus; logfareSupported?: boolean; sensenova?: FreeCodeGoSenseNovaStatus; nvidia?: FreeCodeGoNvidiaStatus; plans: readonly PaymentPlan[]; channels: readonly PaymentChannel[]; gatewayPrices: readonly GatewayModelPrice[]; gatewayPricingError?: string | undefined; order?: PaymentOrder; pendingOrders?: readonly PaymentOrder[]; agnes?: AgnesStatus; cline?: ClineStatus; workbuddy?: WorkBuddyInternationalStatus; qoder?: QoderStatus; trae?: TraeStatus; actionError?: string; syncStatus?: 'refreshing' | 'offline'; syncError?: string }
+type ReadyState = { status: 'ready'; catalog: Catalog; managedCatalog: ManagedCatalog; account: AccountState; paymentConfig?: PaymentConfigSnapshot; vyce?: FreeCodeGoVyceStatus; logfare?: FreeCodeGoLogfareStatus; logfareSupported?: boolean; sensenova?: FreeCodeGoSenseNovaStatus; nvidia?: FreeCodeGoNvidiaStatus; antseed?: FreeCodeGoAntSeedStatus; plans: readonly PaymentPlan[]; channels: readonly PaymentChannel[]; gatewayPrices: readonly GatewayModelPrice[]; gatewayPricingError?: string | undefined; order?: PaymentOrder; pendingOrders?: readonly PaymentOrder[]; agnes?: AgnesStatus; cline?: ClineStatus; workbuddy?: WorkBuddyInternationalStatus; qoder?: QoderStatus; trae?: TraeStatus; actionError?: string; syncStatus?: 'refreshing' | 'offline'; syncError?: string }
 // One member, because one member is what every producer builds: the cache read and
 // the fallback are both `ReadyState`. A `loading` / `error` variant used to sit here
 // with two consumers in the render body and **no producer anywhere**, so the panel
@@ -2735,17 +2799,29 @@ const mediaDefaultRetryAfter = new Map<string, number>()
 type SettingsCache = { readonly language: 'zh' | 'en'; readonly catalog: Injected['catalog']; readonly savedAt: number; readonly state: ReadyState }
 let settingsCache: SettingsCache | undefined
 
-function createLogfareCredentials(): { readonly username: string; readonly password: string } {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  const passwordAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_'
-  const random = (characters: string, length: number): string => {
-    const values = new Uint32Array(length)
-    if (globalThis.crypto?.getRandomValues !== undefined) globalThis.crypto.getRandomValues(values)
-    else for (let index = 0; index < values.length; index += 1) values[index] = Math.floor(Math.random() * 0x1_0000_0000)
-    return [...values].map(value => characters[value % characters.length]!).join('')
-  }
-  return { username: `fcg-${random(alphabet, 14)}`, password: random(passwordAlphabet, 22) }
+/**
+ * Render one Logfare account failure as something the card can act on.
+ *
+ * Upstream suspends an account until its Discord link is made and says so with a
+ * sentinel the Host carries through; naming the one action that clears it is the
+ * difference between a red line and a fixable state. Everything else passes
+ * through unchanged, because upstream's own wording is the better description of
+ * a refusal this code did not anticipate.
+ * @param message - the failure the remote reported.
+ * @param language - the surface's language.
+ * @returns the line the card shows.
+ */
+function describeLogfareError(message: string, language: 'zh' | 'en'): string {
+  if (!message.includes('LOGFARE_DISCORD_MIGRATION_REQUIRED')) return message
+  return language === 'zh'
+    ? '上游要求该 Logfare 账号先绑定 Discord 才能使用账号功能：点上方「绑定 Discord 并激活」，完成后回到这里重新登录一次。'
+    : 'Upstream requires this Logfare account to link Discord before its account features work: use "Link Discord and activate" above, then sign in here again.'
 }
+
+/** The Logfare pages this card hands off to, which are the only steps no code can drive. */
+const LOGFARE_REGISTER_PAGE = 'https://logfare.ai/register'
+const LOGFARE_MIGRATE_PAGE = 'https://logfare.ai/migrate'
+const LOGFARE_DISCORD_INVITE = 'https://discord.gg/QvuwEPNzDj'
 
 function settingsStorage(): Storage | undefined {
   try { return globalThis.localStorage } catch { return undefined }
@@ -3398,7 +3474,8 @@ interface OpenPaymentDialog {
   readonly payCurrency: string | undefined
 }
 
-export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey, logfareStatus, logfareRegister, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer, capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, secondModelStatus, secondModelUpdate, secondModelRoutes, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, engineeringStatus, engineeringSetEnabled, speechStatus, speechSetRoute, speechTest, language, t }: Props): ReactNode {
+export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey,  logfareStatus, logfareLogin, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, antSeedStatus, antSeedInstall, antSeedSetGateway, antSeedRevealIdentity, antSeedSetIdentity, antSeedGenerateIdentity, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer,capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, customApiReasoningSet, setModelCategoryDirect, modelCategorySet
+, pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, secondModelStatus, secondModelUpdate, secondModelRoutes, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, engineeringStatus, engineeringSetEnabled, speechStatus, speechSetRoute, speechTest, language, t }: Props): ReactNode {
   const [state, setState] = useState<State>(() => cachedSettings(language, catalog)?.state ?? { ...fallbackSettings(), syncStatus: 'refreshing' })
   // A fresh catalog render must not infer media defaults until the Host has
   // returned the durable values. Otherwise the first available model can race
@@ -3489,8 +3566,23 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
   const [claudeBusy, setClaudeBusy] = useState(false)
   const [vyceKey, setVyceKey] = useState('')
   const [vyceBusy, setVyceBusy] = useState(false)
-  const [logfareRegisterBusy, setLogfareRegisterBusy] = useState(false)
+  const [logfareLoginBusy, setLogfareLoginBusy] = useState(false)
   const [logfareTrainingBusy, setLogfareTrainingBusy] = useState(false)
+  /** The account name the user types. Digits only, which is this plugin's own
+   * contract for the Logfare accounts it manages rather than upstream's. */
+  const [logfareAccountName, setLogfareAccountName] = useState('')
+  const [logfareAccountPassword, setLogfareAccountPassword] = useState('')
+  /**
+   * The Logfare card's own failure line, drawn beside the buttons that produced it.
+   *
+   * The same defect `authNotice` above describes, in the same shape: the
+   * panel-wide `actionError` renders at the top of this tab, and this card sits
+   * far below it. A refused application or a refused consent therefore put its
+   * reason on a line the reader had already scrolled past — a button that does
+   * nothing and a button whose failure is off-screen look identical from here, so
+   * the two Logfare actions report on this line instead of that one.
+   */
+  const [logfareNotice, setLogfareNotice] = useState<string | undefined>(undefined)
   const [logfareKey, setLogfareKey] = useState('')
   const [logfareKeyBusy, setLogfareKeyBusy] = useState(false)
   const [clineToken, setClineToken] = useState('')
@@ -3503,6 +3595,17 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
   const [sensenovaBusy, setSensenovaBusy] = useState(false)
   const [nvidiaKey, setNvidiaKey] = useState('')
   const [nvidiaBusy, setNvidiaBusy] = useState(false)
+  const [antSeedBusy, setAntSeedBusy] = useState(false)
+  /**
+   * The private key, once the user has asked to export it.
+   *
+   * Held here rather than in the status: the status is read on every render and
+   * on every reconnect, and a wallet key must not ride along with it.
+   * `undefined` means "not exported in this view".
+   */
+  const [antSeedKey, setAntSeedKey] = useState<string | undefined>(undefined)
+  const [antSeedReplaceOpen, setAntSeedReplaceOpen] = useState(false)
+  const [antSeedNewKey, setAntSeedNewKey] = useState('')
   const [agnesEmail, setAgnesEmail] = useState('')
   const [agnesPassword, setAgnesPassword] = useState('')
   const [agnesCode, setAgnesCode] = useState('')
@@ -3538,7 +3641,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
     ? paymentType
     : state.status === 'ready' ? state.channels[0]?.paymentType ?? '' : ''
   const effectiveCatalog = state.status === 'ready'
-    ? withNativeMediaModels(withProviderAvailability(state.managedCatalog, state.logfare?.configured === true, state.logfare?.premiumUnlocked === true), nativeModels, capabilitySnapshot?.modelCategories ?? {})
+    ? withAntSeedMediaModels(withNativeMediaModels(withProviderAvailability(state.managedCatalog, state.logfare?.configured === true, state.logfare?.premiumUnlocked === true), nativeModels, capabilitySnapshot?.modelCategories ?? {}), state.antseed)
     : emptyManagedCatalog
   const categoryModels = effectiveCatalog.models.filter(model => model.availability === 'available' && modelCategoryOf(model, capabilitySnapshot?.modelCategories) === modelCategory)
   const categoryProviderGroups = modelGroupRows(categoryModels, effectiveCatalog.groups)
@@ -3617,6 +3720,83 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
   // advertises a fake local model to stand in for it.
   const sensenovaModelNames = providerModelNames('sensenova', 'text')
   const nvidiaModelNames = providerModelNames('nvidia', 'text')
+  // The gateway's card state, derived here so the card is a shape rather than a pile
+  // of ternaries. The roster comes from the buyer's own answer rather than from
+  // `providerModelNames`, because the card reports what the node can reach: an
+  // image row is generated media and never becomes a picker entry, and both
+  // listings are free offers on the same network.
+  const antSeed = state.status === 'ready' ? state.antseed : undefined
+  const antSeedInstalled = antSeed?.installed === true
+  const antSeedGatewayEnabled = antSeed?.gatewayEnabled === true
+  const antSeedHasIdentity = antSeed?.hasIdentity === true
+  // A value the vault cannot parse is not an absent identity: it is one the
+  // plugin refuses to overwrite, so the card has to offer the repair where that
+  // value lives — the replace gesture — rather than look like a fresh install.
+  const antSeedIdentityUnreadable = antSeed?.identityUnreadable === true
+  const antSeedModels = antSeed?.models ?? []
+  // Image rows keep their own label, because the one thing a user has to be able
+  // to tell apart in this list is a route that answers with text from one that
+  // renders a picture. Nothing on the card promises such a row will exist: the
+  // free roster is what the network currently offers, and every image offer on it
+  // has so far been billed per picture, which is why the card says nothing about
+  // images at all and reports the roster as one number.
+  const antSeedModelLabels = antSeedModels.map(row => row.kind === 'images' ? `${row.name} · ${language === 'zh' ? '生图' : 'image'}` : row.name)
+  // The rows the network advertised at a price. Reported as a count because the
+  // rejected offers are the point: the network serves paid models from the same
+  // directory, and an image column that is always empty needs a reason.
+  const antSeedPaidCount = antSeed?.paidModels ?? 0
+  // A closed gateway after a restart is the normal reading — the switch is
+  // session state on purpose — so it is stated as the next step, not as a fault.
+  const antSeedStatusLabel = !antSeedInstalled
+    ? (language === 'zh' ? '未下载' : 'Not downloaded')
+    : antSeedGatewayEnabled
+      ? (language === 'zh' ? '网关已开启' : 'Gateway open')
+      : (language === 'zh' ? '网关已关闭' : 'Gateway closed')
+  const antSeedStatusTone: ProviderStatusTone = !antSeedInstalled ? 'idle' : antSeedGatewayEnabled ? 'live' : 'warn'
+  const antSeedSummary = (() => {
+    if (antSeedIdentityUnreadable) return language === 'zh' ? '私钥无法读取，请先替换私钥' : 'The private key cannot be read; replace it first'
+    if (!antSeedInstalled) return language === 'zh' ? '下载后即可直接使用免费模型' : 'Download once, then use the free models'
+    if (!antSeedGatewayEnabled) return language === 'zh' ? '网关关闭时不向模型列表添加任何模型' : 'A closed gateway adds nothing to the model list'
+    // An open gateway over a stopped buyer is not "discovering": nothing is
+    // running to discover with, and saying so is how the user learns the process
+    // died instead of concluding the network offers no free models.
+    if (antSeed.running !== true) return language === 'zh' ? '服务已停止，请重新开启网关' : 'The service stopped; reopen the gateway'
+    if (antSeedModels.length === 0) return antSeedPaidCount === 0
+      ? (language === 'zh' ? '正在发现免费模型…' : 'Discovering free models…')
+      : (language === 'zh' ? `没有免费模型：${antSeedPaidCount} 个模型都在收费` : `No free models: all ${antSeedPaidCount} advertised are billed`)
+    const roster = language === 'zh'
+      ? `免费模型 ${antSeedModels.length} 个`
+      : `${antSeedModels.length} free models`
+    return antSeedPaidCount === 0
+      ? roster
+      : language === 'zh' ? `${roster}，已过滤 ${antSeedPaidCount} 个收费模型` : `${roster}; ${antSeedPaidCount} billed filtered out`
+  })()
+  // The states the card cannot infer from the roster are read here rather than
+  // printed: the runtime's two reason codes and the vault's one, none of which
+  // has another surface. An absent marker needs no sentence — the download
+  // button and the summary already say what to do — while an incomplete tree is
+  // the one runtime state where the user has to be told the files went away
+  // rather than that they never arrived. The identity comes first of all, even
+  // ahead of the download: a key the vault cannot parse blocks the switch
+  // whatever else is true, and "download the runtime" would be advice that does
+  // not fix it.
+  const antSeedNotice = antSeed === undefined
+    ? undefined
+    : antSeedIdentityUnreadable
+      ? (language === 'zh' ? '凭证库里的私钥无法读取，网关不会用它启动。请用「替换私钥」粘贴正确的私钥，或由 Host 生成一把新的 —— 插件不会在你不知情时更换钱包。' : 'The stored private key cannot be read, so the gateway will not start with it. Use "Replace key" to paste the key this address belongs to, or generate a new one — this plugin never swaps a wallet out on its own.')
+      : !antSeed.installed
+        ? antSeed.reason === 'KEY_GATEWAY_RUNTIME_INCOMPLETE'
+          ? (language === 'zh' ? '运行时文件不完整，请重新下载。' : 'The runtime files are incomplete; download again.')
+          : undefined
+        : antSeed.gatewayEnabled && antSeed.running !== true
+          ? (language === 'zh' ? '网关开着，但服务已经停止。关闭网关再打开即可重启。' : 'The gateway is open but the service has stopped. Close the gateway and open it again to restart it.')
+          : !antSeed.gatewayEnabled
+            ? (language === 'zh' ? '开启网关后才能使用免费模型；网关不持久化，每次重启 Harness 都需要重新手动开启。' : 'Free models need the gateway open. The switch is not stored, so every Harness restart needs it opened again.')
+            : undefined
+  const antSeedPeerId = antSeed?.peerId ?? ''
+  const antSeedPeerLine = antSeedPeerId === ''
+    ? (language === 'zh' ? '尚未创建身份；下载运行时会由插件生成并保管私钥。' : 'No identity yet; the download creates and holds the private key.')
+    : (language === 'zh' ? `身份（peerId）：${antSeedPeerId}` : `Identity (peerId): ${antSeedPeerId}`)
   // Agnes media routes are excluded: they belong to the media-default picker,
   // not to the chat model list this card describes.
   const agnesModelNames = providerModelNames('agnes', 'text')
@@ -3907,6 +4087,9 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
       })
       refreshRemote(sensenovaStatus, (sensenova) => { patchReady({ sensenova }) })
       refreshRemote(nvidiaStatus, (nvidia) => { patchReady({ nvidia }) })
+      // Read beside the others. The roster is empty while the gateway is closed,
+      // which is exactly what the card shows and what the switch means.
+      refreshRemote(antSeedStatus, (antseed) => { patchReady({ antseed }) })
       // A failed account refresh has no reliable access token for these
       // gateway-backed requests. The durable model catalog is browser-safe,
       // however, so still ask the Host for its offline cache.
@@ -4130,28 +4313,37 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
       else setState(previous => previous.status === 'ready' ? { ...previous, vyce: result.value } : previous)
     }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setVyceBusy(false) })
   }
-  const registerLogfare = (): void => {
-    if (logfareRegister === undefined || logfareRegisterBusy || state.status !== 'ready') return
-    // Logfare requires these fields for account creation. The compact flow
-    // accepts them by default and keeps its one-time credentials internal.
-    const credentials = createLogfareCredentials()
-    setLogfareRegisterBusy(true)
-    void logfareRegister({ ...credentials, ageConfirmed: true, tosAccepted: true, trainingOptIn: false }).then((result) => {
+  /**
+   * Sign the Host in to the Logfare account the user names.
+   *
+   * There is no registration counterpart, and adding one back would be a bug:
+   * upstream gates `POST /auth/register` on a short-lived HttpOnly cookie that
+   * only its own browser Discord flow issues — it refuses every body, including
+   * an empty one, without that cookie — so the account is created on the
+   * provider's web page and this is the half the plugin can drive. The session
+   * it returns is what the consent switch and the premium unlock both read.
+   */
+  const loginLogfare = (): void => {
+    if (logfareLogin === undefined || logfareLoginBusy || state.status !== 'ready') return
+    setLogfareLoginBusy(true)
+    setLogfareNotice(undefined)
+    void logfareLogin({ username: logfareAccountName.trim(), password: logfareAccountPassword }).then((result) => {
       if (!result.ok) {
-        setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
+        setLogfareNotice(describeLogfareError(result.error.message, language))
         return
       }
+      setLogfareAccountPassword('')
       applyLogfareStatus(result.value)
       refreshManagedMediaCatalog()
-    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setLogfareRegisterBusy(false) })
+    }, (error: unknown) => { setLogfareNotice(describeLogfareError(error instanceof Error ? error.message : String(error), language)) }).finally(() => { setLogfareLoginBusy(false) })
   }
   /**
    * Store a Logfare key the user already holds.
    *
    * Applying for a credential and supplying an existing one were the same single
-   * path before this: `logfareRegister` creates an account and saves whatever the
-   * backend issues. Someone with a key from another machine had no way to enter
-   * it, so the only route was to apply again under a new identity.
+   * path before this: signing in drove the provider's own sign-up and saved
+   * whatever it issued. Someone with a key from another machine had no way to
+   * enter it, so the only route was to apply again under a new identity.
    */
   const saveLogfareKey = (): void => {
     if (logfareSetKey === undefined || logfareKeyBusy || logfareKey.trim() === '') return
@@ -4181,10 +4373,11 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
   const setLogfareTraining = (): void => {
     if (logfareSetTrainingOptIn === undefined || logfareTrainingBusy) return
     setLogfareTrainingBusy(true)
+    setLogfareNotice(undefined)
     void logfareSetTrainingOptIn(true).then((result) => {
-      if (!result.ok) setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
+      if (!result.ok) setLogfareNotice(describeLogfareError(result.error.message, language))
       else { applyLogfareStatus(result.value); refreshManagedMediaCatalog() }
-    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setLogfareTrainingBusy(false) })
+    }, (error: unknown) => { setLogfareNotice(describeLogfareError(error instanceof Error ? error.message : String(error), language)) }).finally(() => { setLogfareTrainingBusy(false) })
   }
   const saveSensenovaKey = (): void => {
     if (sensenovaSetKey === undefined || sensenovaBusy) return
@@ -4225,6 +4418,103 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
       if (!result.ok) setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
       else setState(previous => previous.status === 'ready' ? { ...previous, nvidia: result.value } : previous)
     }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setNvidiaBusy(false) })
+  }
+  /**
+   * Download the buyer runtime and create its identity, in one gesture.
+   *
+   * The Host owns the ordering — download first, key second — so a failed
+   * download never leaves the user holding a wallet a broken button announced.
+   */
+  const installAntSeed = (): void => {
+    if (antSeedInstall === undefined || antSeedBusy) return
+    setAntSeedBusy(true)
+    setAntSeedKey(undefined)
+    void antSeedInstall().then((result) => {
+      if (!result.ok) {
+        setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
+        return
+      }
+      setState(previous => previous.status === 'ready' ? { ...previous, antseed: result.value } : previous)
+    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setAntSeedBusy(false) })
+  }
+  /**
+   * Open or close the session gateway.
+   *
+   * Opening is what starts the local buyer and opens peer connections, so this
+   * switch is the user's consent to run it. It is deliberately not stored, and
+   * the Host closes it on the next start; the card says so beside the control.
+   */
+  const toggleAntSeedGateway = (enabled: boolean): void => {
+    if (antSeedSetGateway === undefined || antSeedBusy) return
+    setAntSeedBusy(true)
+    void antSeedSetGateway(enabled).then((result) => {
+      if (!result.ok) {
+        setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
+        return
+      }
+      setState(previous => previous.status === 'ready' ? { ...previous, antseed: result.value } : previous)
+    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setAntSeedBusy(false) })
+  }
+  /**
+   * Re-read the buyer's roster without touching the switch.
+   *
+   * The roster is a live peer market: sellers arrive and leave while the
+   * gateway stays open, and the page only reads it once when it loads. This is
+   * the affordance that makes a model appear without toggling the gateway off
+   * and on again — which would drop the process an in-flight request is on.
+   */
+  const refreshAntSeedModels = (): void => {
+    if (antSeedStatus === undefined || antSeedBusy) return
+    setAntSeedBusy(true)
+    void antSeedStatus().then((result) => {
+      if (!result.ok) {
+        setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
+        return
+      }
+      setState(previous => previous.status === 'ready' ? { ...previous, antseed: result.value } : previous)
+    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setAntSeedBusy(false) })
+  }
+  /**
+   * Ask the Host for the private key, on an explicit click.
+   *
+   * This is the only moment the key exists outside the Host vault, which is why
+   * it is its own button and its own Remote rather than a field of the status.
+   */
+  const revealAntSeedIdentity = (): void => {
+    if (antSeedRevealIdentity === undefined || antSeedBusy) return
+    setAntSeedBusy(true)
+    void antSeedRevealIdentity().then((result) => {
+      if (!result.ok) {
+        setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
+        return
+      }
+      setAntSeedKey(result.value.privateKeyHex)
+    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setAntSeedBusy(false) })
+  }
+  /**
+   * Replace the stored identity, from a pasted key or a freshly generated one.
+   *
+   * Both gestures run through here because they differ only in where the key
+   * comes from: the card asks for a confirmation, the Host refuses a key it
+   * cannot parse, and what follows is the same status with a new peer id beside
+   * it. A key the user exported a moment ago is dropped, since it no longer
+   * names the identity this card describes.
+   */
+  const replaceAntSeedIdentity = (call: () => Promise<RemoteResult<FreeCodeGoAntSeedStatus>> | undefined): void => {
+    if (antSeedBusy) return
+    const pending = call()
+    if (pending === undefined) return
+    setAntSeedBusy(true)
+    void pending.then((result) => {
+      if (!result.ok) {
+        setState(previous => previous.status === 'ready' ? { ...previous, actionError: result.error.message } : previous)
+        return
+      }
+      setAntSeedKey(undefined)
+      setAntSeedNewKey('')
+      setAntSeedReplaceOpen(false)
+      setState(previous => previous.status === 'ready' ? { ...previous, antseed: result.value } : previous)
+    }, (error: unknown) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: error instanceof Error ? error.message : String(error) } : previous) }).finally(() => { setAntSeedBusy(false) })
   }
   useEffect(() => {
     const reconnected = observedConnectionEpoch.current !== connectionEpoch
@@ -5190,7 +5480,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
           <button className={`${css.pageTab} ${settingsPage === 'settings' ? css.pageTabActive : ''}`} type="button" onClick={() => { setSettingsPage('settings') }}>{language === 'zh' ? '设置' : 'Settings'}</button>
         </nav>
         {settingsPage === 'community' && capabilityMarketplace !== undefined && mcpPresetInstall !== undefined && skillPresetInstall !== undefined ? <CommunityPluginsPage communityCatalog={communityCatalog} communityCatalogIcons={communityCatalogIcons} communityEnvironment={communityEnvironment} communityInstalled={communityInstalled} communityInstall={communityInstall} communityUninstall={communityUninstall} capabilityMarketplace={capabilityMarketplace} mcpPresetInstall={mcpPresetInstall} skillPresetInstall={skillPresetInstall} skillPresetRemove={skillPresetRemove} skillPlacements={skillPlacements} skillPlacementPrefer={skillPlacementPrefer} language={language} /> : null}
-        {settingsPage === 'settings' ? <ModelCategorySettingsPage models={nativeModels} categories={capabilitySnapshot?.modelCategories ?? {}} setCategory={modelCategorySet} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: message } : previous) }} /> : null}
+        {settingsPage === 'settings' ? <ModelCategorySettingsPage models={nativeModels} categories={capabilitySnapshot?.modelCategories ?? {}} setCategory={modelCategorySet} customApiReasoningEnabled={capabilitySnapshot?.customApiReasoningEnabled !== false} setCustomApiReasoning={customApiReasoningSet} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: message } : previous) }} /> : null}
         {settingsPage === 'settings' ? <><PluginConflictProtection status={pluginConflictStatus} setEnabled={pluginConflictSetEnabled} /><HeadroomPanel status={headroomStatus} setEnabled={headroomSetEnabled} update={headroomUpdate} language={language} /><MediaGenerationPanel status={mediaGenerationStatus} setEnabled={mediaGenerationSetEnabled} language={language} /><DeferredToolsPanel status={deferredToolsStatus} setEnabled={deferredToolsSetEnabled} language={language} /><SecondModelPanel status={secondModelStatus} update={secondModelUpdate} routes={secondModelRoutes} language={language} /><ReviewPanel sessionId={currentSessionId?.()} status={reviewStatus} start={reviewStart} update={reviewUpdate} language={language} /><GuardSettingsPanel status={guardSettingsStatus} update={guardSettingsUpdate} language={language} /><SandboxModePanel sessionId={currentSessionId?.()} status={sandboxModeStatus} setMode={sandboxModeSet} language={language} /><TrustPanel status={trustFolderStatus} grant={trustFolderGrant} revoke={trustFolderRevoke} projectConfig={projectConfigReport} language={language} /><AutomationSettingsPanel status={automationSettingsStatus} update={automationSettingsUpdate} language={language} /><PluginUpdateSettings status={pluginUpdateSnapshot} check={pluginUpdateCheck} setEnabled={pluginUpdateSetEnabled} install={pluginUpdateInstall} rollback={pluginUpdateRollback} language={language} /><CapabilitySettingsPage snapshot={capabilitySnapshot} setEnabled={capabilitiesSetEnabled} setLocalCapability={setLocalCapability} speechStatus={speechStatus} speechSetRoute={speechSetRoute} speechTest={speechTest} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? message === undefined ? previous : { ...previous, actionError: message } : previous) }} /></> : null}
         {settingsPage === 'settings' ? <section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>ENGINEERING</div><strong className={css.sectionName}>工程增强包</strong></div><span className={`${css.badge} ${engineeringSnapshot?.engineeringEnabled ? css.badgeLive : ''}`}>{engineeringSnapshot?.engineeringEnabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>这里只控制总开关。开启后，工程 Skills、项目长期记忆和代码结构图会在左侧工程页面中管理。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用工程增强包</strong><small>开启后 AI 会持续理解当前项目，并在不同 Agent 之间共享上下文。</small></span><input className={css.switch} aria-label="启用工程增强包" type="checkbox" checked={engineeringSnapshot?.engineeringEnabled === true} onChange={(event) => { toggleEngineering(event.target.checked) }} disabled={engineeringSetEnabled === undefined || engineeringToggleBusy} /></label></div></section> : null}
         {settingsPage === 'overview' ? <section className={css.section}>
@@ -5235,6 +5525,40 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
           {codexRuntimeStatus === undefined ? null : <div className={css.infoCell}><small className={css.cellLabel}>{t('codexAgent')}</small><strong className={css.cellValue}>{codexStatus?.installed ? t('installed') : t('optionalComponent')}</strong><small className={css.cellHint}>{codexStatus?.installed ? `${codexStatus.platform} · ${codexStatus.runtimeVersion ?? ''}` : (codexStatus?.reason ?? t('unavailable'))}</small><div className={css.accountActions}><button className={css.button} type="button" onClick={() => { openRuntimePicker('codex') }} disabled={codexBusy || codexStatus?.installed === true}>{codexBusy ? t('installing') : codexStatus?.installed ? t('installed') : t('installCodex')}</button>{codexStatus?.installed ? <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={removeCodex} disabled={codexBusy}>{t('remove')}</button> : null}</div>{runtimePicker === 'codex' ? <RuntimePackagePicker packages={codexPackages} busy={codexBusy} onCancel={() => { setRuntimePicker(undefined) }} onInstall={installCodex} language={language} t={t} /> : null}</div>}
           {claudeRuntimeStatus === undefined ? null : <div className={css.infoCell}><small className={css.cellLabel}>{t('engineClaude')}</small><strong className={css.cellValue}>{claudeStatus?.installed ? t('installed') : t('optionalComponent')}</strong><small className={css.cellHint}>{claudeStatus?.installed ? `${claudeStatus.platform} · ${claudeStatus.runtimeVersion ?? ''}` : (claudeStatus?.reason ?? t('unavailable'))}</small><div className={css.accountActions}><button className={css.button} type="button" onClick={() => { openRuntimePicker('claude') }} disabled={claudeBusy || claudeStatus?.installed === true}>{claudeBusy ? t('installing') : claudeStatus?.installed ? t('installed') : t('installClaude')}</button>{claudeStatus?.installed ? <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={removeClaude} disabled={claudeBusy}>{t('remove')}</button> : null}</div>{runtimePicker === 'claude' ? <RuntimePackagePicker packages={claudePackages} busy={claudeBusy} onCancel={() => { setRuntimePicker(undefined) }} onInstall={installClaude} language={language} t={t} /> : null}</div>}
         </section> : null}
+        {settingsPage === 'providers' && antSeedStatus !== undefined ? <ProviderCard
+          language={language}
+          name={language === 'zh' ? '私钥网关' : 'Private Key Gateway'} visibility={providerVisibility('antseed')}
+          title={language === 'zh' ? '免费模型' : 'Free models'}
+          icon={<ProviderGlyph kind="antseed" />}
+          status={{ label: antSeedStatusLabel, tone: antSeedStatusTone }}
+          summary={antSeedSummary}
+          models={antSeedModelLabels}
+          modelsAreIdentifiers
+          description={language === 'zh'
+            ? '点击下载后，插件会在本地把运行环境准备好，并自动生成一个身份（私钥只保存在 Harness Host，不会写入本地密钥文件），随后即可直接使用免费模型。开启网关后，可用的免费模型会进入模型列表；网关不持久化，每次重启 Harness 都需要重新手动开启。这里只接入免费模型，不涉及充值或付费。'
+            : 'Downloading prepares the runtime locally and creates an identity for it (the private key stays in the Harness Host; it is never written to a key file), so the free models are ready to use straight away. Once the gateway is open, the free models that are available join the model list; the switch is not stored, so every Harness restart needs it opened again. Only free models are wired up here — no deposits and no paid routes.'}
+          notice={antSeedNotice}
+          actions={<>
+            <button className={antSeedInstalled ? css.button : `${css.button} ${css.buttonPrimary}`} type="button" onClick={installAntSeed} disabled={antSeedBusy || antSeedInstall === undefined}>{antSeedBusy ? (language === 'zh' ? '处理中…' : 'Working…') : antSeedInstalled ? (language === 'zh' ? '重新下载' : 'Download again') : (language === 'zh' ? '下载并创建身份' : 'Download and create identity')}</button>
+            <button className={antSeedGatewayEnabled ? css.button : `${css.button} ${css.buttonPrimary}`} type="button" onClick={() => { toggleAntSeedGateway(!antSeedGatewayEnabled) }} disabled={antSeedBusy || antSeedSetGateway === undefined || !antSeedInstalled || !antSeedHasIdentity}>{antSeedGatewayEnabled ? (language === 'zh' ? '关闭网关' : 'Close gateway') : (language === 'zh' ? '开启网关' : 'Open gateway')}</button>
+            {antSeedGatewayEnabled ? <button className={css.button} type="button" onClick={refreshAntSeedModels} disabled={antSeedBusy || antSeedStatus === undefined}>{language === 'zh' ? '刷新模型' : 'Refresh models'}</button> : null}
+            {antSeedHasIdentity ? <button className={css.button} type="button" onClick={revealAntSeedIdentity} disabled={antSeedBusy || antSeedRevealIdentity === undefined}>{language === 'zh' ? '导出私钥' : 'Export key'}</button> : null}
+            {antSeedHasIdentity || antSeedIdentityUnreadable ? <button className={css.button} type="button" onClick={() => { setAntSeedReplaceOpen(open => !open) }} aria-expanded={antSeedReplaceOpen} disabled={antSeedBusy}>{language === 'zh' ? '替换私钥' : 'Replace key'}</button> : null}
+          </>}
+        >
+          <small className={css.sectionMeta}>{antSeedPeerLine}</small>
+          {antSeedKey === undefined ? null : <div className={css.authForm}>
+            <input className={css.input} readOnly value={antSeedKey} aria-label={language === 'zh' ? '私钥网关的私钥' : 'Private Key Gateway private key'} />
+            <button className={css.button} type="button" onClick={() => { void globalThis.navigator?.clipboard?.writeText(antSeedKey) }}>{language === 'zh' ? '复制私钥' : 'Copy key'}</button>
+            <small className={`${css.sectionMeta} ${css.authFull}`}>{language === 'zh' ? '这把私钥就是钱包地址（peerId），任何充值余额都与它绑定；请离线保存，插件不会自动更换。' : 'This key is the wallet address (peerId) that any deposit is tied to. Keep it offline; the plugin never rotates it.'}</small>
+          </div>}
+          {!antSeedReplaceOpen ? null : <div className={css.authForm}>
+            <input className={css.input} type="password" value={antSeedNewKey} onChange={(event) => { setAntSeedNewKey(event.target.value) }} placeholder={language === 'zh' ? '粘贴私钥（32 字节，即 64 个十六进制字符，可带 0x）' : 'Paste a private key (32 bytes, i.e. 64 hex characters; 0x optional)'} aria-label={language === 'zh' ? '要替换为的私钥' : 'Private key to replace with'} autoComplete="off" />
+            <button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={() => { replaceAntSeedIdentity(() => antSeedSetIdentity?.(antSeedNewKey)) }} disabled={antSeedBusy || antSeedNewKey.trim() === '' || antSeedSetIdentity === undefined}>{language === 'zh' ? '确认替换' : 'Replace'}</button>
+            <button className={css.button} type="button" onClick={() => { replaceAntSeedIdentity(() => antSeedGenerateIdentity?.()) }} disabled={antSeedBusy || antSeedGenerateIdentity === undefined}>{language === 'zh' ? '生成新私钥' : 'Generate a new key'}</button>
+            <small className={`${css.sectionMeta} ${css.authFull}`}>{language === 'zh' ? '替换后旧私钥立即作废：它的地址就是钱包，绑定在该地址上的任何余额都无法再通过这个网关使用，也不会自动转移——想保留就先用「导出私钥」备份。替换会关闭网关，重新开启即可用新身份连接。' : 'The old key stops working the moment this is done: its address is a wallet, and any balance bound to it can no longer be used through this gateway — nothing is moved over. Back the old key up with "Export key" first if you want to keep it. Replacing closes the gateway; open it again to connect with the new identity.'}</small>
+          </div>}
+        </ProviderCard> : null}
         {settingsPage === 'providers' && vyceStatus !== undefined ? <ProviderCard
           language={language}
           name="VyceAI" visibility={providerVisibility('vyce')}
@@ -5273,14 +5597,31 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
             ? '凭证仅保存在 Harness Host，模型通过独立安全通道使用。'
             : 'Credentials stay in the Harness Host; models use a separate secured channel.'}
           actions={<>
-            {state.logfare?.configured ? <button className={css.button} type="button" onClick={registerLogfare} disabled={logfareRegisterBusy}>{logfareRegisterBusy ? (language === 'zh' ? '申请中…' : 'Applying…') : (language === 'zh' ? '重新申请资格' : 'Re-apply')}</button>
-              : <button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={registerLogfare} disabled={logfareRegisterBusy}>{logfareRegisterBusy ? (language === 'zh' ? '申请中…' : 'Applying…') : (language === 'zh' ? '申请资格并保存' : 'Apply and save')}</button>}
-            {state.logfare?.sessionConfigured && !state.logfare.premiumUnlocked ? <button className={`${css.button} ${css.buttonPrimary}`} type="button" onClick={setLogfareTraining} disabled={logfareTrainingBusy} title={language === 'zh' ? '同意将清理后的请求与回复用于内部评估和模型训练。该同意不会向第三方分发内容；已用于训练的内容影响无法撤销。' : 'Agree to use cleaned requests and replies for internal evaluation and model training. This does not distribute content to third parties; training effects cannot be undone.'}>{logfareTrainingBusy ? (language === 'zh' ? '处理中…' : 'Working…') : (language === 'zh' ? '同意训练数据并解锁高级模型' : 'Unlock premium models')}</button> : null}
+            <a className={css.button} href={LOGFARE_REGISTER_PAGE} target="_blank" rel="noopener noreferrer">{language === 'zh' ? '去注册（需 Discord）' : 'Register (Discord required)'}</a>
+            {state.logfare?.discordMigrationRequired === true ? <a className={`${css.button} ${css.buttonPrimary}`} href={LOGFARE_MIGRATE_PAGE} target="_blank" rel="noopener noreferrer">{language === 'zh' ? '绑定 Discord 并激活' : 'Link Discord and activate'}</a> : null}
+            {state.logfare?.accountActive === true && state.logfare.trainingOptIn !== true ? <button className={css.button} type="button" onClick={setLogfareTraining} disabled={logfareTrainingBusy} title={language === 'zh' ? '同意将清理后的请求与回复用于模型训练。这是上游解锁高级模型的开关；该同意不会向第三方分发内容；已用于训练的内容影响无法撤销。' : 'Agree to use cleaned requests and replies for model training. This is upstream’s premium-model switch; it does not distribute content to third parties, and training effects cannot be undone.'}>{logfareTrainingBusy ? (language === 'zh' ? '处理中…' : 'Working…') : (language === 'zh' ? '同意训练数据并解锁高级模型' : 'Unlock premium models')}</button> : null}
           </>}
           children={<>
-            <small className={css.sectionMeta}>{state.logfare?.configured !== true
-              ? (language === 'zh' ? '尚未连接。可以申请资格，或者用下面的输入框填一个已在别处拿到的 Key。' : 'Not connected yet. Apply, or enter a key you already have below.')
-              : state.logfare.premiumUnlocked ? (language === 'zh' ? '基础与高级模型均可从模型列表选择。' : 'Standard and premium models are selectable from the model list.') : state.logfare.sessionConfigured ? (language === 'zh' ? '同意训练数据后即可解锁高级模型。' : 'Agree to training data to unlock premium models.') : (language === 'zh' ? '申请资格后会自动保存凭证。' : 'Applying saves the credential automatically.')}</small>
+            {logfareNotice === undefined ? null : <div className={css.authNoticeAlert} role="alert"><span>{logfareNotice}</span><button className={css.button} type="button" onClick={() => { setLogfareNotice(undefined) }}>{language === 'zh' ? '知道了' : 'Dismiss'}</button></div>}
+            {state.logfare?.discordMigrationRequired === true ? <div className={css.authNoticeAlert} role="status"><span>{language === 'zh' ? `上游已暂停该账号：${state.logfare.migrationReason}` : `Upstream suspended this account: ${state.logfare.migrationReason}`}</span><a className={css.button} href={LOGFARE_MIGRATE_PAGE} target="_blank" rel="noopener noreferrer">{language === 'zh' ? '去绑定' : 'Link now'}</a></div> : null}
+            {state.logfare === undefined ? null : <small className={css.sectionMeta} data-logfare-session={state.logfare.sessionConfigured === true ? 'saved' : 'absent'}>{state.logfare.sessionConfigured === true
+              ? state.logfare.accountActive === true
+                ? (language === 'zh' ? '已保存会话，上游可正常读取该账号。' : 'A session is stored and upstream answers for this account.')
+                : (language === 'zh' ? '已保存会话，但上游没有返回该账号状态（账号被暂停、或会话已失效，都会是这种表现）。' : 'A session is stored but upstream did not answer for this account — a suspended account and a dead session both look like this.')
+              : (language === 'zh' ? '尚未保存会话。用账号密码登录一次即可保存，重启后不用再登录。' : 'No session stored yet. Sign in once with the account name and password and it is kept across restarts.')}</small>}
+            {logfareLogin === undefined ? null : <div className={css.capabilityForm}>
+              <label><span>{language === 'zh' ? 'Logfare 账号（仅数字，3-64 位）' : 'Logfare account (digits, 3-64)'}</span><input className={css.input} type="text" inputMode="numeric" autoComplete="username" aria-label={language === 'zh' ? 'Logfare 账号' : 'Logfare account'} value={logfareAccountName} onChange={(event) => { setLogfareAccountName(event.target.value.replace(/\D/gu, '')) }} /></label>
+              <label><span>{language === 'zh' ? '密码（至少 8 位）' : 'Password (8+ characters)'}</span><input className={css.input} type="password" autoComplete="current-password" aria-label={language === 'zh' ? 'Logfare 密码' : 'Logfare password'} value={logfareAccountPassword} onChange={(event) => { setLogfareAccountPassword(event.target.value) }} /></label>
+              <button className={css.button} type="button" onClick={loginLogfare} disabled={logfareLoginBusy || !/^\d{3,64}$/u.test(logfareAccountName.trim()) || logfareAccountPassword.length < 8}>{logfareLoginBusy ? (language === 'zh' ? '登录中…' : 'Signing in…') : state.logfare?.sessionConfigured === true ? (language === 'zh' ? '重新登录并覆盖会话' : 'Sign in again and replace the session') : (language === 'zh' ? '登录并保存会话' : 'Sign in and save session')}</button>
+            </div>}
+            <small className={css.sectionMeta}>{state.logfare?.discordMigrationRequired === true
+              ? (language === 'zh' ? '该账号在上游被暂停，绑定 Discord 后回到这里重新登录即可恢复。' : 'Upstream suspended this account; link Discord, then sign in here again to restore it.')
+              : state.logfare?.accountActive === true && state.logfare.trainingOptIn !== true ? (language === 'zh' ? '会话正常。同意训练数据后即可解锁高级模型。' : 'The session answers. Agree to training data to unlock premium models.')
+                : state.logfare?.premiumUnlocked === true ? (language === 'zh' ? '当前 Key 已解锁全部模型（基础与高级都能从模型列表选择），无需再同意训练数据。' : 'This key already unlocks every model — standard and premium are both selectable — so there is no training-data consent left to give here.')
+                  : state.logfare?.configured !== true ? (language === 'zh' ? '尚未连接。先在上游注册拿到 Key（注册需要加入 Discord），再用账号密码登录一次。' : 'Not connected yet. Register upstream for a key — registration requires the Discord server — then sign in here once.')
+                    : state.logfare?.sessionConfigured !== true ? (language === 'zh' ? '已保存 Key，但高级模型仍未解锁，且还没有会话：上游对未完成 Discord 绑定（或未同意训练数据）的 Key 直接返回 401「API key required」。用账号密码登录一次即可看到具体原因。' : 'A key is stored but premium routes are still locked and there is no session: upstream answers 401 “API key required” to a key whose account has not completed Discord linking (or has not agreed to training data). Sign in with the account name and password to see which.')
+                      : (language === 'zh' ? '会话已失效，请重新登录。' : 'The session no longer answers; sign in again.')}</small>
+            <small className={css.sectionMeta}><a href={LOGFARE_DISCORD_INVITE} target="_blank" rel="noopener noreferrer">{language === 'zh' ? '加入 Logfare Discord' : 'Join the Logfare Discord'}</a> — {language === 'zh' ? '上游要求账号所在 Discord 在服务器内，注册与激活都绕不开这一步。' : 'upstream requires the linked Discord account to be in that server, and both registration and activation go through it.'}</small>
             {logfareSetKey === undefined ? null : <details className={css.manualEntry}><summary>{language === 'zh' ? '手动填入手上的 Logfare Key' : 'Enter an existing Logfare key'}</summary><small>{language === 'zh' ? '凭证只保存在 Harness Host，不会回显。' : 'The credential is stored in the Harness Host only and is never echoed back.'}</small><div className={css.capabilityForm}><label><span>{language === 'zh' ? 'Logfare Key' : 'Logfare key'}</span><input className={css.input} type="password" autoComplete="off" aria-label={language === 'zh' ? 'Logfare Key' : 'Logfare key'} value={logfareKey} onChange={(event) => { setLogfareKey(event.target.value) }} /></label><button className={css.button} type="button" onClick={saveLogfareKey} disabled={logfareKeyBusy || logfareKey.trim() === ''}>{logfareKeyBusy ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存 Key' : 'Save key')}</button></div></details>}
           </>}
         /> : null}
@@ -7113,14 +7454,28 @@ function ModelCategorySettingsPage(input: {
   readonly models: readonly NativeCatalogModel[]
   readonly categories: Readonly<Record<string, ModelCategory>>
   readonly setCategory: Injected['modelCategorySet']
+  readonly customApiReasoningEnabled: boolean
+  readonly setCustomApiReasoning: Injected['customApiReasoningSet']
   readonly language: 'zh' | 'en'
   readonly onSnapshot: (value: CapabilitySnapshot) => void
   readonly onError: (message: string) => void
 }): ReactNode {
   const [busyKey, setBusyKey] = useState<string | undefined>(undefined)
+  // The switch holds its own optimistic value until the page is remounted: the
+  // capability snapshot this page is given is read at mount and on the settings
+  // event, and a toggle that waited for that round trip would look inert.
+  const [reasoningOverride, setReasoningOverride] = useState<boolean | undefined>(undefined)
   const text = input.language === 'zh'
-    ? { title: '模型分类', badge: '多提供商媒体路由', description: '模型、API 地址和 Key 仍在 Harness 的「模型」页面配置。这里识别或手动标记文本、生图、视频与语音能力；媒体分类会进入对应默认模型下拉框，并由插件工具按原提供商地址调用。', empty: '尚未发现模型。请先到 Harness 设置的「模型」页面添加第三方 API 或模型。', auto: '自动识别为', manual: '已手动分类为', aria: (name: string) => `${name} 模型分类`, autoOption: (label: string) => `自动识别（${label}）` }
-    : { title: 'Model categories', badge: 'Multi-provider media routing', description: 'Models, endpoints, and API keys remain configured on the Harness Models page. Classifications feed the media defaults and route plugin media tools through the model\'s original provider endpoint.', empty: 'No models were found. Add a third-party API or model in the Harness Models page first.', auto: 'Automatically classified as', manual: 'Manually classified as', aria: (name: string) => `${name} model category`, autoOption: (label: string) => `Automatic (${label})` }
+    ? { title: '模型分类', badge: '多提供商媒体路由', description: '模型、API 地址和 Key 仍在 Harness 的「模型」页面配置。这里识别或手动标记文本、生图、视频与语音能力；媒体分类会进入对应默认模型下拉框，并由插件工具按原提供商地址调用。', empty: '尚未发现模型。请先到 Harness 设置的「模型」页面添加第三方 API 或模型。', auto: '自动识别为', manual: '已手动分类为', aria: (name: string) => `${name} 模型分类`, autoOption: (label: string) => `自动识别（${label}）`, reasoningTitle: '自定义 API 的思考程度', reasoningDetail: '为本体内手写的第三方 API 模型声明 off / low / medium / high 四档思考等级，写进 Harness「模型」页的设置。只补不覆盖：模型自己声明过的、以及目录里已支持思考的都不动，也不会删除已写入的声明。', reasoningAria: '自定义 API 的思考程度' }
+    : { title: 'Model categories', badge: 'Multi-provider media routing', description: 'Models, endpoints, and API keys remain configured on the Harness Models page. Classifications feed the media defaults and route plugin media tools through the model\'s original provider endpoint.', empty: 'No models were found. Add a third-party API or model in the Harness Models page first.', auto: 'Automatically classified as', manual: 'Manually classified as', aria: (name: string) => `${name} model category`, autoOption: (label: string) => `Automatic (${label})`, reasoningTitle: 'Thinking levels for custom APIs', reasoningDetail: 'Declares off / low / medium / high for the third-party models you hand-declared on the Harness Models page, written into that page\'s settings. Additive only: a model that states its own answer, or one the catalog already lets think, is left alone, and a declaration already written is never removed.', reasoningAria: 'Thinking levels for custom APIs' }
+  const setReasoning = (enabled: boolean): void => {
+    if (input.setCustomApiReasoning === undefined) return
+    setReasoningOverride(enabled)
+    void input.setCustomApiReasoning(enabled).catch((error: unknown) => {
+      setReasoningOverride(undefined)
+      input.onError(error instanceof Error ? error.message : String(error))
+    })
+  }
   const update = (model: NativeCatalogModel, category: string): void => {
     if (input.setCategory === undefined || busyKey !== undefined) return
     setBusyKey(model.key)
@@ -7133,6 +7488,9 @@ function ModelCategorySettingsPage(input: {
   return <section className={css.section}>
     <div className={css.sectionHeader}><div><div className={css.kicker}>MODEL CAPABILITIES</div><strong className={css.sectionName}>{text.title}</strong></div><span className={css.badge}>{text.badge}</span></div>
     <small className={css.sectionMeta}>{text.description}</small>
+    <div className={css.extensionList}>
+      <label className={css.extensionRow}><span><strong>{text.reasoningTitle}</strong><small>{text.reasoningDetail}</small></span><input className={css.switch} aria-label={text.reasoningAria} type="checkbox" checked={reasoningOverride ?? input.customApiReasoningEnabled} onChange={(event) => { setReasoning(event.target.checked) }} disabled={input.setCustomApiReasoning === undefined} /></label>
+    </div>
     {input.models.length === 0 ? <small className={css.sectionMeta}>{text.empty}</small> : <div className={css.accountList}>
       {input.models.map((model) => {
         const configured = input.categories[model.key]

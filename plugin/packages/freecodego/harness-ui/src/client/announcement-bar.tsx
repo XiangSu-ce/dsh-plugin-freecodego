@@ -211,7 +211,7 @@ function marqueeOf(announcement: Announcement): string {
  * @returns the bar, the dialogs a click opens, or null while there is nothing to show.
  */
 export function AnnouncementBar(props: AnnouncementFeedProps) {
-  const { text, items, unread, preference, close, setBar } = useAnnouncementFeed(props)
+  const { text, items, unread, close } = useAnnouncementFeed(props)
   const [panel, setPanel] = useState<{ readonly kind: 'detail'; readonly id: number } | { readonly kind: 'list' } | undefined>()
   const labels = useMarkdownLabels(text)
 
@@ -223,8 +223,12 @@ export function AnnouncementBar(props: AnnouncementFeedProps) {
     setPanel(currentPanel => currentPanel !== undefined && currentPanel.kind === 'detail' && currentPanel.id === announcement.id ? undefined : currentPanel)
   }, [close])
 
+  // The bar deliberately ignores `preference.bar`: the settings page that owned
+  // the switch is not registered in this build, so a stored `false` would be a
+  // state no surface could leave. Its own dismiss button still closes one notice
+  // at a time, which is the only hide this build offers.
   return <>
-    {current !== undefined && preference.bar
+    {current !== undefined
       ? <div className={`${css.bar} ${current.notifyMode === 'popup' ? css.urgent : css.bonus}`} role="status" aria-label={text.barLabel}>
         <span className={css.badge}>{current.notifyMode === 'popup' ? text.urgent : text.bonus}</span>
         <span className={css.track}>
@@ -252,12 +256,9 @@ export function AnnouncementBar(props: AnnouncementFeedProps) {
       onClose={() => { setPanel(undefined) }}
       title={detail?.title ?? ''}
       closeLabel={text.closeDialog}
-      footer={detail === undefined ? undefined : <>
-        <label className={css.switch}><input type="checkbox" checked={preference.bar} onChange={(event) => { setBar(event.target.checked) }} />{text.showBar}</label>
-        <div className={css.footerButtons}>
-          <button className={css.primary} type="button" onClick={() => { if (detail !== undefined) dismiss(detail) }}>{text.gotIt}</button>
-        </div>
-      </>}
+      footer={detail === undefined ? undefined : <div className={css.footerButtons}>
+        <button className={css.primary} type="button" onClick={() => { if (detail !== undefined) dismiss(detail) }}>{text.gotIt}</button>
+      </div>}
     >
       {detail === undefined ? null : <div className={css.document}>
         <MarkdownText text={detail.content} labels={labels} variant="compact" />
@@ -270,7 +271,6 @@ export function AnnouncementBar(props: AnnouncementFeedProps) {
       title={text.listTitle}
       closeLabel={text.closeDialog}
       description={text.listDetail}
-      footer={<label className={css.switch}><input type="checkbox" checked={preference.bar} onChange={(event) => { setBar(event.target.checked) }} />{text.showBar}</label>}
     >
       <AnnouncementRows items={items} text={text} onOpen={(id) => { setPanel({ kind: 'detail', id }) }} onMarkRead={(announcement) => { dismiss(announcement) }} />
     </Modal>

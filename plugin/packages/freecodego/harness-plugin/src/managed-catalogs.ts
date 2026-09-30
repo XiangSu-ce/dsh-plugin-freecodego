@@ -37,6 +37,7 @@ import { OpenAiCompatibleAdapter } from './openai-compatible-adapter.ts'
 import type { OpenAiCompatibleConnection } from './openai-compatible-adapter.ts'
 import { KnownCatalogAdapter, KnownCatalogDirectory } from './known-provider-catalog.ts'
 import { expandGroupPinnedModels, imageInputModalities, mergeCatalogModels, modelMultiplierDescription, modelRowGroupBlock, parseGroupPin } from './model-catalog.ts'
+import { ANTSEED_PROVIDER_ID, readAntSeedCatalog, resolveAntSeedConnection, toAntSeedModelInfo } from './antseed/provider.ts'
 import { activeAccountIdAfterRemoval, backendNotConfigured } from './account-utils.ts'
 
 /** Bilingual hint appended to every direct-provider 429 error: the proxy
@@ -98,8 +99,8 @@ import {
   LOGFARE_API_KEY_REF, LOGFARE_AUTO_MODEL, OPENCODE_AUTO_MODEL, openCodeAutoPreference,
   LOGFARE_BASE_URL, LOGFARE_BROWSER_USER_AGENT, LOGFARE_CATALOG_CACHE_TTL_MS, LOGFARE_CATALOG_TIMEOUT_MS,
   LOGFARE_MODELS_URL, LOGFARE_PROFILE_URL, LOGFARE_SESSION_REF, LOGFARE_STATUS_CACHE_TTL_MS,
-  LOGFARE_TRAINING_PREFERENCE_URL, LOGFARE_TRAINING_TIMEOUT_MS,
-  logfareHealthDescription, logfareModelKey, logfareResponseError, logfareSelectionId, logfareSupportsChat,
+  LOGFARE_ACCOUNT_CACHE_TTL_MS, LOGFARE_TRAINING_PREFERENCE_URL, LOGFARE_TRAINING_TIMEOUT_MS,
+  isLogfareDiscordMigrationRefusal, logfareAccountError, logfareHealthDescription, logfareModelKey, logfareResponseError, logfareSelectionId, logfareSupportsChat,
   logfareUsesTrainingData, MANAGED_MODEL_CATALOG_CACHE_TTL_MS, MODEL_CATALOG_TIMEOUT_MS, MODEL_REASON_FREECODEGO_LOGIN,
   MODEL_REASON_OPENCODE_UNAVAILABLE, OPENCODE_AGENT_CORE_TOOLS, OPENCODE_CATALOG_CACHE_TTL_MS, OPENCODE_CATALOG_MAX_AGE_MS, OPENCODE_CATALOG_RETRY_MS, OPENCODE_DIRECT_BASE_URL,
   isTextConversationRoute,
@@ -190,6 +191,22 @@ const emptyDirectCatalogState = (): DirectCatalogState => ({ answer: undefined, 
  * which is a directory that really described nothing. */
 const emptyRouteCapacity = (): ReadonlyMap<string, RouteCapacity> => new Map<string, RouteCapacity>()
 
+/**
+ * What the gateway adapter reads from the plugin.
+ *
+ * Passed in rather than reached for: the switch and the port belong to the
+ * plugin, and a catalogs runtime that built its own runtime handle would run a
+ * second buyer against the same data directory.
+ */
+export interface AntSeedAdapterHost {
+  /** Loopback port the plugin's buyer runtime listens on. */
+  readonly port: () => number
+  /** Whether the user has opened the gateway this session. */
+  readonly enabled: () => boolean
+  /** Refuse unless the gateway is open. */
+  readonly assertOpen: () => void
+}
+
 /** Late-bound plugin dependencies. Getters (not values) keep the mutable
  * account/credential state and instance-level method overrides effective. */
 export interface FreeCodeGoManagedCatalogsDeps {
@@ -279,9 +296,25 @@ export function speechModelId(value: string | undefined): string | undefined {
 
 /** Registers the provider adapters into the LLM registry and owns every
  * hosted model directory, health cache, and reasoning-capability record. */
+/**
+ * What upstream says about the account behind the stored session.
+ *
+ * Three outcomes rather than a boolean. The middle one is the reason this type
+ * exists: an account that registered before upstream gated its account APIs on
+ * a linked Discord account answers `403 discord_migration_required` to every
+ * read, and collapsing that into "not opted in" is what left the settings card
+ * offering a consent button that could never succeed while hiding the single
+ * action that would clear it.
+ */
+export type LogfareAccountState =
+  | { readonly state: 'anonymous' }
+  | { readonly state: 'migration-required'; readonly reason: string }
+  | { readonly state: 'active'; readonly trainingOptIn: boolean }
+
 export class FreeCodeGoManagedCatalogs {
   private logfareCatalogPromise: Promise<readonly LogfareModel[]> | undefined
   private logfareCatalogCache: { readonly expiresAt: number; readonly models: readonly LogfareModel[] } | undefined
+  private logfareAccountCache: { readonly expiresAt: number; readonly value: LogfareAccountState } | undefined
   private logfareCatalogGeneration = 0
   private logfareCatalogRetryAfter = 0
   private vyceCatalogPromise: Promise<readonly VyceModel[]> | undefined
@@ -699,7 +732,7 @@ export class FreeCodeGoManagedCatalogs {
         const normalized = model.trim().replace(/^logfare\//iu, '').toLowerCase()
         const candidate = (await this.logfareModels()).find(item => logfareModelKey(item.id) === logfareModelKey(normalized))
         if (candidate === undefined || !logfareSupportsChat(candidate)) throw new Error(`FreeCodeGo model "${model}" is not available for chat completions`)
-        if (candidate.requiresTrainingOptIn && !candidate.premiumUnlocked) throw new Error('LOGFARE_PREMIUM_OPT_IN_REQUIRED: enable training-data consent in FreeCodeGo settings before using this model')
+        if (candidate.requiresTrainingOptIn && !candidate.premiumUnlocked) throw new Error('LOGFARE_ACCOUNT_NOT_ACTIVATED: sign in to the Logfare account in FreeCodeGo settings and agree to training data before using this model')
       },
       resolveConnection: async (model) => {
         const apiKey = await this.logfareApiKey()
@@ -761,6 +794,61 @@ export class FreeCodeGoManagedCatalogs {
     const client = this.deps.cline()
     if (client === undefined) return
     this.registerKnownAdapter(['cline'], new ClineAdapter(client))
+  }
+
+  /** The gateway's free routes, served by the buyer proxy this plugin installs and
+   * supervises on loopback. The switch is consulted here rather than trusted
+   * from the picker: hiding rows is presentation, and a stored session that
+   * names one of its models must still be refused while the gateway is closed.
+   * @param host - the switch and loopback port, owned by the plugin.
+   */
+  registerAntSeedAdapter(host: AntSeedAdapterHost): void {
+    // The last directory read's reasoning verdict, per model id. It exists
+    // because the question the adapter is asked (`reasoningEffortsForModel`) is
+    // synchronous and answers per model, while the verdict arrives on the
+    // network: the list read that produces it is always awaited first —
+    // `resolveModel` lists before it resolves — so the map is populated by the
+    // time it is consulted.
+    const reasoningByModel = new Map<string, boolean>()
+    const adapter = new OpenAiCompatibleAdapter({
+      providerName: 'Private Key Gateway',
+      listModels: async () => {
+        if (!host.enabled()) return []
+        // `.models` is already the free subset; the pricing rule lives in the
+        // provider module, so the adapter never has to know what a free model
+        // looks like — only that it is handed ones that are.
+        const rows = (await readAntSeedCatalog({ port: host.port() })).models
+        reasoningByModel.clear()
+        for (const row of rows) {
+          if (row.reasoning !== undefined) reasoningByModel.set(row.id, row.reasoning)
+        }
+        return toAntSeedModelInfo(rows)
+      },
+      resolveAttachments: () => this.deps.ctx.get('attachments'),
+      resolveConnection: async (model) => {
+        host.assertOpen()
+        return resolveAntSeedConnection(host.port(), model)
+      },
+      // The gateway's own listing carries the one capability this control needs,
+      // and it carries it per model: a row the network reports as never
+      // reasoning keeps no level selector, and a row it says nothing about keeps
+      // one, because offers disagreeing is not a refusal.
+      //
+      // `standard` and `off` are chosen together. The proxy in front of the
+      // sellers speaks the OpenAI chat shape, so a level travels as
+      // `reasoning_effort`, which the buyer forwards to an OpenAI-protocol
+      // seller verbatim (its canonical form has no reasoning field, so a
+      // request it has to re-render loses the parameter — that is the buyers'
+      // limitation, not a level this plugin can spell differently). Off is the
+      // default, and off is the one level whose wire spelling is the field's
+      // absence: a session that never picks a level therefore sends exactly the
+      // request it sent before this control existed.
+      reasoningWire: 'standard',
+      normalizeReasoningEffort: effort => isDirectReasoningEffort(effort) ? effort : undefined,
+      defaultReasoningEffort: 'off',
+      reasoningEffortsForModel: model => reasoningByModel.get(model) === false ? undefined : DIRECT_REASONING_EFFORTS,
+    })
+    this.registerKnownAdapter([ANTSEED_PROVIDER_ID], adapter)
   }
 
   /** Register NVIDIA NIM's OpenAI-compatible public endpoint. Free-tier
@@ -896,7 +984,29 @@ export class FreeCodeGoManagedCatalogs {
       }]
     }) ?? []
     const expanded = expandGroupPinnedModels(chatModels.map(availabilityRow), options)
-    const rows = expanded.map((model) => {
+    // Group-major, not model-major.
+    //
+    // `expandGroupPinnedModels` walks the models and prints every group under
+    // each one, so two rows for one model that bill through different groups
+    // landed far apart and the picker read as an interleaved run of groups
+    // (`AWS Claude · ×0.1`, `Anthropic Claude · ×0.2`, then the next model's AWS
+    // row again). The duplicate is the information the user selects on, and it
+    // is only legible when a group's rows sit together: comparing rates means
+    // reading down one block. So rows sharing a billing group are made adjacent
+    // here, in the order the backend first listed those groups.
+    //
+    // `sort` is stable, which is what keeps the backend's model order inside a
+    // block; unpinned rows — a model the backend grouped nowhere — follow every
+    // block, in that same model order rather than being re-sorted by id.
+    const groupRank = new Map<number, number>()
+    for (const model of expanded) {
+      if (model.__groupPin !== undefined && !groupRank.has(model.__groupPin)) groupRank.set(model.__groupPin, groupRank.size)
+    }
+    const rankOf = (model: (typeof expanded)[number]): number => model.__groupPin === undefined
+      ? Number.MAX_SAFE_INTEGER
+      : groupRank.get(model.__groupPin) ?? Number.MAX_SAFE_INTEGER
+    const ordered = [...expanded].sort((left, right) => rankOf(left) - rankOf(right))
+    const rows = ordered.map((model) => {
       const pinned = model.__groupLabel !== undefined
       // Two rows for one model differ only by their group, so the name must
       // say which line it bills through; otherwise the picker renders two
@@ -1183,7 +1293,7 @@ export class FreeCodeGoManagedCatalogs {
         ...(apiKey === undefined
           ? { availability: 'unavailable' as const, unavailableReason: 'LOGFARE_API_KEY_REQUIRED' }
           : model.requiresTrainingOptIn && !model.premiumUnlocked
-            ? { availability: 'unavailable' as const, unavailableReason: 'LOGFARE_PREMIUM_OPT_IN_REQUIRED' }
+            ? { availability: 'unavailable' as const, unavailableReason: 'LOGFARE_ACCOUNT_NOT_ACTIVATED' }
             : modelHealth?.status === 'degraded' && modelHealth.uptimePercent === 0
               ? { availability: 'unavailable' as const, unavailableReason: 'MODEL_PROVIDER_DEGRADED' }
               : { availability: 'available' as const }),
@@ -1496,41 +1606,83 @@ export class FreeCodeGoManagedCatalogs {
   }
 
 /**
- * The service returns the active preference through its session-authenticated profile.
- * @returns whether the account has opted into Logfare's training-data program.
+ * The stored session's account state, memoised for {@link LOGFARE_ACCOUNT_CACHE_TTL_MS}.
+ * @returns the account state, or `anonymous` when no session is stored.
  */
-  async logfareTrainingOptIn(): Promise<boolean> {
+  async logfareAccount(): Promise<LogfareAccountState> {
+    const cached = this.logfareAccountCache
+    if (cached !== undefined && cached.expiresAt > Date.now()) return cached.value
     const session = await this.logfareSession()
-    if (session === undefined) return false
+    const value: LogfareAccountState = session === undefined
+      ? { state: 'anonymous' }
+      : await this.readLogfareAccount(session)
+    this.logfareAccountCache = { expiresAt: Date.now() + LOGFARE_ACCOUNT_CACHE_TTL_MS, value }
+    return value
+  }
+
+  /** One profile read, with upstream's Discord gate kept distinct from a dead session. */
+  private async readLogfareAccount(session: string): Promise<LogfareAccountState> {
     try {
       const response = await fetch(LOGFARE_PROFILE_URL, {
         headers: { accept: 'application/json', cookie: session, 'user-agent': 'FreeCodeGo-Harness' },
         signal: AbortSignal.timeout(LOGFARE_CATALOG_TIMEOUT_MS),
       })
-      if (!response.ok) return false
+      if (!response.ok) {
+        const detail = await logfareResponseError(response, 'FreeCodeGo account profile failed')
+        return isLogfareDiscordMigrationRefusal(response.status, detail)
+          ? { state: 'migration-required', reason: detail }
+          : { state: 'anonymous' }
+      }
       const profile = record(await response.json())
       const user = record(profile.user)
-      return profile.training_opt_in === true || user.training_opt_in === true
+      return { state: 'active', trainingOptIn: profile.training_opt_in === true || user.training_opt_in === true }
     } catch {
-      return false
+      return { state: 'anonymous' }
     }
   }
 
 /**
  * Set the Logfare training-data preference and invalidate the cached directory.
+ *
+ * This is still the premium switch, and the only account write the plugin makes:
+ * upstream's consent page states that opting in unlocks premium models and
+ * opting out revokes that access, while the eval-dataset preference next to it
+ * changes no access either way.
  * @param enabled - whether training on this account's traffic is allowed.
  */
   async updateLogfareTrainingPreference(enabled: boolean): Promise<void> {
     const [session, apiKey] = await Promise.all([this.logfareSession(), this.logfareApiKey()])
-    if (session === undefined) throw new Error('FreeCodeGo model session is unavailable; apply for access again')
+    if (session === undefined) throw new Error('FreeCodeGo model session is unavailable; sign in with the Logfare account name and password first')
     const response = await fetch(LOGFARE_TRAINING_PREFERENCE_URL, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json', cookie: session, ...(apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` }), origin: 'https://logfare.ai', referer: 'https://logfare.ai/consent', 'user-agent': LOGFARE_BROWSER_USER_AGENT },
       body: JSON.stringify({ training_opt_in: enabled }),
       signal: AbortSignal.timeout(LOGFARE_TRAINING_TIMEOUT_MS),
     })
-    if (!response.ok) throw new Error(await logfareResponseError(response, 'FreeCodeGo training preference update failed'))
+    if (!response.ok) throw new Error(await logfareAccountError(response, 'FreeCodeGo training preference update failed'))
+    this.clearLogfareAccountCache()
     this.invalidateLogfareCatalog()
+  }
+
+  /** Drop the memoised account reading so the next status refresh re-reads it. */
+  clearLogfareAccountCache(): void {
+    this.logfareAccountCache = undefined
+  }
+
+  /**
+   * Whether the stored account may use premium routes.
+   *
+   * Upstream's directory answers `premium_unlocked: false` to every caller —
+   * anonymous, keyed and sessioned alike, so it cannot be the source of this
+   * fact — while the training opt-in it publishes on the profile is the switch
+   * its own consent page documents. An account upstream refuses to read counts
+   * as not unlocked, which is what keeps a suspended account's premium rows
+   * unavailable until Discord is linked.
+   * @returns whether premium routes are unlocked for this account.
+   */
+  async logfarePremiumUnlocked(): Promise<boolean> {
+    const account = await this.logfareAccount()
+    return account.state === 'active' && account.trainingOptIn
   }
 
   /** Fetch the live Logfare directory so new standard and premium models appear without a plugin release. 
@@ -1599,6 +1751,7 @@ export class FreeCodeGoManagedCatalogs {
     this.logfareCatalogGeneration += 1
     this.logfareCatalogPromise = undefined
     this.logfareCatalogCache = undefined
+    this.logfareAccountCache = undefined
   }
 
   /**
@@ -1608,7 +1761,7 @@ export class FreeCodeGoManagedCatalogs {
    * the picker).
    */
   private async loadLogfareModels(): Promise<readonly LogfareModel[]> {
-    const [apiKey, trainingOptIn] = await Promise.all([this.logfareApiKey(), this.logfareTrainingOptIn()])
+    const [apiKey, premiumUnlocked] = await Promise.all([this.logfareApiKey(), this.logfarePremiumUnlocked()])
     // Keep model discovery independent from the optional health service. The
     // status endpoint can be slow during an upstream incident; it must not
     // replace a valid live model directory with the small fallback set.
@@ -1619,7 +1772,7 @@ export class FreeCodeGoManagedCatalogs {
     if (!response.ok) throw new Error(`FreeCodeGo model catalog failed with HTTP ${response.status}`)
     const payload = record(await response.json())
     const models = (Array.isArray(payload.data) ? payload.data : []).map(parseLogfareModel).filter((model): model is LogfareModel => model !== undefined)
-      .map(model => model.requiresTrainingOptIn && trainingOptIn && !model.premiumUnlocked ? { ...model, premiumUnlocked: true } : model)
+      .map(model => model.requiresTrainingOptIn && premiumUnlocked && !model.premiumUnlocked ? { ...model, premiumUnlocked: true } : model)
     // Health is refreshed separately and merged by listLogfareTextModels.
     return models.length > 0 ? models : LOGFARE_FALLBACK_MODELS
   }

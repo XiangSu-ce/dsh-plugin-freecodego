@@ -271,7 +271,7 @@ function unavailableMessage(reason: string | undefined, language: MenuLanguage):
     // only "unavailable", which is the state the producer's own thrown error
     // exists to explain — and the picker disables the row, so that error can
     // never be reached by the user who has to act on it.
-    case 'LOGFARE_PREMIUM_OPT_IN_REQUIRED': return zh ? '请先在设置中开启此提供商的训练数据授权' : 'Enable this provider\u2019s training-data consent in Settings first'
+    case 'LOGFARE_ACCOUNT_NOT_ACTIVATED': return zh ? '请先在设置中登录此提供商账号并同意训练数据' : 'Sign in to this provider in Settings and agree to training data first'
     case 'AGNES_API_KEY_REQUIRED': return zh ? '请先在设置中创建 Agnes API Key' : 'Create an Agnes API key in Settings first'
     case 'AGNES_LOGIN_REQUIRED': return zh ? '请先登录 Agnes' : 'Sign in to Agnes first'
     case 'WORKBUDDY_LOGIN_REQUIRED': return zh ? '请先登录 WorkBuddy' : 'Sign in to WorkBuddy first'
@@ -341,26 +341,36 @@ function unavailableLabel(reason: string | undefined, language: MenuLanguage): s
   return language === 'zh' ? '需配置' : 'SETUP REQUIRED'
 }
 
-function labels(language: MenuLanguage, availability: ModelAvailability | undefined): readonly BadgePresentation[] {
+function labels(language: MenuLanguage, availability: ModelAvailability | undefined, multiplier: string | undefined): readonly BadgePresentation[] {
+  // The rate leads the lane and the state badge closes it: the last badge is
+  // what the eye lands on at the row's right edge, and "需配置" is the thing the
+  // user has to act on.
+  //
   // A multiplier is kept: it states what the route costs, which is a real
   // decision input. It must be derived from `access`, not from the optional
   // `multiplier` string: a free route carries `access: 'free'` with no
   // multiplier value, so keying off the string would render *nothing* for the
   // cheapest models — the exact opposite of useful.
   //
-  // The free and health tags are dropped. Neither changes what the user does:
-  // they are already looking at this row, and a health reading changes by the
-  // minute.
-  // The official picker now renders access/pricing metadata in its own
-  // trailing lane. Do not add a second FREE or multiplier badge here: doing
-  // so creates the duplicated green labels seen in the menu. This decorator
-  // keeps only metadata the official row cannot own (setup).
+  // This lane is where the rate lives now, for every provider, because it is
+  // the row's right edge: `optionCopy` takes the remaining width and the lane
+  // is appended after it, so the badge is right-aligned and vertically centered
+  // on the model row. It used to ride the gateway's own group line, which put
+  // it on a second line hard against the left edge where it read as part of the
+  // group's name.
+  //
+  // The free tag and every health reading are still dropped. Neither changes
+  // what the user does: they are already looking at this row, and a health
+  // reading changes by the minute. Nothing is duplicated either — the upstream
+  // billing lane this decorator probes (`optionMeta`) renders nothing on the
+  // baseline this ships against, so this container is the row's only badge lane.
+  //
   // A spent free budget is not "needs setup": the credential is fine, only this
   // route is out until its budget resets. Same disabled row, honest badge.
-  const unavailable: BadgePresentation | undefined = availability?.available === false
-    ? { kind: 'unavailable', label: unavailableLabel(availability.reason, language) }
-    : undefined
-  return [unavailable].filter((badge): badge is BadgePresentation => badge !== undefined)
+  const badges: BadgePresentation[] = []
+  if (multiplier !== undefined) badges.push({ kind: 'multiplier', label: multiplier })
+  if (availability?.available === false) badges.push({ kind: 'unavailable', label: unavailableLabel(availability.reason, language) })
+  return badges
 }
 
 function groupName(group: Element): string {
@@ -395,7 +405,45 @@ function providerForGroup(snapshot: NativeModelDirectorySnapshot, group: Element
   }
   const name = groupName(group)
   const matches = snapshot.groups.filter(candidate => compact(candidate.name) === name)
-  return matches.length === 1 ? matches[0]!.id : undefined
+  if (matches.length === 1) return matches[0]!.id
+  // A duplicate display name is genuinely ambiguous — binding the wrong section
+  // would collapse a group the user did not touch — so it stays unresolved
+  // rather than being guessed at from the rows below.
+  if (matches.length > 1) return undefined
+  // The heading named no provider this decorator knows: the picker's own
+  // heading is now an instance-owned `useId()` whose *text* is the provider's
+  // display name, and that name is overridden for the built-in account route
+  // (and for any route this plugin renames itself). Fall back to the rows the
+  // section actually renders.
+  return providerByModels(snapshot, group)
+}
+
+/**
+ * Resolve a section to its provider from the rows it renders.
+ *
+ * The picker's group heading stopped carrying the provider id: `MenuGroup`
+ * renders `aria-labelledby={useId()}` with a plain-text label, so the old
+ * `${reactId}-${group.id}` suffix (and the display-name fallback) both miss when
+ * the label is overridden. The rows do not miss: every row's `title` is its
+ * model name, and a model id belongs to the provider that serves it.
+ *
+ * A section is claimed only when exactly one candidate carries *all* of its row
+ * labels, so two providers offering the same routes stay ambiguous and are
+ * skipped rather than bound to the wrong section.
+ * @param snapshot - the picker directory.
+ * @param group - the rendered `section[role="group"]`.
+ * @returns the provider id, or undefined when no single provider owns every row.
+ */
+function providerByModels(snapshot: NativeModelDirectorySnapshot, group: Element): string | undefined {
+  const labels = [...group.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"][title]')]
+    .map(row => compact(row.dataset.fcgModelOriginalTitle ?? row.getAttribute('title') ?? ''))
+    .filter(label => label !== '')
+  if (labels.length === 0) return undefined
+  const candidates = snapshot.groups.filter((candidate) => {
+    const names = new Set(candidate.models.flatMap(model => [compact(model.name), compact(model.id)]))
+    return labels.every(label => names.has(label))
+  })
+  return candidates.length === 1 ? candidates[0]!.id : undefined
 }
 
 function modelForRow(snapshot: NativeModelDirectorySnapshot, group: Element, label: string): NativeModel | undefined {
@@ -437,7 +485,7 @@ export function splitGatewayGroupLabel(provider: string | undefined, label: stri
   return name === '' || group === '' ? undefined : { name, group }
 }
 
-function decorateVisibleModelLabel(row: HTMLButtonElement, provider: string | undefined, model: NativeModel, fallback: string, multiplier: string | undefined): void {
+function decorateVisibleModelLabel(row: HTMLButtonElement, provider: string | undefined, model: NativeModel, fallback: string): void {
   const label = visibleModelLabel(provider, model, fallback)
   const split = splitGatewayGroupLabel(provider, label)
   let target = row.querySelector<HTMLElement>('[data-fcg-model-visible-label]')
@@ -478,16 +526,12 @@ function decorateVisibleModelLabel(row: HTMLButtonElement, provider: string | un
     group.dataset.fcgModelGroup = 'true'
     target.after(group)
   }
-  // The billing group's own line also carries the group's rate, which is what
-  // tells two rows for one model apart in practice: the name says which line it
-  // bills through, the rate says what that line costs. It rides this element
-  // instead of a trailing badge because the group line is ours alone — the
-  // official picker's pricing lane renders nothing for the gateway and a second
-  // badge beside it was what produced the duplicated labels this decorator was
-  // trimmed to avoid. A rate the Host could not resolve carries no `×` token in
-  // the description, so nothing is appended rather than a placeholder.
-  const groupText = multiplier === undefined ? split.group : `${split.group} · ${multiplier}`
-  if (group.textContent !== groupText) group.textContent = groupText
+  // The line says which group the row bills through and nothing else: the rate
+  // is the trailing badge's job (`labels`), where it sits at the row's right
+  // edge for every provider instead of on a second line against the left one.
+  // A rate the Host could not resolve carries no `×` token in the description,
+  // so that reads as no badge rather than a placeholder.
+  if (group.textContent !== split.group) group.textContent = split.group
 }
 
 /** Freeze the picker at its collapsed width.
@@ -842,13 +886,22 @@ function installStyle(): void {
     /* The group container becomes a flex column only so the decorator can order
        the sections with the order property. Keeping each section at its natural
        height (flex: 0 0 auto) is what lets the container still scroll instead of
-       squashing the groups to fit. */
-    [role="menu"] [data-fcg-group-ordered="true"] { display: flex; flex-direction: column; }
-    [role="menu"] [data-fcg-group-ordered="true"] > section[role="group"] { flex: 0 0 auto; }
-    [role="menu"] [class*="groups"] { scrollbar-width: thin; scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, #c4c8cf) transparent; }
-    [role="menu"] [class*="groups"]::-webkit-scrollbar { width: 6px; height: 6px; }
-    [role="menu"] [class*="groups"]::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--dsw-alias-scrollbar-bg-l2, #c4c8cf); }
-    [role="menu"] [class*="groups"]::-webkit-scrollbar-track { background: transparent; }
+       squashing the groups to fit.
+
+       Keyed on the decorator's own attribute rather than on a [role=menu]
+       ancestor: the picker used to put role=menu on the outer surface with the
+       scrolling container inside it, and now puts it on the container itself.
+       A descendant combinator matched the first shape and missed the second,
+       which silently dropped the ordering (the order property is inert outside
+       a flex container). */
+    [data-fcg-group-ordered="true"] { display: flex; flex-direction: column; }
+    [data-fcg-group-ordered="true"] > section[role="group"] { flex: 0 0 auto; }
+    /* Same shape change for the scroll container: it may be the role=menu
+       element itself or a descendant of it, so both are named. */
+    [role="menu"][class*="groups"], [role="menu"] [class*="groups"] { scrollbar-width: thin; scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, #c4c8cf) transparent; }
+    [role="menu"][class*="groups"]::-webkit-scrollbar, [role="menu"] [class*="groups"]::-webkit-scrollbar { width: 6px; height: 6px; }
+    [role="menu"][class*="groups"]::-webkit-scrollbar-thumb, [role="menu"] [class*="groups"]::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--dsw-alias-scrollbar-bg-l2, #c4c8cf); }
+    [role="menu"][class*="groups"]::-webkit-scrollbar-track, [role="menu"] [class*="groups"]::-webkit-scrollbar-track { background: transparent; }
     button[data-fcg-model-unavailable="true"] { cursor: not-allowed !important; filter: grayscale(.72); opacity: .48; }
     [role="menu"][data-fcg-width-pinned="true"] button[role="menuitemradio"] [class*="optionCopy"] { min-width: 0; overflow: hidden; }
     /* The gateway row's billing group gets its own line under the model name:
@@ -857,7 +910,7 @@ function installStyle(): void {
     button[role="menuitemradio"] [class*="optionCopy"]:has([data-fcg-model-group]) { display: flex; flex-direction: column; align-items: flex-start; }
     [data-fcg-model-group] { display: block; max-width: 100%; margin-top: 1px; overflow: hidden; color: var(--dsw-alias-label-secondary, var(--fcg-text-tertiary)); font: 400 11px/15px var(--fcg-font-mono, ui-monospace), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
     [role="menu"][data-fcg-width-pinned="true"] button[role="menuitemradio"] [data-fcg-model-visible-label] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    [role="menu"][data-fcg-width-pinned="true"] [class*="groups"] { overflow-x: hidden; }
+    [role="menu"][data-fcg-width-pinned="true"][class*="groups"], [role="menu"][data-fcg-width-pinned="true"] [class*="groups"] { overflow-x: hidden; }
   `
   document.head.append(style)
 }
@@ -894,7 +947,7 @@ function decorate(options: NativeModelMenuBadgesOptions, collapsedGroups: Collap
         continue
       }
       if (row.dataset.fcgModelHidden === 'true') delete row.dataset.fcgModelHidden
-      decorateVisibleModelLabel(row, provider, model, originalTitle, presentation?.multiplier)
+      decorateVisibleModelLabel(row, provider, model, originalTitle)
       const availability = provider === undefined ? undefined : options.availability?.().get(`${provider}\u0000${model.id}`)
       const unavailable = availability?.available === false
       // Walk a row back the moment its reason is gone: the early exits below
@@ -915,7 +968,9 @@ function decorate(options: NativeModelMenuBadgesOptions, collapsedGroups: Collap
       }
       if (presentation === undefined && !unavailable) continue
       const language = options.language()
-      const values = labels(language, availability)
+      // Only a paid route carries a rate worth showing; a free one carries
+      // `access: 'free'` and no number to print.
+      const values = labels(language, availability, presentation?.access === 'multiplier' ? presentation.multiplier : undefined)
 
       // A spent free budget is advisory, not a gate. The park lifts on the
       // upstream's own schedule, while this availability snapshot is taken when

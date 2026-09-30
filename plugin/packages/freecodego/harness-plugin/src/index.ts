@@ -29,6 +29,18 @@ import { randomUUID, createHash } from 'node:crypto'
 import { SessionWorktrees, worktreeToolDefinitions } from './worktree/tools.ts'
 import { WorktreeRegistry } from './worktree/registry.ts'
 import { speechSetRoute, speechStatus, speechTest, type SpeechRouteHost } from './speech-route.ts'
+import {
+  antSeedGenerateIdentity,
+  antSeedInstall,
+  antSeedRevealIdentity,
+  antSeedSetGateway,
+  antSeedSetIdentity,
+  antSeedStatus,
+  type AntSeedRemotesHost,
+} from './antseed-remotes.ts'
+import { AntSeedGateway } from './antseed/gateway.ts'
+import { AntSeedBuyerRuntime } from './antseed/buyer-runtime.ts'
+import { listFreeAntSeedModels, requestAntSeedImage } from './antseed/provider.ts'
 import { ContextControl, contextControlToolDefinitions } from './context-control.ts'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -37,7 +49,7 @@ import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoManagedRuntime, FreeCodeGoReceiptDocument } from '@deepseek-ai/dsh-freecodego-api'
-import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoAnnouncement, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
+import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoAnnouncement, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareLoginRequest, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, FreeCodeGoAntSeedStatus, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { createUserMessage, type LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import { CodexRuntimeManager, ClaudeRuntimeManager } from '@deepseek-ai/dsh-freecodego-native-runtime-host'
@@ -78,6 +90,9 @@ import type { PlacementContext } from './skills/placement.ts'
 import { freeCodeGoDataHome, harnessHomeDirectory } from './data-home.ts'
 import { ensureDesktopDshShim, requireClaudeEngineManifestPath } from './runtime-assets.ts'
 import { installFreeCodeGoAgentPresets } from './agent-preset-install.ts'
+import { syncCustomApiReasoning } from './custom-api-reasoning.ts'
+import { loaderSettled } from './loader-settled.ts'
+import { MODELS_SETTINGS_ENTRY } from './peer-settings.ts'
 import { PendingWriteDrain } from './abort-drain.ts'
 import { FreeCodeGoHeadroomRuntime, type HeadroomStats } from './headroom/runtime.ts'
 import { FreeCodeGoDeferredTools, type DeferredToolStatus } from './deferred-tools.ts'
@@ -144,7 +159,7 @@ import { narrowTurnScope, turnChangePaths, type TurnScopeEvent, type TurnScopeSu
 import {
   accountAnnouncements, accountDetail, accountMarkAnnouncementRead, accountStatus, backendBootstrap, backendCatalog, backendQuota, backendRuntimeHealth, backendUsage, completeMfa, deviceSessions, groqWhisperTranscribe, vyceSetKey, vyceStatus,
   revokeAllSessions, revokeDeviceSession,
-  forgotPassword, logfareRegister, logfareSetKey, logfareSetTrainingOptIn, logfareStatus, login, logout, refreshAccount, register, resetPassword,
+  forgotPassword, logfareLogin, logfareSetKey, logfareSetTrainingOptIn, logfareStatus, login, logout, refreshAccount, register, resetPassword,
   readRememberedPassword, sendVerifyCode, sensenovaSetKey, sensenovaStatus, nvidiaSetKey, nvidiaStatus, restoreAccount as restoreDurableAccount, accountOAuthLogin,
   accountOAuthPendingStatus, accountOAuthPendingSendVerifyCode, accountOAuthPendingBind, accountOAuthPendingCreate,
   type AccountRemotesHost, type AccountRemotesState,
@@ -630,6 +645,15 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // what leaves the tool block and an over-long transcript indistinguishable.
     promptCompositionEnabled: z.boolean().default(true).volatile(),
 
+    // Settings — custom third-party API reasoning (`custom-api-reasoning.ts`)
+    //
+    // Default on, because the write is additive and answerable: it only ever
+    // *adds* a declaration for a hand-declared model that states none, never
+    // overwrites a model's own answer, and never unsets. Off is the escape hatch
+    // for a deployment that would rather this plugin not edit another entry's
+    // settings document at all.
+    customApiReasoningEnabled: z.boolean().default(true).volatile(),
+
     // Settings — folder trust (`trust.ts`)
     /**
      * Master switch for the whole gate.
@@ -925,6 +949,17 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
   private account: FreeCodeGoAccountCoordinator | undefined
   private api: FreeCodeGoApiClient | undefined
   private credentials: CredentialProvider | undefined
+  /**
+   * Session-scoped gateway switch. Deliberately not a stored setting:
+   * the buyer opens outbound peer connections and signs against a wallet, so it
+   * stays closed until the user opens it and closes again on the next start.
+   */
+  private readonly antSeedGateway = new AntSeedGateway()
+  /**
+   * The managed buyer. Built on first use, because a Host that never
+   * opens the gateway must not touch the runtime directory at all.
+   */
+  private antSeedBuyer: AntSeedBuyerRuntime | undefined
     /** The one accessor behaviour reads go through (see `policy.ts`). */
   private readonly policy: FreeCodeGoPolicy
   /**
@@ -1223,6 +1258,53 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       void this.pendingWrites.run(() => presets.done)
       return presets.release
     }, 'freecodego: agent presets')
+    // The user's own third-party API routes are hand-declared, so nothing gives
+    // their models a thinking-level control; `custom-api-reasoning.ts` states why
+    // the declaration is written into that entry's settings and why it is
+    // additive. Driven by the Models entry's own change event rather than a
+    // timer: a route the user adds has to gain the control without a restart, and
+    // a pass that finds every model already answered writes nothing — which is
+    // also what stops its own write from looping back through the event.
+    //
+    // The first pass waits for the Loader: a constructor runs before the rows
+    // declared after it, so reading `settings` here would find nothing on every
+    // cold start. Best-effort and tracked, like the preset install above: a
+    // locked settings document must never fail a boot.
+    ctx.effect(() => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let running = false
+      const run = (): void => {
+        // The switch is read at the moment the pass acts, not captured at
+        // construction: it is a live settings reference, so turning it off has to
+        // stop the very next pass without a remount. Off leaves the other entry's
+        // document alone; what the plugin already declared stays declared, which is
+        // the additive rule `custom-api-reasoning.ts` states.
+        if (running || this.policy.get()?.customApiReasoningEnabled === false) return
+        running = true
+        void this.pendingWrites.run(() => syncCustomApiReasoning(ctx))
+          .catch((error: unknown) => { console.warn(`[freecodego] custom API reasoning sync failed: ${error instanceof Error ? error.message : String(error)}`) })
+          .finally(() => { running = false })
+      }
+      const schedule = (): void => {
+        if (timer !== undefined) clearTimeout(timer)
+        // Debounced: one edit to the Models page can emit several document
+        // updates, and the pass reads the settled document either way.
+        timer = setTimeout(() => { timer = undefined; run() }, 250)
+      }
+      void loaderSettled(ctx).then(run, run)
+      // Both documents matter: a Models-page edit is what gives the pass something
+      // to declare, and this plugin's own entry is where the switch above lives, so
+      // turning it back on has to apply without waiting for a restart. The entry id
+      // is read live for the same reason the writer reads it per write — a reload
+      // replaces the entry the plugin was constructed under.
+      const off = ctx.on('settings/document-updated', (ns) => {
+        if (ns === MODELS_SETTINGS_ENTRY || ns === ctx.fiber.entry?.options.id) schedule()
+      })
+      return () => {
+        if (timer !== undefined) clearTimeout(timer)
+        off()
+      }
+    }, 'freecodego: custom API reasoning')
     // Harness v0.1.3 rejects a persisted session whose event vocabulary is
     // unknown to the running process. Keep every plugin-owned durable event
     // registered while this plugin is mounted, including historical engine
@@ -2147,6 +2229,14 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     this.catalogs.registerSenseNovaAdapter()
     this.catalogs.registerNvidiaAdapter()
     this.catalogs.registerKiloAdapter()
+    // The gateway's routes exist whether or not its switch is open: the adapter
+    // answers an empty directory while the switch is closed, so the model list
+    // and the switch cannot disagree about what is reachable.
+    this.catalogs.registerAntSeedAdapter(this.antSeedAdapterHost)
+    // A live buyer is a child process holding a port, so the Host stops it on the
+    // way out instead of leaving an orphan behind the settings card: the gateway
+    // is session state already, and this is what makes the session's end real.
+    ctx.effect(() => () => { void this.antSeedBuyer?.stop() }, 'freecodego: free-model buyer runtime')
     // Every directory behind those registrations is read once here, behind the
     // answer, after the snapshot the previous process left has been restored. The
     // model menu's first catalog arrives after a browser has connected, so it
@@ -6649,13 +6739,13 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   }
 
     /**
-   * Create a Logfare account from the settings surface.
-   * @param input - the registration details.
-   * @returns the status after the registration.
+   * Sign the Host in to one Logfare account from the settings surface.
+   * @param input - the account name and password.
+   * @returns the status after the sign-in.
    */
-@Remote('logfareRegister')
-  async logfareRegister(input: FreeCodeGoLogfareRegistrationRequest): Promise<FreeCodeGoLogfareStatus> {
-    return logfareRegister(this.accountRemotesHost, input)
+@Remote('logfareLogin')
+  async logfareLogin(input: FreeCodeGoLogfareLoginRequest): Promise<FreeCodeGoLogfareStatus> {
+    return logfareLogin(this.accountRemotesHost, input)
   }
 
     /**
@@ -6704,6 +6794,69 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
 @Remote('nvidiaSetKey')
   async nvidiaSetKey(value: string): Promise<FreeCodeGoNvidiaStatus> {
     return nvidiaSetKey(this.accountRemotesHost, value)
+  }
+
+    /**
+   * Read the gateway's install, switch, identity, and free-model state.
+   * @returns the browser-safe status; the private key never crosses this boundary.
+   */
+@Remote('antSeedStatus')
+  async antSeedStatus(): Promise<FreeCodeGoAntSeedStatus> {
+    return antSeedStatus(this.antSeedRemotesHost)
+  }
+
+    /**
+   * Download the managed buyer and create an identity for it.
+   * @returns the status once the download finished.
+   */
+@Remote('antSeedInstall')
+  async antSeedInstall(): Promise<FreeCodeGoAntSeedStatus> {
+    return antSeedInstall(this.antSeedRemotesHost)
+  }
+
+    /**
+   * Open or close the gateway for this session. Opening starts the
+   * buyer and waits for its model directory before the switch reports open.
+   * @param enabled - `true` to open the gateway, `false` to close it.
+   * @returns the status after the transition.
+   */
+@Remote('antSeedSetGateway')
+  async antSeedSetGateway(enabled: boolean): Promise<FreeCodeGoAntSeedStatus> {
+    return antSeedSetGateway(this.antSeedRemotesHost, enabled)
+  }
+
+    /**
+   * Export the stored private key for the user to keep.
+   * Separate from `antSeedStatus` because the key is a wallet, so it is read
+   * only when the user asks for it rather than on every status refresh.
+   * @returns the private key, hex encoded, and the peer id it names.
+   */
+@Remote('antSeedRevealIdentity')
+  async antSeedRevealIdentity(): Promise<{ readonly privateKeyHex: string; readonly peerId: string }> {
+    return antSeedRevealIdentity(this.antSeedRemotesHost)
+  }
+
+  /**
+   * Replace the stored identity with a key the user pastes in.
+   * The old address is a wallet, so the card confirms this gesture before it
+   * calls here; the replacement itself is one write, and a key that will not
+   * parse is refused before anything is stopped or overwritten.
+   * @param privateKeyHex - 32 bytes written as 64 hexadecimal characters, with an optional `0x` prefix.
+   * @returns the status after the replacement, carrying the new peer id.
+   */
+@Remote('antSeedSetIdentity')
+  async antSeedSetIdentity(privateKeyHex: string): Promise<FreeCodeGoAntSeedStatus> {
+    return antSeedSetIdentity(this.antSeedRemotesHost, privateKeyHex)
+  }
+
+  /**
+   * Replace the stored identity with a freshly generated one.
+   * The other half of the same gesture, for a user with no key to paste.
+   * @returns the status after the replacement, carrying the new peer id.
+   */
+@Remote('antSeedGenerateIdentity')
+  async antSeedGenerateIdentity(): Promise<FreeCodeGoAntSeedStatus> {
+    return antSeedGenerateIdentity(this.antSeedRemotesHost)
   }
 
   /**
@@ -7567,6 +7720,34 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
     return {
       ...this.coreDeps,
       requireAgnes: () => this.requireAgnes(),
+      // Read through the switch, not around it: a closed gateway has no listener
+      // behind it, so the ladder must not be handed rows it could turn into a
+      // request. The card reads the same directory for its own list.
+      //
+      // Free rows only, and the image listing insists on it harder than the text
+      // one: a picture is billed per picture, the buyer's zero price ceiling
+      // covers token prices alone, and a route the ladder is told is free is a
+      // route a user will spend money on.
+      antSeedImageModels: () => this.antSeedGateway.status().enabled
+        ? listFreeAntSeedModels({ port: this.antSeedRuntime.status().port, kind: 'images' })
+        : Promise.resolve([]),
+      generateAntSeedImage: async (model, args, signal) => {
+        // Asserted here as well as at the model route, because this is the call
+        // that actually reaches the buyer: the two are read at different moments
+        // on a page where the user can close the gateway mid-request. A refusal
+        // travels as a rejected promise like every other failure on this seam,
+        // rather than as a synchronous throw out of an async-shaped call.
+        this.antSeedGateway.assertOpen()
+        return await requestAntSeedImage({
+          port: this.antSeedRuntime.status().port,
+          model,
+          prompt: args.prompt,
+          ...(args.size === undefined ? {} : { size: args.size }),
+          ...(args.quality === undefined ? {} : { quality: args.quality }),
+          ...(args.n === undefined ? {} : { n: args.n }),
+          signal,
+        })
+      },
       groqWhisperTranscribe: (audioBase64, mimeType, language) => this.groqWhisperTranscribe(audioBase64, mimeType, language),
       readManagedCatalogCache: () => this.readManagedCatalogCache(),
       logfareApiKey: () => this.catalogs.logfareApiKey(),
@@ -7644,6 +7825,29 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
       registered: () => this.speechProvider?.roster().registered === true,
       selected: () => this.speechProvider?.roster().selected ?? '',
       refresh: () => this.speechProvider?.refresh() ?? Promise.resolve(),
+    }
+  }
+
+  /** The runtime handle, created once per Host. */
+  private get antSeedRuntime(): AntSeedBuyerRuntime {
+    return this.antSeedBuyer ??= new AntSeedBuyerRuntime()
+  }
+
+  /** What the gateway adapter reads from the plugin. */
+  private get antSeedAdapterHost(): { readonly port: () => number; readonly enabled: () => boolean; readonly assertOpen: () => void } {
+    return {
+      port: () => this.antSeedRuntime.status().port,
+      enabled: () => this.antSeedGateway.status().enabled,
+      assertOpen: () => { this.antSeedGateway.assertOpen() },
+    }
+  }
+
+  private get antSeedRemotesHost(): AntSeedRemotesHost {
+    return {
+      credentials: this.credentials,
+      runtime: () => this.antSeedRuntime,
+      gateway: this.antSeedGateway,
+      refreshRoutes: () => { this.ctx.emit('llm/adapters-updated') },
     }
   }
 

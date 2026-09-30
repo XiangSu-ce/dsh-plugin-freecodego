@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-freecodego-api",
   "description": "Redacted FreeCodeGo Harness public API client",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.2",
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",

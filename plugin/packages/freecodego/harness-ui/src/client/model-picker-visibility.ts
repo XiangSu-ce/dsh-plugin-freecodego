@@ -60,7 +60,7 @@ export {
  * absent for the same reason: the picker lists its rows because the user has an
  * account there, which says nothing about price.
  */
-export const FREE_TIER_PROVIDERS: ReadonlySet<string> = new Set(['opencode', 'kilo', 'cline', 'workbuddy', 'sensenova', 'nvidia', 'bai'])
+export const FREE_TIER_PROVIDERS: ReadonlySet<string> = new Set(['opencode', 'kilo', 'cline', 'workbuddy', 'sensenova', 'nvidia', 'bai', 'antseed'])
 
 /**
  * Providers whose picker rows start hidden unless the model is named here.

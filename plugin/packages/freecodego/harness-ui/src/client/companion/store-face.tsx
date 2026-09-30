@@ -2,7 +2,7 @@
  * The companion drawn where no slot can hand it its facts.
  *
  * Every *seat* gets its session facts as Hooks the framework builds over two
- * stores; an injected row (`./running-row.tsx`, `./step-row.tsx`) is outside the
+ * stores; an injected row (`./running-row.tsx`) is outside the
  * slot system, so it reads those same stores itself. That difference is a
  * subscription wrapper and nothing else — the facts are the readers in
  * `./signals.ts`, the pose is the same arbiter, and the frame comes from the same

@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-freecodego-root-agent",
   "description": "Engine-neutral root agent session bridge over the FreeCodeGo runtime protocol",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.2",
   "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",

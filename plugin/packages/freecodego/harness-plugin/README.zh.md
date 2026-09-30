@@ -22,6 +22,7 @@ kind: "package-reference"
 - [文档](#documentation)
 - [Subagent 模型路由](#subagent-model-routing)
 - [免费模型](#free-models)
+- [私钥网关免费模型](#antseed-free-models)
 - [Engineering 增强](#engineering-enhancement)
 - [会话删除](#session-deletion)
 - [代码审查](#code-review)
@@ -67,19 +68,20 @@ kind: "package-reference"
 ## 免费模型
 
 <!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
-下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-09-28 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
+下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-09-30 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
 
 | 提供商 | 免费模型 | 目录 |
 |---|---|---|
-| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`longcat-2.5-preview-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 82 行中的 14 行；公开，无需登录 |
-| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-fin:free`、`inclusionai/ling-3.0-flash-sante:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stealth/space-bunny-alpha`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free` | 394 行中的 18 行；公开，每个出口 IP 每小时 200 次 |
-| **Logfare** | 对话 `claude-fable-5-1`、`claude-opus-4.6`、`claude-opus-5`、`deepseek-v3.2`、`deepseek-v4.1-flash`、`gemini-3.8-flash`、`gemma-4-26b`、`glm-5`、`glm-5.3`、`glm-5.3-flash`、`gpt-5.6-sol`、`gpt-6-astra`、`gpt-6-sol`、`grok-4.6`、`kimi-k2.5`、`kimi-k2.6`、`kimi-k2.7-code`、`kimi-k3`、`logfare/auto`、`mimo-v2.6-pro`、`moondream3.1`、`qwen-3.8-27b`、`space-bunny-alpha`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`flux-2-pro`、`gpt-image-2`、`mai-image-2.5`、`mai-image-2.6-flash`、`muse-image`、`sdxl-lightning`；视频 `grok-imagine-video`、`kling-v3.0-pro`、`seedance-2.0-fast`、`sora-2-pro`、`veo-3.1`；音频 `melotts`、`whisper-large-v3-turbo`；其他路由 `aleph-2`、`aura-2-en`、`hailuo-3-max`、`krea-2-medium-turbo`、`lucid-origin`、`nano-banana-2`、`nova-3`、`phoenix-1.0`、`wan-3.0-prime` | 50 行；42 行需要训练数据授权，其余 8 行不需要 |
+| **私钥网关** | 选择器里实时读到的免费路由 | 无需注册，也无需 API Key |
+| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`longcat-2.5-preview-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 84 行中的 14 行；公开，无需登录 |
+| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-sante:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stealth/space-bunny-alpha`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free` | 397 行中的 17 行；公开，每个出口 IP 每小时 200 次 |
+| **Logfare** | 对话 `claude-opus-5-5`、`deepseek-v3.2`、`gemma-4-26b`、`glm-5`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`logfare/auto`、`qwen-3.8-27b`、`space-bunny-alpha`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`flux-2-pro`、`gpt-image-2`、`sdxl-lightning`；音频 `whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nano-banana-2`、`nova-3`、`phoenix-1.0` | 24 行；16 行需要训练数据授权，其余 8 行不需要 |
 | **Qoder** | `Qwen 3.8 Flash`（路由 `qmodel_38flash`） | 免费 flash 路由，另有每日签到活动 |
-| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（82 行）中 | 调用需要 API key；核对于 2026-09-28 |
+| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（81 行）中 | 调用需要 API key；核对于 2026-09-30 |
 | **SenseNova** | `deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k3`、`sensenova-6.8-flash-lite` | 名单随 bundle 内置；需要 API key |
 | **TRAE** | 其目录列出的那些行 | 免费额度每日重置，按账号 |
-| **Cline** | 目录标记 `×0 · 官方免费模型` 的那些行 | 账号池 |
-| **WorkBuddy 国际版** | 积分包标记 `x0` 的那些行 | 设备登录，可放多个账号 |
+| **Cline** | 目录标记 `×0 · 官方免费模型` 的那些行 —— 其中包含 `deepseek-v4.1-flash` | 账号池 |
+| **WorkBuddy 国际版** | 积分包标记 `x0` 的那些行 —— `deepseek-v4.1-flash` 在其推广窗口内也算一个 | 设备登录，可放多个账号 |
 | **Agnes** | 对话与图片/视频行 | 控制面账号 |
 | **VyceAI** | 没有免费名单 | 每日签到额度支付其计量行 |
 | **Groq** | `whisper-large-v3-turbo` | 仅转写，不是对话路由 |
@@ -88,9 +90,34 @@ kind: "package-reference"
 
 TRAE、Cline、WorkBuddy 国际版、Agnes 不公布固定名单，因此它们的行在到达时计数，而不在此列名。
 
-Logfare 有 42 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+Logfare 有 16 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+
+`deepseek-v4.1-flash` 在这里还通过上面两个账号池免费提供：Cline 把它留在免费那一半，WorkBuddy 国际版则在推广期内覆盖它。
 
 <!-- generated:free-models:end -->
+
+<a id="antseed-free-models"></a>
+## 私钥网关免费模型
+
+私钥网关就是插件替用户装好并托管的一个运行时：点一下下载、保留一个身份、打开会话级开关，它能触达的免费模型就会进入模型列表。它没有注册流程，也没有可以申请的 API Key——身份本身就是一把 32 字节的 secp256k1 私钥（写出来就是 64 个十六进制字符），它的 EVM 地址同时充当 peerId 和钱包地址。整个接入面就是「账号与提供商」页面上的一张卡片，而 Harness 真正打交道的只是回环地址上的一个本地 OpenAI 兼容端点。
+
+**先下载，再建身份。** 卡片上的下载按钮会把钉死版本的 CLI 包从 npm 装到 `<harness home>/runtimes/key-gateway`，完成标记只在 npm 以退出码 0 结束后才写入。但它不是唯一的依据：一棵带着钉死版本的包与入口文件的目录树，有没有标记都算已安装——手工装进这个目录的、从备份恢复的、从别的机器搬过来的，正是这个样子——而版本是敢这么认的前提：代理说的是一个钉死版本的协议，装着另一个版本的树一律按未安装处理。一次 npm 中断如果连这两样文件都没落地，仍会报告「未安装」；而已在本地的那份安装绝不会被再下载一遍。这个目录名和它的完成标记在版本之间改过名：上一版留在旧名字下的安装，会在本插件第一次看它时被移进新名字（只移进空位，移不动就原地使用），所以没有人需要重新下载一遍，也没有任何拼法的标记会停止被算作「已安装」。私钥由本插件生成——`node:crypto` 取 32 个随机字节，加一份仓库内的 keccak-256 算地址，所以「持有一把 key」根本不需要上游的任何包——并存进 Host 的凭据库 `ANTSEED_IDENTITY_REF` 槽位。`~/.antseed` 不会被写入，那是 CLI 自己放明文 `identity.key` 的地方；已经在手动跑那个 CLI 的用户会保留一份独立身份和独立数据目录，不会被静默接管或覆盖。CLI 自己的加载逻辑会让 `ANTSEED_IDENTITY_HEX` 优先于它的 `identity.key` 文件，并在读取后把这个变量删掉，因此私钥既不会落盘，也不会被运行时启动的任何子进程继承；而 `ANTSEED_DATA_DIR` 会把真正要保存的状态（配置、状态文件、计量数据库）从用户的 `~/.antseed` 挪到本插件的目录下。因为这个地址是任何充值都绑定其上的钱包，这把 key 只生成一次、也不会自行轮换——替换它是一次明确的用户操作（见下一段）——所以读状态永远不会创建它，库里存了但解析不出来的值会按「读不出来」报告，而不是被替换——网关会拒绝用它启动，卡片则给出「替换私钥」，那是唯一应当覆盖它的动作，而它只在用户明确点「导出私钥」时才回到浏览器，不会作为每次渲染都要读的状态字段随行。
+
+**替换私钥是一次操作，不是一个设置项。** 卡片上为它放了一个按钮，而且刻意要点两次：先展开面板，再确认——因为旧私钥所指的地址就是钱包，换成新私钥不会把绑定在旧地址上的任何东西搬过去。两种形态都在：粘贴一把私钥，或由 Host 生成一把；两者走同一份实现，而安全点就在这份实现里：取值在动任何东西之前先校验，所以一次打错的粘贴不会让用户丢掉正在工作的运行时；运行时正在跑就先停掉、开关一并关闭，因为子进程的环境里带着旧私钥，否则它会继续用一把凭据库里已经不存在的私钥签名；写入只落在凭据库，随后重新广播模型路由，好让下一次启动用上真正存着的那把身份。卡片把后果写在面板里，而不是塞进一个用户闭着眼睛点的确认框——旧地址上的余额仍然归旧地址，想拿回来必须在替换**之前**先导出那把私钥——因为这是本卡片里唯一可能把余额遗留原地的操作，而点穿确认框的人就是没读它的人。
+
+**网关开关是会话状态。** 打开它会以环境变量 `ANTSEED_IDENTITY_HEX` 注入身份并拉起运行时进程——绝不用命令行参数，因为 `ps` 和 `Win32_Process` 对机器上每个用户都是可读的；也绝不整体拷贝环境，子进程拿到的是一份白名单——而且只有当代理已经答出 `/v1/models` 目录后，开关才会报告「已开启」，所以出现在模型选择器里的模型就是真能应答的模型。关闭时先落开关再停进程，于是一个在途请求得到的是本插件自己的拒绝，而不是一个连接错误。开关刻意**不做持久化**：运行时会发起对外连接并用钱包签名，这份同意按会话询问一次；启动失败的运行时会直接拆掉，而不是留在一个报告「已关闭」的开关背后继续运行。
+
+**子进程的输出进文件，而不是管道。** 本插件不读运行时的 stdout/stderr，而没人排空的管道会填满操作系统缓冲区、然后把写端堵死——一个会记录自己网络流量的客户端几秒内就会撞上这一点，随后在握手途中卡住：句柄看起来还活着，健康检查却永远没有答复。所以安装和运行时都带着重定向启动：输出写进 `<harness home>/runtimes/key-gateway/runtime.log`（超过 2 MB 就截断），一次失败的启动或安装会引用该文件的末尾：`npm was not found`、端口已被占用、身份解析不出来——正是这一句话，把「退出码 1」变成用户能动手处理的东西。打不开的日志只意味着安静，而不意味着失败：输出是附带品，进程才是功能本身。
+
+**只接免费路由，走运行时自己的端点。** 适配器注册为一个 OpenAI 兼容供应商，端点是 `http://127.0.0.1:8390/v1`。主机写 `127.0.0.1` 而不是 `localhost`，因为在某些 Windows 配置上 `localhost` 会先解析到 `::1`，而运行时监听的是 IPv4；端口用 `8390` 而不是 CLI 自己的 `8377`，这样手动跑的实例和这个被托管的实例不会抢同一个端口。这里不声明任何付费路径，而且这条约束是由**运行时自己的路由器**而不是本插件的菜单来保证的：进程启动时带着一个「零美元/百万 token」的价格上限（`ANTSEED_BUYER_MAX_INPUT_USD_PER_MILLION` 与 `ANTSEED_BUYER_MAX_OUTPUT_USD_PER_MILLION`），运行时在给任何报价排序之前就会把超出该上限的报价丢掉。所以「只用免费模型」是运行中的运行时自身的性质，而不是选择器上的过滤：即使之后钱包里有了余额，也不可能通过这条路由被扣款——而集成里根本没有充值、没有支付通道、也没有任何打款调用。**但这条上限只管 token 价**，所以本插件除了设上限，还要自己筛目录：一个报价的计费字段里，有一部分是路由比较根本不看的，于是一行可以越过零价 token 上限、却仍然对它提供的东西收费。目录读取会按每个报价真实报出的价格判断，只留下零成本的模型（见下「卡片显示什么」）。但免费用量在上游依然是计量签名的——运行时会在首个请求前对链上合约签一条 EIP-712 免费用量授权——这正是运行时是一个外部进程而不是重写实现的原因：那套协议由上游维护，而自研一套、去追一个在撰写当周就改过两次的 schema，会是一场没有终点的维护。
+
+**路由策略是本插件的，而不是 CLI 的默认值。** 上游只在配置文件里声明路由偏好，别处无法设置——这些项一个环境变量都没有——而它内置的 60 分信誉门槛在路由上是**硬门槛**，`/v1/models` 却完全不按它过滤。放着默认值不管，一个低于门槛的免费模型会被这张卡片列出来，然后在请求时被 `502 model_not_found` 拒掉。所以运行时在每次启动前把配置文件写到 `<harness home>/runtimes/key-gateway/data/config.json`，把信誉门槛钉在 0、优先免费报价、两份 peer 名单都留空：有了上面那条价格上限，还能被路由到的报价就只剩免费的，不能再有别的东西把它拒掉。文件先写临时名再改名就位，因为代理会盯着这个路径热更新路由偏好，一个写到一半就来读的读者会退回默认值——而那正是这里要避免的东西。价格上限仍然留在环境变量里，不放进这个文件，所以用户能改的文件抬不动它。
+
+**不是本运行时的端口，就拒绝启动，而不是接管。** CLI 自己遇到端口被占用的做法是复用应答的那个进程、并在没有自己的监听的情况下继续跑；对被托管的 buyer 来说，这意味着流量由一个本插件没有启动、也没有把这份身份交给它的进程来服务——而真正要紧的情形是上一次崩溃留下的 buyer，因为它比「替换私钥」活得更久：卡片会显示新的 peerId，签名的却是旧的那把。所以运行时在启动任何东西之前先探测自己的端口，占用时直接报错（卡片会显示这条消息），而不是加入一个它无法辨认的进程——从那里看，用户手动启动的 buyer 长得一模一样。被拒绝的启动什么都不写：没有数据目录、没有配置文件、没有进程。
+
+**卡片显示什么。** 状态会报告安装情况、会话开关、peerId，以及运行时答出的目录里**免费**的那些行，以供应商 id `antseed` 提供。是否免费是按价格读出来的，从不假定：只要有一个 offer 不要钱就保留（那个零价上限会让同一模型上任何收费 offer 都不可达，所以混合行用起来依然是免费的），而一个没报任何价格的 offer 会被排除，因为未知不等于零。被价格挡掉的行以数量而不是列表的形式报告：目录覆盖的是运行时能看到的一切，没有这个数字，偏短的名单会被读成「网络能给的很少」，而不是「其余都收费」。目录是实时的，所以网关关闭时它就是空的——那是开关在生效，不是目录缺失；卡片上的刷新动作会在不移动开关的前提下重新读取目录，因为免费 offer 会在网关开着的时候来去。逐模型的「模型列表显示设置」按供应商 id `antseed` 覆盖这些行，与其他供应商完全一致。
+
+**「免费」是当下的报价，不是平台赠送。** 一行会出现在这里，是因为上游此刻确实免费提供它，所以目录只是那一刻的快照，免费容量不是承诺。免费报价集中在对话模型上——同时大约十几个（`glm-5.3-flash`、`deepseek-v4-flash`、`gpt-oss-120b`、`qwen3-235b-instruct` 这类）——只要这个模型还有一个免费 offer 存在就会继续列出，所以一个别处收费的模型在这里依然算免费。运行时在用户点击时才从 npm 获取，不随发布包分发。
 
 <a id="session-deletion"></a>
 ## 会话删除
@@ -310,7 +337,7 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 <a id="release-updates"></a>
 ## 发布更新
 
-更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.1.7-rc.2` 构建的 `freecodego-0.1.7-rc.2.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
+更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.2.0-rc.2` 构建的 `freecodego-0.2.0-rc.2.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
 
 <a id="zcode-glm-53-flash-promotion"></a>
 ## Zcode GLM-5.3 Flash 推广
@@ -454,7 +481,7 @@ Kling 用由 `KLING_ACCESS_KEY` / `KLING_SECRET_KEY` 现签的 HS256 令牌鉴�
 
 ### 支持哪些模型
 
-名单是**活的，不是钉死的**：候选路线每次请求实时汇总四路来源——Harness 模型目录（你在「模型」页配置的那些）、托管目录、Logfare 目录、Agnes 目录。路线的分类按 id 推断（`veo` / `seedance` / `kling` / `sora` / `wan` → 视频；`gpt-image` / `dall-e` / `imagen` / `flux` / `sdxl` / `stable-diffusion` / `midjourney` / `ideogram` / `recraft` / `qwen-image` → 生图），也可以在设置页的模型分类里手动覆盖。已收录的条目包括网关的 `gpt-image-2`（`images/generations` + `images/edits`）与 Logfare 的 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`。
+名单是**活的，不是钉死的**：候选路线每次请求实时汇总四路来源——Harness 模型目录（你在「模型」页配置的那些）、托管目录、Logfare 目录、Agnes 目录。路线的分类按 id 推断（`veo` / `seedance` / `kling` / `sora` / `wan` → 视频；`gpt-image` / `dall-e` / `imagen` / `flux` / `sdxl` / `stable-diffusion` / `midjourney` / `ideogram` / `recraft` / `qwen-image` → 生图），也可以在设置页的模型分类里手动覆盖。已收录的条目包括 Logfare 的 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b` 与 `sdxl-lightning`。
 
 每次调用都带逐路线熔断：同一路线连续两次失败就先让位给健康路线五分钟；而因自身声明而退让的路线（渲染不了的时长）不计入失败，因为它一个字节都没发出去。只有路线自己的问题——余额耗尽、端点被关、被限流、上游故障——才落到下一条路线。密钥错或 prompt 被拒则直接失败，因为换哪条路线都是同一个答案，代价却是再来一次要付费的视频任务。
 
@@ -596,6 +623,7 @@ Engineering 套件（`engineering_status`、`engineering_inspect`、`engineering
 - **Graphify 的各个 sidecar 仍是发布门禁** —— 内部 MCP sidecar、持久化构建队列、用户取消、依赖哈希锁、运行时更新通道与 Canvas 适配器均未随包提供。
 - **CodeGraph 没有 Canvas 适配器，也没有 `overview` 工具** —— 它的 CLI 未提供 hub 排名或全图导出命令，因此有界 Canvas 投影仍然只属于 Graphify。
 - **新鲜度来自钩子，而不是后台监听** —— 两个引擎都通过轮次后自动更新钩子与用户显式操作更新，且 `codegraph` 不启动其 daemon，因此查询永不与第二个写入者争用。
+- **运行时是「取用」而不是「随包分发」，且上游 npm 包没有 license 字段** —— 钉死版本的 CLI 包在用户点击时才安装进 Harness home，因此这些字节不进入发布包，也不进 `THIRD_PARTY_NOTICES.md`；上游包未声明 `license`，所以这个分发决策记在这里，而不是作为一行 notices。
 
 <a id="dev-note"></a>
 ### 开发备注

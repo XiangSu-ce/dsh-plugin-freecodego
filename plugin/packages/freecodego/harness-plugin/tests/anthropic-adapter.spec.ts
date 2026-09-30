@@ -122,10 +122,8 @@ describe('OpenAiCompatibleAdapter wire selection', () => {
     expect(request).not.toHaveProperty('input')
   })
 
-  it('keeps the provider timeout when the caller supplies a cancellation signal', async () => {
-    const deadline = new AbortController()
+  it('bounds the wait for a provider that never answers, independently of the caller signal', async () => {
     const caller = new AbortController()
-    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal)
     let requestSignal: AbortSignal | undefined
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => new Promise<Response>((_resolve, reject) => {
       requestSignal = init?.signal ?? undefined
@@ -135,19 +133,26 @@ describe('OpenAiCompatibleAdapter wire selection', () => {
       providerName: 'FreeCodeGo',
       listModels: async provider => [{ provider, id: 'gpt-5.6-terra', name: 'GPT 5.6 Terra' }],
       resolveConnection: async () => ({ baseURL: 'https://gw.example/v1', apiKey: 'gw-token' }),
+      // The route's own idle deadline. It is the whole point of the spec that
+      // this cannot be replaced by (or fall back to) the caller's signal.
+      streamIdleMs: 40,
     })
     const iterator = adapter.stream({ provider: 'freecodego', model: 'gpt-5.6-terra', messages: [userMessage('hello')], signal: caller.signal })[Symbol.asyncIterator]()
-    const pending = iterator.next()
+    // The rejection is produced by the adapter's timer, not by the lines below,
+    // so it is claimed here: an unclaimed rejection would surface as an unhandled
+    // one before the assertion below ever runs.
+    const settled = iterator.next().then(() => undefined, (error: unknown) => error)
     try {
       await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
-      expect(timeout).toHaveBeenCalledWith(120_000)
-      deadline.abort(new Error('provider deadline elapsed'))
-      await expect(pending).rejects.toThrow(/request failed/u)
+      // A caller that never cancels must not be able to leave the turn hanging
+      // on a provider that answers nothing: the adapter's own deadline ends the
+      // wait and tears the request down.
+      expect(String(await settled)).toMatch(/timed out/u)
       expect(requestSignal?.aborted).toBe(true)
+      expect(caller.signal.aborted).toBe(false)
     } finally {
-      deadline.abort()
       caller.abort()
-      await pending.catch(() => undefined)
+      await settled
     }
   })
 

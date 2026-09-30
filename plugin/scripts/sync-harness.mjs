@@ -62,6 +62,23 @@ const cache = join(root, '.upstream-cache', commit)
 // source copy, which is the promise COMPATIBILITY.md records for them.
 const copiedDirectories = ['apps', 'native', 'python', 'docs', 'website', 'snapshots', 'vendor']
 
+/**
+ * The in-box bundle set a FreeCodeGo profile starts from.
+ *
+ * 0.2.0 moved the scheduler out of the Web composition and into the shipped
+ * optional bundle `@deepseek-ai/dsh-experimental-schedule-bundle`; naming it here
+ * is what mounts it, and the installation already depends on the package. One
+ * declaration, so the constants injected into the official installer and the
+ * idempotent branch that brings an already-materialized tree forward cannot drift.
+ */
+const FREECODEGO_PROFILE_BUNDLES_DECLARATION = "const FREECODEGO_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-experimental-schedule-bundle']"
+
+/** The shipped optional schedule bundle, as a declaration the Desktop patch injects. */
+const SCHEDULE_BUNDLE_DECLARATION = "const SCHEDULE_BUNDLE = '@deepseek-ai/dsh-experimental-schedule-bundle'"
+
+/** The Desktop profile's bundle list, including the schedule bundle 0.2.0 split out. */
+const DESKTOP_PROFILE_BUNDLES_DECLARATION = 'const DESKTOP_PROFILE_BUNDLES: readonly string[] = [...WEB_PROFILE.bundles, SCHEDULE_BUNDLE, FREECODEGO_BUNDLE]'
+
 
 
 // Re-apply the forks alone, without a source checkout.
@@ -441,6 +458,7 @@ if (!dryRun) {
   }
 }
 
+
 if (process.env.HARNESS_SYNC_COPY_ONLY === '1') {
   console.log(`sync-harness: copied ${String(summary.mirrored)} entries from ${sourceRoot} (copy-only; the forks were not applied)`)
   process.exit(0)
@@ -498,12 +516,161 @@ console.log(`sync-harness: materialized ${commit} from ${repository}`)
  * One list rather than the call sites it used to be, so full sync and patch-only
  * cannot drift apart: a fork that is added here is applied by both.
  */
+/**
+ * Keep the FreeCodeGo provider display names in the model-selection client.
+ *
+ * Two provider routes must render in the reader's language rather than under the
+ * name the Host reports (`providerInfo`): the built-in `deepseek-account` route
+ * and the `antseed` key-gateway this plugin installs. Upstream hard-codes the
+ * first in three places and has no name at all for the second, so the fork adds
+ * one `providerNameOf` lookup and routes every label through it -- the menu group
+ * heading, the two failure rows, and the composer trigger's fallback label (the
+ * only name left when the current provider's directory is empty, which is why the
+ * map cannot be left to the Host alone).
+ *
+ * `packages/client/ui-model-selection` is mirrored wholesale on every sync, so
+ * this cannot be a hand-edit: `applyForks` re-applies it after the copy, and the
+ * marker makes a second run a no-op. Every anchor is asserted, so an upstream
+ * rename surfaces as a failed sync instead of a silently dropped fork.
+ */
+async function patchModelSelectionProviderNames(root) {
+  const localesPath = join(root, 'packages/client/ui-model-selection/src/client/locales.ts')
+  const indexPath = join(root, 'packages/client/ui-model-selection/src/client/index.ts')
+  const modelSelectPath = join(root, 'packages/client/ui-model-selection/src/client/ModelSelect.tsx')
+
+  // locales.ts: the two dictionary entries (the key union derives from `zh`, and
+  // `en` is checked complete against it, so both must gain the key together) and
+  // the shared lookup appended at the end.
+  let locales = await readFile(localesPath, 'utf8')
+  if (!locales.includes('PROVIDER_NAME_KEYS')) {
+    const zhAccount = "  'provider.account': 'DeepSeek 账号',"
+    const enAccount = "  'provider.account': 'DeepSeek Account',"
+    for (const anchor of [zhAccount, enAccount]) {
+      if (!locales.includes(anchor)) throw new Error('locales.ts no longer matches the provider-name dictionary anchor')
+    }
+    locales = locales.replace(zhAccount, `${zhAccount}\n  'provider.gateway': '私钥网关',`)
+    locales = locales.replace(enAccount, `${enAccount}\n  'provider.gateway': 'Private Key Gateway',`)
+    const helper = `/**
+ * Provider routes this client renames for display, keyed to a dictionary entry.
+ *
+ * A provider's display name normally travels from the Host (\`providerInfo\`), and
+ * that is where it stays: the name is the adapter's own and needs no second
+ * source. These two are the exceptions, and for the same reason — the Host has
+ * one name for them while the surface needs it in the reader's language.
+ * \`deepseek-account\` is the built-in account route; \`antseed\` is the loopback
+ * gateway a plugin installs, whose public name is a product name rather than a
+ * service's.
+ *
+ * The map is consulted in two places that must agree: the group heading and the
+ * fallback label. The second one is why this cannot be left to the Host at all —
+ * a provider whose directory is empty (a gateway that is switched off, an
+ * adapter that failed to load) contributes no group, so the only thing left to
+ * label the current selection with is this map. Without it the label renders the
+ * raw route key, which is an internal id the reader never chose.
+ */
+export const PROVIDER_NAME_KEYS: Readonly<Record<string, ModelKey>> = {
+  'deepseek-account': 'provider.account',
+  'antseed': 'provider.gateway',
+}
+
+/**
+ * The name one provider is displayed under.
+ * @param providerId - the provider route key.
+ * @param hostName - the name the Host reported, used when this client has none of its own.
+ * @param t - the \`model\` dictionary translator.
+ * @returns the display name.
+ */
+export function providerNameOf(
+  providerId: string,
+  hostName: string,
+  t: (key: ModelKey) => string,
+): string {
+  const key = PROVIDER_NAME_KEYS[providerId]
+  return key === undefined ? hostName : t(key)
+}`
+    await writeFile(localesPath, `${locales.trimEnd()}\n\n${helper}\n`)
+  }
+
+  // index.ts: the /model popup's group labels and its failure rows.
+  let index = await readFile(indexPath, 'utf8')
+  if (!index.includes('providerNameOf')) {
+    const importAnchor = "import { en, zh, type ModelKey } from './locales.ts'"
+    const groupAnchor = "    const name = group.id === 'deepseek-account' ? t('provider.account') : group.name"
+    const failureAnchor = "      label: failure.id === 'deepseek-account' ? t('provider.account') : failure.name,"
+    for (const anchor of [importAnchor, groupAnchor, failureAnchor]) {
+      if (!index.includes(anchor)) throw new Error('index.ts no longer matches the provider-name anchor')
+    }
+    index = index.replace(importAnchor, "import { en, providerNameOf, zh, type ModelKey } from './locales.ts'")
+    index = index.replace(groupAnchor, '    const name = providerNameOf(group.id, group.name, t)')
+    index = index.replace(failureAnchor, '      label: providerNameOf(failure.id, failure.name, t),')
+    await writeFile(indexPath, index)
+  }
+
+  // ModelSelect.tsx: the composer trigger's fallback label, the load-failure
+  // row, and the group heading the 0.2.0 `MenuGroup` renders.
+  let modelSelect = await readFile(modelSelectPath, 'utf8')
+  if (!modelSelect.includes('providerNameOf')) {
+    const importAnchor = "import type { ModelSelectInjected } from './slots.ts'"
+    const fallbackAnchor = "      ?? (state.current === null ? t('trigger.fallback') : \`\${state.current.provider}/\${state.current.model}\`)"
+    const warningAnchor = "                  <span>{t('warning.groupLoad', { name: failure.id === 'deepseek-account' ? t('provider.account') : failure.name, message: failure.message })}</span>"
+    const groupAnchor = "                    <MenuGroup key={group.id} label={group.id === 'deepseek-account' ? t('provider.account') : group.name}>"
+    for (const anchor of [importAnchor, fallbackAnchor, warningAnchor, groupAnchor]) {
+      if (!modelSelect.includes(anchor)) throw new Error('ModelSelect.tsx no longer matches the provider-name anchor')
+    }
+    modelSelect = modelSelect.replace(importAnchor, `${importAnchor}\nimport { providerNameOf } from './locales.ts'`)
+    modelSelect = modelSelect.replace(fallbackAnchor, "      ?? (state.current === null\n        ? t('trigger.fallback')\n        : \`\${providerNameOf(state.current.provider, state.current.provider, t)}/\${state.current.model}\`)")
+    modelSelect = modelSelect.replace(warningAnchor, "                  <span>{t('warning.groupLoad', { name: providerNameOf(failure.id, failure.name, t), message: failure.message })}</span>")
+    modelSelect = modelSelect.replace(groupAnchor, "                    <MenuGroup key={group.id} label={providerNameOf(group.id, group.name, t)}>")
+    await writeFile(modelSelectPath, modelSelect)
+  }
+}
+
+/**
+ * Keep this plugin's own web e2e scenarios out of `apps/web`'s client program.
+ *
+ * The five `freecodego-*.e2e.ts` files are host-plane: they boot the host spine
+ * and read its cordis Context merges, which is why `tsconfig.host.json` lists
+ * them by name. Upstream's own web e2e files get the same treatment through
+ * `apps/web/tsconfig.json`'s `exclude` list — that project is registered in the
+ * *client* aggregate, so any file it fails to exclude is typechecked with the
+ * client-side Context and every host-only merge reads as a missing property.
+ *
+ * `apps/` is mirrored from upstream verbatim, so this file cannot be edited in
+ * place: the sync would drop the addition on the next run. Appending the five
+ * entries after upstream's last one is the same shape as the host aggregate's
+ * include block, and the marker makes a rerun a no-op.
+ */
+async function patchWebFreeCodeGoE2eExclusions(root) {
+  const tsconfig = join(root, 'apps/web/tsconfig.json')
+  let source = await readFile(tsconfig, 'utf8')
+  const files = [
+    'freecodego-capabilities.e2e.ts',
+    'freecodego-teams.e2e.ts',
+    'freecodego-root-engines.e2e.ts',
+    'freecodego-voice.e2e.ts',
+    'freecodego-design.e2e.ts',
+  ]
+  const missing = files.filter((file) => !source.includes(`tests/${file}`))
+  if (missing.length === 0) return
+  // Upstream's exclude list ends with this entry; every earlier revision this
+  // workspace can check out (0.1.6-alpha.1 .. 0.2.0-rc.2) carries it too.
+  const anchor = '    "tests/workflow-run.e2e.ts"\n  ],'
+  if (!source.includes(anchor)) {
+    throw new Error('apps/web/tsconfig.json no longer matches the client-program exclude anchor')
+  }
+  const added = missing.map((file) => `    "tests/${file}",`).join('\n')
+  source = source.replace(anchor, `    "tests/workflow-run.e2e.ts",\n${added}\n  ],`)
+  await writeFile(tsconfig, source)
+}
+
 async function applyForks(root) {
   await patchFreeCodeGoProfileInstaller(join(root, 'packages/boot/plugin-manager/src/operations.ts'))
   await patchHarnessV013Compatibility(root)
   await patchTimeoutSuspensionSeam(root)
   await patchReadBinaryDocumentGuard(root)
   await patchSessionRowIdentitySeam(root)
+  await patchModelSelectionProviderNames(root)
+  await patchWebFreeCodeGoE2eExclusions(root)
   await patchDesktopPackageSetFreecodegoTarball(join(root, 'apps/desktop/scripts/prepare-package-set.ts'))
   await patchDesktopProfileBundles(join(root, 'apps/desktop/src/project-manager.ts'))
   await patchDesktopHostInstallAnchor(join(root, 'apps/desktop-host/src/index.ts'))
@@ -783,7 +950,22 @@ async function patchDesktopPackageSetFreecodegoTarball(path) {
  */
 async function patchDesktopProfileBundles(path) {
   let source = await readFile(path, 'utf8')
-  if (source.includes('ensureFreecodegoBundle')) return
+  if (source.includes('ensureFreecodegoBundle')) {
+    // Already patched: still bring the bundle set forward, for the same reason the
+    // profile installer's own idempotent branch does.
+    let updated = source.replace(
+      /const DESKTOP_PROFILE_BUNDLES: readonly string\[\] = \[[^\]]*\]/u,
+      DESKTOP_PROFILE_BUNDLES_DECLARATION,
+    )
+    if (!updated.includes('const SCHEDULE_BUNDLE')) {
+      updated = updated.replace(
+        "const FREECODEGO_BUNDLE = 'freecodego'",
+        `${SCHEDULE_BUNDLE_DECLARATION}\nconst FREECODEGO_BUNDLE = 'freecodego'`,
+      )
+    }
+    if (updated !== source) await writeFile(path, updated)
+    return
+  }
   source = source.replace(
     [
       'import {',
@@ -803,8 +985,10 @@ async function patchDesktopProfileBundles(path) {
       'const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate',
       '/** The FreeCodeGo bundle shipped inside the Desktop runtime: app-owned, activated with the template. */',
       "const FREECODEGO_BUNDLE = 'freecodego'",
-      '/** Bundles a Desktop profile activates: the web template plus the built-in FreeCodeGo bundle. */',
-      'const DESKTOP_PROFILE_BUNDLES: readonly string[] = [...WEB_PROFILE.bundles, FREECODEGO_BUNDLE]',
+      '/** The scheduled-task bundle 0.2.0 ships as an optional bundle; the Desktop profile mounts it too. */',
+      SCHEDULE_BUNDLE_DECLARATION,
+      '/** Bundles a Desktop profile activates: the web template plus the schedule and FreeCodeGo bundles. */',
+      DESKTOP_PROFILE_BUNDLES_DECLARATION,
     ].join('\n'),
   )
   source = source.replace(
@@ -865,10 +1049,18 @@ async function patchFreeCodeGoProfileInstaller(path) {
   // Keep already-materialized generated sources idempotent while still fixing
   // constants introduced by an older overlay revision.
   if (source.includes(profileMarker)) {
-    const updated = source.replace(
-      /const FREECODEGO_BUNDLE = ['"][^'"]+['"]/u,
-      "const FREECODEGO_BUNDLE = 'freecodego'",
-    )
+    const updated = source
+      .replace(
+        /const FREECODEGO_BUNDLE = ['"][^'"]+['"]/u,
+        "const FREECODEGO_BUNDLE = 'freecodego'",
+      )
+      // The bundle set is a constant this fork owns, so an already-materialized
+      // tree is brought forward too: 0.2.0 moved the scheduler into a shipped
+      // optional bundle the FreeCodeGo profile has to name to mount it.
+      .replace(
+        /const FREECODEGO_PROFILE_BUNDLES: readonly string\[\] = \[[^\]]*\]/u,
+        FREECODEGO_PROFILE_BUNDLES_DECLARATION,
+      )
     if (updated !== source) await writeFile(path, updated)
     return
   }
@@ -927,7 +1119,7 @@ function freeCodeGoConstants() {
     '/** The bundle name this fork shipped before the registry package existed. */',
     "const LEGACY_FREECODEGO_BUNDLE = '@freecodego/dsh-harness-alpha-bundle'",
     '/** In-box bundles a FreeCodeGo profile starts from; the bundle itself joins on first use. */',
-    "const FREECODEGO_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']",
+    FREECODEGO_PROFILE_BUNDLES_DECLARATION,
   ]
 }
 
@@ -1367,17 +1559,29 @@ async function patchTimeoutSuspensionSeam(root) {
   await writeFile(approvalManifest, `${JSON.stringify(approvalPackage, null, 2)}\n`)
 
   // Specs for the seam live OUTSIDE upstream's spec files: the sync replaces
-  // whole package directories (tests included), so these are copied wholesale
-  // from the overlay on every run — the same pattern as the tsdown overlays.
-  // The overlay keeps them as `.tpl` because the workspace tsconfig typechecks
-  // `scripts/**/*.ts`, and a template's relative imports only resolve at its
-  // destination.
+  // whole directories the fork happens to keep its tests in — package `tests/`
+  // and `apps/` alike — so these are copied wholesale from the overlay on every
+  // run, after the sweep. The overlay keeps them as `.tpl` because the workspace
+  // tsconfig typechecks `scripts/**/*.ts`, and a template's relative imports only
+  // resolve at its destination.
+  //
+  // The `apps/web/tests/freecodego-*.e2e.ts` set is here for the same reason as
+  // the desktop spec: `apps/` is mirrored exactly (see `copiedDirectories`), and
+  // a fork-only file that upstream has never heard of has no counterpart in the
+  // source — so `sweepMissing` deleted it on every sync and each run had to
+  // recover it by hand. The overlay is the retention mechanism for that whole
+  // class and the copy below is what puts them back.
   const overlay = join(root, 'scripts/harness-overlay')
   for (const [from, to] of [
     ['timeout/tests/pause-resume.spec.ts.tpl', 'packages/util/timeout/tests/pause-resume.spec.ts'],
     ['user-approval/tests/approval-suspension.spec.ts.tpl', 'packages/interaction/user-approval/tests/approval-suspension.spec.ts'],
     ['tool-fs/tests/read-binary-document.spec.ts.tpl', 'packages/fs/tool-fs/tests/read-binary-document.spec.ts'],
     ['desktop/tests/freecodego-desktop-bundle.spec.ts.tpl', 'apps/desktop/tests/freecodego-desktop-bundle.spec.ts'],
+    ['web/tests/freecodego-capabilities.e2e.ts.tpl', 'apps/web/tests/freecodego-capabilities.e2e.ts'],
+    ['web/tests/freecodego-design.e2e.ts.tpl', 'apps/web/tests/freecodego-design.e2e.ts'],
+    ['web/tests/freecodego-root-engines.e2e.ts.tpl', 'apps/web/tests/freecodego-root-engines.e2e.ts'],
+    ['web/tests/freecodego-teams.e2e.ts.tpl', 'apps/web/tests/freecodego-teams.e2e.ts'],
+    ['web/tests/freecodego-voice.e2e.ts.tpl', 'apps/web/tests/freecodego-voice.e2e.ts'],
   ]) {
     const source = join(overlay, from)
     if (!existsSync(source)) throw new Error(`harness overlay spec template missing: ${from}`)

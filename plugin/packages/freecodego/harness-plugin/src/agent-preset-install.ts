@@ -22,7 +22,7 @@
  * composition by id, so this plugin skips an id that is already on the roster
  * rather than racing it with a duplicate.
  *
- * The choice is made after the Loader settles ({@link loaderSettled}), because a
+ * The choice is made after the Loader settles (`loader-settled.ts`), because a
  * plugin constructor runs before the rows declared after it: `ctx.get` would
  * report "no registry" on every cold start and take the dead directory path.
  *
@@ -36,6 +36,7 @@ import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { harnessHomeDirectory } from './data-home.ts'
+import { loaderSettled } from './loader-settled.ts'
 import { maybeRecord } from './untrusted-json.ts'
 
 const MODULE_DIRECTORY = dirname(fileURLToPath(import.meta.url))
@@ -173,28 +174,6 @@ export interface UpstreamAgentPresets {
   readonly list: () => Promise<readonly { readonly id: string }[]>
   /** Declare one preset; the returned function removes it again. */
   readonly register: (definition: AgentPresetDefinition) => Promise<() => Promise<void>>
-}
-
-/**
- * Wait until the Loader has settled every currently declared entry.
- *
- * Which roster mechanisms exist is only knowable then: `ctx.get` answers
- * `undefined` for a service whose providing entry has not activated yet, and a
- * plugin constructor runs before the rows declared after it. Reading the
- * registry at construction time would therefore report "no registry" on every
- * cold start and take the dead directory fallback. Same reason, and the same
- * `ctx.root.loader.await()` seam, as the harness settings service's own legacy
- * import (`packages/settings/settings/src/index.ts`, `importLegacyDocument`).
- *
- * A context that exposes no loader — a unit test's fake — settles immediately.
- * @param ctx - the cordis context to wait on.
- * @returns a promise that never rejects.
- */
-async function loaderSettled(ctx: unknown): Promise<void> {
-  const loader = (ctx as { readonly root?: { readonly loader?: { readonly await?: unknown } } } | undefined)
-    ?.root?.loader
-  if (typeof loader?.await !== 'function') return
-  try { await (loader.await as () => Promise<unknown>).call(loader) } catch { /* a loader that failed to settle still leaves a usable roster */ }
 }
 
 /**

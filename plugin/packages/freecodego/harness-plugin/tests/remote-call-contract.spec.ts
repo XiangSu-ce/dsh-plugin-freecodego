@@ -332,7 +332,18 @@ describe('the remote call contract', () => {
     // button sends. Both have exactly one dispatch site on the client side, so both
     // counts below moved with this one, which is the check that says the pair was
     // extended rather than one side drifting.
-    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(231)
+    // 231 → 235: AntSeed's four remotes — `antSeedStatus`, `antSeedInstall`,
+    // `antSeedSetGateway` and `antSeedRevealIdentity`: the settings card's read,
+    // its download, its session-scoped switch, and the on-demand export of the
+    // identity. All four have exactly one dispatch site on the client side, so
+    // all three counts below moved together, which is the check that says the
+    // pair was extended rather than one side drifting.
+    // 235 → 237: `antSeedSetIdentity` and `antSeedGenerateIdentity`, the card's
+    // two replacement gestures — a key the user pastes in, and one the Host
+    // generates. Both have exactly one dispatch site on the client side, so all
+    // three counts below moved together, which is the check that says the pair
+    // was extended rather than one side drifting.
+    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(237)
     // Re-verified when this moved 182 → 176: the five conditional dispatches
     // (`agnesRefresh`, `agnesCreateApiKey`, `agnesLogout`, `codexRuntimeInstall`,
     // `claudeRuntimeInstall`) that branched into a zero-argument call collapsed
@@ -382,7 +393,13 @@ describe('the remote call contract', () => {
     // 207 → 208: the connection test's own site (`speechTest` in `client/index.ts`).
     // 208 → 210: the two announcement dispatch sites above — one in the bar's
     // feed, one in its close path — counted here rather than in the settings tab.
-    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(210)
+    // 210 → 214: the four AntSeed dispatch sites above, one per name, all in
+    // `client/index.ts` — the card reaches them through its props rather than
+    // through a dispatch of its own.
+    // 214 → 216: the two AntSeed replacement dispatches above, one per name, both
+    // in `client/index.ts` — the card reaches them through its props rather than
+    // through a dispatch of its own.
+    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(216)
     // 196 → 197: `skillPlacements` is a name no earlier dispatch carried, so this count
     // moves with the two above rather than staying put — the check that a new *name*
     // arrived instead of another call to one already counted.
@@ -406,7 +423,13 @@ describe('the remote call contract', () => {
     // 206 → 208: both announcement names are new, so this count moves with the
     // site count above rather than staying put — whole names arrived instead of
     // second calls to names already counted.
-    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(208)
+    // 208 → 212: all four AntSeed names are names no earlier dispatch carried,
+    // so this count moved with the site count above rather than staying put —
+    // whole names arrived instead of second calls to names already counted.
+    // 212 → 214: both replacement names are names no earlier dispatch carried,
+    // so this count moved with the site count above rather than staying put —
+    // whole names arrived instead of second calls to names already counted.
+    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(214)
   })
 
   it('reads a known signature correctly, which is what the arity check rests on', () => {

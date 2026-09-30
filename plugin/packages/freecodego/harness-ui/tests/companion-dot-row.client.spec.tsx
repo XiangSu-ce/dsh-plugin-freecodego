@@ -23,8 +23,7 @@
  * The last block pins the premise against the synced upstream source: the ongoing
  * state is the only `svg[data-state]` `StateDot` emits, its animation is the ring,
  * and a running present row now hands its state to `DisclosureRow` and a text label
- * instead of showing a mark at all — which is why nothing is replaced there any more
- * (the row seat's own half is `./companion-step-row.client.spec.tsx`).
+ * instead of showing a mark at all — which is why nothing is replaced there any more.
  */
 
 import { readFileSync } from 'node:fs'

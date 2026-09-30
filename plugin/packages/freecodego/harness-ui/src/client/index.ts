@@ -10,7 +10,7 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAntSeedStatus, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareLoginRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import type { EngineeringMemoryIndex } from './settings-tab.tsx'
 import freeCodeGoRemote from '@deepseek-ai/dsh-freecodego-harness-plugin/remote'
 import { CAPABILITY_CHANGE_EVENT, ENGINEERING_CHANGE_EVENT, EngineeringSettingsSection, FreeCodeGoSettingsSection, McpSettingsSection, PluginConflictNotice, SkillSettingsSection, type EngineeringLoopStatus, type EngineeringSettings, type EngineeringStatus, type EngineeringTeamDecision, type EngineeringTeamImplementation, type EngineeringTeamJob, type EngineeringTeamReport, type EngineeringTeamVerification } from './settings-tab.tsx'
@@ -375,7 +375,7 @@ export const en = {
   searchProviderRepairFailed: 'The saved local-bridge endpoint is dead and rebuilding it did not succeed. Pick one above.',
 } satisfies Record<keyof typeof zh, string>
 
-import { AnnouncementBar, AnnouncementSettingsSection, type Announcement } from './announcement-bar.tsx'
+import { AnnouncementBar, type Announcement } from './announcement-bar.tsx'
 
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => installFreeCodeGoSidebarIcons(), 'freecodego-ui: semantic sidebar icons')
@@ -1016,12 +1016,27 @@ export function apply(ctx: ClientContext): void {
       vyceStatus: () => backendCall<FreeCodeGoVyceStatus>('vyceStatus'),
       vyceSetKey: (value: string) => backendCall<FreeCodeGoVyceStatus>('vyceSetKey', value),
       logfareStatus: () => backendCall<FreeCodeGoLogfareStatus>('logfareStatus'),
-      logfareRegister: (input: FreeCodeGoLogfareRegistrationRequest) => backendCall<FreeCodeGoLogfareStatus>('logfareRegister', input),
+      logfareLogin: (input: FreeCodeGoLogfareLoginRequest) => backendCall<FreeCodeGoLogfareStatus>('logfareLogin', input),
       logfareSetTrainingOptIn: (enabled: boolean) => backendCall<FreeCodeGoLogfareStatus>('logfareSetTrainingOptIn', enabled),
       sensenovaStatus: () => backendCall<FreeCodeGoSenseNovaStatus>('sensenovaStatus'),
       sensenovaSetKey: (value: string) => backendCall<FreeCodeGoSenseNovaStatus>('sensenovaSetKey', value),
       nvidiaStatus: () => backendCall<FreeCodeGoNvidiaStatus>('nvidiaStatus'),
       nvidiaSetKey: (value: string) => backendCall<FreeCodeGoNvidiaStatus>('nvidiaSetKey', value),
+      // AntSeed's gestures: read the state, download the runtime, open or close
+      // the session gateway, export the identity, and replace it. There is no key
+      // field in the status: the identity is generated by the Host and reaches the
+      // browser only when the user asks for it.
+      antSeedStatus: () => backendCall<FreeCodeGoAntSeedStatus>('antSeedStatus'),
+      antSeedInstall: () => backendCall<FreeCodeGoAntSeedStatus>('antSeedInstall'),
+      antSeedSetGateway: (enabled: boolean) => backendCall<FreeCodeGoAntSeedStatus>('antSeedSetGateway', enabled),
+      // The export is a deliberate gesture, so it is its own Remote: the status
+      // that every render reads never carries the key.
+      antSeedRevealIdentity: () => backendCall<{ readonly privateKeyHex: string; readonly peerId: string }>('antSeedRevealIdentity'),
+      // The destructive counterpart, in both spellings: the address a deposit was
+      // bound to is left behind, so each is its own named gesture rather than a
+      // mode argument on one of them.
+      antSeedSetIdentity: (privateKeyHex: string) => backendCall<FreeCodeGoAntSeedStatus>('antSeedSetIdentity', privateKeyHex),
+      antSeedGenerateIdentity: () => backendCall<FreeCodeGoAntSeedStatus>('antSeedGenerateIdentity'),
       // The microphone's own route: which endpoint, model, and key transcription
       // would use. Read on the settings page rather than at boot, because the card
       // is the only reader and it has to describe the route *now*.
@@ -1132,17 +1147,28 @@ export function apply(ctx: ClientContext): void {
       skillPlacementPrefer: (placement?: import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoSkillPlacement) => backendCall<CapabilitySnapshot>('skillPlacementPrefer', placement),
       capabilities: () => backendCall<CapabilitySnapshot>('capabilities'),
       readLocalCapabilities: async () => {
-        const fallback = { voiceInputEnabled: true, sessionDeleteEnabled: true }
+        const fallback = { voiceInputEnabled: true, sessionDeleteEnabled: true, customApiReasoningEnabled: true }
         let value: Record<string, unknown>
         try { value = await readFreeCodeGoSettings() } catch { return fallback }
         return {
           voiceInputEnabled: value.voiceInputEnabled !== false,
           sessionDeleteEnabled: value.sessionDeleteEnabled !== false,
+          // Absent reads as on, like every other switch here: the Host's own
+          // default is on, and an older stored document named none.
+          customApiReasoningEnabled: value.customApiReasoningEnabled !== false,
         }
       },
       capabilitiesSetEnabled: (input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }) => backendCall<CapabilitySnapshot>('capabilitiesSetEnabled', input),
       setLocalCapability: async (key: 'voiceInputEnabled' | 'sessionDeleteEnabled', value: boolean): Promise<void> => {
         await updateFreeCodeGoSettings({ [key]: value })
+      },
+      // The third-party-reasoning switch. A direct settings write rather than a
+      // Remote call: the Host reads the value from its own live configuration and
+      // re-runs the pass on this document's change event, so the switch needs no
+      // second entry point — and an older Host with no such field simply keeps the
+      // default the schema declares.
+      customApiReasoningSet: async (enabled: boolean): Promise<void> => {
+        await updateFreeCodeGoSettings({ customApiReasoningEnabled: enabled })
       },
       setModelCategoryDirect: async (key: string, category: 'text' | 'image' | 'video' | 'audio'): Promise<void> => {
         const value = await readFreeCodeGoSettings()
@@ -1307,14 +1333,12 @@ export function apply(ctx: ClientContext): void {
     inject: () => ({ ...announcementFeed, language: settingsLanguage() }),
   }, AnnouncementBar)))
 
-  // The other half of hiding the bar: a section that lists the same feed and
-  // carries the switch back on. Without it, a user who turned the bar off would
-  // have no surface left that could turn it on again.
-  ctx.inject(['slots'], scope => scope.slots.inject('settings.section', () => scope.slots.register({
-    name: 'settings.section', id: 'freecodego-announcements', order: 36,
-    label: () => t('announcements'), locale: NS,
-    inject: () => ({ ...announcementFeed, language: settingsLanguage() }),
-  }, AnnouncementSettingsSection)))
+  // The settings page that used to sit here — the announcement history plus the
+  // switch that brings the bar back — is deliberately not registered: this build
+  // keeps the bar and does not expose a page for it. That is why the bar no
+  // longer consults the persisted `bar` preference either: with no switch left
+  // anywhere, honoring a stored `false` would hide the notices with no surface
+  // able to bring them back.
 
   ctx.inject(['slots', 'sessions'], scope => scope.slots.inject('settings.section', () => {
     let disposeEngineering: (() => void) | undefined

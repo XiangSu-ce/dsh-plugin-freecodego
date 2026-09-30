@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-freecodego-harness-plugin",
   "description": "FreeCodeGo engine inventory and lifecycle plugin for DeepSeek Harness",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.2",
   "publishConfig": {
     "access": "public"
   },

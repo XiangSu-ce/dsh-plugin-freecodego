@@ -10,8 +10,7 @@
  * upstream owns. So this seat is a widget-level injection, through
  * `./row-takeover.ts` — the same shape `../sidebar-icons.ts` and
  * `../native-model-menu-badges.ts` already use where the shell offers no
- * extension point, and the same machinery `./step-row.tsx` uses for the rows
- * inside the transcript.
+ * extension point.
  *
  * Three decisions are this seat's own:
  *

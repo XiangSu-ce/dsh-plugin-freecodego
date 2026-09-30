@@ -1029,6 +1029,73 @@ export interface FreeCodeGoNvidiaStatus {
 }
 
 /**
+ * One free model the local buyer currently serves.
+ *
+ * `kind` is what the card groups by: `text` rows are chat routes the model
+ * adapter can serve, `images` rows are generated media on the same network.
+ * Both are listed, because the question the card answers is "what can I reach
+ * for free right now", and a network serving only image models is a different
+ * answer from one serving nothing.
+ *
+ * Rows are free by construction: the price every offer advertises decides it,
+ * and a model that is billed per picture is not one of these however its token
+ * price reads. `paidModels` is the count that did not qualify.
+ */
+export interface FreeCodeGoAntSeedModelRow {
+  readonly id: string
+  readonly name: string
+  readonly kind: 'text' | 'images'
+}
+
+/**
+ * Gateway state, as the settings surface reports it.
+ *
+ * The private key never crosses this boundary. `peerId` is the public EVM
+ * address the key names — the value the user needs to see and to be able to
+ * write down — and it is the whole of what the browser is told about the
+ * identity. `hasIdentity` is separate because a status read must never create
+ * one: generating a wallet as a side effect of opening a settings page is how
+ * a user ends up with a key nobody backed up.
+ */
+export interface FreeCodeGoAntSeedStatus {
+  /** Whether the buyer runtime is installed below the Harness home. */
+  readonly installed: boolean
+  /** Whether this plugin currently owns a live buyer process. */
+  readonly running: boolean
+  /**
+   * Whether the gateway switch is open.
+   * This is session state and is never stored: a Harness restart reports
+   * `false` again, and the user opens it deliberately.
+   */
+  readonly gatewayEnabled: boolean
+  /** Whether an identity is stored in the Host credential vault. */
+  readonly hasIdentity: boolean
+  /**
+   * Whether the vault holds a value that cannot be read as a private key.
+   * Set only in that case, and never together with `hasIdentity`: the card needs
+   * it to offer the repair — a key the vault cannot parse is one the user has to
+   * replace by hand, since this plugin will not write a new key over it.
+   */
+  readonly identityUnreadable?: boolean
+  /** Public EVM address the stored key names; absent until one is stored. */
+  readonly peerId?: string
+  /** Loopback port the buyer proxy listens on. */
+  readonly port: number
+  /** Runtime version this plugin installs and runs. */
+  readonly version: string
+  /** Free models the buyer answers with, while the gateway is open. */
+  readonly models: readonly FreeCodeGoAntSeedModelRow[]
+  /**
+   * How many advertised models were left out of `models` for a price.
+   * Only read while the gateway is open; the count is `0` otherwise, because
+   * nothing was read to count.
+   */
+  readonly paidModels: number
+  /** Why the runtime is not usable, when it is not. */
+  readonly reason?: string
+}
+
+/**
  * Browser-safe speech-route projection; the API key stays in the Host vault.
  *
  * The endpoint and the model travel with it because the card shows the route the
@@ -1147,6 +1214,18 @@ export interface FreeCodeGoVyceStatus {
 export interface FreeCodeGoLogfareStatus {
   readonly configured: boolean
   readonly sessionConfigured: boolean
+  /**
+   * Upstream refuses every account read until Discord is linked; this is its own
+   * reason text, empty when the account is not suspended.
+   *
+   * It travels to the card because it is the only place the reason is written:
+   * re-deriving "you must link Discord" from a boolean would make the surface
+   * name a cause upstream never stated.
+   */
+  readonly migrationReason: string
+  readonly discordMigrationRequired: boolean
+  /** The account APIs answer at all — the precondition for the consent switch. */
+  readonly accountActive: boolean
   readonly trainingOptIn: boolean
   readonly premiumUnlocked: boolean
   readonly standardModelCount: number
@@ -1155,13 +1234,19 @@ export interface FreeCodeGoLogfareStatus {
   readonly premiumModelNames: readonly string[]
 }
 
-/** Explicit confirmations required before the Host creates a Logfare account. */
-export interface FreeCodeGoLogfareRegistrationRequest {
+/**
+ * Credentials the Host signs a Logfare account in with.
+ *
+ * Registration is deliberately absent. Upstream requires the short-lived
+ * HttpOnly cookie its own browser Discord flow issues — `POST /auth/register`
+ * refuses every body without it — so a Host-side `fetch` cannot create the
+ * account, and a new one is always made on the provider's web page. What the
+ * Host *can* do is sign in to the account that page created, which is how the
+ * vault obtains the session every account call needs.
+ */
+export interface FreeCodeGoLogfareLoginRequest {
   readonly username: string
   readonly password: string
-  readonly tosAccepted: boolean
-  readonly ageConfirmed: boolean
-  readonly trainingOptIn: boolean
 }
 
 /**

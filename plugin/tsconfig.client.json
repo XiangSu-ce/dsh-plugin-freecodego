@@ -14,6 +14,13 @@
     "types": ["node"]
   },
   "include": [
+    // The native/renderer keyboard fixture imports only these Cordis-free Desktop modules.
+    "apps/desktop/tests/keyboard.spec.ts",
+    "apps/desktop/src/keyboard.ts",
+    "apps/desktop/src/keybindings.ts",
+    "apps/desktop/src/browser-guests.ts",
+    "apps/desktop/src/ipc.ts",
+    "apps/desktop/src/update-overlay.ts",
     "apps/desktop/tests/**/*.client.spec.tsx",
     // Source-subpath test imports can arrive through workspace links whose
     // realpath semantics vary by host. Load package CSS declarations directly.
@@ -41,11 +48,16 @@
   // in turn. `exclude` wins over `include`, so the test glob above stays broad.
   "exclude": [
     "packages/client/*/tests/**/*.host.spec.ts",
+    // FreeCodeGo packages are checked by their own tsconfigs through
+    // `build:freecodego`, exactly like the host aggregate excludes them. The
+    // `packages/*/*/tests/**/*.client.spec.ts` glob above would otherwise sweep
+    // the plugin's own client specs into this program.
     "packages/freecodego/**/tests/**"
   ],
   "references": [
-    { "path": "./tsconfig.desktop-keyboard-tests.json" },
+    { "path": "./packages/client/product-analytics/tsconfig.client.json" },
     { "path": "./apps/desktop/tsconfig.client.json" },
+    { "path": "./packages/util/atomic-write" },
     { "path": "./packages/experimental/client-ui-voice-input" },
 
     { "path": "./packages/client/ui-sidebar-terminal" },
@@ -79,10 +91,10 @@
     { "path": "./packages/extensions/ui-cordis" },
     { "path": "./packages/test-support/client-runtime" },
     { "path": "./packages/test-support/remote-mock" },
-    { "path": "./packages/client/ui-layout" },
-    { "path": "./packages/client/ui-sidebar" },
     { "path": "./packages/client/shortcuts/tsconfig.client.json" },
     { "path": "./packages/client/ui-shortcuts" },
+    { "path": "./packages/client/ui-layout" },
+    { "path": "./packages/client/ui-sidebar" },
     { "path": "./packages/client/ui-brand-official" },
     { "path": "./packages/client/ui-approval" },
     { "path": "./packages/client/ui-chat/tsconfig.client.json" },
@@ -115,6 +127,7 @@
     { "path": "./packages/client/ui-settings-plugins" },
     { "path": "./packages/client/ui-settings-shell" },
     { "path": "./packages/client/ui-settings-agent-loop" },
+    { "path": "./packages/client/ui-settings-session-log" },
     { "path": "./packages/client/ui-settings-subagent" },
     { "path": "./packages/client/ui-settings-web-search" },
     { "path": "./packages/client/ui-user-questions" },

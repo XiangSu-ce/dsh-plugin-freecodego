@@ -12,8 +12,8 @@
   en: d40518e576fc53a7
   zh: bb54c20ca12a480f
 /dsh-freecodego-harness-plugin/table-of-contents:
-  en: 30a6d701b2a56fca
-  zh: 879ad596c6925d5a
+  en: 588fb4579d90b1bf
+  zh: d64f2757a1deb0db
 /dsh-freecodego-harness-plugin/documentation:
   en: 660155133b4c29cf
   zh: b1f215d495826eb3
@@ -21,8 +21,11 @@
   en: 32df208a73ec7b8b
   zh: 0cf95a41bd0a5af7
 /dsh-freecodego-harness-plugin/free-models:
-  en: 29855220e803af43
-  zh: 1aa6cde044f2701a
+  en: 25c3dc5f7b66a9e4
+  zh: 0b4ec61d400461ae
+/dsh-freecodego-harness-plugin/private-key-gateway-free-models:
+  en: 0df2074148b9bca8
+  zh: f51748bb7ab737de
 /dsh-freecodego-harness-plugin/session-deletion:
   en: 2967cf05c54c36ab
   zh: b7270ef9d2b12b23
@@ -69,8 +72,8 @@
   en: 350dc185fc062c71
   zh: c17aecbc6d44fced
 /dsh-freecodego-harness-plugin/release-updates:
-  en: 687ec267d12bded1
-  zh: 3cf22c9bc436fc4a
+  en: e98426067c953188
+  zh: ccc44f16145ad147
 /dsh-freecodego-harness-plugin/zcode-glm-5-3-flash-promotion:
   en: 49c53908827a765f
   zh: 8524c23d225bd68b
@@ -108,8 +111,8 @@
   en: bdee91cb22023259
   zh: a6c9acb093364358
 /dsh-freecodego-harness-plugin/media-defaults/which-models:
-  en: bc10adf3d0cd3d09
-  zh: 9e4f544a69d92ef7
+  en: 0511a0d3252eb6f9
+  zh: fe74695b8556fa36
 /dsh-freecodego-harness-plugin/model-picker-and-provider-accounts:
   en: 6f92c3b33499c327
   zh: aa9ebe5419bc523d
@@ -162,8 +165,8 @@
   en: 0ce477142517ecfc
   zh: 94438ea15a5ce3fb
 /dsh-freecodego-harness-plugin/known-limitations-and-deferred-work:
-  en: 869a78ba55632aed
-  zh: 7c9cafba74b15c45
+  en: 16df373666db6e88
+  zh: 5edbf400742ac630
 /dsh-freecodego-harness-plugin/known-limitations-and-deferred-work/dev-note:
   en: 23c8fdd7bf160058
   zh: 0c84b908cd1c8505

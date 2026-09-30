@@ -470,6 +470,56 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     }
   })
 
+  it('serves AntSeed image models through the buyer only while its gateway is open', async () => {
+    // The wiring between the media ladder and the plugin's own buyer: the ladder
+    // reads the switch before it reads a directory, and the call that actually
+    // reaches the buyer asserts it again, because the two happen at different
+    // moments on a page where the user can close the gateway in between.
+    const ctx = new Context()
+    await ctx.plugin(AgentEngineRegistry)
+    provideHostService(ctx, 'credentials', { resolve: async () => undefined, set: async () => undefined, unset: async () => undefined })
+    provideHostService(ctx, 'tools', { register: () => () => undefined, guard: () => () => undefined, schemas: () => [] })
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, { autoSubagentModelSelection: false }) as unknown as {
+      antSeedGateway: { enable: () => unknown }
+      mediaHost: {
+        antSeedImageModels: () => Promise<readonly { readonly id: string }[]>
+        generateAntSeedImage: (model: string, args: { readonly prompt: string }, signal: AbortSignal) => Promise<unknown>
+      }
+    }
+    // Priced at zero per picture, which is what makes the row free: the image
+    // listing on the live network reads `0 / 0` on the token fields and bills
+    // per picture, so a fixture without prices would be testing the trap.
+    const zero = { inputUsdPerMillion: 0, outputUsdPerMillion: 0, minImageUsdPerImage: 0, maxImageUsdPerImage: 0 }
+    const read = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'flux-2-pro', peers: [zero] }] }), { status: 200 }))
+    vi.stubGlobal('fetch', read)
+    try {
+      // Shut: the ladder is handed nothing, no request leaves the process, and a
+      // session that names an AntSeed model anyway is refused by the switch rather
+      // than by a connection error.
+      await expect(plugin.mediaHost.antSeedImageModels()).resolves.toEqual([])
+      expect(read).not.toHaveBeenCalled()
+      await expect(plugin.mediaHost.generateAntSeedImage('flux-2-pro', { prompt: 'a cat' }, new AbortController().signal))
+        .rejects.toThrow('KEY_GATEWAY_CLOSED')
+
+      plugin.antSeedGateway.enable()
+
+      await expect(plugin.mediaHost.antSeedImageModels()).resolves.toEqual([{ id: 'flux-2-pro', name: 'flux-2-pro', kind: 'images', free: true }])
+      // Open, but the row is billed per picture: the ladder must not be handed a
+      // route it would spend money on.
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+        String(input).includes('/images/')
+          ? { data: [{ id: 'flux-2-pro' }] }
+          : { data: [{ id: 'flux-2-pro', peers: [{ ...zero, minImageUsdPerImage: 0.05, maxImageUsdPerImage: 0.05 }] }] },
+      ), { status: 200 })))
+      await expect(plugin.mediaHost.antSeedImageModels()).resolves.toEqual([])
+      await expect(plugin.mediaHost.generateAntSeedImage('flux-2-pro', { prompt: 'a cat' }, new AbortController().signal))
+        .resolves.toEqual({ data: [{ id: 'flux-2-pro' }] })
+    } finally {
+      vi.unstubAllGlobals()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('routes the legacy Agnes image tool through the selected default image model', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
@@ -1502,6 +1552,85 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     expect(rows[2]).toMatchObject({ availability: 'unavailable', unavailableReason: 'FREECODEGO_GROUP_LOCKED' })
     expect(rows[0]?.availability).toBe('available')
     expect(rows[0]?.unavailableReason).toBeUndefined()
+    await ctx.fiber.dispose()
+  })
+
+  it('keeps one billing group\u2019s rows adjacent instead of interleaving them per model', async () => {
+    // The expansion is model-major, so two models sharing two groups used to
+    // alternate (`AWS` row for model A, `Anthropic` row for model A, then the
+    // same for model B), which made comparing one group's rates a read down the
+    // whole list. The picker orders by group, keeping the backend's group order
+    // and — because `sort` is stable — the backend's model order inside a block.
+    const ctx = new Context()
+    await ctx.plugin(AgentEngineRegistry)
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, { autoSubagentModelSelection: false }) as unknown as {
+      listFreeCodeGoModels: (provider: string) => Promise<readonly { readonly id: string }[]>
+      localFreeCodeGoModels: (provider: string) => Promise<readonly unknown[]>
+      readManagedCatalogCache: () => Promise<unknown>
+      refreshManagedCatalogInBackground: () => void
+      refreshGatewayHealthInBackground: () => void
+      account: { snapshot: () => { status: string } }
+    }
+    const choice = (groupId: number, groupName: string, rateMultiplier: number) => ({
+      routeKey: `group:${groupId}:gpt-5.6`, label: groupName, availability: 'available', compatibleEngines: ['deepseek'],
+      groupId, groupName, protocol: 'openai_responses', rateMultiplier, zeroPrice: rateMultiplier === 0, locked: false,
+    })
+    const groupedModel = (id: string, displayName: string) => ({
+      id, displayName, provider: 'openai', protocol: 'openai_responses', availability: 'available', compatibleEngines: ['deepseek'],
+      choices: [choice(1, 'AWS Claude', 0.1), choice(2, 'Anthropic Claude', 0.2)],
+    })
+    plugin.localFreeCodeGoModels = async () => []
+    plugin.readManagedCatalogCache = async () => ({
+      catalogRevision: 'group-major-order-test',
+      groups: [
+        { id: 1, name: 'AWS Claude', enabled: true, rateMultiplier: 0.1, sortOrder: 1 },
+        { id: 2, name: 'Anthropic Claude', enabled: true, rateMultiplier: 0.2, sortOrder: 2 },
+      ],
+      models: [groupedModel('claude-fable-5', 'Claude Fable 5'), groupedModel('claude-fable-5-1', 'Claude Fable 5 1')],
+    })
+    plugin.refreshManagedCatalogInBackground = () => undefined
+    plugin.refreshGatewayHealthInBackground = () => undefined
+    plugin.account = { snapshot: () => ({ status: 'authenticated' }) }
+
+    const ids = (await plugin.listFreeCodeGoModels('freecodego')).map(row => row.id)
+    expect(ids).toEqual([
+      'claude-fable-5@group:1', 'claude-fable-5-1@group:1',
+      'claude-fable-5@group:2', 'claude-fable-5-1@group:2',
+    ])
+    await ctx.fiber.dispose()
+  })
+
+  it('follows every grouped row with the ungrouped ones, in backend order', async () => {
+    // A model the backend grouped nowhere has no block to belong to; it trails
+    // the grouped ones rather than being pulled between them by its id.
+    const ctx = new Context()
+    await ctx.plugin(AgentEngineRegistry)
+    const plugin = new FreeCodeGoHarnessPlugin(ctx, { autoSubagentModelSelection: false }) as unknown as {
+      listFreeCodeGoModels: (provider: string) => Promise<readonly { readonly id: string }[]>
+      localFreeCodeGoModels: (provider: string) => Promise<readonly unknown[]>
+      readManagedCatalogCache: () => Promise<unknown>
+      refreshManagedCatalogInBackground: () => void
+      refreshGatewayHealthInBackground: () => void
+      account: { snapshot: () => { status: string } }
+    }
+    const ungrouped = (id: string) => ({ id, displayName: id, provider: 'openai', protocol: 'openai_responses', availability: 'available', compatibleEngines: ['deepseek'], choices: [] })
+    plugin.localFreeCodeGoModels = async () => []
+    plugin.readManagedCatalogCache = async () => ({
+      catalogRevision: 'mixed-group-order-test',
+      groups: [{ id: 7, name: '分组甲', enabled: true, rateMultiplier: 1, sortOrder: 1 }],
+      models: [
+        ungrouped('aaa-plain'),
+        {
+          id: 'zzz-grouped', displayName: 'ZZZ Grouped', provider: 'openai', protocol: 'openai_responses', availability: 'available', compatibleEngines: ['deepseek'],
+          choices: [{ routeKey: 'group:7:zzz', label: '分组甲', availability: 'available', compatibleEngines: ['deepseek'], groupId: 7, groupName: '分组甲', protocol: 'openai_responses', rateMultiplier: 1, zeroPrice: false, locked: false }],
+        },
+      ],
+    })
+    plugin.refreshManagedCatalogInBackground = () => undefined
+    plugin.refreshGatewayHealthInBackground = () => undefined
+    plugin.account = { snapshot: () => ({ status: 'authenticated' }) }
+
+    expect((await plugin.listFreeCodeGoModels('freecodego')).map(row => row.id)).toEqual(['zzz-grouped@group:7', 'aaa-plain'])
     await ctx.fiber.dispose()
   })
 

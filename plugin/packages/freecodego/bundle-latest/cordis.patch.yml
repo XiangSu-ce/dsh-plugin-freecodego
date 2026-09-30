@@ -1,4 +1,4 @@
-# Standard DeepSeek Harness 0.1.7-rc.2 FreeCodeGo composition.
+# Standard DeepSeek Harness 0.2.0-rc.2 FreeCodeGo composition.
 # Neither official route is disabled. The `llm-deepseek` row (which mounts
 # `@deepseek-ai/dsh-llm-deepseek-api-key` since 0.1.7-rc.2) is the only row that
 # registers provider `deepseek-official`, and the base composition names that
@@ -29,32 +29,19 @@
 - id: session-persistence-jsonl
   inject:
     - freeCodeGoSessionEvents
-# The Harness's own reminder scheduler, and the clock it resolves dates against —
-# plus, below, the session index the default-on history tools need. All three are
-# rows another layer declares, which this layer turns on rather than re-mounting.
+# The Harness's own reminder scheduler and the clock it resolves dates against.
 #
-# 0.1.7-rc.2 declares both rows in the Web composition
-# (`packages/bundle/web-app/cordis.patch.yml`) and leaves them `disabled: true`,
-# so the capability has an official home now: this layer *enables the rows the
-# composition already declares* instead of inserting a second copy of the same
-# package. That is the whole difference between an enhancement and a duplicate —
-# the plugin used to ship `packages/schedule/schedule` compiled into its own
-# payload because no upstream bundle mounted it (the plugin's own cron tools were
-# the stand-in before that).
-#
-# Enabling the pair together is not tidiness: `schedule` resolves an unqualified
-# date or time through `time-context`, so a scheduler mounted without it is a
-# scheduler whose dates resolve against nothing. Upstream says the same beside
-# both rows.
-#
-# A patch naming a row the composition does not declare is a stderr warning, not
-# a failure (`app-boot/README.md`), so a composition without the Web bundle boots
-# with no scheduler at all rather than failing to boot — which is what happened
-# when this layer shipped a compiled copy of the package for that case instead.
-- id: schedule
-  disabled: false
-- id: time-context
-  disabled: false
+# 0.2.0 moved `schedule`, `time-context` and the task page out of the Web
+# composition and into the shipped optional bundle
+# `@deepseek-ai/dsh-experimental-schedule-bundle`
+# (`packages/experimental/schedule-bundle`). This layer mounts nothing for them:
+# the FreeCodeGo profile names that official bundle in `dsh.profile.bundles` (see
+# `patchFreeCodeGoProfileInstaller` in `scripts/sync-harness.mjs`), so the official
+# package owns the rows and no copy of the service is mounted here. The pair of
+# `disabled: false` overrides this file carried on 0.1.7-rc.2 are gone — with the
+# Web composition no longer declaring either row, such a patch is a stderr warning
+# rather than a mount (`app-boot/README.md`), so keeping it would only imply a
+# scheduler that never appears.
 # The session-history tools are on by default, and their content search is the
 # half that needs this row: the base mounts `session-query-sqlite` with
 # `openAt: never`, which keeps `ctx.sessionQuery` mounted but never opens SQLite.

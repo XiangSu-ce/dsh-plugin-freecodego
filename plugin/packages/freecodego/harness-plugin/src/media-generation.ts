@@ -20,6 +20,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { FreeCodeGoManagedRuntime } from '@deepseek-ai/dsh-freecodego-api'
 import type { AgnesClient } from './agnes.ts'
 import { AGNES_VIDEO_SECONDS } from './agnes.ts'
+import type { AntSeedModelRow } from './antseed/provider.ts'
 import type { FreeCodeGoCapabilityRegistry } from './capabilities.ts'
 import type { OpenAiCompatibleConnection } from './openai-compatible-adapter.ts'
 import { backendNotConfigured } from './account-utils.ts'
@@ -52,6 +53,21 @@ export interface MediaGenerationHost {
   readonly policy: FreeCodeGoSettingsReadPort
   readonly capabilities: FreeCodeGoCapabilityRegistry
   readonly requireAgnes: () => AgnesClient
+  /**
+   * The free image models the local buyer serves, in the buyer's own
+   * words. Empty while the gateway is shut, because nothing is listening behind
+   * it and the card and this ladder then agree by construction.
+   */
+  readonly antSeedImageModels: () => Promise<readonly AntSeedModelRow[]>
+  /**
+   * One image generation through the local buyer.
+   *
+   * The gateway switch is asserted inside this call rather than assumed from
+   * `antSeedImageModels` having answered: the two are read at different moments
+   * on a page where the user can close the gateway mid-request, and a route that
+   * exists is not a route that may be used.
+   */
+  readonly generateAntSeedImage: (model: string, args: ImageGenerationArgs, signal: AbortSignal) => Promise<unknown>
   readonly groqWhisperTranscribe: (audioBase64: string, mimeType: string, language?: string) => Promise<{ readonly text: string; readonly model: string }>
   readonly readManagedCatalogCache: () => Promise<FreeCodeGoManagedCatalog | undefined>
   readonly logfareApiKey: () => Promise<string | undefined>
@@ -421,6 +437,16 @@ export async function generateImageWithFallback(host: MediaGenerationHost, args:
     // profile without an Agnes account. A model's name describes what it does,
     // not who serves it.
     const references = referenceImageUrls(args.images)
+    if (route.provider === 'antseed') {
+      // The buyer proxy is a seller's OpenAI-shaped face, and the one thing it
+      // cannot carry from here is a source image: this transport sends JSON, and
+      // the edits endpoint that would take one is multipart. Refused rather than
+      // sent without them, because a user who attached a picture and got an
+      // unrelated one back has no way to tell what was dropped.
+      if (references.length > 0) throw new Error('Reference images are unavailable on the private-key gateway media route')
+      const value = await host.generateAntSeedImage(route.model, args, signal)
+      return persistGeneratedImages(visibleMediaSelection(route.selection), value, host.ctx.get('attachments'))
+    }
     if (route.provider === 'agnes') {
       // The Agnes transport takes no sources of its own, so a request that
       // carries them has to reach a provider that does rather than have them
@@ -878,6 +904,14 @@ export async function mediaCandidates(host: MediaGenerationHost, category: Media
       selections.push(selection)
     }
   } catch { /* Agnes stays optional in the fallback chain */ }
+  // The gateway's free image models are read from the buyer's own directory rather
+  // than from the Harness model list, which deliberately carries only its chat
+  // routes. A shut gateway, an absent runtime, or a directory that does not
+  // answer all contribute nothing: none of them is an error the ladder should
+  // report, and all three look the same to a user asking for a picture.
+  try {
+    for (const model of await host.antSeedImageModels()) selections.push(mediaSelection('antseed', model.id))
+  } catch { /* peer-to-peer stays optional in the fallback chain */ }
   const seen = new Set<string>()
   const routes = selections.map(selection => host.mediaRoute(selection)).filter((route) => {
     const key = `${route.provider}\u0000${route.model}`.toLowerCase()

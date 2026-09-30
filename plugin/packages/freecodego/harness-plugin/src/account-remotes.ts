@@ -14,7 +14,7 @@ import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient } from '@deepseek-ai/dsh-freecodego-api'
 import { randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
-import type { FreeCodeGoAccountSnapshot, FreeCodeGoAnnouncement, FreeCodeGoBackendSnapshot, FreeCodeGoCheckinReport, FreeCodeGoDeviceSessions, FreeCodeGoLogfareRegistrationRequest, FreeCodeGoLogfareStatus, FreeCodeGoLoginRequest, FreeCodeGoManagedCatalog, FreeCodeGoNvidiaStatus, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, WorkBuddyBrowserLogin, WorkBuddyInternationalAccount, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, WorkBuddyLoginPoll } from './types.ts'
+import type { FreeCodeGoAccountSnapshot, FreeCodeGoAnnouncement, FreeCodeGoBackendSnapshot, FreeCodeGoCheckinReport, FreeCodeGoDeviceSessions, FreeCodeGoLogfareLoginRequest, FreeCodeGoLogfareStatus, FreeCodeGoLoginRequest, FreeCodeGoManagedCatalog, FreeCodeGoNvidiaStatus, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, WorkBuddyBrowserLogin, WorkBuddyInternationalAccount, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, WorkBuddyLoginPoll } from './types.ts'
 import { buildTraeLoginUrl, TRAE_LOGIN_STATE_TTL_MS, traeCallbackUrl } from './trae/endpoints.ts'
 import { startTraeCallbackListener, type TraeCallbackListener } from './trae/callback-server.ts'
 import { exchangeTraeToken, parseTraeCallback, traeAccountFromLogin, traeMachineIdentity } from './trae/login.ts'
@@ -36,8 +36,8 @@ import { asRecord as record, asString as text } from './untrusted-json.ts'
 import { WORKBUDDY_INTL_AUTH_PLATFORM, WORKBUDDY_INTL_AUTH_STATE_URL, WORKBUDDY_INTL_AUTH_USER_AGENT, WORKBUDDY_INTL_LOGIN_ACCOUNT_URL, WORKBUDDY_INTL_TOKEN_POLL_URL, WORKBUDDY_LOGIN_STATE_TTL_MS } from './managed-catalog-utils.ts'
 import { enrichCatalogChoices, managedCatalogGroups, mergeCatalogModels } from './model-catalog.ts'
 import {
-  LOGFARE_API_KEY_REF, LOGFARE_CATALOG_TIMEOUT_MS, LOGFARE_REGISTER_URL, LOGFARE_SESSION_REF,
-  logfareResponseError, logfareSessionCookie,
+  LOGFARE_API_KEY_REF, LOGFARE_CATALOG_TIMEOUT_MS, LOGFARE_LOGIN_URL, LOGFARE_SESSION_REF,
+  logfareAccountError, logfareSessionCookie,
   NVIDIA_API_KEY_REF, NVIDIA_BASE_URL,
   SENSENOVA_API_KEY_REF, SENSENOVA_BASE_URL,
   VYCE_API_KEY_REF, VYCE_MODEL_PREFIX,
@@ -513,17 +513,21 @@ export async function groqWhisperTranscribe(host: AccountRemotesHost, audioBase6
  * @returns the logfare Status.
  */
 export async function logfareStatus(host: AccountRemotesHost): Promise<FreeCodeGoLogfareStatus> {
-  const [key, session, models, trainingOptIn] = await Promise.all([
+  const [key, session, models, account] = await Promise.all([
     host.catalogs.logfareApiKey(),
     host.catalogs.logfareSession(),
     host.catalogs.refreshLogfareModels(),
-    host.catalogs.logfareTrainingOptIn(),
+    host.catalogs.logfareAccount(),
   ])
   const standard = models.filter(model => model.tier === 1)
   const premiumModels = models.filter(model => model.tier === 2 && model.requiresTrainingOptIn)
+  const trainingOptIn = account.state === 'active' && account.trainingOptIn
   return {
     configured: key !== undefined,
     sessionConfigured: session !== undefined,
+    migrationReason: account.state === 'migration-required' ? account.reason : '',
+    discordMigrationRequired: account.state === 'migration-required',
+    accountActive: account.state === 'active',
     trainingOptIn,
     premiumUnlocked: trainingOptIn || premiumModels.some(model => model.premiumUnlocked),
     standardModelCount: standard.length,
@@ -544,43 +548,64 @@ export async function logfareSetKey(host: AccountRemotesHost, value: string): Pr
   if (host.credentials === undefined) throw new Error('Credential provider is not configured')
   const normalized = value.trim()
   if (normalized !== '' && !/^[\x21-\x7E]+$/.test(normalized)) throw new Error('FreeCodeGo model access key contains invalid characters')
+  const previous = await host.catalogs.logfareApiKey()
   if (normalized === '') await host.credentials.unset(LOGFARE_API_KEY_REF)
   else await host.credentials.set(LOGFARE_API_KEY_REF, normalized)
-  // A manually pasted key may belong to another Logfare account, so never
-  // reuse a prior account's consent session with it.
-  await host.credentials.unset(LOGFARE_SESSION_REF)
+  // A manually pasted key may belong to another Logfare account, so a key that
+  // actually changes never reuses the previous account's consent session. Saving
+  // the key that is already stored is the same account, and dropping the session
+  // for it signed the user out of an account they had already signed in to — the
+  // card then looked like a login that had never persisted.
+  if (normalized !== previous) await host.credentials.unset(LOGFARE_SESSION_REF)
   host.catalogs.invalidateLogfareCatalog()
   host.ctx.emit('llm/adapters-updated')
   return host.logfareStatus()
 }
 
-/** Create one user-confirmed Logfare account and save its issued API key in the Host vault. 
+/**
+ * Sign the Host in to one Logfare account and keep the session it answers with.
+ *
+ * This is the account half of the integration and the reason there is no
+ * registration remote beside it: upstream gates `POST /auth/register` on a
+ * short-lived HttpOnly cookie that only its own browser Discord flow issues — it
+ * refuses every body, including an empty one, without that cookie — so an
+ * account is always created on the provider's web page and the Host signs in to
+ * whatever that page produced.
+ *
+ * The account name is digits only because that is this plugin's own contract for
+ * the accounts it manages, not upstream's; upstream accepts letters, digits and
+ * hyphens and this is a strict subset of that, so nothing it accepts is refused
+ * here.
  * @param host - the Host surface this remote call reaches its services through.
+ * @param input - the account name and password to sign in with.
  * @returns the logfare Status.
- * @param input - the registration details.
  */
-export async function logfareRegister(host: AccountRemotesHost, input: FreeCodeGoLogfareRegistrationRequest): Promise<FreeCodeGoLogfareStatus> {
+export async function logfareLogin(host: AccountRemotesHost, input: FreeCodeGoLogfareLoginRequest): Promise<FreeCodeGoLogfareStatus> {
   if (host.credentials === undefined) throw new Error('Credential provider is not configured')
   const username = typeof input?.username === 'string' ? input.username.trim() : ''
   const password = typeof input?.password === 'string' ? input.password : ''
-  if (!/^[A-Za-z0-9-]{3,64}$/.test(username)) throw new Error('FreeCodeGo account name must contain 3-64 letters, numbers, or hyphens')
+  if (!/^\d{3,64}$/.test(username)) throw new Error('FreeCodeGo account name must be 3-64 digits')
   if (password.length < 8 || password.length > 256) throw new Error('FreeCodeGo account password must contain 8-256 characters')
-  if (!input?.tosAccepted || ! input?.ageConfirmed) throw new Error('Confirm FreeCodeGo age and terms requirements before creating an account')
-  const response = await fetch(LOGFARE_REGISTER_URL, {
+  const response = await fetch(LOGFARE_LOGIN_URL, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'FreeCodeGo-Harness' },
-    body: JSON.stringify({ username, password, tos_accepted: true, age_confirmed: true }),
+    body: JSON.stringify({ username, password }),
     signal: AbortSignal.timeout(LOGFARE_CATALOG_TIMEOUT_MS),
   })
-  if (!response.ok) throw new Error(await logfareResponseError(response, 'FreeCodeGo model access registration failed'))
-  const payload = record(await response.json())
-  const apiKey = typeof payload.api_key === 'string' ? payload.api_key.trim() : ''
-  if (apiKey === '') throw new Error('FreeCodeGo registration did not return a model access key')
-  await host.credentials.set(LOGFARE_API_KEY_REF, apiKey)
+  if (!response.ok) throw new Error(await logfareAccountError(response, 'FreeCodeGo account sign-in failed'))
   const session = logfareSessionCookie(response)
-  if (session !== undefined) await host.credentials.set(LOGFARE_SESSION_REF, session)
+  if (session === undefined) throw new Error('FreeCodeGo sign-in returned no session cookie')
+  await host.credentials.set(LOGFARE_SESSION_REF, session)
+  // Only when the vault holds none: an account that already has a stored key
+  // keeps it, because signing in is not how a key is rotated and replacing one
+  // would silently invalidate whatever else uses it.
+  const payload = await response.json().catch(() => undefined)
+  const issued = typeof record(payload).api_key === 'string' ? text(record(payload).api_key)?.trim() : undefined
+  if (issued !== undefined && issued !== '' && await host.catalogs.logfareApiKey() === undefined) {
+    await host.credentials.set(LOGFARE_API_KEY_REF, issued)
+  }
+  host.catalogs.clearLogfareAccountCache()
   host.catalogs.invalidateLogfareCatalog()
-  if (input.trainingOptIn) await host.catalogs.updateLogfareTrainingPreference(true)
   host.ctx.emit('llm/adapters-updated')
   return host.logfareStatus()
 }

@@ -783,18 +783,17 @@ describe('companion: taking its seats', () => {
     ].map(entry => ({ ...entry, inject: expect.any(Function) })))
     // One namespace carrying both languages: the strip's label resolves through it.
     expect(dictionaries).toEqual([{ ns: 'freecodego.companion', values: { zh, en } }])
-    // The transcript's three seats are injections rather than registrations, so the
+    // The transcript's two seats are injections rather than registrations, so the
     // evidence that they were taken is their stylesheets — and that each handed
     // back the disposer the effect above is the only thing that can ever call.
     const sheets = [
       '[data-fcg-running-row-style]',
-      '[data-fcg-step-row-style]',
       '[data-fcg-dot-row-style]',
     ]
     for (const selector of sheets) expect(document.head.querySelector(selector)).not.toBeNull()
-    // The three injections and the live feed; the feed is the one every seat reads,
+    // The two injections and the live feed; the feed is the one every seat reads,
     // so it has to be disposed with the fiber that created it.
-    expect(disposers).toHaveLength(5)
+    expect(disposers).toHaveLength(4)
     for (const dispose of disposers) dispose()
     for (const selector of sheets) document.head.querySelector(selector)?.remove()
   })

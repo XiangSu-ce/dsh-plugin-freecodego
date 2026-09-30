@@ -197,6 +197,17 @@ export interface FreeCodeGoInlineSettings {
   /** Model-visible prompt-composition breakdown and usage tree (prompt-composition.ts). */
   promptCompositionEnabled: boolean
   /**
+   * Declare reasoning levels for the user's own third-party API models
+   * (custom-api-reasoning.ts).
+   *
+   * A hand-declared model states no reasoning capability, so the picker offers no
+   * effort row; this switch is what lets the plugin write that declaration into the
+   * `llm-pi-ai` settings document. Off means this plugin edits no other entry's
+   * settings — what it already declared stays, because the write is additive and
+   * nothing here ever removes one.
+   */
+  customApiReasoningEnabled: boolean
+  /**
    * Folder-trust gate for project-scoped surfaces (trust.ts).
    *
    * Declared here rather than composed from a `FreeCodeGoTrustSettings`: only the status

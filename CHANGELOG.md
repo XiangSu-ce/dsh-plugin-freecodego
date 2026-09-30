@@ -18,6 +18,142 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.2.0-rc.2 — 2026-09-30
+
+### English
+
+The Harness line this bundle mounts on moved, so `freecodego.harnessBaseline`,
+`engines.dsh` and the release asset name all state `0.2.0-rc.2`, and only this
+line's releases are offered to a Host on it. The largest thing arriving with the
+move is the one that asks for no account anywhere: a private-key gateway whose
+free models reach the picker without a sign-up.
+
+#### Fixed
+
+- **Logfare is signed into, not signed up for.** The card's form posts a
+  username and password to the provider's own login and keeps the session it
+  returns, so a restart no longer asks for it a second time; the API key is
+  adopted only when the vault holds none, so signing in no longer clears a key
+  the user had already saved. The card also states what upstream now requires: an
+  account whose models were suspended until its Discord account is linked is
+  reported as such, with the link to the migration page, and the training-data
+  consent that unlocks the premium rows is offered where it belongs.
+- **A model the stored key has already unlocked is no longer labelled as paid.**
+  Every row the directory returned carried the training-data marker unless it was
+  free by default, so the picker showed the premium rows as costing something and
+  hid them by default; a row upstream reports as unlocked now carries no marker,
+  which is the state the account is actually in.
+
+#### Changed
+
+- **The schedule rows belong to the official bundle now.** On this Harness line
+  `@deepseek-ai/dsh-experimental-schedule-bundle` owns the `schedule` and
+  `time-context` rows and the Web composition no longer declares them, so this
+  profile lists that bundle in `dsh.profile.bundles` and mounts no copy of the
+  package: a second row here would have been a second mount of one service.
+- **Every peer a Host supplies states the Harness line.** Those ranges were `*`,
+  which admits no prerelease version at all, so on a line that publishes
+  prereleases only they named a host that does not exist — the install-time
+  `ERESOLVE` the list's own guide describes. Each now carries the same floor as
+  `engines.dsh`, and a check enforces that shape.
+- **The free-model tables were read again, and the rows moved.** The three
+  document faces and their publish mirrors now state what each provider's
+  directory answered on 2026-09-30, and the table gains the private-key gateway
+  row that belongs with the card below. Two account-pool rows now name
+  `deepseek-v4.1-flash`: Cline keeps it in its free half, and WorkBuddy
+  International covers it for as long as its promotion runs. Elsewhere the
+  directories moved — Logfare's roster is 24 rows rather than 50, OpenCode's free
+  share is 14 of 84, Kilo's is 17 of 397, and NVIDIA's live catalogue lost a row.
+- **The companion no longer seats a row upstream removed.** The seat that drew
+  the character at a running row's sweep leading edge is gone because the row
+  sweeps themselves are gone: every running row's in-flight mark is the dot, and
+  that seat places the character in the dot's own slot.
+- **The announcement stripe has no on/off switch in this build.** The settings
+  page that owned one is not registered here, so a stored `false` would have been
+  a state no surface could leave; the stripe shows what the account has unread,
+  and each notice still closes on its own.
+
+#### Added
+
+- **Free models with no sign-up, through a private-key gateway.** The
+  Accounts-and-providers page gains one card: a download button fetches the
+  pinned runtime into the Harness home, the Host generates and vaults a
+  secp256k1 identity for it — nothing is written to `~/.antseed`, and the key
+  reaches the browser only on an explicit export click — and a session-scoped
+  switch starts the runtime and publishes its catalog at
+  `http://127.0.0.1:8390/v1`. While the gateway is open, its free text models
+  join the picker under `antseed` and its free image models become selectable as
+  the image model under Overview, generated through the runtime's own loopback
+  image endpoint; a request carrying a reference image is refused there rather
+  than answered with an unrelated picture, because that transport cannot send
+  one. Only free routes are wired up — the runtime is started with a zero price
+  ceiling its own router enforces — so there is no deposit, no payment channel
+  and no funding call. The switch is deliberately not persisted, and the
+  per-provider model-list controls cover these rows like any other provider.
+- **Reasoning levels for your own API models.** A hand-declared third-party
+  model states no reasoning capability, so the picker offered no effort row.
+  `customApiReasoningEnabled` (on by default) lets the plugin write that
+  declaration into the `llm-pi-ai` settings document — an additive write that
+  never removes one, so what it already declared stays, and none of another
+  entry's settings is edited while the switch is off.
+
+### 中文
+
+本 bundle 挂载的 Harness 线前进了：`freecodego.harnessBaseline`、`engines.dsh`
+与发布资产名现在都写着 `0.2.0-rc.2`，并且只有这条线上的发布才会被这条线上的 Host
+选中。随这次前进一起到来的最大一件事，恰恰是不需要任何账号的那件：私钥网关 ——
+它的免费模型无需在任何地方注册就能进入选择器。
+
+#### 修复
+
+- **Logfare 是「登录」，不是「注册」。** 卡片上的表单把用户名与密码提交到该提供商自己的
+  登录接口，并保存它返回的会话，因此重启后不必再登录一次；API key 只在凭证库里一把
+  都没有时才被采用，所以登录也不再清掉用户自己存好的 key。卡片同时如实说明上游现在
+  的要求：模型被暂停、必须先绑定 Discord 的账号会被照实报告，并给出迁移页面的链接；
+  解锁高级行所需的训练数据授权，也放在它该在的位置。
+- **已解锁的模型不再被标成付费。** 目录返回的每一行只要不是默认免费，就会带上训练数据
+  标记，于是选择器把高级行显示成要花钱、并默认隐藏它们；上游报告为已解锁的行现在不再
+  带标记 —— 那才是这个账号真实的状态。
+
+#### 变更
+
+- **计划（schedule）那几行现在归官方 bundle 所有。** 在这条 Harness 线上，`schedule`
+  与 `time-context` 两行由 `@deepseek-ai/dsh-experimental-schedule-bundle` 提供，Web
+  组合不再声明它们，因此本 profile 把该 bundle 列进 `dsh.profile.bundles`，且不挂载
+  这个包的任何副本：这里再多一行，就是同一个服务被挂载第二次。
+- **Host 提供的每个 peer 范围都带上 Harness 线。** 这些范围原先写作 `*`，而 `*` 不接受
+  任何预发布版本，于是在一条只发预发布的线上，它指的是一个并不存在的 Host —— 正是那份
+  收录指南里描述的安装期 `ERESOLVE`。现在每个范围与 `engines.dsh` 声明同一条底线，
+  并有检查强制这个形状。
+- **免费模型表重新读了一遍，行数确实变了。** 三处文档面及其公开镜像现在写的是各提供商
+  目录在 2026-09-30 的答复，并且表里多出一行「私钥网关」，与下面那张卡片配套。两个
+  账号池的行里现在点名 `deepseek-v4.1-flash`：Cline 把它留在免费那一半，WorkBuddy
+  国际版则在推广期内覆盖它。其它目录也动了 —— Logfare 名单是 24 行而不是 50 行，
+  OpenCode 的免费占比是 84 行里的 14 行，Kilo 是 397 行里的 17 行，NVIDIA 的实时目录
+  少了一行。
+- **伴侣（companion）不再占一个上游已删掉的位置。** 那个把角色画在运行中行「扫光」前缘
+  的座位已经取消，因为扫光本身被上游删掉了：现在每个运行中行的进行中标记就是那个圆点，
+  该座位把角色画在圆点自己的位置上。
+- **本构建里公告横条没有开关。** 拥有那个开关的设置页在本构建里没有注册，因此存下的
+  `false` 会是一个没有任何界面能离开的状态；横条显示这个账号还有哪些没读，而每条公告
+  仍然可以单独关掉。
+
+#### 新增
+
+- **无需注册，走「私钥网关」就能用上免费模型。** 「账号与提供商」页面只多一张卡片：点
+  下载会把钉死版本的运行时取进 Harness home，Host 为它生成一把 secp256k1 身份并存入
+  凭证库 —— 不写 `~/.antseed`，私钥只在用户明确点「导出私钥」时才回到浏览器 —— 而一个
+  会话级开关会拉起运行时，并把它的目录发布在 `http://127.0.0.1:8390/v1`。网关开启期间，
+  它提供的免费文本模型以 `antseed` 出现在选择器里，免费生图模型则可以在「概览」里选为
+  默认生图模型，经由运行时自己的回环生图端点生成；带参考图的请求在那里会被拒绝，而不是
+  拿一张不相干的图当作答案，因为那条传输带不动参考图。这里只接免费路由 —— 运行时启动时
+  带着一个由它自己的路由器强制执行的零价格上限 —— 所以没有充值、没有支付通道、也没有
+  任何打款调用。开关刻意不做持久化；逐模型的「模型列表显示设置」对它与其他供应商一视同仁。
+- **给自己接的第三方 API 模型声明思考等级。** 手工声明的模型不包含任何思考能力，因此
+  选择器不会给出思考档位。`customApiReasoningEnabled`（默认开启）允许插件把这份声明写进
+  `llm-pi-ai` 设置文档 —— 这是一次只增不减的写入，因此它已经声明过的内容会保留，而开关
+  关掉时不会去改别的条目的设置。
+
 ## 0.1.7-rc.2.3 — 2026-09-28
 
 ### English

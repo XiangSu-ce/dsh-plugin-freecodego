@@ -5,7 +5,7 @@
  * another plugin's React tree with no extension point on them (the Chat view's
  * turn-status row, the transcript's running rows). Where that is the case the
  * character is *injected* into the shipped element and only its animation is
- * replaced — see `./running-row.tsx` and `./step-row.tsx`, the two callers.
+ * replaced — see `./running-row.tsx`, the caller.
  *
  * What a caller owns is the site: its selector, the marker its stylesheet keys on,
  * what it mounts, and what "release" means for it. What this module owns is the

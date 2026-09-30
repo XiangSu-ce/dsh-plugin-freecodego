@@ -10,6 +10,7 @@ import type {
 } from '@deepseek-ai/dsh-attachment'
 import { hasImageContent, serializeRequest, serializeRequestWithInlineImages, translate } from './openai-wire.ts'
 import { parseSse } from './wire-shared.ts'
+import { StreamIdleTimeoutError, withIdleDeadline } from './stream-deadline.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 import { llmCodeForUpstreamStatus } from './upstream-status-code.ts'
 import { ANTHROPIC_MESSAGES_HEADERS, serializeAnthropicRequest, serializeAnthropicRequestWithInlineImages, translateAnthropic } from './anthropic-wire.ts'
@@ -70,6 +71,21 @@ export function normalizeWireProtocol(protocol: string | undefined): string {
 export function wireForProtocol(protocol: string | undefined): OpenAiCompatibleWire | undefined {
   return WIRE_FOR_PROTOCOL.get(normalizeWireProtocol(protocol))
 }
+
+/**
+ * Default idle deadline for one provider request, in milliseconds.
+ *
+ * Replaces what used to be a 120-second *total* request budget. An absolute
+ * budget cannot be used on a streamed completion: a reasoning turn that takes
+ * minutes is not a failure, and aborting it made the Harness re-send the
+ * identical request — which on a slow route never got any further than the
+ * aborted one did, so the turn could not finish at all. Silence is the only
+ * evidence that something is wrong, so the deadline is refreshed by every chunk
+ * (`withIdleDeadline`, the same decision the provider bridge makes) and the wait
+ * for the response headers gets a deadline of its own, because that one silence
+ * no chunk can break.
+ */
+export const PROVIDER_STREAM_IDLE_MS = 120_000
 
 /** How one OpenAI-compatible route reaches its provider. */
 export interface OpenAiCompatibleConnection {
@@ -168,6 +184,15 @@ export interface OpenAiCompatibleAdapterOptions {
   readonly resolveAttachments?: () => AttachmentStore | undefined
   /** Per-route request-image normalization budget before base64 expansion. */
   readonly imageRequestPolicy?: FreeCodeGoImageRequestBudget
+  /**
+   * How long the route may go quiet before its stream is treated as stalled.
+   *
+   * Idle rather than absolute: the deadline is refreshed by every chunk, so a
+   * slow-but-alive answer is never cut off for taking a long time. It also
+   * bounds the wait for the response headers, which is the one silence no chunk
+   * can break. Defaults to {@link PROVIDER_STREAM_IDLE_MS}.
+   */
+  readonly streamIdleMs?: number
 }
 
 /**
@@ -191,6 +216,11 @@ type ModelLimits = LlmModelInfo & {
 export class OpenAiCompatibleAdapter extends LlmAdapter {
   constructor(private readonly config: OpenAiCompatibleAdapterOptions) {
     super()
+  }
+
+  /** The idle deadline this route applies to its streams, headers included. */
+  private get streamIdleMs(): number {
+    return this.config.streamIdleMs ?? PROVIDER_STREAM_IDLE_MS
   }
 
   override providerInfo(provider: string): LlmProviderInfo {
@@ -284,12 +314,28 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
     })
     if (response.body === null) throw new LlmError(`${this.config.providerName} returned no response body`, 'EMPTY_RESPONSE')
     try {
-      yield* translate(parseSse(response.body))
+      yield* withIdleDeadline(translate(parseSse(response.body)), this.streamIdleMs)
     } catch (error) {
-      if (options.signal?.aborted) throw new LlmError(`${this.config.providerName} request aborted by caller`, 'ABORTED', { cause: error })
-      if (error instanceof LlmError) throw error
-      throw new LlmError(`${this.config.providerName} stream failed`, 'TRANSPORT', { cause: error })
+      throw this.streamFailure(error, options)
     }
+  }
+
+  /**
+   * Name a failed stream so the caller knows which of the two silences it hit.
+   *
+   * A cancellation comes from the client and must stay quiet; a provider that
+   * stopped answering is a transport failure the turn is allowed to retry. The
+   * classification is shared with the provider bridge, which keys on the same
+   * {@link StreamIdleTimeoutError}, so both routes report one stall one way.
+   * @param error - the failure the stream raised.
+   * @param options - the request, for its cancellation signal.
+   * @returns the failure to throw.
+   */
+  private streamFailure(error: unknown, options: GenerateOptions): LlmError {
+    if (options.signal?.aborted) return new LlmError(`${this.config.providerName} request aborted by caller`, 'ABORTED', { cause: error })
+    if (error instanceof LlmError) return error
+    if (error instanceof StreamIdleTimeoutError) return new LlmError(`${this.config.providerName} stream stalled`, 'TIMEOUT', { cause: error })
+    return new LlmError(`${this.config.providerName} stream failed`, 'TRANSPORT', { cause: error })
   }
 
   /**
@@ -343,6 +389,17 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
     onBadRequest?: (detail: string) => void,
   ): Promise<Response> {
     let response: Response
+    // Only the *wait for the response* is bounded here, and only until the
+    // headers arrive: the stream that follows carries its own idle deadline, so
+    // a long but live answer is never cut off for taking a long time. What this
+    // still catches is the provider that accepts the connection and then answers
+    // nothing at all — the one case no chunk-based deadline can see.
+    const headersDeadline = new AbortController()
+    const headersTimer = setTimeout(() => {
+      headersDeadline.abort(new StreamIdleTimeoutError(this.streamIdleMs))
+    }, this.streamIdleMs)
+    // A pending deadline must not hold the Host open on its own.
+    ;(headersTimer as { unref?: () => void }).unref?.()
     try {
       response = await fetch(endpoint, {
         method: 'POST',
@@ -353,16 +410,21 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
           ...headers,
         },
         body: JSON.stringify(body),
-        // A caller's cancellation and the provider deadline are independent:
-        // supplying the former must not let a half-open TCP connection hang the
-        // turn forever.
+        // A caller's cancellation and the provider's own deadline are
+        // independent: supplying the former must not let a half-open TCP
+        // connection hang the turn forever.
         signal: options.signal === undefined
-          ? AbortSignal.timeout(120_000)
-          : AbortSignal.any([options.signal, AbortSignal.timeout(120_000)]),
+          ? headersDeadline.signal
+          : AbortSignal.any([options.signal, headersDeadline.signal]),
       })
     } catch (error) {
       if (options.signal?.aborted) throw new LlmError(`${this.config.providerName} request aborted by caller`, 'ABORTED', { cause: error })
+      if (headersDeadline.signal.aborted) throw new LlmError(`${this.config.providerName} request timed out`, 'TIMEOUT', { cause: error })
       throw new LlmError(`${this.config.providerName} request failed`, 'TRANSPORT', { cause: error })
+    } finally {
+      // The headers are in (or the request is over), so the wait is no longer
+      // what needs watching — the stream is.
+      clearTimeout(headersTimer)
     }
     if (!response.ok) {
       const detail = redactProviderDetail(await response.text().catch(() => ''))
@@ -404,11 +466,9 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
     )
     if (response.body === null) throw new LlmError(`${this.config.providerName} returned no response body`, 'EMPTY_RESPONSE')
     try {
-      yield* translateAnthropic(parseSse(response.body))
+      yield* withIdleDeadline(translateAnthropic(parseSse(response.body)), this.streamIdleMs)
     } catch (error) {
-      if (options.signal?.aborted) throw new LlmError(`${this.config.providerName} request aborted by caller`, 'ABORTED', { cause: error })
-      if (error instanceof LlmError) throw error
-      throw new LlmError(`${this.config.providerName} stream failed`, 'TRANSPORT', { cause: error })
+      throw this.streamFailure(error, options)
     }
   }
 

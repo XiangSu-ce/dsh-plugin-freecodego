@@ -80,7 +80,7 @@ export function uniqueModelLabels(models: readonly string[]): readonly string[] 
  * redrawn third-party logos: these identify a section inside our own settings
  * panel, and shipping recognisable brand marks we do not own would be a
  * licensing problem for a purely decorative gain. */
-export type ProviderGlyphKind = 'logfare' | 'sensenova' | 'nvidia' | 'agnes' | 'cline' | 'workbuddy' | 'qoder' | 'trae' | 'vyce' | 'generic'
+export type ProviderGlyphKind = 'logfare' | 'sensenova' | 'nvidia' | 'agnes' | 'cline' | 'workbuddy' | 'qoder' | 'trae' | 'vyce' | 'antseed' | 'generic'
 
 export function ProviderGlyph({ kind, size = 18 }: { readonly kind: ProviderGlyphKind; readonly size?: number }): ReactNode {
   const common = { width: size, height: size, viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': true as const }
@@ -106,6 +106,11 @@ export function ProviderGlyph({ kind, size = 18 }: { readonly kind: ProviderGlyp
     // A trail that doubles back on itself: the connector's own shape is a
     // browser round trip out and a pasted callback back in.
     return <svg {...common}><path d="M5.2 15.4c0-4.2 3-5.6 4.8-3.4 1.6 2-.4 4.2-2.4 3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /><path d="M9.6 5.4h5.2M12.2 5.4v4.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+  }
+  if (kind === 'antseed') {
+    // Three nodes on one ring: the peer network the buyer joins, drawn as
+    // generic geometry rather than as a mark we would have to license.
+    return <svg {...common}><circle cx="10" cy="4.9" r="2.1" stroke="currentColor" strokeWidth="1.5" /><circle cx="4.9" cy="14.4" r="2.1" stroke="currentColor" strokeWidth="1.5" /><circle cx="15.1" cy="14.4" r="2.1" stroke="currentColor" strokeWidth="1.5" /><path d="M9 6.8 6.1 12.4M11 6.8l2.9 5.6M7 14.4h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
   }
   if (kind === 'vyce') {
     return <svg {...common}><path d="M4.4 4.6 10 15.4 15.6 4.6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /><path d="M12.2 4.6h3.4v3.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>

@@ -9,12 +9,13 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.1.7-rc.2.3`, targeting Harness baseline `0.1.7-rc.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.1.7-rc.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
+Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.2.0-rc.2`, targeting Harness baseline `0.2.0-rc.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.2.0-rc.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
 
 ## Table of Contents
 
 - [Install](#install)
 - [Free Models](#free-models)
+- [Private Key Gateway Free Models](#antseed-free-models)
 - [Code Review](#code-review)
 - [Project Memory](#project-memory)
 - [Agent Teams](#agent-teams)
@@ -32,10 +33,10 @@ Install the release for the Harness baseline you run; each release carries one t
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.1.7-rc.2.3/freecodego-0.1.7-rc.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2/freecodego-0.2.0-rc.2.tgz
 ```
 
-`freecodego-0.1.7-rc.2.tgz` is the bundle for Harness `0.1.7-rc.2`: substitute the version you run, which the settings page shows beside the installed plugin version. The asset name is the naming contract in `packages/freecodego/AGENTS.md`.
+`freecodego-0.2.0-rc.2.tgz` is the bundle for Harness `0.2.0-rc.2`: substitute the version you run, which the settings page shows beside the installed plugin version. The asset name is the naming contract in `packages/freecodego/AGENTS.md`.
 
 The `dsh` command is provided by the Harness CLI, not this bundle. In a normal terminal install it first with `npm install --global @deepseek-ai/dsh` (and ensure `pnpm` is available). Desktop launches the same command through its private shims and passes the active `DSH_HOME`, so Web and Desktop use one Profile data directory when they select the same Harness home.
 
@@ -54,19 +55,20 @@ The workflow verifies the family, builds, packs, and creates the GitHub release 
 ## Free Models
 
 <!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
-Every free row below comes from the provider's own directory, read when you open the picker, so this is what those directories returned on 2026-09-28 (sorted, where the picker keeps directory order) — and the picker is the count that is true when you look.
+Every free row below comes from the provider's own directory, read when you open the picker, so this is what those directories returned on 2026-09-30 (sorted, where the picker keeps directory order) — and the picker is the count that is true when you look.
 
 | Provider | Free models | Directory |
 |---|---|---|
-| **OpenCode** | `big-pickle`, `deepseek-v4-flash-free`, `jev-1.13-free`, `ling-3.0-flash-fin-free`, `longcat-2.5-preview-free`, `mimo-v2.5-free`, `mimo-v2.6-flash-free`, `muse-spark-1.2`, `muse-spark-1.2-contributor-free`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, `space-bunny-free` | 14 of 82 rows; public, no sign-in |
-| **Kilo** | `cohere/north-mini-code:free`, `dots-studio/dots-3-note-preview:free`, `inclusionai/ling-3.0-flash-fin:free`, `inclusionai/ling-3.0-flash-sante:free`, `kilo-auto/free`, `liquid/lfm-2.5-2.6b:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-content-safety:free`, `nvidia/nemotron-3.5-lightning:free`, `openrouter/free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `qwen/qwen3.8-27b:free`, `stealth/space-bunny-alpha`, `stepfun/step-3.7-flash:free`, `thinkingmachines/inkling-small:free` | 18 of 394 rows; public, 200 requests/hour per egress IP |
-| **Logfare** | chat `claude-fable-5-1`, `claude-opus-4.6`, `claude-opus-5`, `deepseek-v3.2`, `deepseek-v4.1-flash`, `gemini-3.8-flash`, `gemma-4-26b`, `glm-5`, `glm-5.3`, `glm-5.3-flash`, `gpt-5.6-sol`, `gpt-6-astra`, `gpt-6-sol`, `grok-4.6`, `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`, `kimi-k3`, `logfare/auto`, `mimo-v2.6-pro`, `moondream3.1`, `qwen-3.8-27b`, `space-bunny-alpha`, `step-3.7-flash`; images `flux-1-schnell`, `flux-2-dev`, `flux-2-klein-4b`, `flux-2-klein-9b`, `flux-2-pro`, `gpt-image-2`, `mai-image-2.5`, `mai-image-2.6-flash`, `muse-image`, `sdxl-lightning`; video `grok-imagine-video`, `kling-v3.0-pro`, `seedance-2.0-fast`, `sora-2-pro`, `veo-3.1`; audio `melotts`, `whisper-large-v3-turbo`; other routes `aleph-2`, `aura-2-en`, `hailuo-3-max`, `krea-2-medium-turbo`, `lucid-origin`, `nano-banana-2`, `nova-3`, `phoenix-1.0`, `wan-3.0-prime` | 50 rows; 42 need a training-data opt-in, the other 8 do not |
+| **Private Key Gateway** | the free routes in the picker, read live | no sign-up and no API key |
+| **OpenCode** | `big-pickle`, `deepseek-v4-flash-free`, `jev-1.13-free`, `ling-3.0-flash-fin-free`, `longcat-2.5-preview-free`, `mimo-v2.5-free`, `mimo-v2.6-flash-free`, `muse-spark-1.2`, `muse-spark-1.2-contributor-free`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, `space-bunny-free` | 14 of 84 rows; public, no sign-in |
+| **Kilo** | `cohere/north-mini-code:free`, `dots-studio/dots-3-note-preview:free`, `inclusionai/ling-3.0-flash-sante:free`, `kilo-auto/free`, `liquid/lfm-2.5-2.6b:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-content-safety:free`, `nvidia/nemotron-3.5-lightning:free`, `openrouter/free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `qwen/qwen3.8-27b:free`, `stealth/space-bunny-alpha`, `stepfun/step-3.7-flash:free`, `thinkingmachines/inkling-small:free` | 17 of 397 rows; public, 200 requests/hour per egress IP |
+| **Logfare** | chat `claude-opus-5-5`, `deepseek-v3.2`, `gemma-4-26b`, `glm-5`, `glm-5.3-flash`, `grok-4.6`, `kimi-k2.5`, `logfare/auto`, `qwen-3.8-27b`, `space-bunny-alpha`, `step-3.7-flash`; images `flux-1-schnell`, `flux-2-dev`, `flux-2-klein-4b`, `flux-2-klein-9b`, `flux-2-pro`, `gpt-image-2`, `sdxl-lightning`; audio `whisper-large-v3-turbo`; other routes `aura-2-en`, `lucid-origin`, `nano-banana-2`, `nova-3`, `phoenix-1.0` | 24 rows; 16 need a training-data opt-in, the other 8 do not |
 | **Qoder** | `Qwen 3.8 Flash` (route `qmodel_38flash`) | the free flash route, plus daily check-in campaigns |
-| **NVIDIA** | `google/gemma-4-31b-it`, `moonshotai/kimi-k3`, `z-ai/glm-5.3`, `z-ai/glm-5.3-flash` — the roster also names `deepseek-ai/deepseek-v4-flash-0731` and `deepseek-ai/deepseek-v4-pro-0813`, which are gone from NVIDIA's live catalogue of 82 rows | an API key is required to call them; cross-checked 2026-09-28 |
+| **NVIDIA** | `google/gemma-4-31b-it`, `moonshotai/kimi-k3`, `z-ai/glm-5.3`, `z-ai/glm-5.3-flash` — the roster also names `deepseek-ai/deepseek-v4-flash-0731` and `deepseek-ai/deepseek-v4-pro-0813`, which are gone from NVIDIA's live catalogue of 81 rows | an API key is required to call them; cross-checked 2026-09-30 |
 | **SenseNova** | `deepseek-v4-flash`, `deepseek-v4-pro`, `glm-5.2`, `kimi-k3`, `sensenova-6.8-flash-lite` | roster ships in the bundle; an API key is required |
 | **TRAE** | the rows its directory lists | free credits reset daily, per account |
-| **Cline** | the rows the directory marks `×0 · 官方免费模型` | an account pool |
-| **WorkBuddy International** | the rows a credit package marks `x0` | device login, several accounts |
+| **Cline** | the rows the directory marks `×0 · 官方免费模型`, `deepseek-v4.1-flash` among them | an account pool |
+| **WorkBuddy International** | the rows a credit package marks `x0`, `deepseek-v4.1-flash` among them while its promotion window is open | device login, several accounts |
 | **Agnes** | chat and image/video rows | a control-plane account |
 | **VyceAI** | no free roster | the daily check-in credit pays its metered rows |
 | **Groq** | `whisper-large-v3-turbo` | transcription, not a chat route |
@@ -75,9 +77,16 @@ These lists follow their directories: a route upstream retires leaves the table 
 
 TRAE, Cline, WorkBuddy International, Agnes publish no stable roster, so their rows are counted when they arrive rather than listed here.
 
-42 Logfare rows sit behind a training-data opt-in, which the picker labels rather than hides.
+16 Logfare rows sit behind a training-data opt-in, which the picker labels rather than hides.
+
+`deepseek-v4.1-flash` is also free here through two of the account pools above: Cline keeps it in its free half, and WorkBuddy International covers it for as long as its promotion runs.
 
 <!-- generated:free-models:end -->
+
+<a id="antseed-free-models"></a>
+## Private Key Gateway Free Models
+
+The private-key gateway gives the user free models with no sign-up and no API key to apply for: its identity is a secp256k1 private key whose EVM address is the peer id and the wallet at once. The Accounts-and-providers page carries one card for it. Downloading fetches the pinned runtime into the Harness home, and the Host then generates an identity into the credential vault — nothing is written to `~/.antseed`, the key is generated once and never rotated, and it reaches the browser only through an explicit export click. A session-scoped gateway switch starts the runtime and serves its catalog at `http://127.0.0.1:8390/v1`, so free text models join the picker under `antseed` only while the switch is open, and its free image models become selectable as the image model under Overview — generated through the runtime's own `/v1/images/generations` on the same endpoint — only while it is open. The switch is deliberately not persisted — a restart asks again — and only free routes are wired up: the runtime is started with a zero price ceiling, which its own router enforces by dropping every offer priced above it, so there is no deposit and no payment channel in the integration and a wallet funded later still cannot be charged through it. Because upstream's default trust floor is a hard gate on routing while its model listing ignores it, the runtime also pins its own routing preferences — a zero trust floor, free offers preferred — in a config file under its own root, so nothing the card lists is refused once a request is made; and a port another process already holds is refused rather than reused, since a buyer this plugin did not start is a buyer it cannot hand its identity to. Free means the model is currently offered at no charge, so the roster is a snapshot rather than a platform grant, and the card's refresh re-reads it without moving the switch.
 
 <a id="code-review"></a>
 ## Code Review

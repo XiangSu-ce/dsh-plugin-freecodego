@@ -8,7 +8,7 @@
  * draw the same frame for the same session facts, because everything they share
  * lives in `./view.ts`; this file is the rail mark plus the single entry point
  * that seats all of them, including the surfaces the shell gives no slot for
- * (`./running-row.tsx`, `./step-row.tsx`, `./dot-row.tsx`).
+ * (`./running-row.tsx`, `./dot-row.tsx`).
  *
  * Where the pose comes from is deliberately not this file's business. The vendored
  * engine decides what a state looks like at a time, the arbiter decides which
@@ -26,7 +26,6 @@ import { CompanionSvg } from './render.tsx'
 import { installCompanionBar } from './bar.tsx'
 import { installDotFaces } from './dot-row.tsx'
 import { installRunningRow } from './running-row.tsx'
-import { installStepRows } from './step-row.tsx'
 import { en, NS, zh } from './companion-locale.ts'
 import { COMPANION_BODY, COMPANION_EYES, COMPANION_HALO, COMPANION_SURFACE } from './palette.ts'
 import { mainViewSessionId } from './signals.ts'
@@ -76,15 +75,14 @@ export function FreeCodeGoCompanion(props: FreeCodeGoCompanionProps) {
 
 /**
  * Seat the companion in the sidebar's brand slot, the composer's entry list, and
- * the transcript's three injected seats — the running turn's status row, the
- * running rows inside a turn, and the shell's own ongoing dot.
+ * the transcript's two injected seats — the running turn's status row, and the
+ * shell's own ongoing dot.
  *
  * The registrations are one entry point because they are one character: a build
  * that seated only the mark would leave the label namespace unreachable, a build
  * that seated only the strip would lose the rail's own mark, and the injected
- * seats (`./running-row.tsx`, `./step-row.tsx`, `./dot-row.tsx`) draw the same pose
- * in place of the shell's own loading animations — the row sweeps that are left, and
- * the spinner ring of an in-flight mark.
+ * seats (`./running-row.tsx`, `./dot-row.tsx`) draw the same pose in place of the
+ * shell's own loading animations — the spinner ring of an in-flight mark.
  *
  * `priority: -1` is the sanctioned way to shadow a single slot: the default rank
  * is 0 and the lowest live entry renders, so this wins over the fallback mark
@@ -110,6 +108,5 @@ export function installCompanion(ctx: ClientContext): void {
     }, FreeCodeGoCompanion))
   installCompanionBar(ctx, activity)
   ctx.effect(() => installRunningRow(ctx, activity), 'freecodego-ui: Companion running row')
-  ctx.effect(() => installStepRows(ctx, activity), 'freecodego-ui: Companion step rows')
   ctx.effect(() => installDotFaces(ctx, activity), 'freecodego-ui: Companion ongoing dots')
 }

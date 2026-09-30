@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   FREE_MODEL_TABLE_BEGIN, FREE_MODEL_TABLE_END,
-  recordedObservedAt, renderFreeModelRegion, replaceFreeModelRegion,
+  recordedObservedAt, renderFreeModelRegion, replaceFreeModelRegion, withoutReadingDates,
 } from './generate-free-model-tables.ts'
 
 const SECTION = {
@@ -84,6 +84,48 @@ describe('recordedObservedAt', () => {
 
   it('treats an empty date as missing rather than publishing a blank one', () => {
     expect(recordedObservedAt({ observedAt: '' })).toBeUndefined()
+  })
+})
+
+describe('withoutReadingDates', () => {
+  /** A front page whose table was generated for `SECTION`'s reading. */
+  const generated = replaceFreeModelRegion([
+    '# Front page',
+    '',
+    FREE_MODEL_TABLE_BEGIN,
+    'stale table',
+    FREE_MODEL_TABLE_END,
+    '',
+  ].join('\n'), renderFreeModelRegion(SECTION, 'en', '\n'))
+  /** The same rows, read on a later day. */
+  const readALaterDay = { ...SECTION, observedAt: '2026-09-24' }
+
+  it('masks every reading date in place, so nothing around them shifts', () => {
+    const masked = withoutReadingDates(generated)
+
+    expect(masked).toContain('YYYY-MM-DD')
+    expect(masked).not.toContain('2026-09-23')
+    // The drift report prints both documents at the offset of the first
+    // difference, and it finds that offset in the masked pair: a mask of a
+    // different width would point at the wrong words.
+    expect(masked).toHaveLength(generated.length)
+  })
+
+  it('reads a later day as the same table, which is what the check asks', () => {
+    // The failure this exists for: `--check` on any day after a generation
+    // called all twelve files stale because the live read dates itself with the
+    // reader's own clock.
+    expect(withoutReadingDates(replaceFreeModelRegion(generated, renderFreeModelRegion(readALaterDay, 'en', '\n'))))
+      .toBe(withoutReadingDates(generated))
+  })
+
+  it('still reads a moved row as a different table', () => {
+    const moved = {
+      ...SECTION,
+      cells: [{ ...SECTION.cells[0], models: { en: '`big-pickle`, `raptor`', zh: '`big-pickle`、`raptor`' } }, ...SECTION.cells.slice(1)],
+    }
+    expect(withoutReadingDates(replaceFreeModelRegion(generated, renderFreeModelRegion(moved, 'en', '\n'))))
+      .not.toBe(withoutReadingDates(generated))
   })
 })
 

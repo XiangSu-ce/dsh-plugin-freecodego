@@ -17,10 +17,15 @@
  * the last recorded reading otherwise. The account-gated providers (TRAE, Cline,
  * WorkBuddy International, Agnes) and the fixed-route ones (Qoder, VyceAI, Groq)
  * have no readable roster, so their cells state that instead of inventing a list.
+ * The private-key gateway is a third kind: its directory exists only inside a
+ * caller's own session (a loopback port the runtime opens on demand), so its row
+ * names no routes at all and sends the reader to the picker for the live list.
  *
  * Usage:
  *   tsx scripts/generate-free-model-tables.ts             # read live, write all targets
- *   tsx scripts/generate-free-model-tables.ts --check     # read live, write nothing, exit 1 on drift
+ *   tsx scripts/generate-free-model-tables.ts --check     # read live, write nothing, exit 1 on roster drift
+ *                                                         # (a reading date that moved is not drift — see
+ *                                                         # `withoutReadingDates`)
  *   tsx scripts/generate-free-model-tables.ts --offline   # use the recorded snapshot, no network
  *   tsx scripts/generate-free-model-tables.ts --sources-only  # skip the publish-tree mirrors
  *
@@ -49,6 +54,31 @@ import {
 export const FREE_MODEL_TABLE_BEGIN = '<!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->'
 /** Marker closing the generated region. */
 export const FREE_MODEL_TABLE_END = '<!-- generated:free-models:end -->'
+
+/** The stand-in a comparison puts in place of a reading date. */
+const MASKED_READING_DATE = 'YYYY-MM-DD'
+/** Every date the region writes, in the one shape it writes them. */
+const READING_DATE_PATTERN = /\d{4}-\d{2}-\d{2}/gu
+
+/**
+ * Replace every reading date with a stand-in, so a comparison can ignore them.
+ *
+ * A date in the region is *when the directories were read*, not what they
+ * answered, so two readings a day apart agree on every row and differ on the
+ * date alone. `--check` asks the question it documents — whether the
+ * directories' current answer differs from what the table states — and without
+ * this a run on any day after a generation reports all twelve files stale for a
+ * reason that is not a roster change.
+ *
+ * Length-preserving on purpose: the drift report finds the first differing
+ * character in the masked pair and prints both documents at that offset, so a
+ * stand-in of a different width would report the wrong words.
+ * @param text - the document or region to mask.
+ * @returns the same text with every reading date replaced.
+ */
+export function withoutReadingDates(text: string): string {
+  return text.replace(READING_DATE_PATTERN, MASKED_READING_DATE)
+}
 
 const pluginRoot = resolve(import.meta.dirname, '..')
 const workspaceRoot = resolve(pluginRoot, '..')
@@ -205,6 +235,24 @@ async function readDirectory(
   }
   if (options.recorded === undefined) return undefined
   return { ids: options.recorded.directoryIds, observedAt: options.recorded.checkedAt }
+}
+
+/**
+ * The Private Key Gateway, whose roster this generator cannot read.
+ *
+ * The runtime publishes `http://127.0.0.1:8390/v1` only while the caller's
+ * session switch is on, and it refuses to start without an identity this plugin
+ * generated into that caller's own credential store — so a build machine has no
+ * directory to read and no fixed list to publish. The row names no routes on
+ * purpose: a roster copied from one reading would outlive the free offers behind
+ * it, which is the failure the rest of this table exists to avoid.
+ */
+function keyGatewayCell(): ProviderCell {
+  return {
+    label: { en: 'Private Key Gateway', zh: '私钥网关' },
+    models: { en: 'the free routes in the picker, read live', zh: '选择器里实时读到的免费路由' },
+    directory: { en: 'no sign-up and no API key', zh: '无需注册，也无需 API Key' },
+  }
 }
 
 /** OpenCode's public free roster, as the picker sees it. */
@@ -364,13 +412,19 @@ function accountGatedCells(): readonly ProviderCell[] {
     },
     {
       label: { en: 'Cline', zh: 'Cline' },
-      models: { en: 'the rows the directory marks `×0 · 官方免费模型`', zh: '目录标记 `×0 · 官方免费模型` 的那些行' },
+      models: {
+        en: 'the rows the directory marks `×0 · 官方免费模型`, `deepseek-v4.1-flash` among them',
+        zh: '目录标记 `×0 · 官方免费模型` 的那些行 —— 其中包含 `deepseek-v4.1-flash`',
+      },
       directory: { en: 'an account pool', zh: '账号池' },
       rosterless,
     },
     {
       label: { en: 'WorkBuddy International', zh: 'WorkBuddy 国际版' },
-      models: { en: 'the rows a credit package marks `x0`', zh: '积分包标记 `x0` 的那些行' },
+      models: {
+        en: 'the rows a credit package marks `x0`, `deepseek-v4.1-flash` among them while its promotion window is open',
+        zh: '积分包标记 `x0` 的那些行 —— `deepseek-v4.1-flash` 在其推广窗口内也算一个',
+      },
       directory: { en: 'device login, several accounts', zh: '设备登录，可放多个账号' },
       rosterless,
     },
@@ -427,6 +481,13 @@ function footnotes(cells: readonly ProviderCell[], optInRows: number | undefined
       zh: `Logfare 有 ${optInRows} 行位于训练数据授权之后，选择器会标注而不是隐藏它们。`,
     })
   }
+  // The one route two channels carry for nothing at once, which the rows above
+  // both name: stated once here so the two mentions cannot drift into two
+  // different claims about the same model.
+  notes.push({
+    en: '`deepseek-v4.1-flash` is also free here through two of the account pools above: Cline keeps it in its free half, and WorkBuddy International covers it for as long as its promotion runs.',
+    zh: '`deepseek-v4.1-flash` 在这里还通过上面两个账号池免费提供：Cline 把它留在免费那一半，WorkBuddy 国际版则在推广期内覆盖它。',
+  })
   return notes
 }
 
@@ -521,6 +582,7 @@ async function collect(offline: boolean, snapshot: Snapshot): Promise<{ section:
     throw new Error('the recorded snapshot carries no reading date — run this once without --offline to record one')
   }
   const cells: ProviderCell[] = [
+    keyGatewayCell(),
     openCodeCell(opencodeRows),
     kiloCell(kiloRows),
     logfareCell(logfareRows),
@@ -574,14 +636,20 @@ async function main(): Promise<void> {
     const region = renderFreeModelRegion(section, target.lang, source.includes('\r\n') ? '\r\n' : '\n')
     if (check) {
       const replaced = replaceFreeModelRegion(source, region)
-      if (replaced !== source) {
+      // Rosters, not the clock: the rows are what the check is about, and a
+      // date that moved is a table that was read on another day rather than one
+      // that is wrong. See `withoutReadingDates`.
+      const maskedSource = withoutReadingDates(source)
+      const maskedReplaced = withoutReadingDates(replaced)
+      if (maskedReplaced !== maskedSource) {
         drifted.push(target.file)
         // Show what moved, in a window around the first differing character: a
         // stale table is either upstream roster churn or a rule change, and the
         // changed words say which (the rows are long, so a prefix would only
-        // print the part that agreed).
+        // print the part that agreed). The offset comes from the masked pair,
+        // which is the same length as the one printed from.
         let at = 0
-        while (at < source.length && source[at] === replaced[at]) at += 1
+        while (at < maskedSource.length && maskedSource[at] === maskedReplaced[at]) at += 1
         const from = Math.max(0, at - 60)
         process.stderr.write(`  ${target.file}\n    - …${source.slice(from, at + 140).replaceAll('\n', '⏎')}\n    + …${replaced.slice(from, at + 140).replaceAll('\n', '⏎')}\n`)
       }
