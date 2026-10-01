@@ -170,7 +170,7 @@ an install that supplies its own keeps it.
 
 ## NPM Version Selection
 
-The public package is `freecodego@0.2.0-rc.2`. It is published for the
+The public package is `freecodego@0.2.0-rc.2.1`. It is published for the
 supported Harness version `0.2.0-rc.2`, and `freecodego.harnessBaseline`,
 `engines.dsh` and the release's asset name all state that line exactly: the
 baseline is what a Host selects a version by, and the bundle metadata and

@@ -7800,6 +7800,7 @@ async listNvidiaModels(provider: string): Promise<readonly LlmModelInfo[]> { ret
   private readonly accountRemotesState: AccountRemotesState = {
     restorePromise: undefined,
     restoreCompleted: false,
+    restoreFailureStreak: 0,
     pendingOAuthState: undefined,
   }
 

@@ -57,7 +57,7 @@ category: model
 description:
   en: 'Unofficial FreeCodeGo for DeepSeek Harness: DeepSeek, Codex and Claude engines over one session and toolchain, with a 0-token free access channel for deepseek-v4.1-flash, deepseek-v4-pro, deepseek-v4-flash-free, glm-5.3-flash, grok-4.6, kimi-k3, nemotron-3-ultra-free, muse-spark-1.3, Qwen 3.8 Flash and mimo-v2.6-flash-free, plus a keyless private-key gateway.'
   zh: '面向 DeepSeek Harness 的 FreeCodeGo：DeepSeek、Codex、Claude 三套引擎共用同一条会话与工具链，并为以下模型提供 0 token 免费使用渠道：deepseek-v4.1-flash、deepseek-v4-pro、deepseek-v4-flash-free、glm-5.3-flash、grok-4.6、kimi-k3、nemotron-3-ultra-free、muse-spark-1.3、Qwen 3.8 Flash、mimo-v2.6-flash-free，另有零注册的私钥网关。'
-tarball: https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2/freecodego-0.2.0-rc.2.tgz
+tarball: https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2.1/freecodego-0.2.0-rc.2.tgz
 ```
 
 Notes on the fields, each of which follows from a rule above:
@@ -67,7 +67,7 @@ Notes on the fields, each of which follows from a rule above:
 - **`description`** is quoted on both lines. English is required and is one line ending in a period; Chinese is optional (a maintainer fills it in if missing), and neither may contain a newline. It names no counts, because every number in it is read as a claim and counted — the one digit it does carry, `0-token`, is a price statement rather than a tally, and it is the form the plugin's own free-model table uses for a route that is offered at no charge. The model ids are the literal strings the providers' directories returned on the reading date the free-model table records, which is why they belong to `scripts/generate-free-model-tables.ts`: a route upstream retires has to leave this line the same way it leaves that table, and neither is edited by hand.
 - **`tarball`** must be refreshed whenever the release for the *current* Harness baseline is superseded — see below.
 
-The npm name is claimed as well, for a reason that is not the listing: an unpublished name is released to other accounts, so leaving `freecodego` unpublished would let anyone take the name the Harness CLI resolves on its own. `freecodego@0.2.0-rc.2` is published, which also makes the bare-name install work — `dsh plugin --profile web add freecodego` — resolved by the CLI through `pnpm view freecodego versions` against each version's `freecodego.harnessBaseline`. The release workflow publishes both halves from one packed file and verifies each against it, so the two cannot name different versions; the contract is in `packages/freecodego/AGENTS.md`.
+The npm name is claimed as well, for a reason that is not the listing: an unpublished name is released to other accounts, so leaving `freecodego` unpublished would let anyone take the name the Harness CLI resolves on its own. `freecodego@0.2.0-rc.2.1` is published, which also makes the bare-name install work — `dsh plugin --profile web add freecodego` — resolved by the CLI through `pnpm view freecodego versions` against each version's `freecodego.harnessBaseline`. The release workflow publishes both halves from one packed file and verifies each against it, so the two cannot name different versions; the contract is in `packages/freecodego/AGENTS.md`.
 
 ## How the card learns the Harness we need
 

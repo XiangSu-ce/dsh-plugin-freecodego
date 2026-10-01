@@ -92,6 +92,15 @@ export interface AccountRemotesState {
   /** Whether a durable session has already been restored successfully. */
   restoreCompleted: boolean
   /**
+   * Consecutive failed durable-session restores.
+   *
+   * `restoring` exists so that a startup network failure does not read as a
+   * logout, but it is also a state with no way out — no surface renders a
+   * sign-in form while it is reported. Counted here so the budget in
+   * {@link accountStatus} can end it; consecutive, so any success clears it.
+   */
+  restoreFailureStreak: number
+  /**
    * Handoff state of the browser sign-in whose federated identity landed in a
    * pending registration.
    *
@@ -189,7 +198,16 @@ export async function accountStatus(host: AccountRemotesHost): Promise<FreeCodeG
     if (await host.account.hasStoredSession()) {
       // Startup networking must not make an encrypted, durable session look
       // like a logout. The settings client retries this state in background.
-      return { status: 'restoring' }
+      //
+      // Past the budget those retries have stopped being evidence that anything
+      // will change, and `restoring` renders no sign-in form on any surface: an
+      // unrestorable session would park the panel there for the life of the
+      // process with nothing to press and no way to see why. Report a
+      // reauthentication instead — the state that shows the form — and leave the
+      // stored credential in place, so a restore that later succeeds still signs
+      // the account back in without the user doing anything.
+      if (host.state.restoreFailureStreak <= RESTORE_FAILURE_BUDGET) return { status: 'restoring' }
+      return { status: 'reauth-required' }
     }
     if (error instanceof Error && /FreeCodeGo authentication is required(?: after (?:token refresh|unauthorized response))?/i.test(error.message)) return { status: 'signed-out' }
     throw error
@@ -779,6 +797,17 @@ export async function backendUsage(host: AccountRemotesHost, days: number): Prom
 }
 
 /**
+ * Consecutive failed restores a durable session may report before the panel
+ * stops calling it `restoring`.
+ *
+ * The settings client backs off 5s, 10s, 20s, 40s and then 60s, so four failures
+ * cover roughly a minute of continuous failure: long enough that a machine which
+ * merely resumed without a network has reconnected, and short enough that a
+ * session which can never be restored stops hiding its own sign-in form.
+ */
+export const RESTORE_FAILURE_BUDGET = 4
+
+/**
  * Rehydrate the stored session when the Host starts.
  * @param host - the Host surface this remote call reaches its services through.
  */
@@ -795,9 +824,12 @@ export function restoreAccount(host: AccountRemotesHost): Promise<void> {
     try {
       await host.account!.withAccessToken(hydrateIdentity)
       state.restoreCompleted = true
+      // A restorable session ends the streak the `restoring` budget counts.
+      state.restoreFailureStreak = 0
     } catch (error) {
       // Do not silently downgrade to an old access token. The caller sees
       // the refresh failure and can explicitly retry or sign in again.
+      state.restoreFailureStreak += 1
       throw error
     }
   })().finally(() => { state.restorePromise = undefined })

@@ -1509,6 +1509,21 @@ const PROBES: readonly GuardProbe[] = [
     to: "  'edit_and_run_renamed',",
     specs: ['packages/freecodego/harness-plugin/tests/deferred-tools.spec.ts'],
   },
+  {
+    // The panel's only way out of a session that cannot be restored. `restoring`
+    // is honest while the retries still have a chance, but no surface renders a
+    // sign-in form in it, and the failure that put it there is reported to nobody
+    // — the mount swallows it. Left unconditional, a stored session whose refresh
+    // kept failing through a proxy reported `restoring` for the life of the
+    // process: a message the user cannot act on, over a form they cannot reach.
+    // The mutation writes that state back, which is why the budget's decision is
+    // the line being pinned rather than the counter that feeds it.
+    name: 'a session that will not restore stops reporting a restore in progress, so the form comes back',
+    file: 'src/account-remotes.ts',
+    from: "      if (host.state.restoreFailureStreak <= RESTORE_FAILURE_BUDGET) return { status: 'restoring' }\n      return { status: 'reauth-required' }",
+    to: "      return { status: 'restoring' }",
+    specs: ['packages/freecodego/harness-plugin/tests/account-restore-budget.spec.ts'],
+  },
 ]
 
 const read = (file: string): string => readFileSync(resolve(PACKAGE, file), 'utf8')

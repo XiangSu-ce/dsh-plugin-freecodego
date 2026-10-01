@@ -32,7 +32,7 @@ function host(state: string | undefined): AccountRemotesHost {
     api: {
       getCurrentUser: vi.fn(async () => ({ id: 1, username: 'u', email: 'a@b.c', role: 'user', balance: 0, status: 'active' })),
     },
-    state: { restorePromise: undefined, restoreCompleted: false, pendingOAuthState: state },
+    state: { restorePromise: undefined, restoreCompleted: false, restoreFailureStreak: 0, pendingOAuthState: state },
   } as unknown as AccountRemotesHost
 }
 

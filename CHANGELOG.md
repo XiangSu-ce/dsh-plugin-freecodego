@@ -18,6 +18,45 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.2.0-rc.2.1 — 2026-10-01
+
+### English
+
+A hotfix on the Harness line `0.2.0-rc.2`: `freecodego.harnessBaseline`, the
+`engines.dsh` floor and the release asset name all still state that line, while
+the bundle's own version — the one the tag names — is one counter deeper.
+
+#### Fixed
+
+- **A session that cannot be restored no longer hides the sign-in form.** While a
+  stored session is being rehydrated the panel reports `restoring`, and no
+  surface renders a sign-in form in that state — the right answer for as long as
+  the failures are still worth retrying, and an unconditional one before this
+  release. A machine whose proxy client had stopped answering, or whose network
+  never reached the backend, kept the settings panel on "recovering your session,
+  it will finish when the network does" for the life of the process: nothing to
+  press, and the failure that put it there reported to nobody. Four consecutive
+  failed restores now end it, and the next read reports that signing in again is
+  required — the state that shows the form. The stored credential is deliberately
+  kept, so a restore that succeeds afterwards still signs the account back in,
+  with nothing asked of the user.
+
+### 中文
+
+Harness 线 `0.2.0-rc.2` 上的 hotfix：`freecodego.harnessBaseline`、`engines.dsh`
+下限与 release 资产名仍写这条线，而这个 bundle 自己的版本 —— tag 命名的那个 —— 只深一个
+计数。
+
+#### 修复
+
+- **恢复不了的会话不再永久藏起登录表单。** 本机存有会话、正在从它恢复账户信息时，面板
+  报 `restoring`，而这个状态下没有任何界面渲染登录表单 —— 在「失败仍然值得重试」的阶段
+  这是对的答案，但在本次 release 之前它是无条件的。代理客户端已经不再应答、或网络根本
+  到不了后端的机器，会把设置面板一直停在「正在恢复本机登录 —— 网络恢复后会自动完成」，
+  直到进程结束：没有任何可点的东西，造成这个状态的失败也不告诉任何人。现在连续四次恢复
+  失败会结束它，下一次读取改报「需要重新登录」—— 也就是会露出登录表单的那个状态。存下来
+  的凭证被刻意保留，因此之后成功的恢复仍会把账号自动登回去，用户什么都不用做。
+
 ## 0.2.0-rc.2 — 2026-09-30
 
 ### English

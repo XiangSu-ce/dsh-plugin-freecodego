@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-面向 DeepSeek Harness `freecodego@0.2.0-rc.2` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.2.0-rc.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.2.0-rc.2`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
+面向 DeepSeek Harness `freecodego@0.2.0-rc.2.1` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.2.0-rc.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.2.0-rc.2.1`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
 
 ## 目录
 
@@ -33,7 +33,7 @@ kind: "package-bundle"
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2/freecodego-0.2.0-rc.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2.1/freecodego-0.2.0-rc.2.tgz
 ```
 
 `freecodego-0.2.0-rc.2.tgz` 就是面向 Harness `0.2.0-rc.2` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
@@ -55,16 +55,16 @@ gh workflow run release-freecodego.yml --ref freecodego-v<version>
 ## 免费模型
 
 <!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
-下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-09-30 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
+下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-10-01 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
 
 | 提供商 | 免费模型 | 目录 |
 |---|---|---|
 | **私钥网关** | 选择器里实时读到的免费路由 | 无需注册，也无需 API Key |
 | **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`longcat-2.5-preview-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 84 行中的 14 行；公开，无需登录 |
 | **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-sante:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stealth/space-bunny-alpha`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free` | 397 行中的 17 行；公开，每个出口 IP 每小时 200 次 |
-| **Logfare** | 对话 `claude-opus-5-5`、`deepseek-v3.2`、`gemma-4-26b`、`glm-5`、`glm-5.3-flash`、`grok-4.6`、`kimi-k2.5`、`logfare/auto`、`qwen-3.8-27b`、`space-bunny-alpha`、`step-3.7-flash`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`flux-2-pro`、`gpt-image-2`、`sdxl-lightning`；音频 `whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nano-banana-2`、`nova-3`、`phoenix-1.0` | 24 行；16 行需要训练数据授权，其余 8 行不需要 |
+| **Logfare** | 对话 `deepseek-v4.1-flash`、`gemma-4-26b`、`ling-3.0-flash-vl`、`logfare/auto`、`qwen-3.8-27b`、`space-bunny-alpha`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`flux-2-pro`、`gpt-image-2`、`sdxl-lightning`；音频 `whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nano-banana-2`、`nova-3`、`phoenix-1.0` | 19 行；11 行需要训练数据授权，其余 8 行不需要 |
 | **Qoder** | `Qwen 3.8 Flash`（路由 `qmodel_38flash`） | 免费 flash 路由，另有每日签到活动 |
-| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（81 行）中 | 调用需要 API key；核对于 2026-09-30 |
+| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（81 行）中 | 调用需要 API key；核对于 2026-10-01 |
 | **SenseNova** | `deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k3`、`sensenova-6.8-flash-lite` | 名单随 bundle 内置；需要 API key |
 | **TRAE** | 其目录列出的那些行 | 免费额度每日重置，按账号 |
 | **Cline** | 目录标记 `×0 · 官方免费模型` 的那些行 —— 其中包含 `deepseek-v4.1-flash` | 账号池 |
@@ -77,7 +77,7 @@ gh workflow run release-freecodego.yml --ref freecodego-v<version>
 
 TRAE、Cline、WorkBuddy 国际版、Agnes 不公布固定名单，因此它们的行在到达时计数，而不在此列名。
 
-Logfare 有 16 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+Logfare 有 11 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
 
 `deepseek-v4.1-flash` 在这里还通过上面两个账号池免费提供：Cline 把它留在免费那一半，WorkBuddy 国际版则在推广期内覆盖它。
 
