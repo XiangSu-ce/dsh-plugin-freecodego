@@ -18,6 +18,102 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.2.1-alpha.1.2 — 2026-10-05
+
+### English
+
+A correctness pass over tool registration, resource lifetime and the security
+spine. The Harness line is unchanged at `0.2.1-alpha.1`; the asset name is
+unchanged too, and this release only moves the bundle's own version forward one
+segment on the same line.
+
+#### Fixed
+
+- **A failed engine probe no longer orphans the engineering tool batch.**
+  `registerTools()` registered `engineering_status` and `engineering_doctor`
+  (plus the six memory tools) and only recorded the batch's disposer *after*
+  awaiting the graphify and code-graph probes. A rejection from either probe threw
+  before the handle was retained, so the already-mounted tools had no disposer
+  left and `disposeTools()`/`dispose()` could never reclaim them. The handle is
+  now retained before the first `await`, matching its five synchronous siblings.
+- **A hand-edited worktree registry no longer crashes the reader.** `worktrees.json`
+  entries missing the fields a reader dereferences (such as `memberId`) were kept
+  by the filter and then crashed `list()`, `status()` and `held()` with a
+  `TypeError`. Entries that do not carry a readable shape are now dropped, and a
+  partially hand-edited file degrades to the entries that are intact.
+- **`worktree exit` reports whether the copy is really gone.** With
+  `remove: true` the outcome reported `exists: true` after the path was deleted;
+  the flag now answers what the tool actually did.
+- **An excluded tool's result is never run through the lossy compression chain.**
+  With the read-fold switch on, a result belonging to an excluded tool was
+  dropped from the protected set and then folded lossily — a 14 kB read became
+  7 kB. Excluded tools are now protected unconditionally, and the switch keeps
+  its effect inside the fold it governs.
+- **A memory title or body that is nothing but a bare credential is refused.**
+  A bare hex digest or opaque token carried no vendor prefix, so it matched
+  neither the keyword screen nor the shape-based redaction: it was stored as-is
+  and then refused again on export, so it could be written but never read back.
+  Such a title or body is now rejected at the door.
+- **A checkpoint manifest can no longer point `restore` outside the blob tree.**
+  Blob paths are built from the manifest's `hash`, and only the `file` field was
+  validated, so a hash such as `../secret.txt` escaped the blob directory and
+  copied an arbitrary file into the workspace. A hash must now be 64 hex
+  characters, as a sha256 digest is.
+- **The cold-cache list and the hook shell family agree on what a shell is.**
+  `exec` was a member of the `Bash` hook family but missing from
+  `CLEARABLE_TOOL_KINDS` while its siblings `exec_command` and `run_command`
+  were in both, so a shell arriving under that spelling was invisible to the
+  whole reclamation policy. Both tables now carry the same spellings, and a test
+  pins them equal so either side drifting fails.
+
+#### Changed
+
+- **Tool registration goes through one registrar.** Multi-tool registration in
+  the design, engineering, media, agent, automation and host modules is
+  centralized, so every registration point records its disposer the same way and
+  one refused tool no longer discards the batch.
+
+### 中文
+
+一次针对工具注册、资源生命周期与安全脊柱的正确性排查。Harness 线仍是
+`0.2.1-alpha.1`，资产名不变；本次只把 bundle 自身版本在这条线上前进一个点段。
+
+#### 修复
+
+- **引擎探测失败不再让工程工具整批失去句柄。** `registerTools()` 先注册
+  `engineering_status` 与 `engineering_doctor`（记忆开关打开时再加六个记忆工具），
+  却要等到 graphify 与 code-graph 两处探测 `await` 完才记录该批的 disposer。
+  任一探测 reject 都会在记录之前抛出，已挂载的工具再无句柄可回收，
+  `disposeTools()`/`dispose()` 永远管不到它们。现在句柄在第一个 `await` 之前
+  就被记录，与另外五个同步的兄弟方法一致。
+- **被手改过的工作树注册表不再让读取方崩溃。** `worktrees.json` 里缺少读取方
+  会解引用的字段（例如 `memberId`）的条目原先仍被过滤器保留，随后让 `list()`、
+  `status()`、`held()` 抛 `TypeError`。现在形状不可读的条目会被丢弃，
+  被部分手改的文件会退化为其中仍然完整的那些条目。
+- **`worktree exit` 会如实报告副本是否已消失。** 带 `remove: true` 时，
+  路径已被删除，结果却仍报 `exists: true`；现在这个标志回答的是工具实际做了什么。
+- **被排除工具的结果不再走进有损压缩链。** 打开读折叠开关时，属于被排除工具的
+  结果会被移出受保护集合，随后又被有损折叠 —— 一次 14 kB 的读变成 7 kB。
+  现在被排除的工具无条件受保护，而开关的效果保留在它所管辖的折叠内部。
+- **整段就是裸凭证的记忆标题或正文会被拒绝。** 裸 hex 摘要或 opaque token
+  没有厂商前缀，既不匹配关键词筛查、也不匹配基于形状的就地脱敏：它被原样入库，
+  随后又在导出时被拒，于是写得进、读不回来。现在这类标题或正文在入口处即被拒绝。
+- **检查点清单不能再让 `restore` 走出 blob 树。** blob 路径由清单里的 `hash`
+  拼出，而此前只校验了 `file` 字段，因此形如 `../secret.txt` 的 hash 可以越出
+  blob 目录，把任意文件复制进工作区。现在 hash 必须是 64 位十六进制字符，
+  也就是一个 sha256 摘要该有的样子。
+- **冷缓存可清理清单与 hook 的 shell family 对「什么是 shell」达成一致。**
+  `exec` 是 `Bash` hook family 的成员，却不在 `CLEARABLE_TOOL_KINDS` 里，
+  而它的兄弟拼写 `exec_command` 与 `run_command` 两张表都有，
+  于是以该拼写到达的 shell 结果对整条回收策略不可见。现在两张表携带同一组拼写，
+  并有测试把二者钉成相等，任一侧漂移都会失败。
+
+#### 变更
+
+- **工具注册统一走一个 registrar。** design、engineering、media、agent、
+  automation 与宿主模块里的多工具注册集中到一处，于是每个注册点都以同样方式
+  记录自己的 disposer，且一个被拒的工具不再让整批一起丢失。
+
 ## 0.2.1-alpha.1.1 — 2026-10-04
 
 ### English
