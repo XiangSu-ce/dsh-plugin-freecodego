@@ -65,19 +65,19 @@ const copiedDirectories = ['apps', 'native', 'python', 'docs', 'website', 'snaps
 /**
  * The in-box bundle set a FreeCodeGo profile starts from.
  *
- * 0.2.0 moved the scheduler out of the Web composition and into the shipped
- * optional bundle `@deepseek-ai/dsh-experimental-schedule-bundle`; naming it here
- * is what mounts it, and the installation already depends on the package. One
- * declaration, so the constants injected into the official installer and the
- * idempotent branch that brings an already-materialized tree forward cannot drift.
+ * 0.2.0 split the scheduler out into the shipped optional bundle
+ * `@deepseek-ai/dsh-experimental-schedule-bundle`, and 0.2.1 retired it again: the
+ * Web composition declares the `schedule` row itself and the `standard` preset
+ * declares the clock and reminder rows. Naming the retired bundle here would mount
+ * nothing -- `app-boot`'s `RETIRED_BUNDLES` drops it from every profile it loads --
+ * so the set is the web template's own two bundles. One declaration, so the
+ * constants injected into the official installer and the idempotent branch that
+ * brings an already-materialized tree forward cannot drift.
  */
-const FREECODEGO_PROFILE_BUNDLES_DECLARATION = "const FREECODEGO_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-experimental-schedule-bundle']"
+const FREECODEGO_PROFILE_BUNDLES_DECLARATION = "const FREECODEGO_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']"
 
-/** The shipped optional schedule bundle, as a declaration the Desktop patch injects. */
-const SCHEDULE_BUNDLE_DECLARATION = "const SCHEDULE_BUNDLE = '@deepseek-ai/dsh-experimental-schedule-bundle'"
-
-/** The Desktop profile's bundle list, including the schedule bundle 0.2.0 split out. */
-const DESKTOP_PROFILE_BUNDLES_DECLARATION = 'const DESKTOP_PROFILE_BUNDLES: readonly string[] = [...WEB_PROFILE.bundles, SCHEDULE_BUNDLE, FREECODEGO_BUNDLE]'
+/** The Desktop profile's bundle list: the web template plus the app-owned FreeCodeGo bundle. */
+const DESKTOP_PROFILE_BUNDLES_DECLARATION = 'const DESKTOP_PROFILE_BUNDLES: readonly string[] = [...WEB_PROFILE.bundles, FREECODEGO_BUNDLE]'
 
 
 
@@ -670,12 +670,66 @@ async function applyForks(root) {
   await patchReadBinaryDocumentGuard(root)
   await patchSessionRowIdentitySeam(root)
   await patchModelSelectionProviderNames(root)
+  await patchSharedRuntimePeers(root)
   await patchWebFreeCodeGoE2eExclusions(root)
   await patchDesktopPackageSetFreecodegoTarball(join(root, 'apps/desktop/scripts/prepare-package-set.ts'))
   await patchDesktopProfileBundles(join(root, 'apps/desktop/src/project-manager.ts'))
   await patchDesktopHostInstallAnchor(join(root, 'apps/desktop-host/src/index.ts'))
   await patchDesktopElectronVersionPin(root)
   await patchGenConfigCatalogTypeParameters(join(root, 'scripts/gen-config-catalog.ts'))
+}
+
+/**
+ * Keep a shared host runtime the installation's in the experimental packages
+ * upstream ships beside the ones this fork owns.
+ *
+ * `dsh-mcp-client` carries identity in module-local state (its live `serverName`
+ * reservations), so a second copy makes a later browser-tool registration fail on
+ * the name the first copy already owns. A `dependencies` entry *is* that second
+ * copy: pnpm resolves the package's own tree. Three upstream experimental packages
+ * declare it that way while importing it from `src/`, which the checkout's
+ * `host-runtime-identity.spec.ts` reads as a violation. This overlay restates the
+ * entry the way a shared runtime is meant to be taken -- a `peerDependencies`
+ * entry the installation satisfies, plus the `devDependencies` copy the package
+ * builds and tests against on its own, which is the shape
+ * `experimental/browser-use-runtime` already carries.
+ *
+ * `packages/*` is mirrored wholesale on every sync, so this cannot be a hand-edit:
+ * `applyForks` re-applies it after the copy, and a package already carrying the
+ * shape returns early. Each manifest is read back and asserted, so an upstream
+ * rename surfaces as a failed sync rather than a silently dropped fork.
+ */
+async function patchSharedRuntimePeers(root) {
+  const runtime = '@deepseek-ai/dsh-mcp-client'
+  const directories = [
+    'packages/experimental/browser-use-stagehand-native',
+    'packages/experimental/computer-use-cua-driver-mcp',
+    'packages/experimental/computer-use-cua-driver-native',
+  ]
+  for (const directory of directories) {
+    const manifestPath = join(root, directory, 'package.json')
+    // A package upstream has since removed has nothing left to restate; skipping
+    // keeps a sync from failing over a name that is no longer a consumer.
+    if (!existsSync(manifestPath)) continue
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    const dependency = manifest.dependencies?.[runtime]
+    const peer = manifest.peerDependencies?.[runtime]
+    const dev = manifest.devDependencies?.[runtime]
+    // Already restated: nothing to write, and the manifest stays byte-for-byte.
+    if (dependency === undefined && peer !== undefined && dev !== undefined) continue
+    if (manifest.dependencies !== undefined) delete manifest.dependencies[runtime]
+    manifest.peerDependencies = { ...(manifest.peerDependencies ?? {}), [runtime]: peer ?? 'workspace:*' }
+    manifest.devDependencies = { ...(manifest.devDependencies ?? {}), [runtime]: dev ?? 'workspace:*' }
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    const written = JSON.parse(await readFile(manifestPath, 'utf8'))
+    if (
+      written.dependencies?.[runtime] !== undefined ||
+      written.peerDependencies?.[runtime] === undefined ||
+      written.devDependencies?.[runtime] === undefined
+    ) {
+      throw new Error(`${directory} still declares ${runtime} outside peer + dev; the shared-runtime fork did not take`)
+    }
+  }
 }
 
 /**
@@ -953,16 +1007,16 @@ async function patchDesktopProfileBundles(path) {
   if (source.includes('ensureFreecodegoBundle')) {
     // Already patched: still bring the bundle set forward, for the same reason the
     // profile installer's own idempotent branch does.
-    let updated = source.replace(
-      /const DESKTOP_PROFILE_BUNDLES: readonly string\[\] = \[[^\]]*\]/u,
-      DESKTOP_PROFILE_BUNDLES_DECLARATION,
-    )
-    if (!updated.includes('const SCHEDULE_BUNDLE')) {
-      updated = updated.replace(
-        "const FREECODEGO_BUNDLE = 'freecodego'",
-        `${SCHEDULE_BUNDLE_DECLARATION}\nconst FREECODEGO_BUNDLE = 'freecodego'`,
+    let updated = source
+      .replace(
+        /const DESKTOP_PROFILE_BUNDLES: readonly string\[\] = \[[^\]]*\]/u,
+        DESKTOP_PROFILE_BUNDLES_DECLARATION,
       )
-    }
+      // 0.2.1 retired the optional schedule bundle and the Web composition mounts the
+      // row again, so a tree the previous revision materialized is brought forward by
+      // dropping the declaration this fork injected for it.
+      .replace(/\n\/\*\* The scheduled-task bundle[^\n]*\nconst SCHEDULE_BUNDLE = '[^']*'/u, '')
+      .replace(/\nconst SCHEDULE_BUNDLE = '[^']*'/u, '')
     if (updated !== source) await writeFile(path, updated)
     return
   }
@@ -985,9 +1039,7 @@ async function patchDesktopProfileBundles(path) {
       'const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate',
       '/** The FreeCodeGo bundle shipped inside the Desktop runtime: app-owned, activated with the template. */',
       "const FREECODEGO_BUNDLE = 'freecodego'",
-      '/** The scheduled-task bundle 0.2.0 ships as an optional bundle; the Desktop profile mounts it too. */',
-      SCHEDULE_BUNDLE_DECLARATION,
-      '/** Bundles a Desktop profile activates: the web template plus the schedule and FreeCodeGo bundles. */',
+      '/** Bundles a Desktop profile activates: the web template plus the FreeCodeGo bundle. */',
       DESKTOP_PROFILE_BUNDLES_DECLARATION,
     ].join('\n'),
   )

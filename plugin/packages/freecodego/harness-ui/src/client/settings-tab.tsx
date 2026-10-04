@@ -846,6 +846,12 @@ interface Injected {
    */
   readonly accountRememberedPassword?: () => Promise<RemoteResult<{ readonly password?: string }>>
   /**
+   * The sign-in address the Host credential vault remembers, read once per
+   * mount. Optional like the password read: a Host build that predates it
+   * answers nothing, and the form falls back to the browser store it used to use.
+   */
+  readonly accountRememberedEmail?: () => Promise<RemoteResult<{ readonly email?: string }>>
+  /**
    * `remember` keeps the issued session; `rememberPassword` keeps the password
    * itself in the Host credential file so this form can prefill it next time.
    * They are separate intents, and an explicit `false` on the second erases a
@@ -3474,7 +3480,7 @@ interface OpenPaymentDialog {
   readonly payCurrency: string | undefined
 }
 
-export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey,  logfareStatus, logfareLogin, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, antSeedStatus, antSeedInstall, antSeedSetGateway, antSeedRevealIdentity, antSeedSetIdentity, antSeedGenerateIdentity, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer,capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, customApiReasoningSet, setModelCategoryDirect, modelCategorySet
+export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, accountRememberedEmail, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey,  logfareStatus, logfareLogin, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, antSeedStatus, antSeedInstall, antSeedSetGateway, antSeedRevealIdentity, antSeedSetIdentity, antSeedGenerateIdentity, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer,capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, customApiReasoningSet, setModelCategoryDirect, modelCategorySet
 , pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, secondModelStatus, secondModelUpdate, secondModelRoutes, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, engineeringStatus, engineeringSetEnabled, speechStatus, speechSetRoute, speechTest, language, t }: Props): ReactNode {
   const [state, setState] = useState<State>(() => cachedSettings(language, catalog)?.state ?? { ...fallbackSettings(), syncStatus: 'refreshing' })
   // A fresh catalog render must not infer media defaults until the Host has
@@ -3905,6 +3911,26 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
     }, () => undefined)
     return () => { active = false }
   }, [accountRememberedPassword])
+  /**
+   * Prefill the address from the Host vault.
+   *
+   * This is the durable half of the remembered login: the browser store is
+   * per-renderer-origin and an app update that changes it drops the address,
+   * which is exactly the "ticked remember me, still got a blank email" case.
+   * The vault is keyed by the backend origin, so it survives. The browser effect
+   * above runs too and wins nothing: each merge keeps whatever is already typed.
+   */
+  useEffect(() => {
+    if (accountRememberedEmail === undefined) return
+    let active = true
+    void accountRememberedEmail().then((result) => {
+      if (!active || !result.ok) return
+      const remembered = result.value.email
+      if (remembered === undefined || remembered.trim() === '') return
+      setEmail(previous => previous === '' ? remembered : previous)
+    }, () => undefined)
+    return () => { active = false }
+  }, [accountRememberedEmail])
   useEffect(() => {
     if (agnesRegisterCooldown === 0 && agnesResetCooldown === 0 && verifyCooldown === 0 && oauthPendingVerifyCooldown === 0 && resetCooldown === 0) return
     const timer = globalThis.setInterval(() => {

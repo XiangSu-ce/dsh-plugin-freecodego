@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountDetail, logfareSetKey, readRememberedPassword } from '../src/account-remotes.ts'
+import { accountDetail, logfareSetKey, readRememberedEmail, readRememberedPassword } from '../src/account-remotes.ts'
 import type { AccountRemotesHost } from '../src/account-remotes.ts'
 import { LOGFARE_SESSION_REF } from '../src/managed-catalog-utils.ts'
 
@@ -16,6 +16,20 @@ describe('remembered password', () => {
     // was given, and the form's "nothing remembered" is the empty object.
     const empty = { account: { rememberedPassword: async () => undefined } } as unknown as AccountRemotesHost
     await expect(readRememberedPassword(empty)).resolves.toEqual({})
+  })
+})
+
+describe('remembered sign-in address', () => {
+  it('answers nothing when the Host has no account surface', async () => {
+    const host = { account: undefined } as unknown as AccountRemotesHost
+    await expect(readRememberedEmail(host)).resolves.toEqual({})
+  })
+
+  it('reads what the coordinator remembers and reports none as an absent field', async () => {
+    const host = { account: { rememberedEmail: async () => 'user@example.com' } } as unknown as AccountRemotesHost
+    await expect(readRememberedEmail(host)).resolves.toEqual({ email: 'user@example.com' })
+    const empty = { account: { rememberedEmail: async () => undefined } } as unknown as AccountRemotesHost
+    await expect(readRememberedEmail(empty)).resolves.toEqual({})
   })
 })
 

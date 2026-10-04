@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-面向 DeepSeek Harness `freecodego@0.2.0-rc.2.1` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.2.0-rc.2`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.2.0-rc.2.1`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
+面向 DeepSeek Harness `freecodego@0.2.1-alpha.1.1` 的可安装单包 FreeCodeGo 组合，目标 Harness 基线为 `0.2.1-alpha.1`。npm 产物包含编译后的 Host 插件、浏览器端 client、会话事件前置包、原生 worker 入口，以及随包交付的 Harness Agent Teams 组合。发布产物使用 npm 的 `next` dist-tag，且其插件版本刻意与所面向的 Harness 版本完全一致；需要可复现安装时请指定版本（`freecodego@0.2.1-alpha.1.1`），而不是渠道名。官方 Codex 与 Claude 运行时二进制仍按平台可选下载——本包不内嵌每个平台的原生二进制。
 
 ## 目录
 
@@ -33,10 +33,10 @@ kind: "package-bundle"
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2.1/freecodego-0.2.0-rc.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.1-alpha.1.1/freecodego-0.2.1-alpha.1.tgz
 ```
 
-`freecodego-0.2.0-rc.2.tgz` 就是面向 Harness `0.2.0-rc.2` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
+`freecodego-0.2.1-alpha.1.tgz` 就是面向 Harness `0.2.1-alpha.1` 的 bundle：请替换为你实际运行的版本，设置页会把它显示在已装插件版本旁边。资产名即 `packages/freecodego/AGENTS.md` 里的命名约定。
 
 `dsh` 命令由 Harness CLI 提供，不来自本 bundle。普通终端里请先用 `npm install --global @deepseek-ai/dsh` 安装它（并确保 `pnpm` 可用）。桌面端通过自己的私有 shim 运行同一条命令并传入当前 `DSH_HOME`，因此 Web 与桌面端选择同一个 Harness home 时共用同一份 Profile 数据目录。
 

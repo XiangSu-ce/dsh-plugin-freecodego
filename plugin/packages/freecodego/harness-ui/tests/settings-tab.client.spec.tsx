@@ -1298,6 +1298,35 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     expect(screen.getByRole('button', { name: '隐藏密码' }).getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('prefills the sign-in address the Host vault remembers, with no browser store', async () => {
+    // The address used to live only in the renderer's localStorage, which an app
+    // update that changes the origin drops — the "ticked remember me, still got a
+    // blank email" case. Clearing it here stands for that update: the Host
+    // credential vault is the only place the address can come from.
+    globalThis.localStorage.clear()
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'deepseek', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'signed-out' as const } })}
+      accountRememberedEmail={vi.fn().mockResolvedValue({ ok: true as const, value: { email: 'user@example.com' } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      backendCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { catalogRevision: 'test', models: [] } })}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    const field = await screen.findByPlaceholderText('email') as HTMLInputElement
+    await waitFor(() => { expect(field.value).toBe('user@example.com') })
+  })
+
   it('never paints a sign-in form before the account read settles', async () => {
     // The Host answers `accountStatus` only after it has tried to restore the
     // vault session, so this promise is the seconds the user used to spend

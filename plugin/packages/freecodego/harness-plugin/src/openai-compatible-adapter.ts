@@ -448,13 +448,29 @@ export class OpenAiCompatibleAdapter extends LlmAdapter {
     return response
   }
 
-  /** Anthropic Messages streaming path (gateway `/v1/messages` route). */
+  /**
+   * Anthropic Messages streaming path (gateway `/v1/messages` route).
+   *
+   * The body names the connection's wire model, not the selection value, for the
+   * same reason the chat-completions path does: a group-pinned selection
+   * (`id@group:N`) names a backend group, the pin travels in the route key, and
+   * the wire body has to carry the bare id. Sending the pin put a model name the
+   * backend's account mappings never contain into the request, so every pinned
+   * Anthropic row — which is every backend Claude group — answered `503 No
+   * available accounts`, while its OpenAI sibling on the same picker worked
+   * because that path applied the override.
+   * @param options - the caller's request, whose `model` is the selection value.
+   * @param connection - the resolved route, whose `model` is the wire model.
+   */
   private async *streamAnthropic(options: GenerateOptions, connection: OpenAiCompatibleConnection): AsyncIterable<StreamChunk> {
-    const attachments = hasImageContent(options) ? this.config.resolveAttachments?.() : undefined
+    const wireOptions = connection.model === undefined || connection.model === options.model
+      ? options
+      : { ...options, model: connection.model }
+    const attachments = hasImageContent(wireOptions) ? this.config.resolveAttachments?.() : undefined
     const body = attachments === undefined
-      ? await serializeAnthropicRequest(options)
-      : await serializeAnthropicRequestWithInlineImages(options, {
-        resolveImage: ref => attachments.readImageRequest(ref, imageRequestTarget(ref, this.config.imageRequestPolicy), options.signal),
+      ? await serializeAnthropicRequest(wireOptions)
+      : await serializeAnthropicRequestWithInlineImages(wireOptions, {
+        resolveImage: ref => attachments.readImageRequest(ref, imageRequestTarget(ref, this.config.imageRequestPolicy), wireOptions.signal),
       })
     const endpoint = `${connection.baseURL.replace(/\/+$/, '')}${connection.endpointPath ?? '/messages'}`
     const response = await this.post(

@@ -57,6 +57,16 @@ export class HarnessFreeCodeGoCredentialVault implements FreeCodeGoCredentialVau
    */
   private readonly passwordRef
   /**
+   * The sign-in address, kept beside the password.
+   *
+   * The browser store held only the address, and it is per-renderer-origin: an
+   * app update that changes that origin drops it, which is why a user who ticked
+   * "remember me" still found an empty email field. Moving it into the vault
+   * (keyed by the backend origin) makes it survive the update that used to lose
+   * it.
+   */
+  private readonly emailRef
+  /**
    * The installation's device identity, kept beside the session pair.
    *
    * It is a separate value rather than a field of the pair because it outlives
@@ -70,6 +80,7 @@ export class HarnessFreeCodeGoCredentialVault implements FreeCodeGoCredentialVau
     const digest = createHash('sha256').update(origin).digest('hex').slice(0, 24).toUpperCase()
     this.ref = credentialRef(`FREECODEGO_SESSION_${digest}`)
     this.passwordRef = credentialRef(`FREECODEGO_PASSWORD_${digest}`)
+    this.emailRef = credentialRef(`FREECODEGO_EMAIL_${digest}`)
     this.deviceRef = credentialRef(`FREECODEGO_DEVICE_${digest}`)
   }
 
@@ -102,6 +113,26 @@ export class HarnessFreeCodeGoCredentialVault implements FreeCodeGoCredentialVau
 
   async deletePassword(_origin: string): Promise<void> {
     await this.credentials.unset(this.passwordRef)
+  }
+
+  /**
+   * Read the remembered sign-in address, treating an empty entry as no entry.
+   * @returns the stored address, or undefined when none was kept.
+   */
+  async loadRememberedEmail(_origin: string): Promise<string | undefined> {
+    const resolved = await this.credentials.resolve(this.emailRef)
+    const value = resolved === undefined ? '' : resolved.value.trim()
+    return value === '' ? undefined : value
+  }
+
+  /** Persist the sign-in address for the next form. */
+  async saveRememberedEmail(_origin: string, email: string): Promise<void> {
+    await this.credentials.set(this.emailRef, email)
+  }
+
+  /** Forget the remembered sign-in address. */
+  async deleteRememberedEmail(_origin: string): Promise<void> {
+    await this.credentials.unset(this.emailRef)
   }
 
   /**
@@ -191,6 +222,14 @@ export class FreeCodeGoAccountCoordinator {
    * the attempt that made the choice.
    */
   private pendingPassword: { readonly keep: string } | { readonly forget: true } | undefined
+  /**
+   * The address this attempt signed in with, committed once a pair exists.
+   *
+   * Held until {@link consumeLoginResult} sees an authenticated result so the
+   * MFA branch keeps it, exactly as the remember and password intents do: the
+   * second factor completes the attempt that stated the address.
+   */
+  private pendingEmail: string | undefined
 
   constructor(
     private readonly auth: FreeCodeGoMobileAuthClient,
@@ -244,6 +283,38 @@ export class FreeCodeGoAccountCoordinator {
     } catch {
       return undefined
     }
+  }
+
+  /**
+   * The address this machine remembers for the sign-in form.
+   *
+   * Read from the credential vault rather than the browser store, so it survives
+   * an app update that changes the renderer origin — the reason a remembered
+   * email used to come back blank.
+   * @returns the stored address, or undefined when none was kept.
+   */
+  async rememberedEmail(): Promise<string | undefined> {
+    try {
+      return await this.vault.loadRememberedEmail?.(this.auth.origin)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Keep the address a sign-in used; failure is not a login failure. */
+  private async writeRememberedEmail(email: string): Promise<void> {
+    const trimmed = email.trim()
+    if (trimmed === '') return
+    try {
+      await this.vault.saveRememberedEmail?.(this.auth.origin, trimmed)
+    } catch { /* The next sign-in that states an address retries the write. */ }
+  }
+
+  /** Forget the remembered address after an explicit sign-out. */
+  private async eraseRememberedEmail(): Promise<void> {
+    try {
+      await this.vault.deleteRememberedEmail?.(this.auth.origin)
+    } catch { /* Erasing is best-effort: a sign-out does not fail over a convenience. */ }
   }
 
   /** Keep the password a sign-in asked to remember; failure is not a login failure. */
@@ -392,12 +463,17 @@ export class FreeCodeGoAccountCoordinator {
     if (input.rememberPassword === undefined) this.pendingPassword = undefined
     else if (input.rememberPassword) this.pendingPassword = { keep: input.password }
     else this.pendingPassword = { forget: true }
+    // The address is remembered on the same commit as the password, but it is
+    // not gated on the "remember password" box: it is the identifier the user
+    // typed, and the one thing a sign-in form has to prefill to be usable.
+    this.pendingEmail = input.email
     try {
       return await this.consumeLoginResult(await this.auth.login({ ...input, deviceId: await this.deviceIdFor(input.deviceId) }, signal))
     } catch (error) {
       // No pair was issued, so this attempt has no intent left to carry.
       this.pendingRemember = undefined
       this.pendingPassword = undefined
+      this.pendingEmail = undefined
       throw error
     }
   }
@@ -409,10 +485,12 @@ export class FreeCodeGoAccountCoordinator {
    */
   async register(input: FreeCodeGoRegisterInput, signal?: AbortSignal): Promise<FreeCodeGoAccountState> {
     this.pendingRemember = input.remember
+    this.pendingEmail = input.email
     try {
       return await this.consumeLoginResult(await this.auth.register({ ...input, deviceId: await this.deviceIdFor(input.deviceId) }, signal))
     } catch (error) {
       this.pendingRemember = undefined
+      this.pendingEmail = undefined
       throw error
     }
   }
@@ -600,6 +678,7 @@ export class FreeCodeGoAccountCoordinator {
     // later speak for a login the user has not started.
     this.pendingRemember = undefined
     this.pendingPassword = undefined
+    this.pendingEmail = undefined
     // An in-flight refresh must not write the rotated pair back after the
     // vault erase below: the refresh loop observes signingOut before its
     // settlement save, and this await keeps ordering deterministic.
@@ -619,6 +698,7 @@ export class FreeCodeGoAccountCoordinator {
         // surface forgets the address it prefilled: a password left behind would
         // prefill the form of the account the user just signed out of.
         await this.eraseRememberedPassword()
+        await this.eraseRememberedEmail()
         this.state = { status: 'signed-out' }
       }
     } finally {
@@ -732,6 +812,10 @@ export class FreeCodeGoAccountCoordinator {
     this.pendingMfaToken = undefined
     try {
       const user = await hydrateIdentity(tokens.accessToken, signal)
+      // A federated sign-in knows the address only once the profile is read, so
+      // it is remembered here rather than from a form: a Google/GitHub user then
+      // sees it prefilled on the next sign-in like a password user does.
+      await this.writeRememberedEmail(user.email)
       this.state = { status: 'authenticated', user }
       return this.state
     } catch (error) {
@@ -769,6 +853,12 @@ export class FreeCodeGoAccountCoordinator {
       if ('keep' in passwordIntent) await this.writeRememberedPassword(passwordIntent.keep)
       else await this.eraseRememberedPassword()
     }
+    // The address is committed on every attempt that reached a pair, whatever
+    // the "remember password" box said: a form that reopens with the address the
+    // user typed is the baseline the password box is the exception to.
+    const emailIntent = this.pendingEmail
+    this.pendingEmail = undefined
+    if (emailIntent !== undefined) await this.writeRememberedEmail(emailIntent)
     // A failed vault write must not leave the UI authenticated with no
     // durable session: surface the failure so the user can retry the login
     // instead of discovering the missing credentials on the next launch.

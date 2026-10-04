@@ -288,6 +288,13 @@
 !/scripts/release/bump.ts
 !/scripts/release/pack.ts
 !/scripts/release/publish.ts
+# The channel checks the publish step now runs before it uploads anything: which
+# npm dist-tag a prerelease binds to, whether that tag is already taken, and
+# whether an already published version carries this build's bytes. They shipped
+# with the step that answers them, so the spec ships here too -- a working copy
+# that ran it while a clone skipped it is the one check that told the two trees
+# apart, and only this one could have noticed.
+!/scripts/release/publish.spec.ts
 !/scripts/release/verify.ts
 !/scripts/release/verify-packed-install.ts
 !/scripts/release/verify-published.ts

@@ -124,25 +124,75 @@ export const EYE_FACES: Readonly<Record<StateId, RingName>> = {
  * The names are also the tool's enum (the plugin declares them for the model), and a test
  * in this package reads that declaration and asserts the two lists are identical.
  *
- * Every entry is a shape the six-outline vocabulary already has; nothing here invents a
- * shape at request time, because a vocabulary the model can reach that no pose ever draws
- * is a vocabulary nobody has looked at.
+ * Every entry names a shape from the outline table (`./rings.ts`), and no two entries share
+ * one: a request can therefore only ask for a shape someone has looked at, and two names
+ * never resolve to the same picture the way a table of synonyms would.
  */
 export const EYE_EXPRESSIONS = {
   /** Nothing asked for: the resting eye. */
   neutral: 'open',
+  /** Settled, unbothered. */
+  calm: 'oval',
+  /** Quietly satisfied, without a smile. */
+  content: 'narrow',
+  /** Nothing is interesting and the eye has stopped pretending otherwise. */
+  bored: 'slim',
+  /** Overwhelmed by scale: the eye opens all the way round. */
+  awed: 'round',
+  /** Taken aback. */
+  surprised: 'dot',
+  /** Startled in a way that shows in the size of the pupil. */
+  flustered: 'bead',
+  /** Alarmed to a pinprick. */
+  overwhelmed: 'pin',
+  /** Tired, or waiting. */
+  sleepy: 'half',
+  /** Worn down by a long stretch. */
+  tired: 'tired',
+  /** The eye settling after effort. */
+  relaxed: 'droop',
+  /** Attention kept up against sleep. */
+  drowsy: 'hood',
+  /** Effort with the lid nearly shut. */
+  drained: 'heavy',
+  /** The thinnest sliver of an eye: the end of a long night. */
+  exhausted: 'slit',
   /** Pleased. */
   happy: 'smile',
   /** Something went well, and it shows. */
   delighted: 'beam',
+  /** Amused rather than delighted. */
+  amused: 'grin',
+  /** A laugh that closes the eye. */
+  laughing: 'laugh',
+  /** Quiet pleasure. */
+  pleased: 'arc',
   /** Effort, or a thing that did not work. */
   sad: 'frown',
+  /** A setback, held. */
+  disappointed: 'sad',
+  /** A small, held disappointment. */
+  upset: 'pout',
+  /** Anger, which closes the eye the way a laugh does. */
+  angry: 'glare',
   /** Attention in earnest: narrowed and tilted up. */
   focused: 'glint',
-  /** Tired, or waiting. */
-  sleepy: 'half',
-  /** Taken aback. */
-  surprised: 'dot',
+  /** Attention with a goal. */
+  determined: 'keen',
+  /** Effort rather than attention: the narrowed eye tilted the other way. */
+  skeptical: 'squint',
+  /** Suspicion rather than effort. */
+  annoyed: 'leer',
+  /** A glance rather than a stare. */
+  shy: 'peek',
+  /** Wariness, the lid doing the looking. */
+  worried: 'slant',
+  /** Something has been noticed. */
+  curious: 'curious',
+  /** Thinking about something just out of reach. */
+  thoughtful: 'pensive',
+  /** Raised away from the reader: distance, not attention. */
+  distant: 'aloof',
 } as const satisfies Readonly<Record<string, RingName>>
 
 /** A name from {@link EYE_EXPRESSIONS}: what a caller may ask the companion to look like. */

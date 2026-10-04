@@ -1,7 +1,7 @@
 # Harness Target
 
-FreeCodeGo targets DeepSeek Harness `0.2.0-rc.2` at tag
-`dsh-v0.2.0-rc.2`. The checked-in candidate source follows that official
+FreeCodeGo targets DeepSeek Harness `0.2.1-alpha.1` at tag
+`dsh-v0.2.1-alpha.1`. The checked-in candidate source follows that official
 at the commit recorded in `harness.lock.json`; that lock file is the sole
 source used by assembly, builds, tests, and release verification.
 
@@ -34,11 +34,13 @@ counterpart — not as a second peer that can disagree:
   has no preset gate. (`action-reviewer.ts`, `standsDown`.)
 - **Scheduling.** `@deepseek-ai/dsh-schedule` owns reminders: the durable record,
   the `schedule` projection, delivery, and `schedule_create` / `_list` / `_delete`.
-  On 0.2.0 the shipped optional bundle
-  `@deepseek-ai/dsh-experimental-schedule-bundle` owns those rows — the Web
-  composition no longer declares them — so the FreeCodeGo profile lists that
-  official bundle in `dsh.profile.bundles` and mounts no copy of the package: an
-  extra row here would be a second mount of one service. The plugin contributes calendar arithmetic only —
+  0.2.1 retired the optional bundle
+  `@deepseek-ai/dsh-experimental-schedule-bundle` that 0.2.0 had split those rows
+  into: the Web composition declares the `schedule` row itself, and the clock and
+  the four reminder tools moved into the `standard` preset these bundled presets
+  mirror. The FreeCodeGo profile is back to the web template's own two bundles, and
+  this plugin mounts no copy of the package: an extra row here would be a second
+  mount of one service. The plugin contributes calendar arithmetic only —
   `freecodego_schedule_plan` answers when a cron rule next falls and whether one
   `every_seconds` reminder can carry it — and stores no reminder of its own.
   (`automation.ts`.)
@@ -170,15 +172,15 @@ an install that supplies its own keeps it.
 
 ## NPM Version Selection
 
-The public package is `freecodego@0.2.0-rc.2.1`. It is published for the
-supported Harness version `0.2.0-rc.2`, and `freecodego.harnessBaseline`,
+The public package is `freecodego@0.2.1-alpha.1.1`. It is published for the
+supported Harness version `0.2.1-alpha.1`, and `freecodego.harnessBaseline`,
 `engines.dsh` and the release's asset name all state that line exactly: the
 baseline is what a Host selects a version by, and the bundle metadata and
 release checks reject a package whose declared baseline is not the supported
 source line.
 
 The version itself is the line, with a counter appended for a later publication
-on the same line (`0.2.0-rc.2`, the hotfix form
+on the same line (`0.2.1-alpha.1`, the hotfix form
 `packages/freecodego/AGENTS.md` documents). Only the first publication on a line
 carries the bare line version, and a version is never reused: a tag is immutable
 in the published repository, so a release that has been tagged is never

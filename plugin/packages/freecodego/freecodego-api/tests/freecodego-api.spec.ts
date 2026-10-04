@@ -1052,6 +1052,58 @@ describe('FreeCodeGo account coordination', () => {
     await expect(coordinator.rememberedPassword()).resolves.toBeUndefined()
   })
 
+  it('remembers the sign-in address in the vault, independent of the password box', async () => {
+    let email: string | undefined
+    const vault: FreeCodeGoCredentialVault = {
+      load: async () => undefined,
+      save: async () => {},
+      delete: async () => {},
+      loadRememberedEmail: async () => email,
+      saveRememberedEmail: async (_origin, value) => { email = value },
+      deleteRememberedEmail: async () => { email = undefined },
+    }
+    const auth = {
+      origin: 'https://freecodego.example',
+      login: async () => ({
+        kind: 'authenticated' as const,
+        tokens: { accessToken: 'access', refreshToken: 'refresh', expiresIn: 3600, tokenType: 'Bearer' as const },
+        user: { id: 1, username: 'user', email: 'user@example.com', role: 'user', balance: 0, status: 'active' },
+      }),
+      logout: async () => {},
+    } as unknown as FreeCodeGoMobileAuthClientType
+
+    // A fresh coordinator over the same vault is a restart: the address has to be
+    // readable without a second sign-in, which is the whole point of keeping it
+    // in the credential file rather than the browser store.
+    await new FreeCodeGoAccountCoordinator(auth, vault).login({ email: 'user@example.com', password: 'hunter2' })
+    await expect(new FreeCodeGoAccountCoordinator(auth, vault).rememberedEmail()).resolves.toBe('user@example.com')
+
+    // Signing out is how this machine forgets the address, like the password.
+    await new FreeCodeGoAccountCoordinator(auth, vault).logout()
+    await expect(new FreeCodeGoAccountCoordinator(auth, vault).rememberedEmail()).resolves.toBeUndefined()
+  })
+
+  it('does not remember an address from a sign-in that never issued a pair', async () => {
+    let email: string | undefined
+    const vault: FreeCodeGoCredentialVault = {
+      load: async () => undefined,
+      save: async () => {},
+      delete: async () => {},
+      loadRememberedEmail: async () => email,
+      saveRememberedEmail: async (_origin, value) => { email = value },
+      deleteRememberedEmail: async () => { email = undefined },
+    }
+    const auth = {
+      origin: 'https://freecodego.example',
+      login: async () => { throw new Error('invalid credentials') },
+      logout: async () => {},
+    } as unknown as FreeCodeGoMobileAuthClientType
+    const coordinator = new FreeCodeGoAccountCoordinator(auth, vault)
+
+    await expect(coordinator.login({ email: 'typo@example.com', password: 'hunter2' })).rejects.toThrow('invalid credentials')
+    await expect(coordinator.rememberedEmail()).resolves.toBeUndefined()
+  })
+
   it('keeps an unremembered login out of the vault and clears a stored session', async () => {
     // A vault holds whole token pairs, so the fixture holds one too — the
     // previous session it stands in for was written by the same `save`.

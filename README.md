@@ -307,7 +307,7 @@ The plugin's own model-facing surface is declared once, in `tool-manifest.ts`, t
 ## Requirements
 
 - **Node** `^22.19.0 || >=24.0.0`
-- **DeepSeek Harness** `0.1.7-rc.2`. The bundle declares `freecodego.harnessBaseline`, and an update is offered only for the line it was built for.
+- **DeepSeek Harness** `0.2.1-alpha.1`. The bundle declares `freecodego.harnessBaseline`, and an update is offered only for the line it was built for.
 
 ## Install
 
@@ -317,11 +317,11 @@ The bundle is distributed as a release asset, not from a package registry:
 dsh plugin --profile web add --save-exact <tarball-url>
 ```
 
-For example, the bundle built for Harness `0.1.7-rc.2`:
+For example, the bundle built for Harness `0.2.1-alpha.1`:
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2.1/freecodego-0.2.0-rc.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.1-alpha.1.1/freecodego-0.2.1-alpha.1.tgz
 ```
 
 `--profile web` is the profile `dsh web` runs under; substitute your own profile name if you launched the Harness differently. A Host restart is required before the new bundle is loaded.
@@ -336,7 +336,7 @@ pnpm run build
 
 ## Releases and asset naming
 
-Every release is tagged `freecodego-v<version>`, and its tarball is named `<package>-<Harness version>.tgz` — for this bundle, `freecodego-0.1.7-rc.2.tgz`. The asset names the **Harness line** rather than the bundle version, so a hotfix (`v0.1.7-rc.2`) still says which line it belongs to. A release whose asset carries the bundle version installs too, and a release holding a single tarball is accepted whatever it is called — a name that disagrees with the tag is not a reason to leave an update unreachable.
+Every release is tagged `freecodego-v<version>`, and its tarball is named `<package>-<Harness version>.tgz` — for this bundle, `freecodego-0.2.1-alpha.1.tgz`. The asset names the **Harness line** rather than the bundle version, so a hotfix (`v0.2.1-alpha.1.1`) still says which line it belongs to. A release whose asset carries the bundle version installs too, and a release holding a single tarball is accepted whatever it is called — a name that disagrees with the tag is not a reason to leave an update unreachable.
 
 The update service reads the releases of this repository, checks shortly after startup and then daily, and installs through the same `dsh plugin add --save-exact <url>` entry point the user installed with. Installation stages the bundle in a sibling Profile and promotes it atomically; the previous Profile stays restorable until the restarted Host is healthy.
 

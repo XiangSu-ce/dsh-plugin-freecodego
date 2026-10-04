@@ -116,20 +116,22 @@ export const FACE_POOLS: Readonly<Record<StateId, FacePool>> = {
   // input is where a session spends its idle time. All five are quiet eyes — the face looks
   // around, settles, and gets heavy-lidded; nothing here claims an outcome. Five at the
   // resting interval is a cycle of twenty-one seconds, which is long enough that a reader
-  // who looks twice at a plan does not see the same pair twice in a row.
-  idle: { intervalMs: RESTING_FACE_INTERVAL_MS, faces: ['open', 'half', 'oval', 'glint', 'tired'] },
-  // The turn is open and nothing has been emitted. Seven entries, and the only pool that
+  // who looks twice at a plan does not see the same pair twice in a row. The length is also
+  // load-bearing: a seat test pumps two laps of this pool, and a sixth entry would push its
+  // simulated idle past the twenty-second `restless` flourish and change the state under it.
+  idle: { intervalMs: RESTING_FACE_INTERVAL_MS, faces: ['open', 'droop', 'oval', 'glint', 'tired'] },
+  // The turn is open and nothing has been emitted. Nine entries, and the only pool that
   // reaches both "noticed something" (`curious`) and "working at it" (`squint`): pondering
   // is the state a reader watches longest, so it gets the widest vocabulary — and nothing
   // here says a result, which is the constraint the whole table is written under.
-  thinking: { intervalMs: BUSY_FACE_INTERVAL_MS, faces: ['open', 'half', 'oval', 'dot', 'glint', 'curious', 'squint'] },
+  thinking: { intervalMs: BUSY_FACE_INTERVAL_MS, faces: ['open', 'half', 'oval', 'dot', 'glint', 'curious', 'squint', 'slant', 'heavy'] },
   // Tools in flight: attention first, then the same set minus the round pupil — a tool run
   // is not a moment to look surprised at, and the narrowed pair is what the state is for.
-  orbit: { intervalMs: BUSY_FACE_INTERVAL_MS, faces: ['glint', 'half', 'squint', 'open', 'curious', 'oval'] },
+  orbit: { intervalMs: BUSY_FACE_INTERVAL_MS, faces: ['glint', 'half', 'squint', 'open', 'curious', 'oval', 'keen', 'leer'] },
   // The reply is streaming: watching the words arrive, which is the one busy state where a
   // wide eye is the *point* — so `open` and `oval` lead and the two narrowed shapes in
   // between read as the reader following along rather than as a change of mood.
-  comet: { intervalMs: BUSY_FACE_INTERVAL_MS, faces: ['open', 'oval', 'half', 'curious', 'glint', 'squint'] },
+  comet: { intervalMs: BUSY_FACE_INTERVAL_MS, faces: ['open', 'oval', 'half', 'curious', 'glint', 'squint', 'peek'] },
 
   // Not rotating. The one-shots are over before a second outline could arrive; the
   // faceless poses (`thinking`'s own body, `alert`, `exclaim`, `sleep`) draw no eyes at

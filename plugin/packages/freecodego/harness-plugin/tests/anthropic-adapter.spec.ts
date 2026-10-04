@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MessageId } from '@deepseek-ai/dsh-llm'
 import { OpenAiCompatibleAdapter, wireForProtocol } from '../src/openai-compatible-adapter.ts'
+import { parseGroupPin } from '../src/model-catalog.ts'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -68,6 +69,42 @@ describe('OpenAiCompatibleAdapter wire selection', () => {
     // The OpenAI-only envelope must not leak into an Anthropic request.
     expect(request).not.toHaveProperty('stream_options')
     expect(request).not.toHaveProperty('thinking')
+  })
+
+  it('sends the bare wire model for a group-pinned Anthropic selection', async () => {
+    // The picker's selection value carries the group pin (`id@group:N`) and the
+    // route key carries the same pin to the backend; the Messages body has to
+    // name the bare model. Sending the pin made the gateway look for an account
+    // whose model mapping contains `claude-opus-5-5@group:7`, which none does — so
+    // every selectable Claude row answered `503 No available accounts` while the
+    // OpenAI row for the same group worked, because only this path ignored the
+    // connection's wire model.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      ANTHROPIC_SSE,
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ))
+    const adapter = new OpenAiCompatibleAdapter({
+      providerName: 'FreeCodeGo',
+      listModels: async provider => [{ provider, id: 'claude-opus-5-5', name: 'claude opus 5 5' }],
+      // Mirrors the gateway's own resolver (`managed-catalogs.ts`), which strips
+      // the pin into the connection for the wire and keeps it in the route key.
+      resolveConnection: async model => {
+        const { modelId, groupId } = parseGroupPin(model)
+        return {
+          baseURL: 'https://gw.example/v1',
+          apiKey: 'gw-token',
+          wire: 'anthropic' as const,
+          headers: { 'X-FreeCodeGo-Route-Key': `group:${String(groupId)}:${modelId}` },
+          ...(modelId === model ? {} : { model: modelId }),
+        }
+      },
+    })
+    for await (const _chunk of adapter.stream({ provider: 'freecodego', model: 'claude-opus-5-5@group:7', messages: [userMessage('hello')] })) { /* consume the stream */ }
+
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>
+    expect(request.model).toBe('claude-opus-5-5')
+    // The pin stays where the backend reads it: the route-key header.
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ 'X-FreeCodeGo-Route-Key': 'group:7:claude-opus-5-5' })
   })
 
   it('keeps the OpenAI chat-completions path when no wire is set', async () => {

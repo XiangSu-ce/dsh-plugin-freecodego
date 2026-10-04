@@ -160,7 +160,7 @@ import {
   accountAnnouncements, accountDetail, accountMarkAnnouncementRead, accountStatus, backendBootstrap, backendCatalog, backendQuota, backendRuntimeHealth, backendUsage, completeMfa, deviceSessions, groqWhisperTranscribe, vyceSetKey, vyceStatus,
   revokeAllSessions, revokeDeviceSession,
   forgotPassword, logfareLogin, logfareSetKey, logfareSetTrainingOptIn, logfareStatus, login, logout, refreshAccount, register, resetPassword,
-  readRememberedPassword, sendVerifyCode, sensenovaSetKey, sensenovaStatus, nvidiaSetKey, nvidiaStatus, restoreAccount as restoreDurableAccount, accountOAuthLogin,
+  readRememberedPassword, readRememberedEmail, sendVerifyCode, sensenovaSetKey, sensenovaStatus, nvidiaSetKey, nvidiaStatus, restoreAccount as restoreDurableAccount, accountOAuthLogin,
   accountOAuthPendingStatus, accountOAuthPendingSendVerifyCode, accountOAuthPendingBind, accountOAuthPendingCreate,
   type AccountRemotesHost, type AccountRemotesState,
   workbuddyImportDesktopLogin, workbuddyLogout, workbuddyOpenSignIn, workbuddyPollBrowserLogin, workbuddyRefreshToken, workbuddyRefreshCredits, workbuddyRemoveAccount, workbuddySetActiveAccount, workbuddyStartBrowserLogin, workbuddyStatus,
@@ -6547,6 +6547,15 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
 @Remote('accountRememberedPassword')
   async rememberedPassword(): Promise<{ readonly password?: string }> {
     return readRememberedPassword(this.accountRemotesHost)
+  }
+
+    /**
+   * Read the sign-in address this machine remembers for the form.
+   * @returns the remembered address, or `undefined` when none was kept.
+   */
+@Remote('accountRememberedEmail')
+  async rememberedEmail(): Promise<{ readonly email?: string }> {
+    return readRememberedEmail(this.accountRemotesHost)
   }
 
   /**

@@ -177,39 +177,29 @@ function shifted(ring: Ring, dy: number): Ring {
  *
  * The interesting entries are the arcs and the lidded pair — an eye closed into a curve and
  * an eye with a lid over it are what two capsules genuinely cannot say, which is why this
- * module exists. The division of labour is worth stating, because three of these names are
- * reached from exactly one place: `smile` and `frown` only by a request, and `squint` only
- * by a pool entry. That is the intended shape of the table rather than an accident — the
- * vocabulary a *caller* may ask for is deliberately emotional and small (`./faces.ts`
- * declares it), while the shapes a *schedule* may walk are free to be as specific as the
- * reading they serve, since no caller ever names them.
+ * module exists — and the tilted and shifted families, the only shapes here whose meaning is
+ * a *direction* or an *offset* rather than a contour. Most names are reached from exactly
+ * one place (`./faces.ts` maps a caller's name onto one of them), while a few are also
+ * walked by a state's pool (`./pools.ts`). A shape nothing draws would be a shape nobody has
+ * looked at, and the spec beside this module enforces that every name here is worn.
  */
 export const RINGS = {
   /** The whole box: the resting eye, and the closest thing to the engine's capsule. */
   open: ellipse(1, 1),
   /** Narrower than the box, for the flourishes whose own silhouette is already narrow. */
   oval: ellipse(0.72, 1),
+  /** Narrower still: an eye that is paying attention without being startled. */
+  narrow: ellipse(0.46, 1),
+  /** The narrowest upright eye: mostly shut with intention rather than sleep. */
+  slim: ellipse(0.28, 1),
+  /** A round eye that fills both axes: wonder rather than attention. */
+  round: ellipse(0.78, 0.78),
   /** A round pupil, for a face that has just been pinged. */
   dot: ellipse(0.5, 0.42),
-  /** A narrow eye tilted up toward the nose: attention in earnest. */
-  glint: tilted(ellipse(0.34, 0.95), 22),
-  /**
-   * The same narrowed eye tilted the other way: effort rather than attention. The mirror of
-   * `glint` rather than a new shape, because at this size the direction of the tilt is the
-   * whole of what a reader can tell — and a pair that is exactly mirrored is the one pair
-   * that cannot drift into looking like each other.
-   */
-  squint: tilted(ellipse(0.36, 0.9), -20),
-  /**
-   * A wide eye sitting high in its box: something has been noticed.
-   *
-   * The one shape here whose meaning is an *offset* (`shifted`) rather than a contour, and
-   * that is deliberately the only way this vocabulary says "looking at" — the engine moves
-   * both eyes over a sphere and does it properly, so a ring only ever raises the pupil
-   * inside its own box. It stays in bounds: half-height 0.62 lifted 0.28 leaves 0.9 of the
-   * box above it, so the shape cannot poke out of the silhouette the fit table protects.
-   */
-  curious: shifted(ellipse(0.75, 0.62), -0.28),
+  /** A small pupil sitting wide: something small and startling was noticed. */
+  bead: ellipse(0.34, 0.5),
+  /** The smallest eye in the vocabulary: a pinprick of alarm. */
+  pin: ellipse(0.22, 0.32),
   /** Lidded at the middle, the way a face mid-change looks. */
   half: lidded(-0.02),
   /**
@@ -219,21 +209,71 @@ export const RINGS = {
    * level, so a second shape here would be a second measurement of the same idea.
    */
   tired: lidded(0.38),
+  /** A lid a little lower than `half`: the eye settling rather than arriving. */
+  droop: lidded(0.22),
+  /** A lid past the middle: attention kept up against the pull of sleep. */
+  hood: lidded(0.5),
+  /** A lid low enough that the eye is effort rather than sight. */
+  heavy: lidded(0.6),
+  /** The thin sliver that is almost shut: the end of a long wait, or a long night. */
+  slit: lidded(0.78),
   /**
    * A soft upward arc: the eye of a face that is pleased rather than delighted.
    *
-   * The two arcs, `smile` and `beam`, and their mirror `frown` are thick enough to
-   * survive the size they are drawn at, and that is not a detail. The companion's eye is
-   * about eight pixels tall on the strip and five on the rail, so a shape's own
-   * thickness becomes a fraction of a pixel: a crescent a third as thick as its rise is
-   * a hairline on the rail and an anti-aliased smudge rather than an eye. Slightly over
-   * half the rise is what a closed eye looks like drawn as a solid anyway.
+   * The arcs are thick enough to survive the size they are drawn at, and that is not a
+   * detail. The companion's eye is about eight pixels tall on the strip and five on the
+   * rail, so a shape's own thickness becomes a fraction of a pixel: a crescent a third as
+   * thick as its rise is a hairline on the rail and an anti-aliased smudge rather than an
+   * eye. Slightly over half the rise is what a closed eye looks like drawn as a solid.
    */
   smile: crescent(0.55, 0.3),
   /** A deep upward arc: the eye a face closes over something it finished. */
   beam: crescent(0.78, 0.4),
+  /** A shallow upward arc: amusement rather than delight. */
+  grin: crescent(0.38, 0.24),
+  /** The deepest arc in the vocabulary: a laugh that closes the eye. */
+  laugh: crescent(0.95, 0.55),
+  /** A broad, calm upward arc: quiet pleasure. */
+  arc: crescent(0.62, 0.45),
   /** The same arc turned down: effort, disappointment, a thing gone wrong. */
   frown: crescent(-0.45, -0.24),
+  /** A deeper downward arc: grief rather than a setback. */
+  sad: crescent(-0.62, -0.34),
+  /** A shallow downward arc: a small, held disappointment. */
+  pout: crescent(-0.32, -0.2),
+  /** The deepest downward arc: anger, which closes the eye the way a laugh does. */
+  glare: crescent(-0.85, -0.5),
+  /** A narrow eye tilted up toward the nose: attention in earnest. */
+  glint: tilted(ellipse(0.34, 0.95), 22),
+  /**
+   * The same narrowed eye tilted the other way: effort rather than attention. The mirror of
+   * `glint` rather than a new shape, because at this size the direction of the tilt is the
+   * whole of what a reader can tell — and a pair that is exactly mirrored is the one pair
+   * that cannot drift into looking like each other.
+   */
+  squint: tilted(ellipse(0.36, 0.9), -20),
+  /** A sharper tilt than `glint`: attention with a goal. */
+  keen: tilted(ellipse(0.3, 0.85), 30),
+  /** A sharper tilt the other way than `squint`: suspicion rather than effort. */
+  leer: tilted(ellipse(0.32, 0.88), -30),
+  /** A gentle tilt of a tall eye: a glance rather than a stare. */
+  peek: tilted(ellipse(0.4, 0.95), 14),
+  /** A lidded eye leaned over: wariness, the lid doing the looking. */
+  slant: tilted(lidded(0.1), 18),
+  /**
+   * A wide eye sitting high in its box: something has been noticed.
+   *
+   * The meaning is an *offset* (`shifted`) rather than a contour, and that is deliberately
+   * the only way this vocabulary says "looking at" — the engine moves both eyes over a
+   * sphere and does it properly, so a ring only ever raises the pupil inside its own box.
+   * It stays in bounds: half-height 0.62 lifted 0.28 leaves 0.9 of the box above it, so the
+   * shape cannot poke out of the silhouette the fit table protects.
+   */
+  curious: shifted(ellipse(0.75, 0.62), -0.28),
+  /** The same eye lowered: a face thinking about something just out of reach. */
+  pensive: shifted(ellipse(0.6, 0.55), 0.3),
+  /** A calm eye raised away from the reader: distance, not attention. */
+  aloof: shifted(ellipse(0.55, 0.5), -0.34),
 } as const
 
 /** A name from {@link RINGS}. */

@@ -27,7 +27,7 @@ describe('FreeCodeGo RC.1 composition', () => {
     const patch = await readFile(resolve(bundleDirectory, 'cordis.patch.yml'), 'utf8')
 
     expect(manifest.name).toBe('freecodego')
-    expect(manifest.freecodego?.harnessBaseline).toBe('0.2.0-rc.2')
+    expect(manifest.freecodego?.harnessBaseline).toBe('0.2.1-alpha.1')
     // `dsh.bootstrap` used to be declared here, naming `bootstrapFreeCodeGoHarness`. It was
     // never part of the Harness contract — `DshManifest` declares `bundle`, `profile` and
     // `client` — and no reader anywhere resolved it, so the pre-Loader window it advertised
@@ -306,48 +306,50 @@ describe('FreeCodeGo RC.1 composition', () => {
     expect(owner?.body).toMatch(/^\s+openAt:\s*never\s*$/mu)
   })
 
-  it('mounts the official scheduler bundle instead of a copy of the service', async () => {
+  it('mounts the Web composition\'s scheduler row instead of a copy of the service', async () => {
     // 0.2.0 moved `schedule`, `time-context` and the task page out of the Web
     // composition and into the shipped optional bundle
-    // `@deepseek-ai/dsh-experimental-schedule-bundle`. The capability has an
-    // official home the composition no longer names, so this plugin reaches it the
-    // way the harness offers every shipped optional bundle: the FreeCodeGo profile
-    // lists the bundle in `dsh.profile.bundles`. It mounts no row of its own — one
-    // mount of one service — and the `disabled: false` overrides this file carried
-    // on 0.1.7-rc.2 are gone with the rows they targeted. The premise is upstream's,
-    // so it is read from upstream's files rather than restated.
+    // `@deepseek-ai/dsh-experimental-schedule-bundle`. 0.2.1 retired that bundle
+    // again: `packages/bundle/web-app/cordis.patch.yml` declares the `schedule` row
+    // itself, and the clock and the four reminder tools moved into the `standard`,
+    // `cordis` and `ptc` presets. So this plugin mounts no row of its own and no
+    // profile names a scheduler bundle — the composition is the one mount of one
+    // service. The premise is upstream's, so it is read from upstream's files rather
+    // than restated.
     const patch = compositionRows(read(resolve(bundleDirectory, 'cordis.patch.yml')), 'freecodego/bundle-latest/cordis.patch.yml')
 
-    // This bundle declares no scheduler row: neither the enable it used to carry nor
-    // an inserted copy. This is the assertion a reintroduced row has to fail.
+    // This bundle declares no scheduler row: neither an inserted copy nor an override.
+    // This is the assertion a reintroduced row has to fail.
     expect(patch.find(row => row.id === 'schedule')).toBeUndefined()
     expect(patch.find(row => row.id === 'time-context')).toBeUndefined()
+    expect(patch.find(row => row.id === 'tool-schedule')).toBeUndefined()
     expect(patch.find(row => row.name === 'freecodego/schedule')).toBeUndefined()
 
-    // The Web composition no longer declares either row (they left in 0.2.0), so an
-    // `id`-targeted override there would only warn.
+    // The Web composition owns the row now, exactly once, which is what makes naming
+    // a scheduler bundle in `dsh.profile.bundles` unnecessary rather than merely
+    // redundant.
     const webAppPath = resolve(workspaceDirectory, 'packages/bundle/web-app/cordis.patch.yml')
     if (existsSync(webAppPath)) {
       const webApp = compositionRows(read(webAppPath), 'bundle/web-app/cordis.patch.yml')
-      expect(webApp.filter(row => row.name === '@deepseek-ai/dsh-schedule')).toHaveLength(0)
+      expect(webApp.filter(row => row.id === 'schedule' && row.name === '@deepseek-ai/dsh-schedule')).toHaveLength(1)
       expect(webApp.filter(row => row.name === '@deepseek-ai/dsh-time-context')).toHaveLength(0)
     }
 
-    // The official optional bundle is the one that declares them, once each.
-    const scheduleBundlePath = resolve(workspaceDirectory, 'packages/experimental/schedule-bundle/cordis.patch.yml')
-    expect(existsSync(scheduleBundlePath), scheduleBundlePath).toBe(true)
-    const scheduleBundle = compositionRows(read(scheduleBundlePath), 'experimental/schedule-bundle/cordis.patch.yml')
-    expect(scheduleBundle.filter(row => row.id === 'schedule' && row.name === '@deepseek-ai/dsh-schedule')).toHaveLength(1)
-    expect(scheduleBundle.filter(row => row.id === 'time-context' && row.name === '@deepseek-ai/dsh-time-context')).toHaveLength(1)
+    // The optional bundle 0.2.0 shipped is gone in 0.2.1. A checkout that still
+    // carried it would mean this plugin, or the profile it writes, named a package
+    // the installation no longer has.
+    const retiredBundlePath = resolve(workspaceDirectory, 'packages/experimental/schedule-bundle/cordis.patch.yml')
+    expect(existsSync(retiredBundlePath), retiredBundlePath).toBe(false)
 
-    // And the FreeCodeGo profile mounts that official bundle by name. Read from the
-    // installer the sync materializes, because that constant is what a profile
-    // actually starts from.
+    // And the FreeCodeGo profile mounts no retired bundle: the web template's own two
+    // bundles are the whole set. Read from the installer the sync materializes,
+    // because that constant is what a profile actually starts from.
     const installerPath = resolve(workspaceDirectory, 'packages/boot/plugin-manager/src/operations.ts')
     expect(existsSync(installerPath), installerPath).toBe(true)
     const bundles = /const FREECODEGO_PROFILE_BUNDLES: readonly string\[\] = \[([^\]]*)\]/u.exec(read(installerPath))
     expect(bundles, 'FREECODEGO_PROFILE_BUNDLES is missing from the materialized installer').not.toBeNull()
-    expect(bundles![1]).toContain('@deepseek-ai/dsh-experimental-schedule-bundle')
+    expect(bundles![1]).toContain('@deepseek-ai/dsh-web-app')
+    expect(bundles![1]).not.toContain('@deepseek-ai/dsh-experimental-schedule-bundle')
   })
 
   it('does not depend on unpublished Harness source subpaths', async () => {

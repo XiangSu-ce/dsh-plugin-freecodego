@@ -307,7 +307,7 @@ Logfare 有 11 行位于训练数据授权之后，选择器会标注而不是�
 ## 运行要求
 
 - **Node** `^22.19.0 || >=24.0.0`
-- **DeepSeek Harness** `0.1.7-rc.2`。bundle 里声明了 `freecodego.harnessBaseline`，只对它构建时对应的那条线提供更新。
+- **DeepSeek Harness** `0.2.1-alpha.1`。bundle 里声明了 `freecodego.harnessBaseline`，只对它构建时对应的那条线提供更新。
 
 ## 安装
 
@@ -317,11 +317,11 @@ bundle 以 release 资产分发，不走包注册表：
 dsh plugin --profile web add --save-exact <tarball-url>
 ```
 
-例如为 Harness `0.1.7-rc.2` 构建的那个 bundle：
+例如为 Harness `0.2.1-alpha.1` 构建的那个 bundle：
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.0-rc.2.1/freecodego-0.2.0-rc.2.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.1-alpha.1.1/freecodego-0.2.1-alpha.1.tgz
 ```
 
 `--profile web` 就是 `dsh web` 运行的 profile；如果你用别的方式启动 Harness，请换成你自己的 profile 名。新 bundle 需要重启 Host 才会加载。
@@ -336,7 +336,7 @@ pnpm run build
 
 ## 发行与资产命名
 
-每个 release 打 `freecodego-v<version>` 标签，它的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本 bundle 是 `freecodego-0.1.7-rc.2.tgz`。资产名带的是 **Harness 线**而不是 bundle 版本，所以 hotfix（`v0.1.7-rc.2`）依然能说明自己属于哪条线。资产名写成 bundle 版本的 release 同样能装；一个 release 里只放一个 tarball 时，无论叫什么都会被接受 —— 名字与标签不一致，不该成为让更新永远不出现的理由。
+每个 release 打 `freecodego-v<version>` 标签，它的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本 bundle 是 `freecodego-0.2.1-alpha.1.tgz`。资产名带的是 **Harness 线**而不是 bundle 版本，所以 hotfix（`v0.2.1-alpha.1.1`）依然能说明自己属于哪条线。资产名写成 bundle 版本的 release 同样能装；一个 release 里只放一个 tarball 时，无论叫什么都会被接受 —— 名字与标签不一致，不该成为让更新永远不出现的理由。
 
 更新服务读取本仓库的 release，启动后不久检查一次、之后每天一次，并用与用户安装时相同的入口 `dsh plugin add --save-exact <url>` 安装。安装会先把 bundle 落在一个同级 Profile 里，再原子提升；在重启后的 Host 健康之前，上一个 Profile 始终可恢复。
 

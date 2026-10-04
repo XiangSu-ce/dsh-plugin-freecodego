@@ -18,6 +18,60 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.2.1-alpha.1.1 — 2026-10-04
+
+### English
+
+The Harness line this bundle mounts on moves to `0.2.1-alpha.1`:
+`freecodego.harnessBaseline`, the `engines.dsh` floor, every peer a Host supplies
+and the release asset name all state that line, and only its releases are offered
+to a Host on it.
+
+#### Changed
+
+- **The scheduler is now owned by the official Web composition.** Upstream 0.2.1
+  retired its standalone schedule bundle: the Web composition declares
+  `@deepseek-ai/dsh-schedule` itself, and the clock plus the four reminder tools
+  moved into the `standard` preset. The Agent presets here carry the same two rows,
+  so scheduling is unaffected — but a Host below this line has no
+  `@deepseek-ai/dsh-tool-schedule` to resolve, which is why the floor moved rather
+  than the rows being dropped.
+
+#### Fixed
+
+- **A second copy of the shared MCP runtime can no longer hide the browser tools.**
+  Three experimental providers imported `@deepseek-ai/dsh-mcp-client` while
+  declaring it as a dependency, which installs a copy of the module inside the
+  plugin. Its live `serverName` reservations then belong to a second instance, the
+  first Session owns the names, and every later Session fails to create with
+  `mcp-client(...): initial connection or tool synchronization failed`. The three
+  now take the runtime as a peer — satisfied by the installation, with a dev copy
+  kept to build against — as the other experimental providers already did.
+
+### 中文
+
+本 bundle 所挂载的 Harness 线前进到 `0.2.1-alpha.1`：`freecodego.harnessBaseline`、
+`engines.dsh` 下限、Host 提供的每一个 peer 以及 release 资产名都写这条线，并且只有
+这条线上的 release 才会提供给运行在这条线上的 Host。
+
+#### 变更
+
+- **调度器改由官方 Web 组合自己声明。** 上游 0.2.1 退休了独立的 schedule bundle：
+  Web 组合自己声明 `@deepseek-ai/dsh-schedule`，而时钟与四个提醒工具移入了
+  `standard` 预设。本仓库的 Agent 预设同样带着这两行，因此调度能力不受影响 —— 但
+  低于这条线的 Host 上没有 `@deepseek-ai/dsh-tool-schedule` 可解析，这正是下限
+  跟着动、而不是把这两行删掉的原因。
+
+#### 修复
+
+- **共享 MCP 运行时的第二份拷贝不再能让浏览器工具凭空消失。** 三个 experimental
+  provider 从 `@deepseek-ai/dsh-mcp-client` 导入的同时又把它声明为 dependency，
+  于是插件内部装进了该模块的第二份拷贝。它实时的 `serverName` 预占属于另一个实例，
+  第一个 Session 占住名字之后，后续每个 Session 创建都会失败并报
+  `mcp-client(...): initial connection or tool synchronization failed`。现在这三个包
+  与其余 experimental provider 一样，把该运行时改为 peer（由安装方满足，并保留一份
+  dev 副本用于自身构建）。
+
 ## 0.2.0-rc.2.1 — 2026-10-01
 
 ### English

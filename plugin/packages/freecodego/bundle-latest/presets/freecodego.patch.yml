@@ -65,6 +65,11 @@
             config:
               maxBytes: 65536
 
+          # 0.2.1 added this row to `standard`, and a mirror names the same packages in the
+          # same order: the clock the model resolves relative dates against.
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+
           # ── shell ────────────────────────────────────────────────────────────────────
 
           - id: tool-bash
@@ -89,6 +94,12 @@
 
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
+
+          # The four reminder tools. 0.2.1 moved them from the retired
+          # `@deepseek-ai/dsh-experimental-schedule-bundle` into this row and into
+          # `standard`, so the mirror carries it too.
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
 
           # ── skills ──────────────────────────────────────────────────────────────────
 

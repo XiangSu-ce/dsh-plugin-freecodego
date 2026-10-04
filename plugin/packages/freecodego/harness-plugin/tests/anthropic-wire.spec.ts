@@ -59,15 +59,17 @@ describe('Anthropic Messages serialization', () => {
       messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
     } as never)
     expect(body.model).toBe('claude-sonnet-5')
-    expect(body.system).toBe('SYS')
+    // The system prompt is a block array so it can carry a cache breakpoint;
+    // the bare string has no element to mark.
+    expect(body.system).toEqual([{ type: 'text', text: 'SYS', cache_control: { type: 'ephemeral' } }])
     expect(body.stream).toBe(true)
     // The budget fits inside the caller's cap, so both are sent and the cap is
     // honoured exactly.
     expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 8_192 })
     expect(body.max_tokens).toBe(20_000)
     expect(body.stop_sequences).toEqual(['END'])
-    expect(body.tools).toEqual([{ name: 'read_files', description: 'Read', input_schema: { type: 'object' } }])
-    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }])
+    expect(body.tools).toEqual([{ name: 'read_files', description: 'Read', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } }])
+    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }] }])
   })
 
   it('drops the thinking step rather than raising an explicit caller cap', async () => {
@@ -124,7 +126,7 @@ describe('Anthropic Messages serialization', () => {
         { type: 'tool_use', id: 'call-1', name: 'read_files', input: { path: 'a.ts' } },
         { type: 'tool_use', id: 'call-2', name: 'grep', input: {} },
       ] },
-      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'ok' }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'ok', cache_control: { type: 'ephemeral' } }] },
     ])
   })
 
@@ -137,7 +139,7 @@ describe('Anthropic Messages serialization', () => {
         { role: 'user', content: [{ type: 'text', text: 'real turn' }] },
       ],
     } as never)
-    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'real turn' }] }])
+    expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'real turn', cache_control: { type: 'ephemeral' } }] }])
   })
 
   it('inlines user images as base64 sources and keeps tool-result images as text', async () => {
@@ -147,8 +149,102 @@ describe('Anthropic Messages serialization', () => {
     } as never, { resolveImage: async () => requestImage(new Uint8Array([1, 2, 3, 4])) })
     expect(body.messages).toEqual([{
       role: 'user',
-      content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQIDBA==' } }],
+      content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQIDBA==' }, cache_control: { type: 'ephemeral' } }],
     }])
+  })
+})
+
+/**
+ * Every block in an assembled body that carries a cache breakpoint, in the order
+ * the body lays them out.
+ *
+ * A count alone answers "did the ceiling hold"; the positions are what tells a
+ * breakpoint apart from one written onto the wrong segment.
+ */
+function markedBlocks(body: Record<string, unknown>): string[] {
+  const marked: string[] = []
+  const visit = (where: string, value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => visit(`${where}.${index}`, entry))
+      return
+    }
+    if (value === null || typeof value !== 'object') return
+    const record = value as Record<string, unknown>
+    if (record.cache_control !== undefined) marked.push(where)
+    for (const [key, entry] of Object.entries(record)) {
+      if (key === 'cache_control') continue
+      visit(`${where}.${key}`, entry)
+    }
+  }
+  visit('tools', body.tools)
+  visit('system', body.system)
+  visit('messages', body.messages)
+  return marked
+}
+
+/**
+ * The sticky-session identity the gateway routes on.
+ *
+ * Without it the router hashes the request content, which changes every turn,
+ * so each turn would be sent to a freshly chosen upstream account and the
+ * per-account prefix cache could never be reused. These cases pin that a
+ * conversation carries one stable id and that a request with no session still
+ * sends no `metadata` at all.
+ */
+describe('Anthropic sticky-session metadata', () => {
+  it('carries the session id as JSON metadata.user_id', async () => {
+    const body = await serializeAnthropicRequest({
+      provider: 'freecodego', model: 'claude-sonnet-5', sessionId: 'sess-abc',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+    } as never)
+    expect(body.metadata).toEqual({ user_id: JSON.stringify({ device_id: 'freecodego', session_id: 'sess-abc' }) })
+  })
+
+  it('omits metadata when the caller carries no session id', async () => {
+    const body = await serializeAnthropicRequest({
+      provider: 'freecodego', model: 'claude-sonnet-5',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+    } as never)
+    expect('metadata' in body).toBe(false)
+  })
+})
+
+describe('Anthropic cache breakpoints', () => {
+  const tool = (name: string) => ({ name, description: name, parameters: { type: 'object' } })
+  const turn = (role: 'user' | 'assistant', text: string) => ({ role, content: [{ type: 'text', text }] })
+
+  it('marks the tool tail, the system prompt, and the conversation tail, in that order', async () => {
+    const body = await serializeAnthropicRequest({
+      provider: 'freecodego', model: 'claude-sonnet-5', system: 'SYS',
+      tools: [tool('read_files'), tool('grep')],
+      messages: [turn('user', 'one'), turn('assistant', 'two'), turn('user', 'three')],
+    } as never)
+    // Three marks, because only the *last* tool definition ends a stable prefix:
+    // a mark on the first tool would cache nothing the next tool does not already.
+    expect(markedBlocks(body)).toEqual(['tools.1', 'system.0', 'messages.2.content.0'])
+  })
+
+  it('holds Anthropic\'s ceiling of four breakpoints on a long transcript', async () => {
+    const body = await serializeAnthropicRequest({
+      provider: 'freecodego', model: 'claude-sonnet-5', system: 'SYS',
+      tools: [tool('read_files')],
+      messages: [
+        turn('user', 'one'), turn('assistant', 'two'),
+        turn('user', 'three'), turn('assistant', 'four'), turn('user', 'five'),
+      ],
+    } as never)
+    // Tool tail + system + the last two user turns. Anthropic rejects a fifth.
+    expect(markedBlocks(body)).toEqual(['tools.0', 'system.0', 'messages.2.content.0', 'messages.4.content.0'])
+  })
+
+  it('skips the second user breakpoint while one exchange is all there is', async () => {
+    const body = await serializeAnthropicRequest({
+      provider: 'freecodego', model: 'claude-sonnet-5',
+      messages: [turn('user', 'one'), turn('assistant', 'two'), turn('user', 'three')],
+    } as never)
+    // Marking the user turn before this one would cache a prefix the transcript
+    // is about to grow away from, at a 25% write premium, for no read back.
+    expect(markedBlocks(body)).toEqual(['messages.2.content.0'])
   })
 })
 

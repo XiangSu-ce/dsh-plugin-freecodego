@@ -526,6 +526,18 @@ export function apply(ctx: ClientContext): void {
     if (typeof service?.accountRememberedPassword !== 'function') return { ok: true, value: {} }
     return service.accountRememberedPassword()
   }
+  /**
+   * Read the sign-in address this machine remembers for the form.
+   *
+   * A Host that predates this Remote answers nothing, which leaves the form on
+   * whatever the browser store still carries — never worse than before.
+   */
+  const accountRememberedEmail = async (): Promise<RemoteResult<{ readonly email?: string }>> => {
+    await remoteMounted
+    const service = ctx.get('remote.freeCodeGoHarness') as { accountRememberedEmail?: () => Promise<RemoteResult<{ readonly email?: string }>> } | undefined
+    if (typeof service?.accountRememberedEmail !== 'function') return { ok: true, value: {} }
+    return service.accountRememberedEmail()
+  }
   const login = async (email: string, password: string, remember?: boolean, rememberPassword?: boolean): Promise<RemoteResult<Account>> => {
     await remoteMounted
     const service = ctx.get('remote.freeCodeGoHarness') as { accountLogin?: (input: { email: string; password: string; remember?: boolean; rememberPassword?: boolean }) => Promise<RemoteResult<Account>> } | undefined
@@ -983,6 +995,7 @@ export function apply(ctx: ClientContext): void {
       language: settingsLanguage(),
       accountStatus,
       accountRememberedPassword,
+      accountRememberedEmail,
       login,
       register,
       sendVerifyCode,

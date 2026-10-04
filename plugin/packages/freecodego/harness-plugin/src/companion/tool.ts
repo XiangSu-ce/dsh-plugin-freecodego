@@ -42,19 +42,45 @@ export const COMPANION_FACE_TOOL_NAME = 'freecodego_companion_face'
 /**
  * The expressions the model may ask for, in the order the description offers them.
  *
- * Shorter than the client's outline vocabulary on purpose, and every name maps to a shape
- * that vocabulary already draws: a name the character has no face for would be a request
- * that silently does nothing. `neutral` is first because it is the one that *undoes* a
- * mood, which is what a caller reaches for when the moment has passed.
+ * Every name maps to exactly one shape in the client's outline vocabulary (`harness-ui`'s
+ * `companion/eyes/faces.ts`), and a spec there holds the two lists identical: a name the
+ * character has no face for would be a request that silently does nothing. `neutral` is
+ * first because it is the one that *undoes* a mood, which is what a caller reaches for when
+ * the moment has passed.
  */
 export const COMPANION_FACES = [
   'neutral',
+  'calm',
+  'content',
+  'bored',
+  'awed',
+  'surprised',
+  'flustered',
+  'overwhelmed',
+  'sleepy',
+  'tired',
+  'relaxed',
+  'drowsy',
+  'drained',
+  'exhausted',
   'happy',
   'delighted',
+  'amused',
+  'laughing',
+  'pleased',
   'sad',
+  'disappointed',
+  'upset',
+  'angry',
   'focused',
-  'sleepy',
-  'surprised',
+  'determined',
+  'skeptical',
+  'annoyed',
+  'shy',
+  'worried',
+  'curious',
+  'thoughtful',
+  'distant',
 ] as const
 
 /** One expression a caller may ask for. */
@@ -106,7 +132,7 @@ function runCompanionFace(args: CompanionFaceArgs): unknown {
 export function companionFaceToolDefinition(): ToolDefinitionShape {
   return toolDefinition({
     name: COMPANION_FACE_TOOL_NAME,
-    description: 'Ask the companion character — the small figure drawn beside the composer — to wear an expression: neutral, happy, delighted, sad, focused, sleepy or surprised. Call it once when a step of work ends in a way worth seeing — something landed, an attempt failed, the result was not what anyone expected, a long stretch of attention is starting, a task is a slog — rather than once per message. It changes the character\'s face and nothing else: the text beside it is derived from the session, so this is not a status channel and must not be used to report progress. The expression holds for a few seconds and then the face goes back to whatever the session is doing; call it again with "neutral" to end one early. No side effects: nothing is read, written, run or fetched.',
+    description: 'Ask the companion character — the small figure drawn beside the composer — to wear one of thirty-two expressions, from the quiet ones (neutral, calm, content, bored, distant) through the working ones (focused, determined, curious, thoughtful, skeptical) to the emotional ones (happy, delighted, amused, laughing, pleased, sad, disappointed, upset, angry, surprised, worried, shy, tired, sleepy). Call it once when a step of work ends in a way worth seeing — something landed, an attempt failed, the result was not what anyone expected, a long stretch of attention is starting, a task is a slog — rather than once per message. It changes the character\'s face and nothing else: the text beside it is derived from the session, so this is not a status channel and must not be used to report progress. The expression holds for a few seconds and then the face goes back to whatever the session is doing; call it again with "neutral" to end one early. No side effects: nothing is read, written, run or fetched.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -115,7 +141,7 @@ export function companionFaceToolDefinition(): ToolDefinitionShape {
         face: {
           type: 'string',
           enum: [...COMPANION_FACES],
-          description: 'The expression to wear: neutral | happy | delighted | sad | focused | sleepy | surprised.',
+          description: 'The expression to wear: neutral | calm | content | bored | awed | surprised | flustered | overwhelmed | sleepy | tired | relaxed | drowsy | drained | exhausted | happy | delighted | amused | laughing | pleased | sad | disappointed | upset | angry | focused | determined | skeptical | annoyed | shy | worried | curious | thoughtful | distant.',
         },
       },
     },

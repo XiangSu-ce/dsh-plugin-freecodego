@@ -343,7 +343,12 @@ describe('the remote call contract', () => {
     // generates. Both have exactly one dispatch site on the client side, so all
     // three counts below moved together, which is the check that says the pair
     // was extended rather than one side drifting.
-    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(237)
+    // 237 → 238: `accountRememberedEmail`, the read that prefills the sign-in
+    // address from the Host vault instead of the per-renderer-origin browser
+    // store. Like `accountRememberedPassword` its client side is a cast-style
+    // call, so REMOTES and the unreached count below move while SITES and the
+    // distinct-name count do not.
+    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(238)
     // Re-verified when this moved 182 → 176: the five conditional dispatches
     // (`agnesRefresh`, `agnesCreateApiKey`, `agnesLogout`, `codexRuntimeInstall`,
     // `claudeRuntimeInstall`) that branched into a zero-argument call collapsed
@@ -470,7 +475,9 @@ describe('the remote call contract', () => {
     // the transcript path is the Host's now, so a browser never reaches it. It stays
     // declared because the media tool path resolves the same method and it remains
     // this plugin's transcription entry point.
-    expect(unused.length, `unreached remotes changed: ${unused.join(', ')}`).toBe(23)
+    // 23 → 24 by `accountRememberedEmail`, reached the same cast-style way as the
+    // password read above rather than through a dispatch site.
+    expect(unused.length, `unreached remotes changed: ${unused.join(', ')}`).toBe(24)
   })
 
   it('reports an undeclared name and a wrong argument count, which is the defect this gate exists for', () => {

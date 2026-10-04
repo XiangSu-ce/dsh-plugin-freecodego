@@ -337,7 +337,7 @@ Headroom 在模型看到之前压缩过大的工具输出。持久会话日志�
 <a id="release-updates"></a>
 ## 发布更新
 
-更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.2.0-rc.2` 构建的 `freecodego-0.2.0-rc.2.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
+更新服务读取 `XiangSu-ce/dsh-plugin-freecodego` 的 release，而不是孤立地更新某一个 Host 组件。一个 release 以 `freecodego-v<version>` 打 tag（家族前缀让同一个仓库里多个 release 家族的 tag 互不混淆，裸 `v<version>` 形式同样可读），并把它 bundle 的 tarball 命名为 `<包名>-<Harness 版本>.tgz` —— 本包即为 Harness `0.2.1-alpha.1` 构建的 `freecodego-0.2.1-alpha.1.tgz` —— 因此一次请求就回答了检查要问的两件事：哪个版本最新，以及它为哪条 Harness 而构建。资产名对应的是 Harness 线而不是 bundle 版本，因此 hotfix 仍可辨识：它的 tag 是深一个点段的精确版本，资产名则依旧写着它属于哪条线。资产名带 bundle 版本的 release 同样会被安装 —— 查找同时接受两种拼法，并在该 release 只带一个 tarball 时兜底 —— 因为名字与 tag 不一致并不是让更新不可达的理由。只会提供适用于当前运行 Harness 的 release —— 完全匹配，或深一个点段的 hotfix —— 其中版本最高者胜出。检查在启动后不久执行一次，此后每天一次；安装执行 `dsh plugin add --save-exact <tarball url>`，也就是用户当初安装所用的同一入口，并把结果暂存在一个同级 Profile 中，然后再原子地提升它。更新前的 Profile 会一直可用，直到重启后的 Host 保持健康，设置页可以在确认之前恢复它。编辑 release 即可撤回某个版本，而一个已发布的 npm 版本做不到这一点；更新绝不隐式重启进程，因此需要重启 Host 才会加载新的 bundle。
 
 <a id="zcode-glm-53-flash-promotion"></a>
 ## Zcode GLM-5.3 Flash 推广
@@ -425,7 +425,7 @@ Harness 的语音输入是它自己的可选 bundle（`@deepseek-ai/dsh-experime
 有三个决定值得写下来，因为每一个都是这个角色**刻意不做**的事。
 
 - **图形在动，文字不动。** 两条池子轮换的是**画出来的东西**，从不移动状态。`companion/poses.ts` 轮换三个长时间忙碌状态各自用哪个姿态来表现，`companion/eyes/pools.ts` 则按自己的时钟轮换眼睛（忙碌时 1.5 秒、休息时 4.2 秒，绝不让同一个眼型连着出现两次）—— 这就是「等待中的会话原先会一直戴着同一个表情，只要窗口开着」的修复。两者都是共享时钟的纯函数，所以同一瞬间的两个座位画出同一张图，晚挂载的座位也不会落后一格；`prefers-reduced-motion` 会同时冻结两者。
-- **模型可以点一个表情，但不能点文字。** `freecodego_companion_face` 可以让角色戴上 `neutral`、`happy`、`delighted`、`sad`、`focused`、`sleepy`、`surprised` 中的一个，持续几秒。这个工具**不写入任何东西**：调用连同它的名字与参数落进会话的事件窗口，而客户端自己的事件流正是从那里读它，所以这个请求会实时出现在转录里，也不存在第二条需要与第一条保持同步的通道。请求来的表情是装饰 —— 状态仍由阶梯决定，再用 `neutral` 调一次就能提前结束一个心情。
+- **模型可以点一个表情，但不能点文字。** `freecodego_companion_face` 可以让角色戴上三十二个表情中的一个 —— 安静的如 `neutral`、`calm`、`bored`；工作状态如 `focused`、`determined`、`curious`；情绪的如 `happy`、`delighted`、`sad`、`angry` —— 持续几秒。这个工具**不写入任何东西**：调用连同它的名字与参数落进会话的事件窗口，而客户端自己的事件流正是从那里读它，所以这个请求会实时出现在转录里，也不存在第二条需要与第一条保持同步的通道。请求来的表情是装饰 —— 状态仍由阶梯决定，再用 `neutral` 调一次就能提前结束一个心情。
 - **失败的步骤不用谁开口就能换上一张脸。** 工具结果以失败返回时，角色会短暂戴上难过的脸（2.6 秒）。会话使用的**两种**形状都算：核心的 `isError` 标记，以及 harness 自己为「命令以非零码退出」渲染的那行 `[exit code: N]` —— 后者才是实践中「一个工具失败了」的绝大多数，也正是只读第一种形状就会让角色永远不皱眉的原因。这行标记用的是本插件诊断 loader 失败时**同一个**模式读取的，并由一条用例把两个读者互相对住，谁都不能单独漂移。
 
 每个状态、姿态、眼型与表情都会作为 data 属性发布在被画的元素上（`data-fcg-state`、`data-fcg-pose`、`data-fcg-face`、`data-fcg-companion-expression` 与其 `-source`），因为眼睛是 mask 里每一帧都要重画的路径：组件之外没有任何东西能分辨「轮换的脸」与「静止的脸」，而 `-source` 分隔的是「模型点名的脸」与「会话自己挣来的脸」。

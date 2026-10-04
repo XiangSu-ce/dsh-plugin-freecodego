@@ -1,4 +1,4 @@
-# Standard DeepSeek Harness 0.2.0-rc.2 FreeCodeGo composition.
+# Standard DeepSeek Harness 0.2.1-alpha.1 FreeCodeGo composition.
 # Neither official route is disabled. The `llm-deepseek` row (which mounts
 # `@deepseek-ai/dsh-llm-deepseek-api-key` since 0.1.7-rc.2) is the only row that
 # registers provider `deepseek-official`, and the base composition names that
@@ -33,15 +33,17 @@
 #
 # 0.2.0 moved `schedule`, `time-context` and the task page out of the Web
 # composition and into the shipped optional bundle
-# `@deepseek-ai/dsh-experimental-schedule-bundle`
-# (`packages/experimental/schedule-bundle`). This layer mounts nothing for them:
-# the FreeCodeGo profile names that official bundle in `dsh.profile.bundles` (see
-# `patchFreeCodeGoProfileInstaller` in `scripts/sync-harness.mjs`), so the official
-# package owns the rows and no copy of the service is mounted here. The pair of
-# `disabled: false` overrides this file carried on 0.1.7-rc.2 are gone — with the
-# Web composition no longer declaring either row, such a patch is a stderr warning
-# rather than a mount (`app-boot/README.md`), so keeping it would only imply a
-# scheduler that never appears.
+# `@deepseek-ai/dsh-experimental-schedule-bundle` (`packages/experimental/schedule-bundle`).
+# 0.2.1 retired that bundle again: the Web composition declares the `schedule` row
+# itself (`packages/bundle/web-app/cordis.patch.yml`), and the clock and the four
+# reminder tools moved into the `standard` preset these bundled presets mirror. This
+# layer still mounts nothing for them — the composition owns the row, so no copy of
+# the service is mounted here, and the FreeCodeGo profile is back to the web
+# template's own two bundles (see `patchFreeCodeGoProfileInstaller` in
+# `scripts/sync-harness.mjs`). The pair of `disabled: false` overrides this file
+# carried on 0.1.7-rc.2 stay gone: an `id`-targeted patch for a row another layer
+# declares is a stderr warning rather than a mount (`app-boot/README.md`), so
+# keeping it would only imply a scheduler this layer does not own.
 # The session-history tools are on by default, and their content search is the
 # half that needs this row: the base mounts `session-query-sqlite` with
 # `openAt: never`, which keeps `ctx.sessionQuery` mounted but never opens SQLite.

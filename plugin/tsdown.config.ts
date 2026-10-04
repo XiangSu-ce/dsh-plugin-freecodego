@@ -22,7 +22,7 @@ export default defineConfig(({ env }) => {
     workspace: client
       ? ['vendor/*', 'packages/*/*', 'apps/cli', '!packages/freecodego/*']
       : ['vendor/*', 'packages/*/*', 'apps/cli', 'apps/desktop-host', '!packages/freecodego/*'],
-    entry: client ? '' : ['lib/types/{index,invariant,startup}.js'],
+    entry: client ? '' : ['lib/types/{index,startup}.js'],
     outDir: 'lib',
     format: ['esm'],
     platform: 'node',

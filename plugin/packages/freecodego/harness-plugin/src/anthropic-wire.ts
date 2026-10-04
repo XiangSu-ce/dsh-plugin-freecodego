@@ -10,6 +10,7 @@
 import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, FinishReason, GenerateOptions, RequestMessage, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
+import { applyAnthropicCacheBreakpoints } from './anthropic-cache.ts'
 import { callIdFor, closeStream, openBlock, DONE, unsupported } from './wire-shared.ts'
 import type { OpenBlock } from './wire-shared.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
@@ -18,6 +19,15 @@ const DEFAULT_MAX_TOKENS = 8_192
 /** Room a thinking budget needs beside itself inside `max_tokens`. */
 const THINKING_ROOM = 1_024
 const ANTHROPIC_VERSION = '2023-06-01'
+/**
+ * Device identity paired with the Harness session in `metadata.user_id`.
+ *
+ * The gateway's sticky-session router keys a conversation by the `session_id`
+ * half of this value and ignores the device half, but its parser rejects a
+ * payload that omits either field, so a stable stand-in is sent rather than left
+ * out.
+ */
+const ANTHROPIC_DEVICE_ID = 'freecodego'
 
 /** Request headers required by the Anthropic Messages wire. */
 export const ANTHROPIC_MESSAGES_HEADERS: Readonly<Record<string, string>> = { 'anthropic-version': ANTHROPIC_VERSION }
@@ -164,6 +174,39 @@ function thinkingBudget(effort: string | undefined): number | undefined {
   }
 }
 
+/**
+ * The `metadata` object that pins one conversation to one upstream account.
+ *
+ * The gateway routes a request by `metadata.user_id` when it is present (its
+ * `GenerateSessionHash` reads the `session_id` from either the JSON or the legacy
+ * form) and otherwise falls back to hashing the request's own content. That
+ * fallback hash grows with every turn of a conversation, so each turn looked
+ * like a new session and the load-aware scheduler re-picked an upstream account;
+ * Anthropic's prefix cache is per account, so it could never accumulate and
+ * `cache_read_input_tokens` stayed at zero however many cache breakpoints the
+ * body carried. Sending the Harness session id instead keeps the whole
+ * conversation on one account for the sticky TTL.
+ *
+ * The value is JSON rather than the legacy `user_..._session_...` string because
+ * the parser's legacy form demands a 64-hex device id and a 36-char UUID session
+ * id, neither of which this layer can promise.
+ * @param options - the request, whose `sessionId` is the conversation identity.
+ * @returns the metadata object, or `undefined` when no session id is available.
+ */
+function anthropicMetadata(options: GenerateOptions): Record<string, string> | undefined {
+  const sessionId = options.sessionId === undefined ? '' : String(options.sessionId).trim()
+  if (sessionId === '') return undefined
+  return { user_id: JSON.stringify({ device_id: ANTHROPIC_DEVICE_ID, session_id: sessionId }) }
+}
+
+/**
+ * Assemble the Messages body, then mark its cache breakpoints.
+ *
+ * The marks are the last step rather than a caller's follow-up, because there is
+ * exactly one body builder behind both serializers and a breakpoint a caller had
+ * to remember would be the one route that forgot it. See `anthropic-cache.ts`
+ * for where the marks land and why `system` becomes a block array here.
+ */
 function anthropicRequest(
   options: GenerateOptions,
   system: string | undefined,
@@ -183,7 +226,8 @@ function anthropicRequest(
     ? Math.max(requested ?? DEFAULT_MAX_TOKENS, thinkingWithRoom)
     : requested ?? DEFAULT_MAX_TOKENS
   const tools = options.tools?.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.parameters }))
-  return {
+  const metadata = anthropicMetadata(options)
+  return applyAnthropicCacheBreakpoints({
     model: options.model,
     max_tokens: maxTokens,
     stream: true,
@@ -193,7 +237,8 @@ function anthropicRequest(
     ...(tools === undefined || tools.length === 0 ? {} : { tools }),
     ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
     ...(options.stop === undefined ? {} : { stop_sequences: options.stop }),
-  }
+    ...(metadata === undefined ? {} : { metadata }),
+  })
 }
 
 /** Serialize an Anthropic Messages request for a text-only turn.

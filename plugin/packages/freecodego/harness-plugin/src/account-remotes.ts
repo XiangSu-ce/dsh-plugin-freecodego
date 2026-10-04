@@ -182,6 +182,33 @@ export async function accountMarkAnnouncementRead(host: AccountRemotesHost, anno
 }
 
 /**
+ * Whether this machine has a record of a sign-in that used to work.
+ *
+ * The record is the remembered address or password: both are written only after
+ * a sign-in succeeded and are erased by an explicit sign-out, so their presence
+ * is evidence that a now-missing session ended rather than never existed. That
+ * is the difference between reporting `signed-out` and `reauth-required`. The
+ * reads are cast optional so a Host double that models neither answers "no
+ * record" instead of throwing.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns true when a remembered sign-in is present.
+ */
+async function remembersSignIn(host: AccountRemotesHost): Promise<boolean> {
+  const account = host.account as {
+    rememberedEmail?: () => Promise<string | undefined>
+    rememberedPassword?: () => Promise<string | undefined>
+  } | undefined
+  if (account === undefined) return false
+  try {
+    if (await account.rememberedEmail?.() !== undefined) return true
+    return await account.rememberedPassword?.() !== undefined
+  } catch {
+    // A vault read that fails is not evidence of a remembered sign-in.
+    return false
+  }
+}
+
+/**
  * Read the account state the settings surface renders.
  * @param host - the Host surface this remote call reaches its services through.
  * @returns the account snapshot.
@@ -209,7 +236,15 @@ export async function accountStatus(host: AccountRemotesHost): Promise<FreeCodeG
       if (host.state.restoreFailureStreak <= RESTORE_FAILURE_BUDGET) return { status: 'restoring' }
       return { status: 'reauth-required' }
     }
-    if (error instanceof Error && /FreeCodeGo authentication is required(?: after (?:token refresh|unauthorized response))?/i.test(error.message)) return { status: 'signed-out' }
+    if (error instanceof Error && /FreeCodeGo authentication is required(?: after (?:token refresh|unauthorized response))?/i.test(error.message)) {
+      // An empty vault is only a first visit when nothing on this machine says
+      // otherwise. A remembered address or password is the record of a sign-in
+      // that used to work, so its session ending is a reauthentication — the
+      // state that shows the bilingual "sign in again" banner — rather than a
+      // bare form with no explanation, which is what a server-side revocation
+      // used to leave behind.
+      return await remembersSignIn(host) ? { status: 'reauth-required' } : { status: 'signed-out' }
+    }
     throw error
   }
   const current = host.account.snapshot()
@@ -350,6 +385,24 @@ export async function readRememberedPassword(host: AccountRemotesHost): Promise<
   // remote boundary carries the answers it was given, and "no password" and
   // "null" are not the same answer for the form that prefills from it.
   return password === undefined ? {} : { password }
+}
+
+/**
+ * Read the sign-in address this machine remembers for the form.
+ *
+ * It lives in the Host credential vault, not the browser store, so it survives
+ * the app update that used to clear a remembered email. Like the password read
+ * it is deliberately outside the account snapshot: the snapshot is what every
+ * surface renders, while this exists only to prefill one field.
+ * @param host - the Host surface this remote call reaches its services through.
+ * @returns the remembered address, or an empty answer when there is none.
+ */
+export async function readRememberedEmail(host: AccountRemotesHost): Promise<{ readonly email?: string }> {
+  if (host.account === undefined) return {}
+  const email = await host.account.rememberedEmail()
+  // Absent rather than `undefined`: the remote boundary carries the answers it
+  // was given, and "no address" is a field the form can branch on.
+  return email === undefined ? {} : { email }
 }
 
 /**

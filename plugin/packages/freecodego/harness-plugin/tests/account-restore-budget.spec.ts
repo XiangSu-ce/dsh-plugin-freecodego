@@ -103,4 +103,33 @@ describe('durable-session restore budget', () => {
     expect(state.restoreFailureStreak).toBe(0)
     expect(state.restoreCompleted).toBe(true)
   })
+
+  /**
+   * A host whose vault is empty and whose restore says so, with an optional
+   * record of a sign-in that used to work.
+   */
+  function emptyVaultHost(remembered: { readonly email?: string; readonly password?: string }): AccountRemotesHost {
+    return {
+      account: {
+        rememberedEmail: async () => remembered.email,
+        rememberedPassword: async () => remembered.password,
+        hasStoredSession: async () => false,
+        snapshot: () => ({ status: 'signed-out' as const }),
+      },
+      api: {},
+      restoreAccount: async () => { throw new Error('FreeCodeGo authentication is required') },
+    } as unknown as AccountRemotesHost
+  }
+
+  it('reports a reauthentication when a remembered sign-in lost its session', async () => {
+    // This is the case a server-side revocation leaves: the vault was cleared,
+    // but the machine still remembers the address, so the user did sign in and
+    // needs the banner that says to do it again.
+    await expect(accountStatus(emptyVaultHost({ email: 'user@example.com' }))).resolves.toEqual({ status: 'reauth-required' })
+    await expect(accountStatus(emptyVaultHost({ password: 'hunter2' }))).resolves.toEqual({ status: 'reauth-required' })
+  })
+
+  it('still reports a first visit as signed out, not as an expired session', async () => {
+    await expect(accountStatus(emptyVaultHost({}))).resolves.toEqual({ status: 'signed-out' })
+  })
 })

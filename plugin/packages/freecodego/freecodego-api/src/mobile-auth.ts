@@ -47,6 +47,22 @@ export interface FreeCodeGoCredentialVault {
   savePassword?(origin: string, password: string): Promise<void>
   deletePassword?(origin: string): Promise<void>
   /**
+   * The address a sign-in was made with, for prefilling the next form.
+   *
+   * Kept in the same vault as the session and password rather than in the
+   * browser's `localStorage`, which is per-renderer-origin: an app update that
+   * changes that origin (or a sign-in made from a surface that never touched the
+   * settings card) silently loses the address, and the form then opens blank
+   * even though the user asked this machine to remember it. The vault is keyed by
+   * the backend origin, so it survives every such update.
+   *
+   * Optional like the password pair: a vault that models only the session is not
+   * obliged to keep it, and the coordinator then leaves the form as it was.
+   */
+  loadRememberedEmail?(origin: string): Promise<string | undefined>
+  saveRememberedEmail?(origin: string, email: string): Promise<void>
+  deleteRememberedEmail?(origin: string): Promise<void>
+  /**
    * The stable device identity this installation names itself with.
    *
    * The gateway binds every session to the device that opened it: the tokens it
