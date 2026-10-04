@@ -18,7 +18,7 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
-## 0.2.1-alpha.1.2 — 2026-10-05
+## 0.2.1-alpha.1.3 — 2026-10-05
 
 ### English
 
