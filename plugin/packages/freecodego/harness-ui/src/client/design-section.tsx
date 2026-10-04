@@ -24,6 +24,8 @@ import css from './design-section.module.css'
 /** Locale keys this section renders. */
 export type DesignSectionLocaleKey =
   | 'design' | 'designIntro' | 'designMasterOn' | 'designMasterOff'
+  | 'designNoFeatureOn'
+  | 'designSessionTools' | 'designSessionSkills'
   | 'designTools' | 'designLoading' | 'designLoadFailed' | 'designWriteFailed'
 
 /**
@@ -124,6 +126,11 @@ export function DesignSection(props: DesignSectionInjected): React.ReactElement 
     )
   }
 
+  // What the session actually holds. The two counts are the answer to "is any of
+  // this reachable right now", which no single row can give: a row reports its
+  // own mount, and a page whose master switch is on can still have every row off.
+  const anyFeatureOn = snapshot.features.some(feature => feature.enabled)
+
   return (
     <div className={css.page}>
       <div className={css.head}>
@@ -139,6 +146,35 @@ export function DesignSection(props: DesignSectionInjected): React.ReactElement 
         />
       </div>
       {failure === undefined ? null : <p className={css.error}>{failure}</p>}
+      {/*
+        The master switch is the one control on this page that changes nothing
+        by itself: `enabledFeatures()` reads the feature list, so a pack switched
+        on with every row off mounts no tool and no Skill, while the header above
+        says "on". That state is worth naming, because the only other signal a
+        user gets is an assistant that never reaches for any of it.
+      */}
+      {!snapshot.designEnabled || anyFeatureOn
+        ? null
+        : <p className={css.notice}>{t('designNoFeatureOn')}</p>}
+      {/*
+        The page's one session-level reading, and the complement of the notice
+        above: when at least one row is on, this says how much of the pack actually
+        reached the session — the registered tool count and the size of the Skills
+        mount. It is what turns "the row says enabled" into "and here is what that
+        bought", which is the question a user asks after switching rows on.
+      */}
+      {!snapshot.designEnabled || !anyFeatureOn ? null : (
+        <div className={css.session}>
+          <span className={css.sessionStat}>
+            <span className={css.meta}>{t('designSessionTools')}</span>
+            <strong className={css.sessionCount}>{String(snapshot.registeredTools.length)}</strong>
+          </span>
+          <span className={css.sessionStat}>
+            <span className={css.meta}>{t('designSessionSkills')}</span>
+            <strong className={css.sessionCount}>{String(snapshot.mountedSkills)}</strong>
+          </span>
+        </div>
+      )}
       <ul className={css.list}>
         {snapshot.features.map(feature => (
           <li key={feature.id} className={css.row}>

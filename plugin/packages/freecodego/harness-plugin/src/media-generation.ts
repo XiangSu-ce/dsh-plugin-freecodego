@@ -29,6 +29,8 @@ import { asRecord as record, asString as text } from './untrusted-json.ts'
 import { KLING_ACCESS_KEY_REF, KLING_SECRET_KEY_REF, dataUrlImage, defaultMediaAuthScheme, defaultMediaBaseURL, defaultMediaCredentialRef, gatewayModelId, generatedVideoResult, guessImageMediaType, imageEndpointMayBeResponses, imageEndpointUnavailable, imagesViaGenerationBody, inferMediaCategory, isKlingProvider, mediaFailureBelongsToRequest, mediaCategoryOverrideKey, mediaFallbackAllowed, MediaRouteCapabilityRefusal, MediaRouteLimitation, mediaSelection, mediaVideoRequest, redactMediaDetail, referenceImageUrls, signKlingJwt, sizeToAspectRatio, sleepForMedia, unknownImageParameter, videoStatusEndpoint, videoSecondsRefusal, visibleMediaSelection, type MediaCategory, type MediaRoute, type MediaVideoArgs, type MediaVideoRequest } from './media-utils.ts'
 import { LOGFARE_MODEL_PREFIX, logfareMediaCategory, logfareSelectionId, mediaCategoryForManagedModel } from './managed-catalog-utils.ts'
 import { toolDefinition as rawAgnesTool, type ToolDefinitionShape } from './tool-definition.ts'
+import { registerToolDefinitions } from './tool-registration.ts'
+import { redactCredentialShapes } from './secret-scan.ts'
 import type { LogfareModel } from './managed-catalog-utils.ts'
 import type { FreeCodeGoManagedCatalog } from './types.ts'
 // Type-only: the canonical settings scope already carries the guard toggles this
@@ -327,9 +329,20 @@ export function registerGenerationTools(host: MediaGenerationHost): MediaToolReg
     },
     presentCall: (args: { prompt: string }) => ({ card: 'generic', title: `Generate video: ${args.prompt}` }),
   })
-  const disposeImage = tools.register(imageTool)
-  const disposeVideo = tools.register(videoTool)
-  return { names: [imageTool.name, videoTool.name], dispose: () => { disposeImage(); disposeVideo() } }
+  // One batch, so a registry that refuses the second definition still mounts the
+  // first and keeps a handle to it. The hand-rolled pair of `tools.register` calls
+  // this replaces lost the first handle when the second threw, because the throw
+  // left the function before the `dispose` closure below was built.
+  // A refusal is named rather than counted: `MediaToolRegistration.names` is what
+  // the settings panel reports as mounted right now, so a tool the registry threw on
+  // must not stay in it. The set is filled by the synchronous `onFailure` before this
+  // call returns, so filtering afterwards reads the refusals of exactly this batch.
+  const refused = new Set<string>()
+  const dispose = registerToolDefinitions(tools, [imageTool, videoTool], (name, error) => {
+    refused.add(name)
+    host.ctx.logger.warn(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`)
+  })
+  return { names: [imageTool.name, videoTool.name].filter(name => !refused.has(name)), dispose }
 }
 
 /**
@@ -409,9 +422,12 @@ export function registerAudioTools(host: MediaGenerationHost): MediaToolRegistra
     },
     presentCall: (args: { path: string }) => ({ card: 'generic', title: `Transcribe audio: ${args.path}` }),
   })
-  const disposeAudio = tools.register(audioTool)
-  const disposeTranscribe = tools.register(transcribeTool)
-  return { names: [audioTool.name, transcribeTool.name], dispose: () => { disposeAudio(); disposeTranscribe() } }
+  const refused = new Set<string>()
+  const dispose = registerToolDefinitions(tools, [audioTool, transcribeTool], (name, error) => {
+    refused.add(name)
+    host.ctx.logger.warn(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`)
+  })
+  return { names: [audioTool.name, transcribeTool.name].filter(name => !refused.has(name)), dispose }
 }
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "freecodego",
-  "version": "0.2.1-alpha.1.1",
+  "version": "0.2.1-alpha.1.2",
   "description": "FreeCodeGo distribution bundle for the DeepSeek Harness: one composition, its host plugin, and its client factory",
   "publishConfig": {
     "access": "public"

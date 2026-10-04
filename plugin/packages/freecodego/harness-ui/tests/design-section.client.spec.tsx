@@ -45,6 +45,8 @@ afterEach(cleanup)
  */
 const LOCALE_CONTRACT: readonly DesignSectionLocaleKey[] = [
   'design', 'designIntro', 'designMasterOn', 'designMasterOff',
+  'designNoFeatureOn',
+  'designSessionTools', 'designSessionSkills',
   'designTools', 'designLoading', 'designLoadFailed', 'designWriteFailed',
 ]
 
@@ -54,6 +56,9 @@ const LOCALE: Record<DesignSectionLocaleKey, string> = {
   designIntro: 'Turn design capabilities on as you need them.',
   designMasterOn: 'Master switch on',
   designMasterOff: 'Master switch off',
+  designNoFeatureOn: 'Nothing below is on, so this session loads no design tools or Skills.',
+  designSessionTools: 'Design tools registered this session',
+  designSessionSkills: 'Design Skills mounted this session',
   designTools: 'Tools provided',
   designLoading: 'Reading design capability status…',
   designLoadFailed: 'Could not read the design capability status.',
@@ -88,6 +93,8 @@ function status(overrides: Partial<FreeCodeGoDesignStatus> = {}): FreeCodeGoDesi
   return {
     designEnabled: false,
     skillsReady: true,
+    registeredTools: [],
+    mountedSkills: 0,
     features: [
       feature({
         id: 'hyperframes',
@@ -222,6 +229,73 @@ describe('DesignSection', () => {
     fireEvent.click(screen.getByLabelText('HyperFrames'))
     expect((props.setFeatureEnabled as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1)
     expect(props.setEnabled).not.toHaveBeenCalled()
+  })
+
+  it('says so when the master switch is on with every capability still off', async () => {
+    // The state that misleads: `enabledFeatures()` reads the feature list, so a
+    // pack switched on with every row off mounts no tool and no Skill while the
+    // header says "on". Naming it is the only signal a user gets, because the
+    // other one is an assistant that never reaches for any of it.
+    setup({
+      status: vi.fn(async () => ({ ok: true as const, value: status({ designEnabled: true }) })),
+    })
+    await waitFor(() => { expect(screen.getAllByRole('checkbox')).toHaveLength(3) })
+    expect(screen.getByText(LOCALE.designNoFeatureOn)).toBeTruthy()
+  })
+
+  it('does not cry wolf once a capability is on, nor when the pack is off', async () => {
+    setup({
+      status: vi.fn(async () => ({
+        ok: true as const,
+        value: status({ designEnabled: true, features: [
+          feature({ id: 'hyperframes', label: 'HyperFrames', enabled: true }),
+          feature({ id: 'not-installed', label: 'Missing pack', available: false }),
+        ] }),
+      })),
+    })
+    await waitFor(() => { expect(screen.getAllByRole('checkbox')).toHaveLength(3) })
+    expect(screen.queryByText(LOCALE.designNoFeatureOn)).toBeNull()
+    cleanup()
+    // The off state is not the state this note is about: every row being off is
+    // exactly what a switched-off page should look like.
+    setup()
+    await waitFor(() => { expect(screen.getAllByRole('checkbox')).toHaveLength(3) })
+    expect(screen.queryByText(LOCALE.designNoFeatureOn)).toBeNull()
+  })
+
+  it('reports what the session actually holds once a capability is on', async () => {
+    // The reading the page could not give before: every row can say "enabled" and
+    // the session still hold nothing, and the two counts are what separate the two.
+    setup({
+      status: vi.fn(async () => ({
+        ok: true as const,
+        value: status({
+          designEnabled: true,
+          registeredTools: ['freecodego_design_lint', 'freecodego_design_render'],
+          mountedSkills: 17,
+          features: [feature({ id: 'hyperframes', label: 'HyperFrames', enabled: true })],
+        }),
+      })),
+    })
+    await waitFor(() => { expect(screen.getAllByRole('checkbox')).toHaveLength(2) })
+    expect(screen.getByText(LOCALE.designSessionTools)).toBeTruthy()
+    expect(screen.getByText('2')).toBeTruthy()
+    expect(screen.getByText(LOCALE.designSessionSkills)).toBeTruthy()
+    expect(screen.getByText('17')).toBeTruthy()
+    // It is the complement of the notice, not an addition to it.
+    expect(screen.queryByText(LOCALE.designNoFeatureOn)).toBeNull()
+  })
+
+  it('omits the session reading while the pack is off or nothing is on', async () => {
+    setup()
+    await waitFor(() => { expect(screen.getAllByRole('checkbox')).toHaveLength(3) })
+    expect(screen.queryByText(LOCALE.designSessionSkills)).toBeNull()
+    cleanup()
+    // Master on, every row off: the notice speaks here, and a "0 tools, 0 Skills"
+    // bar beside it would say the same thing twice.
+    setup({ status: vi.fn(async () => ({ ok: true as const, value: status({ designEnabled: true }) })) })
+    await waitFor(() => { expect(screen.getAllByRole('checkbox')).toHaveLength(3) })
+    expect(screen.queryByText(LOCALE.designSessionSkills)).toBeNull()
   })
 
   it('lists the tools a row adds, and omits the block when it adds none', async () => {

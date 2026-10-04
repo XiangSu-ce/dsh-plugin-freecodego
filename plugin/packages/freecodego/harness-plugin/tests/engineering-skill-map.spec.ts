@@ -5,8 +5,13 @@
  * dedup discipline the memory recall needs (session-start fires per resume).
  */
 
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { FreeCodeGoEngineeringRegistry, SKILL_MAP_MAX_CHARS, buildSkillMap, parseSkillBrief } from '../src/engineering.ts'
+import { FreeCodeGoEngineeringRegistry, SKILL_MAP_MAX_CHARS, SKILL_MAP_MAX_ENTRIES, buildSkillMap, parseSkillBrief } from '../src/engineering.ts'
+import { forgetMountedSkillRoots, publishMountedSkillRoots } from '../src/mounted-skill-roots.ts'
+
+/** A design asset root that really exists, so the map reads real frontmatter. */
+const DESIGN_ROOT = join(import.meta.dirname, '..', 'assets', 'design', 'react-bits')
 
 /** Short, uniform briefs, so the entry cap is the only bound that can bite. */
 const briefs = (count: number, description = 'd'): readonly { name: string; description: string; modelInvocable: boolean; userInvocable: boolean }[] =>
@@ -132,7 +137,7 @@ describe('session-start capability map', () => {
     expect(text).toContain('subagent-driven-development')
     expect(text).toContain('engineering-release-readiness')
     // 42 shipped Skills stay inside the map's entry bound.
-    expect(text.match(/^- /gm)?.length ?? 0).toBeLessThanOrEqual(48)
+    expect(text.match(/^- /gm)?.length ?? 0).toBeLessThanOrEqual(SKILL_MAP_MAX_ENTRIES)
     await registry.dispose()
   })
 
@@ -148,6 +153,39 @@ describe('session-start capability map', () => {
     await registry.skillMapForTest(queued.agent)
     expect(queued.injected).toHaveLength(0)
     await registry.dispose()
+  })
+
+  it('lists what a design-only profile mounted, with the engineering pack off', async () => {
+    // The map lists whatever this plugin mounted, so its gate is the user's
+    // preference about receiving it, not the engineering pack's own switch.
+    // Requiring `engineeringEnabled` withheld a design-only session's own
+    // inventory from it — and that composition is one the design page offers:
+    // six rows that mount 27 Skills, switched on by a user who does not want the
+    // engineering disciplines.
+    publishMountedSkillRoots('design', [DESIGN_ROOT])
+    try {
+      const registry = registryWith({ engineeringEnabled: false })
+      const { agent, injected } = fakeAgent('session-design-only')
+      await registry.skillMapForTest(agent)
+      const text = mapText(injected)
+      expect(text).toBeDefined()
+      expect(text).toContain('react-bits')
+      // The pack whose switch is off mounted nothing, so it is not advertised:
+      // the map's claim is about what is reachable, not about what is installed.
+      expect(text).not.toContain('engineering-verification')
+      await registry.dispose()
+
+      // The map switch itself still closes the block with the pack off — that is
+      // the user's own answer about receiving it, and it is a different statement
+      // from which pack mounted the Skills it lists.
+      const optedOut = registryWith({ engineeringEnabled: false, engineeringSkillMapEnabled: false })
+      const off = fakeAgent('session-design-map-off')
+      await optedOut.skillMapForTest(off.agent)
+      expect(off.injected).toHaveLength(0)
+      await optedOut.dispose()
+    } finally {
+      forgetMountedSkillRoots('design')
+    }
   })
 
   it('stays silent when the map switch or the whole pack is off', async () => {
@@ -180,21 +218,22 @@ describe('Skill brief parsing', () => {
   })
 
   it('bounds the rendered map and keeps the axis split explicit', () => {
-    // Worst case for the budget: the maximum entry count, names at their
-    // longest plausible width, and descriptions above their own cap.
-    const many = Array.from({ length: 80 }, (_, index) => ({
-      name: `skill-${String(index).padStart(2, '0')}-${'n'.repeat(60)}`,
+    // Worst case for the budget: more than the entry cap, names at their
+    // longest plausible width, and descriptions above their own cap. The last
+    // entry is what proves the cut happened rather than the pack happening to fit.
+    const many = Array.from({ length: SKILL_MAP_MAX_ENTRIES + 32 }, (_, index) => ({
+      name: `skill-${String(index).padStart(3, '0')}-${'n'.repeat(60)}`,
       description: 'x'.repeat(400),
       modelInvocable: index % 2 === 0,
       userInvocable: true,
     }))
     const text = buildSkillMap(many)?.text ?? ''
     expect(text.length).toBeLessThanOrEqual(SKILL_MAP_MAX_CHARS)
-    expect(text.match(/^- /gm)?.length ?? 0).toBeLessThanOrEqual(48)
+    expect(text.match(/^- /gm)?.length ?? 0).toBeLessThanOrEqual(SKILL_MAP_MAX_ENTRIES)
     // Overflow is reported, never silently swallowed: the reader must be able
     // to tell that the list was cut and where to find the rest.
     expect(text).toMatch(/- \.\.\. \d+ more \(open the Skills page for the full list\)/)
-    expect(text).not.toContain('- skill-79')
+    expect(text).not.toContain(`- skill-${String(SKILL_MAP_MAX_ENTRIES + 31).padStart(3, '0')}`)
     expect(buildSkillMap([])).toBeUndefined()
   })
 })
@@ -216,16 +255,17 @@ describe('capability map budget telemetry', () => {
   })
 
   it('names the entry cap as the bound that cut, and counts what it removed', () => {
-    const built = buildSkillMap(briefs(80))!
-    // Entry cap is 48; short descriptions cannot exhaust the character budget,
-    // so every one of the 48 that were rendered survives the budget.
-    expect(built.metrics).toMatchObject({ strategy: 'entry-capped', discovered: 80, rendered: 48, omitted: 0, entryCapped: 32 })
+    const count = SKILL_MAP_MAX_ENTRIES + 32
+    const built = buildSkillMap(briefs(count))!
+    // Short descriptions cannot exhaust the character budget, so every one of
+    // the entries that survived the cap also survives the budget.
+    expect(built.metrics).toMatchObject({ strategy: 'entry-capped', discovered: count, rendered: SKILL_MAP_MAX_ENTRIES, omitted: 0, entryCapped: 32 })
   })
 
   it('names the character budget as the bound that cut when descriptions fill it', () => {
-    // 48 entries is exactly the entry cap, so only the character budget can cut
-    // here; long names and full-length descriptions are what exhaust it.
-    const wide = Array.from({ length: 48 }, (_, index) => ({
+    // Exactly the entry cap, so only the character budget can cut here; long
+    // names and full-length descriptions are what exhaust it.
+    const wide = Array.from({ length: SKILL_MAP_MAX_ENTRIES }, (_, index) => ({
       name: `skill-${String(index).padStart(2, '0')}-${'n'.repeat(60)}`,
       // Well over the per-description cap, so the fixture keeps meaning "a
       // full-length description" whatever the cap is set to.
@@ -237,7 +277,7 @@ describe('capability map budget telemetry', () => {
     expect(built.metrics.strategy).toBe('chars-exhausted')
     expect(built.metrics.entryCapped).toBe(0)
     expect(built.metrics.omitted).toBeGreaterThan(0)
-    expect(built.metrics.rendered).toBe(48 - built.metrics.omitted)
+    expect(built.metrics.rendered).toBe(SKILL_MAP_MAX_ENTRIES - built.metrics.omitted)
     // The uncapped figure is what the pack would have needed, and it must be
     // strictly larger — otherwise the metric says nothing about truncation.
     expect(built.metrics.uncappedChars).toBeGreaterThan(built.metrics.renderedChars)

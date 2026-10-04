@@ -62,10 +62,12 @@ import { maybeRecord } from './untrusted-json.ts'
 /**
  * The levels declared on a hand-declared model, in escalation order.
  *
- * Deliberately the four a plain OpenAI-compatible endpoint can be expected to
- * understand. `minimal`, `xhigh` and `max` are pi-ai levels with vendor-specific
- * wires, and declaring them for an arbitrary endpoint would offer the user a
- * choice whose spelling the provider is likely to reject.
+ * The six the model-tuning surface offers, so the default declaration and the
+ * edit surface name the same ladder: `off` through `max`. `minimal` stays out —
+ * it is a level below `low` with no place on a ladder that starts at "do not
+ * think", and declaring it would offer a spelling most endpoints reject. The two
+ * larger tiers are named as their own wire spellings, which a gateway serving a
+ * reasoning model understands or ignores rather than misparsing.
  *
  * `off` maps to `null` — supported, send nothing — which is the wire for "do not
  * think" on every protocol this build speaks.
@@ -75,6 +77,8 @@ const DECLARED_REASONING_EFFORTS: Readonly<Record<string, string | null>> = {
   low: 'low',
   medium: 'medium',
   high: 'high',
+  xhigh: 'xhigh',
+  max: 'max',
 }
 
 /**

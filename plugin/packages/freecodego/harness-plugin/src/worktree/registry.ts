@@ -165,6 +165,34 @@ export class JsonDocumentStore<T> {
   }
 }
 
+/**
+ * Whether one persisted entry is one this module's readers can act on.
+ *
+ * The document's promise is that a hand-edited file degrades to an empty
+ * registry rather than taking a session down, and that promise has to cover an
+ * *entry*, not just the document: the parser used to keep any object carrying a
+ * string `id`, so an entry a hand edit had stripped of `memberId` made the very
+ * next read throw — `worktreeOwner(entry.memberId)` calls `.startsWith` on it,
+ * and `held`/`list`/`status` all reach that through the same document. Every
+ * field a reader dereferences is validated here (the ones `WorktreeEntry`
+ * declares as required, plus the optionals whose *shape* is part of the
+ * contract), and an entry that fails is dropped rather than half-trusted.
+ */
+function isReadableWorktreeEntry(value: unknown): value is WorktreeEntry {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const entry = value as Partial<WorktreeEntry>
+  if (typeof entry.id !== 'string' || entry.id === '') return false
+  if (typeof entry.memberId !== 'string') return false
+  if (typeof entry.branch !== 'string' || typeof entry.path !== 'string' || entry.path === '') return false
+  if (typeof entry.base !== 'string') return false
+  if (typeof entry.createdAt !== 'number' || !Number.isFinite(entry.createdAt)) return false
+  if (entry.state !== 'active' && entry.state !== 'merged' && entry.state !== 'abandoned') return false
+  if (entry.strategy !== undefined && entry.strategy !== 'git' && entry.strategy !== 'fast') return false
+  if (entry.sessionId !== undefined && typeof entry.sessionId !== 'string') return false
+  if (entry.mergedAt !== undefined && (typeof entry.mergedAt !== 'number' || !Number.isFinite(entry.mergedAt))) return false
+  return true
+}
+
 function parseWorktrees(cwd: string): (input: unknown) => WorktreeDocument | undefined {
   return (input) => {
     if (input === null || typeof input !== 'object' || Array.isArray(input)) return undefined
@@ -173,7 +201,7 @@ function parseWorktrees(cwd: string): (input: unknown) => WorktreeDocument | und
     return {
       version: 1,
       cwd: resolve(cwd),
-      worktrees: document.worktrees.filter(entry => entry !== null && typeof entry === 'object' && typeof (entry as WorktreeEntry).id === 'string'),
+      worktrees: document.worktrees.filter(isReadableWorktreeEntry),
     }
   }
 }

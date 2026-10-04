@@ -199,6 +199,42 @@ describe('engineering checkpoints', () => {
     reopened.close()
   })
 
+  it('refuses a manifest whose blob hash escapes the blob tree', async () => {
+    // The path rule above refuses an entry that escapes the *workspace*; the
+    // hash is the other half, and it is joined into a filesystem path too
+    // (`readBlob` -> `<blobs>/<hash[0..2]>/<hash>`). A hash that is not the
+    // shape `capture` writes is not a manifest this reader can trust, and the
+    // restore would otherwise read whatever file it names into the workspace.
+    const parent = await mkdtemp(join(tmpdir(), 'freecodego-checkpoint-hash-parent-'))
+    const workspace = join(parent, 'ws')
+    await mkdir(workspace, { recursive: true })
+    const storeParent = await mkdtemp(join(tmpdir(), 'freecodego-checkpoint-hash-store-'))
+    const storeDirectory = join(storeParent, 'store')
+    await mkdir(storeDirectory, { recursive: true })
+    directories.push(parent, storeParent)
+    await writeFile(join(workspace, 'a.ts'), 'const a = 1\n', 'utf8')
+    const store = new EngineeringCheckpointStore(storeDirectory)
+    await store.open()
+    const checkpoint = await store.capture({ cwd: workspace, label: 'mine' })
+    // `<storeDirectory>/blobs/../../secret.txt` is `<storeParent>/secret.txt`,
+    // so this hash names a file outside the blob tree.
+    await writeFile(join(storeParent, 'secret.txt'), 'TOP SECRET\n', 'utf8')
+    store.close()
+
+    const database = new DatabaseSync(join(storeDirectory, 'checkpoints.sqlite'))
+    database.prepare('UPDATE engineering_checkpoints SET entries_json = ? WHERE id = ?')
+      .run(JSON.stringify([{ file: 'a.ts', hash: '../secret.txt', bytes: 11 }]), checkpoint.id)
+    database.close()
+
+    const reopened = new EngineeringCheckpointStore(storeDirectory)
+    await reopened.open()
+    expect(reopened.get({ cwd: workspace, id: checkpoint.id })).toBeUndefined()
+    await expect(reopened.restore({ cwd: workspace, id: checkpoint.id })).rejects.toThrow(/not found/)
+    // The secret was not copied into the workspace by the restore.
+    expect(await readFile(join(workspace, 'a.ts'), 'utf8')).toBe('const a = 1\n')
+    reopened.close()
+  })
+
   it('removes a checkpoint manifest and enforces workspace scoping', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'freecodego-checkpoint-ws-'))
     const otherWorkspace = await mkdtemp(join(tmpdir(), 'freecodego-checkpoint-other-'))

@@ -153,20 +153,34 @@ export class SpillArchive {
       this.options.logger?.debug?.(`freecodego: headroom original ${hash} stays in memory only, because the tool call that produced it has no session owner to archive it under`)
       return
     }
-    const save = store.saveText({
-      owner: { sessionId: owner.sessionId },
-      source: { kind: 'tool', toolName: owner.toolName, callId: owner.callId, label: 'headroom-original' },
-      suggestedName: `headroom-${hash}.txt`,
-      content: payload,
-    }).then(ref => {
-      this.refs.set(hash, { locator: ref.locator, retrievalHint: ref.retrievalHint })
-      this.archived += 1
-    }).catch((error: unknown) => {
+    // The `saveText` *call* is inside the try, not just the promise chain. A
+    // backend that throws instead of rejecting violates this method's
+    // "never throws" contract, and that throw would escape through
+    // `ArchivingCcrStore.put` and abort a compression the pipeline had already
+    // decided to ship — so an archive failure would cost the model the smaller
+    // rendering, not merely the durable copy of it. Contained here exactly as the
+    // rejection is, so the only thing lost is the durable copy.
+    let save: Promise<void>
+    try {
+      save = store.saveText({
+        owner: { sessionId: owner.sessionId },
+        source: { kind: 'tool', toolName: owner.toolName, callId: owner.callId, label: 'headroom-original' },
+        suggestedName: `headroom-${hash}.txt`,
+        content: payload,
+      }).then(ref => {
+        this.refs.set(hash, { locator: ref.locator, retrievalHint: ref.retrievalHint })
+        this.archived += 1
+      }).catch((error: unknown) => {
+        this.failures += 1
+        this.options.logger?.warn(`freecodego: could not archive the original for hash ${hash}, so it stays retrievable only while it is in memory: ${String(error)}`)
+      }).finally(() => {
+        this.inflight.delete(hash)
+      })
+    } catch (error: unknown) {
       this.failures += 1
       this.options.logger?.warn(`freecodego: could not archive the original for hash ${hash}, so it stays retrievable only while it is in memory: ${String(error)}`)
-    }).finally(() => {
-      this.inflight.delete(hash)
-    })
+      return
+    }
     this.inflight.set(hash, save)
   }
 

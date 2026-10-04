@@ -157,6 +157,14 @@ export interface WorktreeEnterOutcome {
 export interface WorktreeExitOutcome {
   readonly removed: boolean
   readonly worktree?: WorktreeEntry
+  /**
+   * Whether the directory is still on disk after this call.
+   *
+   * Measured, not inferred from `removed`: a copy kept for review is present, and
+   * one discarded is not. A tool result that hardcoded `true` here would report the
+   * copy it had just deleted as still there, contradicting its own `removed: true`.
+   */
+  readonly exists: boolean
   readonly detail: string
 }
 
@@ -395,7 +403,7 @@ export class SessionWorktrees {
   async exit(input: { readonly sessionId: string; readonly remove?: boolean; readonly repoRoot?: string }): Promise<WorktreeExitOutcome> {
     const worktree = await this.held(input.sessionId)
     if (worktree === undefined) {
-      return { removed: false, detail: 'This session holds no worktree.' }
+      return { removed: false, exists: false, detail: 'This session holds no worktree.' }
     }
     if (input.remove === true) {
       const strategy = recordedStrategy(worktree)
@@ -411,6 +419,7 @@ export class SessionWorktrees {
         return {
           removed: false,
           worktree,
+          exists: this.exists(worktree.path),
           detail: `The worktree could not be removed: ${redactCredentialShapes(error instanceof Error ? error.message : String(error))}. It is still registered, so a later exit can retry.`,
         }
       }
@@ -426,6 +435,7 @@ export class SessionWorktrees {
         return {
           removed: false,
           worktree,
+          exists: true,
           detail: `The worktree could not be removed: ${worktree.path} is still on disk. It is still registered, so a later exit can retry.`,
         }
       }
@@ -435,6 +445,9 @@ export class SessionWorktrees {
     return {
       removed: input.remove === true,
       worktree: released,
+      // Measured: a kept copy is present, and a discarded one is not — the same
+      // question `status` asks, so the two tools cannot disagree about the directory.
+      exists: this.exists(released.path),
       detail: input.remove === true
         ? `Removed ${released.path}${released.branch === '' ? ' (the copy had no branch to delete)' : `; branch ${released.branch} was kept`}.`
         : `Left ${released.path} in place for review, on the copy's own branch. Pass remove: true to discard it.`,
@@ -634,7 +647,10 @@ export function worktreeToolDefinitions(deps: WorktreeToolDeps): readonly ToolDe
         return {
           removed: outcome.removed,
           detail: outcome.detail,
-          ...(outcome.worktree === undefined ? {} : { worktree: summarizeWorktree({ worktree: outcome.worktree, owner: 'session', sessionId: context.id, exists: true }) }),
+          // The class measured whether the directory is there; the tool reports that
+          // rather than assuming a held copy, so `remove: true` cannot come back with
+          // the copy it deleted marked as present.
+          ...(outcome.worktree === undefined ? {} : { worktree: summarizeWorktree({ worktree: outcome.worktree, owner: 'session', sessionId: context.id, exists: outcome.exists }) }),
         }
       },
       presentCall: (args: { readonly remove?: boolean }) => ({ card: 'generic', title: args?.remove === true ? 'Discard the isolated copy' : 'Leave the isolated copy in place' }),

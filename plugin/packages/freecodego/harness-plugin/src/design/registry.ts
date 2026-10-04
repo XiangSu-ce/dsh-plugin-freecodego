@@ -8,7 +8,7 @@
  * fiber would make each switch's meaning depend on the other's state.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,44 +18,14 @@ import { apply as applySkillFilesystem } from '@deepseek-ai/dsh-skill-filesystem
 import { forgetMountedSkillRoots, publishMountedSkillRoots } from '../mounted-skill-roots.ts'
 import type { FreeCodeGoDesignSettings } from '../types.ts'
 import { DESIGN_FEATURES } from './features.ts'
-import { registerDesignTools } from './tools.ts'
+import { disposeToolRegistration, registerDesignTools, type ToolRegistration } from './tools.ts'
 import type { FreeCodeGoDesignStatus } from './types.ts'
-
-/**
- * The handle a registration returns.
- *
- * `dispose` may return a promise, and this module does not await it: standing the
- * pack down is not a request the caller can be made to wait on, and the alternative
- * — an `await` in a synchronous `dispose()` — is not available. The union is here so
- * a registration whose teardown *is* asynchronous can hand its promise to a caller
- * that does have somewhere to put the wait.
- */
-type ToolRegistration = (() => void) | { dispose?: () => void | Promise<void> }
 
 /** The prefix that puts a design tool into the deferred set. */
 const DESIGN_TOOL_PREFIX = 'freecodego_'
 
 /** This pack's name in the mounted-roots registry the capability map reads. */
 const DESIGN_OWNER = 'design'
-
-/**
- * Run one registration's teardown without letting its promise escape.
- *
- * `dispose` may be synchronous or promise-returning, so the return value is a
- * union and the promise has to be narrowed out before it can be claimed. Claiming
- * it is the point: a teardown that returns a promise and is called for its side
- * effect leaves an unhandled rejection behind when it fails — which would make
- * *standing the pack down* the path that takes the host process with it. Nothing
- * is reported because there is nowhere to report it: the caller has already said
- * the pack is not wanted.
- */
-function disposeRegistration(registration: ToolRegistration): void {
-  if (typeof registration === 'function') {
-    registration()
-    return
-  }
-  void Promise.resolve(registration.dispose?.()).catch(() => undefined)
-}
 
 /** The slice of a plugin fiber this module needs; a mount that fails throws. */
 type Fiber = { dispose(): Promise<void> }
@@ -87,6 +57,55 @@ const FEATURE_SKILL_ROOTS: ReadonlyMap<string, string> = new Map(
     .filter(feature => feature.skillRoot !== undefined)
     .map(feature => [feature.id, assetDirectory(feature.skillRoot as string)]),
 )
+
+/**
+ * Whether a candidate file is a Skill the provider would serve.
+ *
+ * The provider skips a file whose frontmatter is absent or lacks `name` and
+ * `description`, so a count that only checked the file name would count
+ * `assets/design/taste/PROVENANCE.md` as a Skill: it is a loose `.md` in a
+ * mounted root and it is not one. The check here mirrors that requirement rather
+ * than the full parse, which is enough to tell a Skill from a sibling document.
+ * @param file - absolute path of a candidate `SKILL.md` or loose `.md`.
+ * @returns whether the file carries the frontmatter a Skill needs.
+ */
+function isSkillFile(file: string): boolean {
+  try {
+    const normalized = readFileSync(file, 'utf8').replaceAll('\r\n', '\n')
+    if (!normalized.startsWith('---\n')) return false
+    const end = normalized.indexOf('\n---', 3)
+    const frontmatter = normalized.slice(4, end === -1 ? undefined : end + 1)
+    return /^name:\s*\S/mu.test(frontmatter) && /^description:\s*\S/mu.test(frontmatter)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Count the Skills one asset root serves.
+ *
+ * Both shapes the Skills provider mounts are counted, because both are what makes
+ * a row's claim true: `<root>/<name>/SKILL.md` for a directory-shaped Skill, and a
+ * loose `<root>/<name>.md` for the other one it accepts. Counting only directories
+ * reported `assets/design/react-bits` — whose root holds `SKILL.md` directly — as
+ * serving nothing while its row read ready, which is the same blind spot the
+ * capability map had.
+ * @param root - an asset root the provider was mounted with.
+ * @returns how many Skills the root contributes.
+ */
+function countSkillFiles(root: string): number {
+  try {
+    return readdirSync(root, { withFileTypes: true }).filter((entry) => {
+      if (entry.isDirectory()) {
+        const candidate = resolve(root, entry.name, 'SKILL.md')
+        return existsSync(candidate) && isSkillFile(candidate)
+      }
+      return entry.isFile() && entry.name.endsWith('.md') && isSkillFile(resolve(root, entry.name))
+    }).length
+  } catch {
+    return 0
+  }
+}
 
 /**
  * The settings surface this module needs, typed loosely on purpose.
@@ -125,7 +144,10 @@ export class FreeCodeGoDesignRegistry {
   private skillFiber: Fiber | undefined
   private skillsMounted = false
   private skillsError: string | undefined
+  /** Registration failure, kept apart from `skillsError`: the two halves fail independently. */
+  private toolsError: string | undefined
   private mountedRoots: readonly string[] = []
+  private mountedSkillCount = 0
   private toolRegistrations: ToolRegistration[] = []
   private registeredTools: readonly string[] = []
   private registeredNames: readonly string[] = []
@@ -186,14 +208,18 @@ export class FreeCodeGoDesignRegistry {
     const unchanged = names.length === this.registeredNames.length
       && names.every((name, index) => name === this.registeredNames[index])
     if (unchanged) return
-    for (const registration of this.toolRegistrations) disposeRegistration(registration)
+    for (const registration of this.toolRegistrations) disposeToolRegistration(registration)
+    // Reset the bookkeeping before the attempt, not after it: a registration that
+    // throws would otherwise leave `registeredTools` naming the set just disposed
+    // and `registeredNames` claiming a reconcile that never happened, so the page
+    // would report tools this switch no longer owns and the next reconcile with
+    // the same names would short-circuit instead of retrying.
     this.toolRegistrations = []
-    this.registeredNames = names
-    if (names.length === 0) {
-      this.registeredTools = []
-      return
-    }
+    this.registeredTools = []
+    this.registeredNames = []
+    if (names.length === 0) return
     const result = registerDesignTools({ ctx: this.ctx, toolPrefix: DESIGN_TOOL_PREFIX }, names)
+    this.registeredNames = names
     this.toolRegistrations = [...result.registrations]
     this.registeredTools = result.registered
   }
@@ -205,11 +231,27 @@ export class FreeCodeGoDesignRegistry {
     // present, so a build without the Skill pack still gets the two tools that
     // need no browser.
     const features = this.enabledFeatures()
-    this.reconcileTools(features.flatMap(id => DESIGN_FEATURES.find(feature => feature.id === id)?.tools ?? []))
+    // Tools and the mount have different dependencies, so a failure in one must not
+    // stop the other from being attempted: a build with no tools service can still
+    // mount its Skills, and a broken asset root must not also take the tools down.
+    // The failure is recorded rather than thrown so the mount below still runs.
+    try {
+      this.reconcileTools(features.flatMap(id => DESIGN_FEATURES.find(feature => feature.id === id)?.tools ?? []))
+      this.toolsError = undefined
+    } catch (error) {
+      if (this.closed) return
+      this.toolsError = error instanceof Error ? error.message : String(error)
+    }
     const roots = this.desiredRoots()
     const unchanged = roots.length === this.mountedRoots.length
       && roots.every((root, index) => root === this.mountedRoots[index])
-    if (unchanged && (roots.length === 0 || this.skillsMounted || this.skillsError !== undefined)) return
+    // A stored error must not count as "settled". It used to be part of this test,
+    // so re-asserting the same switches after a failed mount short-circuited here
+    // and replayed the error instead of trying again — the failure was permanent
+    // for the life of the process, and a transient one looked like a broken build.
+    // Retrying only when the provider is not already mounted keeps the cost to a
+    // reconcile the caller explicitly asked for, and still skips a working mount.
+    if (unchanged && (roots.length === 0 || this.skillsMounted)) return
 
     if (this.skillFiber !== undefined) {
       await this.skillFiber.dispose()
@@ -219,6 +261,7 @@ export class FreeCodeGoDesignRegistry {
     this.skillsError = undefined
     this.mountedRoots = roots
     if (roots.length === 0) {
+      this.mountedSkillCount = 0
       publishMountedSkillRoots(DESIGN_OWNER, [])
       return
     }
@@ -260,6 +303,9 @@ export class FreeCodeGoDesignRegistry {
     // Published after the attempt and carrying its outcome, so the capability map
     // cannot announce Skills whose provider failed to mount.
     publishMountedSkillRoots(DESIGN_OWNER, this.skillsMounted ? roots : [])
+    // Counted from the roots the provider was actually mounted with, so the page
+    // reports the size of the mount rather than of the switch.
+    this.mountedSkillCount = this.skillsMounted ? roots.reduce((total, root) => total + countSkillFiles(root), 0) : 0
   }
 
   /** Switch the whole pack on or off. @param enabled - the desired state. */
@@ -348,23 +394,33 @@ export class FreeCodeGoDesignRegistry {
       // reporting a mount state it will never have. The master switch still wins:
       // with the pack off, every row says the same thing, which is what the user
       // just did.
-      const detail = root === undefined
-        ? enabled
-          ? '已启用：工具按需加载，不挂载 Skill 资源。'
-          : settings.designEnabled
-            ? '未启用。'
-            : '设计功能总开关已关闭。'
-        : !assetsPresent
-          ? '内置 Skill 资源在此构建中缺失，无法启用。'
-          : !settings.designEnabled
-            ? '设计功能总开关已关闭。'
-            : enabled
-              ? this.skillsError !== undefined
-                ? `Skill 挂载失败：${this.skillsError}`
-                : this.skillsMounted
+      // The two failures are named apart rather than as one: the tools are the
+      // tools service's and the mount is the asset roots', so a build with one
+      // working and one broken has to say which. A row can carry both, and then it
+      // says both.
+      const mountFailure = root !== undefined && assetsPresent && enabled && this.skillsError !== undefined
+        ? `Skill 挂载失败：${this.skillsError}`
+        : undefined
+      const toolsFailure = enabled && feature.tools.length > 0 && this.toolsError !== undefined
+        ? `工具注册失败：${this.toolsError}`
+        : undefined
+      const detail = mountFailure !== undefined && toolsFailure !== undefined
+        ? `${toolsFailure}；${mountFailure}`
+        : toolsFailure ?? mountFailure ?? (root === undefined
+          ? enabled
+            ? '已启用：工具按需加载，不挂载 Skill 资源。'
+            : settings.designEnabled
+              ? '未启用。'
+              : '设计功能总开关已关闭。'
+          : !assetsPresent
+            ? '内置 Skill 资源在此构建中缺失，无法启用。'
+            : !settings.designEnabled
+              ? '设计功能总开关已关闭。'
+              : enabled
+                ? this.skillsMounted
                   ? 'Skill 已就绪，按需加载。'
                   : '等待挂载。'
-              : '未启用。'
+                : '未启用。')
       return {
         id: feature.id,
         label: feature.label,
@@ -382,6 +438,9 @@ export class FreeCodeGoDesignRegistry {
       designEnabled: settings.designEnabled,
       skillsReady: this.skillsMounted && this.skillsError === undefined,
       ...this.skillsError === undefined ? {} : { skillsError: this.skillsError },
+      ...this.toolsError === undefined ? {} : { toolsError: this.toolsError },
+      registeredTools: [...this.registeredTools],
+      mountedSkills: this.mountedSkillCount,
       features,
     }
   }
@@ -391,14 +450,20 @@ export class FreeCodeGoDesignRegistry {
     if (this.closed) return
     this.closed = true
     forgetMountedSkillRoots(DESIGN_OWNER)
-    for (const registration of this.toolRegistrations) disposeRegistration(registration)
+    for (const registration of this.toolRegistrations) disposeToolRegistration(registration)
     this.toolRegistrations = []
     this.registeredNames = []
     this.registeredTools = []
     const fiber = this.skillFiber
     this.skillFiber = undefined
     this.skillsMounted = false
+    // Both stored failures are cleared with the state they describe: a torn-down
+    // pack has no mount and no registrations, so reporting either as still broken
+    // would outlive the thing it was about.
+    this.skillsError = undefined
+    this.toolsError = undefined
     this.mountedRoots = []
+    this.mountedSkillCount = 0
     void fiber?.dispose().catch(() => undefined)
   }
 }

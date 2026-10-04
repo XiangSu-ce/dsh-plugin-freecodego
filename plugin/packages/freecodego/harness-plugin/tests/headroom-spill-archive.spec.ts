@@ -216,6 +216,29 @@ describe('the archive itself', () => {
     expect(ownerless.archivedCount).toBe(0)
   })
 
+  it('contains a backend that throws synchronously, so one archive error cannot abort a decided compression', async () => {
+    // The documented contract: archiving is best-effort, and a failure "is logged
+    // and leaves the in-memory entry as the only copy". A `saveText` that *throws*
+    // rather than rejecting broke it in the worst direction — the throw propagated
+    // out of `record` and out of `ArchivingCcrStore.put`, so a compression the
+    // pipeline had already decided to ship was dropped, and the archive failing
+    // cost the model the *smaller* rendering rather than just its durable copy.
+    const archive = new SpillArchive({
+      store: () => ({ saveText: () => { throw new Error('backend refused synchronously') } }),
+      logger: { warn: () => undefined },
+    })
+    archive.setOwner({ sessionId: 'session-1' as never, toolName: 'bash', callId: 'call-1' })
+    expect(() => archive.record('d'.repeat(24), payload)).not.toThrow()
+    expect(archive.failureCount).toBe(1)
+    await expect(archive.settle()).resolves.toBeUndefined()
+
+    // The same through the store the runtime actually uses: the entry is held, so
+    // the in-memory fast path is intact and the branch keeps its rendering.
+    const store = new ArchivingCcrStore(archive)
+    expect(store.put('e'.repeat(24), payload)).toBe(true)
+    expect(store.get('e'.repeat(24))).toBe(payload)
+  })
+
   it('spends at most a twentieth of a compression saving on the notice it appends', async () => {
     const store = new FakeSpillStore()
     const archive = new SpillArchive({ store: () => store, readArtifact: locator => store.read(locator) })

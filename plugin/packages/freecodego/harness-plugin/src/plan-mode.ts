@@ -210,12 +210,9 @@ export const PLAN_MODE_UNPREFIXED_PLUGIN_TOOLS: readonly string[] = pluginToolsW
  * a row, so an unclassified tool is a failing test rather than a name that drifts
  * past all three lists.
  *
- * `tool_search` is deliberately absent. It was named here while this was a
- * hand-written list, and the entry was inert for the same reason it was harmless:
- * the fence only reaches that branch for a name it recognises as this plugin's
- * own, and `tool_search` is a Harness tool this package never registers. Naming
- * a tool this plugin does not own inside its own manifest would be the same
- * category error the single table exists to prevent.
+ * The discovery entry point is classified by the manifest too: this plugin
+ * registers it through the Harness registry, and discovery must stay available
+ * while planning so deferred read tools can actually be reached.
  */
 export const PLAN_MODE_ALLOWED_PLUGIN_TOOLS: readonly string[] = pluginToolsWithPlanMode('allow')
 

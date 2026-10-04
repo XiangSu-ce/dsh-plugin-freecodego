@@ -17,6 +17,8 @@ import type { CompiledCommandPolicy } from './command-policy.ts'
 import { renderGeneratedImages, type ImageGenerationArgs, type MediaToolRegistration } from './media-generation.ts'
 import type { MediaVideoArgs } from './media-utils.ts'
 import { toolDefinition as rawAgnesTool, type ToolDefinitionShape } from './tool-definition.ts'
+import { registerToolDefinitions } from './tool-registration.ts'
+import { redactCredentialShapes } from './secret-scan.ts'
 import type { FreeCodeGoEngineeringCouncilRequest, FreeCodeGoEngineeringVerificationResult, FreeCodeGoEngineeringVerificationStage, FreeCodeGoEngineeringVerificationVerdict } from './types.ts'
 import { VERIFICATION_TOOL_NAME } from './verify-on-stop.ts'
 
@@ -69,7 +71,7 @@ export function registerEngineeringTools(deps: AgentToolsDeps): void {
     if (exec.agent === undefined) throw new Error('Engineering tools require a calling Agent')
     return exec.agent
   }
-  const disposeTeamStart = tools.register(rawAgnesTool({
+  const teamStartTool = rawAgnesTool({
     name: 'engineering_team_start',
     description: 'Start a bounded engineering council. The parent Agent remains the active engine while DeepSeek, Codex, and Claude child Agents independently review the supplied plan in read-only mode.',
     parameters: {
@@ -95,32 +97,32 @@ export function registerEngineeringTools(deps: AgentToolsDeps): void {
       return deps.engineCouncil.run(agent, request, exec.signal)
     },
     presentCall: () => ({ card: 'generic', title: 'Start multi-engine engineering council' }),
-  }))
-  const disposeTeamStatus = tools.register(rawAgnesTool({
+  })
+  const teamStatusTool = rawAgnesTool({
     name: 'engineering_team_status',
     description: 'Read the live state of a multi-engine engineering council by id.',
     parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'string', pattern: '^council_[a-fA-F0-9]{32}$' } } },
     output,
     execute: (args: { readonly id: string }) => deps.engineCouncil.job(args.id),
     presentCall: () => ({ card: 'generic', title: 'Inspect engineering council status' }),
-  }))
-  const disposeTeamReport = tools.register(rawAgnesTool({
+  })
+  const teamReportTool = rawAgnesTool({
     name: 'engineering_team_report',
     description: 'Read completed multi-engine council reports for this conversation.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output,
     execute: (_args: unknown, exec: { readonly agent?: Agent }) => ({ reports: deps.engineCouncil.reports(requireAgent(exec)) }),
     presentCall: () => ({ card: 'generic', title: 'Read engineering council reports' }),
-  }))
-  const disposeTeamCancel = tools.register(rawAgnesTool({
+  })
+  const teamCancelTool = rawAgnesTool({
     name: 'engineering_team_cancel',
     description: 'Cancel a running multi-engine engineering council and dispose its child Agents.',
     parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'string', pattern: '^council_[a-fA-F0-9]{32}$' } } },
     output,
     execute: (args: { readonly id: string }) => deps.engineCouncil.cancel(args.id),
     presentCall: () => ({ card: 'generic', title: 'Cancel engineering council' }),
-  }))
-  const disposeTeamApproval = tools.register(rawAgnesTool({
+  })
+  const teamApprovalTool = rawAgnesTool({
     name: 'engineering_team_request_approval',
     description: 'Ask the user to explicitly approve or reject a completed engineering council before implementation. A council report is evidence only; this tool records the required durable user decision.',
     parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'string', pattern: '^council_[a-fA-F0-9]{32}$' } } },
@@ -157,8 +159,8 @@ export function registerEngineeringTools(deps: AgentToolsDeps): void {
       )
     },
     presentCall: () => ({ card: 'generic', title: 'Request implementation approval' }),
-  }))
-  const disposeTeamVerify = tools.register(rawAgnesTool({
+  })
+  const teamVerifyTool = rawAgnesTool({
     name: VERIFICATION_TOOL_NAME,
     description: 'Run the declared scope, build, type, lint, and test verification stages after the user approved and the primary Agent implemented an engineering council plan. Passing the project\'s own gates is not by itself a verification: every stage result carries the command that ran and its exit status, and the run is only VERIFIED when at least one adversarial probe you declare here ran and held its expectation. A probe is an independent check against the change — a boundary, a concurrency case, an idempotency re-run, an orphaned operation — with its expectation (pass or fail) declared before it runs and a rationale saying what breakage it would catch. A probe whose exit status does not match its declaration makes the whole verification FAIL, and a probe that reaches the network, publishes, or deletes is refused and also fails the run. Zero probes yields UNVERIFIED, never a pass.',
     parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: {
@@ -226,18 +228,25 @@ export function registerEngineeringTools(deps: AgentToolsDeps): void {
       return recorded.result
     },
     presentCall: () => ({ card: 'generic', title: 'Verify approved engineering council' }),
-  }))
-  const disposeTeamImplementation = tools.register(rawAgnesTool({
+  })
+  const teamImplementationTool = rawAgnesTool({
     name: 'engineering_team_mark_implemented',
     description: 'Record that the primary Agent completed an approved council plan. This explicit marker is required before verification can run.',
     parameters: { type: 'object', additionalProperties: false, required: ['id', 'summary'], properties: { id: { type: 'string', pattern: '^council_[a-fA-F0-9]{32}$' }, summary: { type: 'string', minLength: 1, maxLength: 4_000 } } },
     output,
     execute: async (args: { readonly id: string; readonly summary: string }, exec: { readonly agent?: Agent }) => deps.engineCouncil.recordImplementation(requireAgent(exec), args.id, args.summary),
     presentCall: () => ({ card: 'generic', title: 'Mark engineering council implemented' }),
-  }))
-  deps.ctx.effect(() => () => {
-    disposeTeamStart(); disposeTeamStatus(); disposeTeamReport(); disposeTeamCancel(); disposeTeamApproval(); disposeTeamVerify(); disposeTeamImplementation()
-  }, 'freecodego: engineering council tools')
+  })
+  // One batch through the shared registrar, so a registry that refuses one tool
+  // still mounts the rest and keeps a handle to every one that registered. The
+  // seven hand-rolled `tools.register` calls this replaces lost every earlier
+  // handle when a later call threw, because the throw left the function before the
+  // disposer effect was reached.
+  deps.ctx.effect(() => registerToolDefinitions(
+    tools,
+    [teamStartTool, teamStatusTool, teamReportTool, teamCancelTool, teamApprovalTool, teamVerifyTool, teamImplementationTool],
+    (name, error) => { deps.ctx.logger.warn(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`) },
+  ), 'freecodego: engineering council tools')
 }
 
 /**
@@ -262,7 +271,7 @@ export function registerAgnesMediaTools(deps: AgentToolsDeps): MediaToolRegistra
   const client = deps.agnes
   const tools = deps.ctx.get('tools') as { register: (tool: ToolDefinitionShape) => () => void } | undefined
   if (client === undefined || tools === undefined) return { names: [], dispose: () => undefined }
-  const disposeImage = tools.register(rawAgnesTool({
+  const agnesImageTool = rawAgnesTool({
     name: AGNES_MEDIA_TOOL_NAMES.image,
     description: 'Legacy image-generation tool name. Generate an image with the FreeCodeGo Settings image default; do not assume Agnes is selected. The Host routes this request through the configured default image model and falls back safely when unavailable.',
     parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Detailed image prompt.' }, size: { type: 'string', description: 'Image size accepted by the default image model, for example 1024x1024.' } }, required: ['prompt'], additionalProperties: false },
@@ -278,8 +287,8 @@ export function registerAgnesMediaTools(deps: AgentToolsDeps): MediaToolRegistra
       return deps.generateImageWithFallback({ prompt: args.prompt, ...(args.size === undefined ? {} : { size: args.size }) }, exec.signal)
     },
     presentCall: (args: { prompt: string }) => ({ card: 'generic', title: `Generate image: ${args.prompt}` }),
-  }))
-  const disposeVideo = tools.register(rawAgnesTool({
+  })
+  const agnesVideoTool = rawAgnesTool({
     name: AGNES_MEDIA_TOOL_NAMES.video,
     description: 'Legacy video-generation tool name. Generate a video with the FreeCodeGo Settings video default; do not assume Agnes is selected. The Host routes this request through the configured default video model and falls back safely when unavailable.',
     parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Detailed video prompt.' }, seconds: { type: 'string', enum: [...AGNES_VIDEO_SECONDS], description: 'Video duration in seconds; the Agnes route renders 4 through 12.' }, aspectRatio: { type: 'string', description: 'Video aspect ratio, for example 16:9.' }, images: { type: 'array', items: { type: 'string' }, description: 'Optional reference image URLs; the first entry becomes the source frame.' } }, required: ['prompt'], additionalProperties: false },
@@ -297,6 +306,13 @@ export function registerAgnesMediaTools(deps: AgentToolsDeps): MediaToolRegistra
       return deps.generateVideoWithFallback({ prompt: args.prompt, ...(args.seconds === undefined ? {} : { seconds: Number(args.seconds) }), ...(args.aspectRatio === undefined ? {} : { aspectRatio: args.aspectRatio }), ...(args.images?.[0] === undefined ? {} : { image: args.images[0] }), ...(args.images === undefined || args.images.length < 2 ? {} : { images: args.images.slice(1) }) }, exec.signal)
     },
     presentCall: (args: { prompt: string }) => ({ card: 'generic', title: `Generate video: ${args.prompt}` }),
-  }))
-  return { names: [AGNES_MEDIA_TOOL_NAMES.image, AGNES_MEDIA_TOOL_NAMES.video], dispose: () => { disposeImage(); disposeVideo() } }
+  })
+  // The names reported as mounted exclude anything the registry refused, because the
+  // switch's status reads this list as "mounted right now".
+  const refused = new Set<string>()
+  const dispose = registerToolDefinitions(tools, [agnesImageTool, agnesVideoTool], (name, error) => {
+    refused.add(name)
+    deps.ctx.logger.warn(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`)
+  })
+  return { names: [AGNES_MEDIA_TOOL_NAMES.image, AGNES_MEDIA_TOOL_NAMES.video].filter(name => !refused.has(name)), dispose }
 }

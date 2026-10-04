@@ -111,29 +111,47 @@ describe('commandHookRunner', () => {
     // Killing only the shell leaves its background child alive. The child writes
     // a start marker before scheduling its delayed side effect, so the test proves
     // the background process actually ran before asserting that it was terminated.
+    //
+    // The deadline has to clear a `node` cold start: the descendant is a *grandchild*
+    // of the shell, so "it wrote its marker" and "the deadline fired" race, and the
+    // deadline starts at spawn. A 200ms deadline lost that race under the full
+    // suite's cross-package parallelism — measured with a direct probe of this same
+    // shell line, the descendant needed up to ~276ms to boot and the start marker
+    // was missing in 10 of 20 runs, while the case passed in isolation (0 of 15,
+    // ~215ms). The deadline is therefore set ~7x above the observed cold-start
+    // ceiling, and the side effect is scheduled well past it, so the two claims —
+    // "the descendant ran" and "the deadline stopped it" — are both comfortable.
     const directory = mkdtempSync(join(tmpdir(), 'freecodego-hook-tree-'))
     const startedMarker = join(directory, 'started')
     const marker = join(directory, 'survived')
-    const childScript = `const fs=require('node:fs');fs.writeFileSync(process.env.FREECODEGO_HOOK_STARTED,'yes');setTimeout(()=>fs.writeFileSync(process.env.FREECODEGO_HOOK_MARKER,'alive'),1800)`
+    const DEADLINE_MS = 2_000
+    const SIDE_EFFECT_MS = 6_000
+    const childScript = `const fs=require('node:fs');fs.writeFileSync(process.env.FREECODEGO_HOOK_STARTED,'yes');setTimeout(()=>fs.writeFileSync(process.env.FREECODEGO_HOOK_MARKER,'alive'),${SIDE_EFFECT_MS})`
     const childCommand = `node -e "${childScript}"`
-    const foregroundWaiter = 'node -e "setTimeout(() => {}, 5000)"'
+    const foregroundWaiter = 'node -e "setTimeout(() => {}, 30000)"'
     const shellLine = process.platform === 'win32'
       ? `start /b "" ${childCommand} & ${foregroundWaiter}`
       : `${childCommand} & ${foregroundWaiter}`
     try {
       const started = Date.now()
-      await expect(commandHookRunner(commandHandler(shellLine), {}, 200, {
+      await expect(commandHookRunner(commandHandler(shellLine), {}, DEADLINE_MS, {
         FREECODEGO_HOOK_STARTED: startedMarker,
         FREECODEGO_HOOK_MARKER: marker,
-      })).rejects.toThrow('hook timed out after 200ms')
-      expect(Date.now() - started).toBeLessThan(1_500)
+      })).rejects.toThrow(`hook timed out after ${DEADLINE_MS}ms`)
+      const elapsed = Date.now() - started
+      // The deadline ended the call, not the child's own exit.
+      expect(elapsed).toBeLessThan(5_000)
+      // The background process ran before the tree was killed.
       expect(existsSync(startedMarker)).toBe(true)
-      await sleep(2_200)
+      // ...and it did not live to fire the side effect it had scheduled. Wait out
+      // the child's own clock (not a fixed two seconds) so the claim holds whatever
+      // the kill took, plus a margin for the side effect's own scheduling jitter.
+      await sleep(Math.max(0, SIDE_EFFECT_MS - elapsed) + 1_500)
       expect(existsSync(marker)).toBe(false)
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
-  }, 10_000)
+  }, 20_000)
 
   it('reports a shell that cannot start as a non-zero exit rather than a throw', async () => {
     // Fail open: a handler that cannot run is recorded, not propagated. 127 is the

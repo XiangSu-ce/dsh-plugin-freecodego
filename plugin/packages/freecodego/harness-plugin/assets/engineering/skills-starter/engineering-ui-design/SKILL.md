@@ -48,6 +48,19 @@ A component is not the markup for its best case. Every interactive surface owes 
 - **error** — the failure, and what the user can do next. "Something went wrong" is a dead end.
 - **overflow** — the long unbroken string, the 12-digit number, the missing image, the 40-item list, 200% zoom, and a 320px viewport. Long real data is the normal case; the mock string was the exception.
 
+## The design capabilities this package carries
+
+Four of this plugin's own tools exist for this exact work — a reviewed catalogue, the brand-agnostic rulebooks, a detector and a component library. Reach for them instead of styling from memory:
+
+- `freecodego_uiux_search` — the bundled UI/UX catalogue: styles, palettes, typography, landing-page structure, charts, icons, accessibility, animation and implementation guidelines. One call in plain language routes itself; name a `domain` or a `stack` to aim it. It abstains rather than inventing advice at low confidence.
+- `freecodego_design_craft` — eleven rulebooks that apply on top of any design system (typography hierarchy, colour discipline, motion discipline, accessibility baseline, form validation, the laws of UX, RTL, state coverage, anti-AI-slop). `list`, then `get` the two or three that apply — one call reads at most four.
+- `freecodego_design_detect` — scans a file, a directory or a URL for known generated-UI tells and quality defects, with upstream rule ids. Run it on what you just wrote, then fix what it names.
+- `freecodego_reactbits` — `search`, `get` and `apply` animated React components (text reveals, backgrounds, cards, marquees). Needs the network; `apply` writes into a directory you name and requires `confirm: true`.
+
+Most tool schemas are not in the request until they are fetched, so if freecodego_uiux_search, freecodego_design_craft, freecodego_design_detect, freecodego_reactbits are not in your schema, load them first with tool_search "select:freecodego_uiux_search, freecodego_design_craft, freecodego_design_detect, freecodego_reactbits" — a call to a tool you have not fetched is refused.
+
+A name that does not come back from the search is a **row switched off** in Settings → Design, not a broken tool: say which capability you would have used and continue with the rules in this Skill, rather than styling from memory or claiming a check you never ran.
+
 ## Look at it before you describe it
 
 1. **Run it and render it.** Screenshot at 375, 768, and 1440 CSS px, and once per state above that the change touches.

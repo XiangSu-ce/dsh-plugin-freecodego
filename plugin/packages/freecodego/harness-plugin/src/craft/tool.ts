@@ -142,11 +142,15 @@ function runGet(sections: readonly string[]): unknown {
     return refusal(action, 'empty-sections', 'Name the sections to read, or call action "list" to see what exists.', { available: availableSlugs() })
   }
   if (sections.length > CRAFT_SECTIONS_PER_CALL) {
+    // The catalogue, not an echo of the request: `available` is what exists to
+    // choose from, and a caller that just sent too many needs the list it can pick
+    // from — the same answer every other refusal here gives — rather than its own
+    // oversize list handed back under a name that promises something else.
     return refusal(
       action,
       'too-many-sections',
       `One call returns at most ${String(CRAFT_SECTIONS_PER_CALL)} sections; these bodies are long, and the catalogue reports each one's size so the choice can be made deliberately.`,
-      { available: sections },
+      { available: availableSlugs() },
     )
   }
 

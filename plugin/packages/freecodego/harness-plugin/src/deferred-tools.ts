@@ -244,9 +244,23 @@ interface ToolServiceLike {
   register(tool: ToolDefinitionShape): (() => void) | { dispose?: () => void }
   schemas?(scope?: unknown): readonly ToolSchemaLike[]
 }
+interface ScopedTools {
+  restrict(filter: { readonly allow?: readonly string[]; readonly deny?: readonly string[] }): () => void
+}
 interface AgentLike {
   readonly id: string
-  readonly ctx: { readonly tools?: { restrict(filter: { readonly allow?: readonly string[]; readonly deny?: readonly string[] }): () => void } }
+  readonly ctx: {
+    readonly tools?: ScopedTools
+    get?(name: string): unknown
+  }
+}
+
+/** Resolve the scoped service without assuming the Agent's fiber injected it.
+ * @param agent - the Agent whose tool visibility is being changed.
+ * @returns its scoped registry, or undefined when this composition has none.
+ */
+function scopedTools(agent: AgentLike): ScopedTools | undefined {
+  return agent.ctx.get === undefined ? agent.ctx.tools : agent.ctx.get('tools') as ScopedTools | undefined
 }
 interface SettingsSource {
   get(): unknown
@@ -377,6 +391,7 @@ export class FreeCodeGoDeferredTools {
     readonly revealed: Set<string>
   }>()
   private stopWatching: (() => void) | undefined
+  private resyncQueued = false
   private disposed = false
 
   constructor(
@@ -398,7 +413,7 @@ export class FreeCodeGoDeferredTools {
     // still refused. The same seam is what makes the eligible set a *catalog*
     // rather than a snapshot: a capability mounting or unmounting mid-session
     // recomputes it instead of leaving the previous answer standing.
-    this.stopWatching = this.settings?.watch?.(() => {
+    const resync = (): void => {
       try {
         this.syncRestrictions()
       } catch {
@@ -406,6 +421,21 @@ export class FreeCodeGoDeferredTools {
         // it: the previous restriction stays in force and the session keeps
         // working, which is strictly better than an exception here.
       }
+    }
+    this.stopWatching = this.settings?.watch?.(resync)
+    // The production policy is a read-through Config, not a watchable settings
+    // fake. Harness announces committed profile writes on this seam instead.
+    this.ctx.on('settings/document-updated', resync)
+    // Registrations can arrive after agent creation (design toggles, MCP mounts,
+    // engineering startup). Restrictions themselves also emit tools/change, so
+    // coalesce the announcement instead of recursively changing the same scope.
+    this.ctx.on('tools/change', () => {
+      if (this.disposed || this.resyncQueued) return
+      this.resyncQueued = true
+      queueMicrotask(() => {
+        this.resyncQueued = false
+        if (!this.disposed) resync()
+      })
     })
     // Rides the creation announcement (`agent/created` replaced
     // `agent/session-start` in Harness 0.1.6); the body is already fail-open.
@@ -467,24 +497,20 @@ export class FreeCodeGoDeferredTools {
     return value?.deferredToolSchemasEnabled !== false
   }
 
-  /** Deny everything eligible for this agent; a no-op when the list is empty. */
+  /** Track the Agent and deny its eligible tools, including later-mounted ones. */
   private applyRestriction(agent: AgentLike): void {
-    if (!this.enabled()) return
-    const scoped = agent.ctx?.tools
-    if (scoped?.restrict === undefined) return
-    const names = this.eligible().map(schema => schema.name)
-    if (names.length === 0) return
-    // Replace any earlier restriction for this agent rather than stacking, so a
-    // re-entered session does not accumulate intersecting deny layers.
+    if (this.disposed || scopedTools(agent)?.restrict === undefined) return
+    // Keep ownership even when deferral is off or the catalog is still empty:
+    // either can change later without another agent/created announcement.
     this.agents.get(agent.id)?.dispose?.()
-    const dispose = scoped.restrict({ deny: names })
-    this.agents.set(agent.id, { agent, dispose, deferred: new Set(names), revealed: new Set() })
+    this.agents.set(agent.id, { agent, dispose: undefined, deferred: new Set(), revealed: new Set() })
+    this.syncRestrictions()
   }
 
   /** Lift the denial for the tools a fetch just returned. */
   private reveal(agent: AgentLike, names: readonly string[]): void {
     const entry = this.agents.get(agent.id)
-    const scoped = agent.ctx?.tools
+    const scoped = scopedTools(agent)
     if (entry === undefined || scoped?.restrict === undefined) return
     let changed = false
     for (const name of names) {
@@ -513,7 +539,7 @@ export class FreeCodeGoDeferredTools {
     if (this.disposed) return
     const eligibleNames = new Set(this.eligible().map(schema => schema.name))
     for (const entry of this.agents.values()) {
-      const scoped = entry.agent.ctx.tools as { restrict?: (input: { readonly deny: readonly string[] }) => () => void } | undefined
+      const scoped = scopedTools(entry.agent)
       if (scoped?.restrict === undefined) continue
       if (!this.enabled() || eligibleNames.size === 0) {
         entry.dispose?.()
@@ -573,10 +599,20 @@ export class FreeCodeGoDeferredTools {
         },
       },
       output: {
-        schema: { type: 'object', additionalProperties: true },
+        // Harness validates the canonical value before rendering it. Every
+        // discovery branch returns text, so an object schema rejects the index
+        // and fetched schemas before the model can read either of them.
+        schema: { type: 'string' },
         render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value) }],
       },
       execute: async (args: { readonly query?: string; readonly max_results?: number }, exec: { readonly agent?: unknown }) => {
+        // The registry does not enforce every JSONSchema keyword (notably the
+        // numeric bounds). Honour the discovery contract at execution too.
+        if (args?.query !== undefined && typeof args.query !== 'string') throw new Error('query must be a string')
+        const limit = args?.max_results
+        if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > MAX_TOOL_SEARCH_RESULTS)) {
+          throw new Error(`max_results must be an integer from 1 to ${MAX_TOOL_SEARCH_RESULTS}`)
+        }
         const agent = exec?.agent as AgentLike | undefined
         const candidates = this.eligible()
         const query = typeof args?.query === 'string' ? args.query.trim() : ''

@@ -1439,6 +1439,116 @@ export interface FreeCodeGoCapabilitySettings {
 export type FreeCodeGoModelCategory = 'text' | 'image' | 'video' | 'audio'
 
 /**
+ * The thinking levels the model-tuning surface may write into the Models entry.
+ *
+ * The six a plain endpoint can be expected to understand once the two larger
+ * tiers are offered: `off` sends nothing, and each other level names its own
+ * wire spelling. `minimal` is deliberately absent — it is a level below `low`
+ * that the surface has no use for, and omitting it keeps the offered set one
+ * monotone ladder from "do not think" to "think hardest".
+ */
+export type FreeCodeGoReasoningLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/**
+ * Where one effective model setting came from.
+ *
+ * `settings` is the Models entry the user edits here (or a declaration this
+ * plugin wrote into it), `catalog` is the installed pi-ai catalog's own answer,
+ * and `default` is the route-level fallback the schema materializes when
+ * nothing more specific supplies one.
+ */
+export type FreeCodeGoTuningSource = 'settings' | 'catalog' | 'default' | 'none'
+
+/** One effective numeric model setting, and where it came from. */
+export interface FreeCodeGoTuningNumber {
+  /** The effective value, absent when nothing supplies one. */
+  readonly value?: number
+  readonly source: FreeCodeGoTuningSource
+}
+
+/** One model's editable tuning state, as the settings surface renders it. */
+export interface FreeCodeGoModelTuning {
+  readonly provider: string
+  readonly providerName: string
+  readonly model: string
+  readonly name: string
+  /**
+   * Whether the Models entry already names this model — a `models` entry or a
+   * `modelOverrides` key. What decides where an edit is written.
+   */
+  readonly declared: boolean
+  readonly contextWindow: FreeCodeGoTuningNumber
+  readonly maxOutputTokens: FreeCodeGoTuningNumber
+  /**
+   * The token count at which compaction steps in for this model's window,
+   * computed by the Host's own budget rule. The surface renders it as the hint
+   * beside the context control — the reason a user raises the window at all —
+   * so the number has to come from the rule that actually fires rather than a
+   * second copy of the arithmetic in the browser. Absent when no window is known.
+   */
+  readonly compactionAt?: number
+  /** Levels the model offers; absent means it does not reason. */
+  readonly reasoningLevels?: readonly FreeCodeGoReasoningLevel[]
+  readonly reasoningSource: FreeCodeGoTuningSource
+}
+
+/** One provider route's defaults, as the surface shows and edits them. */
+export interface FreeCodeGoProviderTuning {
+  readonly provider: string
+  readonly providerName: string
+  readonly modelCount: number
+  /**
+   * Whether an adapter currently serves this route. A `false` route is declared
+   * in the Models settings but dormant — no credential, or an adapter that has
+   * not mounted — so its models come from the stored declaration and only its
+   * stored fields are known.
+   */
+  readonly live: boolean
+  /** Route-level fallbacks; absent when the schema default is in force. */
+  readonly defaultContextWindow?: number
+  readonly defaultMaxTokens?: number
+  /** Route-level default thinking level, when one is stored. */
+  readonly reasoning?: FreeCodeGoReasoningLevel
+}
+
+/** Everything the model-tuning surface renders. */
+export interface FreeCodeGoModelTuningSnapshot {
+  readonly providers: readonly FreeCodeGoProviderTuning[]
+  readonly models: readonly FreeCodeGoModelTuning[]
+  /** Offered levels in escalation order; `off` first. */
+  readonly reasoningLevels: readonly FreeCodeGoReasoningLevel[]
+  /** Context lengths the presets offer, ascending. */
+  readonly contextPresets: readonly number[]
+  /** Whether a settings writer is reachable; a read-only surface when false. */
+  readonly writable: boolean
+}
+
+/**
+ * One model-tuning write.
+ *
+ * A `model` names one entry; `applyToModels` names the whole route, writing each
+ * of its models so a catalog route gains explicit entries too. An absent field
+ * leaves what is stored alone, and `null` clears it.
+ */
+export type FreeCodeGoModelTuningWrite =
+  | {
+    readonly provider: string
+    readonly model: string
+    readonly contextWindow?: number | null
+    readonly maxOutputTokens?: number | null
+    /** Offered levels; `null` declares a non-reasoning model. */
+    readonly reasoningLevels?: readonly FreeCodeGoReasoningLevel[] | null
+  }
+  | {
+    readonly provider: string
+    readonly applyToModels: true
+    readonly contextWindow?: number | null
+    readonly maxOutputTokens?: number | null
+    /** Route default level; `null` clears it. */
+    readonly reasoning?: FreeCodeGoReasoningLevel | null
+  }
+
+/**
  * One discovered Skill as the settings library lists it.
  *
  * The list is the *user-facing* inventory, so it deliberately keeps skills the

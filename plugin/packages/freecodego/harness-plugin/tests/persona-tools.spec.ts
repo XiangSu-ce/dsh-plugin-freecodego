@@ -210,6 +210,49 @@ describe('engineering_subagent_start', () => {
   })
 })
 
+describe('a spawn that fails after isolation', () => {
+  test('releases the checkout it created, because no session will ever own it', async () => {
+    // The child is created *with* its working directory, so a spawn that throws
+    // after `isolate` leaves a worktree and a registry entry whose session id was
+    // never handed to a session. Nothing else will release it: the tool that made
+    // it is the only code that knows both the id and the workspace.
+    const discards: string[] = []
+    const { deps: d } = deps({
+      spawn: async () => { throw new Error('the child could not be started') },
+      discardIsolation: async (input: { readonly workspaceRoot: string; readonly sessionId: string }) => { discards.push(input.sessionId) },
+    })
+    const definitions = personaToolDefinitions(d, new PersonaRuns())
+    await expect(
+      toolOf(definitions, 'engineering_subagent_start')({ persona: 'implementer', task: 'do it' }, EXEC),
+    ).rejects.toThrow('could not be started')
+    expect(discards).toEqual(['child-1'])
+  })
+
+  test('does not discard anything when the child ran unisolated', async () => {
+    // A failure in the shared checkout must not throw away a copy this call never
+    // made — there is nothing it owns to release.
+    const discards: string[] = []
+    const { deps: d } = deps({
+      spawn: async () => { throw new Error('boom') },
+      discardIsolation: async (input: { readonly workspaceRoot: string; readonly sessionId: string }) => { discards.push(input.sessionId) },
+    })
+    const definitions = personaToolDefinitions(d, new PersonaRuns())
+    await expect(
+      toolOf(definitions, 'engineering_subagent_start')({ persona: 'reviewer', task: 'review', inputs: { diff: 'x' } }, EXEC),
+    ).rejects.toThrow('boom')
+    expect(discards).toEqual([])
+  })
+
+  test('does not discard a checkout when the spawn succeeded', async () => {
+    const discards: string[] = []
+    const { deps: d } = deps({ discardIsolation: async (input: { readonly workspaceRoot: string; readonly sessionId: string }) => { discards.push(input.sessionId) } })
+    const definitions = personaToolDefinitions(d, new PersonaRuns())
+    const started = await toolOf(definitions, 'engineering_subagent_start')({ persona: 'implementer', task: 'do it' }, EXEC)
+    expect(started.cwd).toBe('/isolated/child-1')
+    expect(discards).toEqual([])
+  })
+})
+
 describe('the output contract', () => {
   test('a shortfall is reported, and the rest of the work is kept', () => {
     const runs = new PersonaRuns()

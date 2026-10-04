@@ -231,6 +231,22 @@ describe('the built-in backend', () => {
     expect((quality.coverage as Record<string, unknown>).rules).toBeGreaterThan(1)
   })
 
+  it('names the category, not `include_advisories`, as the reason a finding was withheld', async () => {
+    // Three findings here are `slop`, and none of them is an advisory. A note that
+    // attributed them to the advisory filter would send the caller to
+    // `include_advisories` for rules `category` excluded — the wrong fix for the
+    // missing finding, and the exact misattribution this pins.
+    withoutEngine()
+    const { service } = fileService({ '/work/page.css': SLOP_AND_QUALITY })
+    const tool = harness({ get: (name: string) => name === 'fs' ? service : undefined })
+
+    const quality = await tool.execute({ path: '/work/page.css', category: 'quality' })
+    expect(notes(quality).some(note => note.includes('advisory finding(s) were withheld'))).toBe(false)
+
+    const slop = await tool.execute({ path: '/work/page.css', category: 'slop' })
+    expect(notes(slop).some(note => note.includes('advisory finding(s) were withheld'))).toBe(false)
+  })
+
   it('walks a directory, skips what it cannot read, and names every skip', async () => {
     // A scan that quietly read three of forty files reads exactly like a clean
     // directory, and the difference matters most when the news is good.

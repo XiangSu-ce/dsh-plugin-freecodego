@@ -89,6 +89,16 @@ export interface PersonaToolDeps {
     readonly strategy: string
     readonly fallbackReason?: string
   }>
+  /**
+   * Release a checkout {@link isolate} created for a child that will not exist.
+   *
+   * There is no session to attach the copy to when the spawn itself fails — the
+   * child is created *with* its working directory, so a spawn that throws after
+   * isolation leaves a worktree and a registry entry nothing owns. The session
+   * worktree operations can only be reached through the caller's workspace, which
+   * is why this is a port rather than something the tool could undo itself.
+   */
+  readonly discardIsolation?: (input: { readonly workspaceRoot: string; readonly sessionId: string }) => Promise<void>
   /** Agent-type defaults, when the composition declares any. */
   readonly defaults?: () => { readonly model?: string; readonly reasoningEffort?: string; readonly isolation?: 'none' | 'worktree' }
   readonly newSessionId: () => string
@@ -286,21 +296,30 @@ export function personaToolDefinitions(deps: PersonaToolDeps, runs: PersonaRuns)
           isolated = await deps.isolate({ workspaceRoot: caller.cwd, sessionId })
         }
 
-        const instructions = await deps.instructions(persona)
-        const brief = composeChildBrief({ persona, instructions, task: args.task, inputs: args.inputs ?? {} })
-        await deps.spawn({
-          sessionId,
-          parent: caller.agent,
-          session: {
-            workspaceRoot: caller.cwd,
-            persona: persona.name,
-            cwd: isolated?.path ?? caller.cwd,
-            brief,
-            ...(runtime.model === undefined ? {} : { model: runtime.model }),
-            ...(runtime.reasoningEffort === undefined ? {} : { reasoningEffort: runtime.reasoningEffort }),
-            ...(exec === undefined ? {} : { signal: (exec as { readonly signal?: AbortSignal }).signal }),
-          },
-        })
+        try {
+          const instructions = await deps.instructions(persona)
+          const brief = composeChildBrief({ persona, instructions, task: args.task, inputs: args.inputs ?? {} })
+          await deps.spawn({
+            sessionId,
+            parent: caller.agent,
+            session: {
+              workspaceRoot: caller.cwd,
+              persona: persona.name,
+              cwd: isolated?.path ?? caller.cwd,
+              brief,
+              ...(runtime.model === undefined ? {} : { model: runtime.model }),
+              ...(runtime.reasoningEffort === undefined ? {} : { reasoningEffort: runtime.reasoningEffort }),
+              ...(exec === undefined ? {} : { signal: (exec as { readonly signal?: AbortSignal }).signal }),
+            },
+          })
+        } catch (error) {
+          // The copy was created for a child that now will not exist: its session id
+          // was never handed to a session, so nothing else will ever release it. Only
+          // released when isolation actually happened — a failure in the shared
+          // checkout must not discard a copy this call did not make.
+          if (isolated !== undefined) await deps.discardIsolation?.({ workspaceRoot: caller.cwd, sessionId })
+          throw error
+        }
         runs.expect(sessionId, persona.name, persona.outputs.filter(field => field.required).map(field => field.name), caller.agent)
 
         const started: SpawnedChild = {

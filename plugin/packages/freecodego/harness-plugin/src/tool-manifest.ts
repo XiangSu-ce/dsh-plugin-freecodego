@@ -294,9 +294,11 @@ export const PLUGIN_TOOL_MANIFEST: readonly PluginToolRecord[] = [
     note: 'Registered on a host whose shell tool has another name (Windows ships `pwsh`), so the shell spelling every engine offers exists here too; the command is judged on the nested dispatch, exactly as above.',
   },
 
-  // ── Headroom and the unprefixed readers ───────────────────────────────────
+  // ── Discovery, headroom and the unprefixed readers ────────────────────────
+  // This plugin registers the discovery entry point itself; using the Harness
+  // registry does not make it a Harness-owned tool or exempt it from this table.
+  { name: 'tool_search', capability: 'read', planMode: 'allow' },
   { name: 'headroom_retrieve', capability: 'read', planMode: 'allow' },
-  { name: 'inspect', capability: 'read', planMode: 'allow' },
   { name: 'read_document', capability: 'read', planMode: 'allow' },
 ]
 

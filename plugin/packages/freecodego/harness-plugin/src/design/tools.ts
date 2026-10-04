@@ -60,17 +60,16 @@ export interface DesignFileService {
 const ASSET_MAX_BYTES = 64 * 1024 * 1024
 
 /**
- * The handle a registration returns, and this module's own teardown handles.
+ * The handle a registration returns, and the shared teardown for it.
  *
- * `dispose` may be synchronous or promise-returning. The registry calls it
- * without awaiting — its own teardown has nowhere to put the wait — so a promise
- * here costs nothing there, while a caller that *can* await it gets the real
- * completion instead of a race. Written as a union rather than as `() => void`
- * because a promise-returning function offered where a `void` return is expected
- * is a defect the linter names, and rightly: the caller in that shape has no way
- * to know whether the work finished.
+ * Re-exported from `../tool-registration.ts` rather than declared here: the
+ * review tools' batch registration had its own copy of the same rule and grew a
+ * different, broken shape from it (see that module), so "how a tool goes away"
+ * now has one home. The registry still imports both names from this module, so
+ * existing callers are unchanged.
  */
-type ToolRegistration = (() => void) | { dispose?: () => void | Promise<void> }
+import { disposeToolRegistration, type ToolRegistration } from '../tool-registration.ts'
+export { disposeToolRegistration, type ToolRegistration }
 
 /** The tools service, typed structurally so this module stays independent of it. */
 type ToolService = { register(tool: ToolDefinitionShape): ToolRegistration }
@@ -595,7 +594,17 @@ export function registerDesignTools(deps: DesignToolDeps, names: readonly string
 
   for (const definition of definitions) {
     if (!want.has(definition.name)) continue
-    if (!register(deps, registrations, definition.define())) continue
+    try {
+      if (!register(deps, registrations, definition.define())) continue
+    } catch (error) {
+      // A definition that could not be built, or a service that threw on it, must
+      // not leave the tools already registered behind: the throw discards this
+      // function's return value, so nothing would ever hold their handles and the
+      // switch could never take them away. Roll back, then let the caller see the
+      // failure rather than reporting a surface that is half registered.
+      for (const registration of registrations) disposeToolRegistration(registration)
+      throw error
+    }
     registered.push(definition.name)
   }
 

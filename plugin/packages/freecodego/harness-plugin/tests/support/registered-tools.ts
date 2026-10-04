@@ -43,13 +43,9 @@ export const NOT_TOOLS: Readonly<Record<string, string>> = {
   // plugin's tool registry and so are not the manifest's subject.
   freecodego_skill_discover: 'an MCP tool name rendered for the Claude runtime',
   freecodego_skill_load: 'an MCP tool name rendered for the Claude runtime',
-  // A Harness tool that `deferred-tools.ts` carries in a registration-shaped record
-  // so its own rules can read it — the entry point that must never be deferred. This
-  // package does not register it, so it is not the manifest's subject either; it was
-  // exempted here while it also sat on the Plan Mode allow list, where the entry was
-  // inert, and the exemption kept it discoverable-and-unclassified after that entry
-  // went away with the hand-written list.
-  tool_search: 'a Harness tool (deferred tool schemas), not one this plugin registers',
+  // index.ts registers this name with commands, not with tools. The actual
+  // model-facing diagnostic is engineering_inspect.
+  inspect: 'a slash-command registration in index.ts, not a tool',
 }
 
 /**

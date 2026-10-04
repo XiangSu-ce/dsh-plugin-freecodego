@@ -348,7 +348,12 @@ describe('the remote call contract', () => {
     // store. Like `accountRememberedPassword` its client side is a cast-style
     // call, so REMOTES and the unreached count below move while SITES and the
     // distinct-name count do not.
-    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(238)
+    // 238 → 240: `modelTuningRead` and `modelTuningWrite`, the provider/model
+    // tuning surface's snapshot read and its one write. Both have exactly one
+    // dispatch site on the client side (`client/index.ts`), so all three counts
+    // below move together, which is the check that says the pair was extended
+    // rather than one side drifting.
+    expect(REMOTES.size, 'the Host remote inventory changed — re-verify the pairs, then update this count').toBe(240)
     // Re-verified when this moved 182 → 176: the five conditional dispatches
     // (`agnesRefresh`, `agnesCreateApiKey`, `agnesLogout`, `codexRuntimeInstall`,
     // `claudeRuntimeInstall`) that branched into a zero-argument call collapsed
@@ -404,7 +409,10 @@ describe('the remote call contract', () => {
     // 214 → 216: the two AntSeed replacement dispatches above, one per name, both
     // in `client/index.ts` — the card reaches them through its props rather than
     // through a dispatch of its own.
-    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(216)
+    // 216 → 218: the two model-tuning dispatches above, one site each, both in
+    // `client/index.ts` — the section reaches them through its props rather
+    // than through a dispatch of its own.
+    expect(SITES.length, 'the client dispatch inventory changed — re-verify, then update this count').toBe(218)
     // 196 → 197: `skillPlacements` is a name no earlier dispatch carried, so this count
     // moves with the two above rather than staying put — the check that a new *name*
     // arrived instead of another call to one already counted.
@@ -434,7 +442,10 @@ describe('the remote call contract', () => {
     // 212 → 214: both replacement names are names no earlier dispatch carried,
     // so this count moved with the site count above rather than staying put —
     // whole names arrived instead of second calls to names already counted.
-    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(214)
+    // 214 → 216: both model-tuning names are names no earlier dispatch carried,
+    // so this count moves with the site count above rather than staying put —
+    // whole names arrived instead of second calls to names already counted.
+    expect(new Set(SITES.map(site => site.name)).size, 'distinct dispatched names changed').toBe(216)
   })
 
   it('reads a known signature correctly, which is what the arity check rests on', () => {

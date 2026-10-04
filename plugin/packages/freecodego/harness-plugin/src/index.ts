@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { ToolDefinitionShape } from './tool-definition.ts'
 import { JSON_TOOL_OUTPUT } from './tool-definition.ts'
+import { registerToolDefinitions } from './tool-registration.ts'
 import { readDocumentToolDefinition } from './read-document.ts'
 import { companionFaceToolDefinition, COMPANION_FACE_TOOL_NAME } from './companion/tool.ts'
 import { createWorktree, realCreatorDeps, type WorktreeCreation } from './worktree/creator.ts'
@@ -49,7 +50,7 @@ import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { FreeCodeGoAccountCoordinator, FreeCodeGoApiClient, FreeCodeGoManagedRuntime, FreeCodeGoReceiptDocument } from '@deepseek-ai/dsh-freecodego-api'
-import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoAnnouncement, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareLoginRequest, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, FreeCodeGoAntSeedStatus, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
+import type { FreeCodeGoEngineId, FreeCodeGoEngineSnapshot, FreeCodeGoAccountSnapshot, FreeCodeGoAnnouncement, FreeCodeGoLoginRequest, FreeCodeGoPasswordResetRequest, FreeCodeGoRegistrationRequest, FreeCodeGoBackendSnapshot, FreeCodeGoDeviceSessions, FreeCodeGoManagedCatalog, FreeCodeGoModelAvailability, TraeModel, TraeStatus, FreeCodeGoCheckinReport, JsonValue, FreeCodeGoPaymentPlan, FreeCodeGoPaymentOrder, FreeCodeGoPaymentChannel, FreeCodeGoPaymentConfig, FreeCodeGoGatewayModelPrice, FreeCodeGoCodexRuntimeStatus, FreeCodeGoClaudeRuntimeStatus, FreeCodeGoRuntimePackage, AgnesStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoVyceStatus, FreeCodeGoLogfareStatus, FreeCodeGoLogfareLoginRequest, FreeCodeGoCapabilitySnapshot, FreeCodeGoCapabilityMarketplacePage, FreeCodeGoCapabilityMarketplaceRequest, FreeCodeGoMcpServer, FreeCodeGoModelCategory, FreeCodeGoModelTuningSnapshot, FreeCodeGoModelTuningWrite, FreeCodeGoSkillDetail, FreeCodeGoSkillDetailRequest, FreeCodeGoSkillRoot, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, FreeCodeGoPluginConflictStatus, FreeCodeGoEngineeringSettings, FreeCodeGoEngineeringStatus, FreeCodeGoEngineeringCheckpoint, FreeCodeGoEngineeringCheckpointRestoreResult, FreeCodeGoEngineeringCheckpointDiff, FreeCodeGoNvidiaStatus, FreeCodeGoAntSeedStatus, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, WorkBuddyInternationalStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderStatus, QoderBrowserLogin, QoderLoginPoll, ClineDeviceLogin, ClineLoginPoll, ClineStatus, FreeCodeGoReviewStatus, FreeCodeGoReviewStartRequest, FreeCodeGoReviewUpdate, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus } from './types.ts'
 import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { createUserMessage, type LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import { CodexRuntimeManager, ClaudeRuntimeManager } from '@deepseek-ai/dsh-freecodego-native-runtime-host'
@@ -91,6 +92,7 @@ import { freeCodeGoDataHome, harnessHomeDirectory } from './data-home.ts'
 import { ensureDesktopDshShim, requireClaudeEngineManifestPath } from './runtime-assets.ts'
 import { installFreeCodeGoAgentPresets } from './agent-preset-install.ts'
 import { syncCustomApiReasoning } from './custom-api-reasoning.ts'
+import { readModelTuning, writeModelTuning } from './model-tuning.ts'
 import { loaderSettled } from './loader-settled.ts'
 import { MODELS_SETTINGS_ENTRY } from './peer-settings.ts'
 import { PendingWriteDrain } from './abort-drain.ts'
@@ -1966,8 +1968,9 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // creation, so this keeps its original non-fatal disposition.
     ctx.on('agent/created', ({ agent }) => {
       try {
-        if (this.capabilities.skillEnabled() || this.engineering.skillEnabled() || agent.ctx.tools.get('skill', agent) === undefined) return
-        agent.ctx.tools.restrict({ deny: ['skill'] })
+        const tools = agent.ctx.get('tools')
+        if (this.capabilities.skillEnabled() || this.engineering.skillEnabled() || tools?.get('skill', agent) === undefined) return
+        tools.restrict({ deny: ['skill'] })
       } catch { /* fail-open: the skill denial must never veto agent creation */ }
     })
     // After a successful compaction, re-inject standing context (latest todo
@@ -2859,11 +2862,16 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   }
 
   /** Export reviewed project knowledge without drafts, rejected records, or database paths. 
+   *
    * @param sessionId - the Harness session this operation acts on.
-   * @returns the reviewable records, with drafts and rejected entries omitted.
+   * @returns the reviewable records, with drafts and rejected entries omitted, plus
+   *   `omitted`: the reviewed records the export cap left out. The store and the
+   *   free function both carry that count, and the declared Remote type must not
+   *   drop it — a UI that could not see it would read a truncated export as a
+   *   complete one, which is the exact failure the field exists to prevent.
    */
   @Remote('engineeringMemoryExport')
-  engineeringMemoryExport(sessionId: string): { readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly FreeCodeGoEngineeringMemoryDetail[] } {
+  engineeringMemoryExport(sessionId: string): { readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly FreeCodeGoEngineeringMemoryDetail[]; readonly omitted: number } {
     return engineeringMemoryExport(this.engineeringRemotesHost, sessionId)
   }
 
@@ -4219,18 +4227,29 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     const tools = this.toolRegistry()
     if (tools?.register === undefined) return
     try {
-      const disposers = reviewToolDefinitions({
-        forWorkspace: workspace => this.reviewInstallFor(workspace).then(install => install.port),
-        // Resolved per call rather than cached with the workspace's port: the deep
-        // reviewer opens a child in the calling agent's session, and one workspace's
-        // port is shared by every session in it. The setting is read here for the
-        // same reason the second-model route is — a toggle takes effect on the next
-        // review instead of on the next reload.
-        deepReviewer: agent => this.deepReviewerFor(agent),
-      }).map(tool => tools.register(tool))
-      const cleanups = disposers.map(dispose => typeof dispose === 'function' ? dispose : () => { dispose.dispose?.() })
+      // Registered one at a time rather than mapped, because a single refusal is
+      // not the batch's verdict: a map aborted on the first throw, so every tool
+      // after the refused one was never attempted *and* the handles of the tools
+      // that had registered were lost with the stack frame, leaving them mounted
+      // with nothing left to dispose them. Here each refusal is logged and the
+      // rest of the set still registers.
+      const cleanup = registerToolDefinitions(
+        tools,
+        reviewToolDefinitions({
+          forWorkspace: workspace => this.reviewInstallFor(workspace).then(install => install.port),
+          // Resolved per call rather than cached with the workspace's port: the deep
+          // reviewer opens a child in the calling agent's session, and one workspace's
+          // port is shared by every session in it. The setting is read here for the
+          // same reason the second-model route is — a toggle takes effect on the next
+          // review instead of on the next reload.
+          deepReviewer: agent => this.deepReviewerFor(agent),
+        }),
+        (name, error) => {
+          this.ctx.logger.warn(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`)
+        },
+      )
       this.ctx.effect(() => () => {
-        for (const cleanup of cleanups) cleanup()
+        cleanup()
         this.reviewInstalls.clear()
       }, 'freecodego: review tools')
     } catch (error) {
@@ -4724,18 +4743,14 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
         return { id, cwd }
       },
     })
-    for (const definition of definitions) {
-      try {
-        const dispose = tools.register(definition)
-        const cleanup = typeof dispose === 'function' ? dispose : () => { dispose.dispose?.() }
-        this.ctx.effect(() => () => { cleanup() }, `freecodego: ${definition.name}`)
-      } catch (error) {
-        // One failed registration must not remove the other three. *Which* one is
-        // gone has to be in the log: a worktree tool the model is never offered
-        // fails the same way as one that does not exist.
-        this.ctx.logger.warn(`freecodego: ${definition.name} was not registered: ${redactCredentialShapes(String(error))}`)
-      }
-    }
+    // One batch through the shared registrar: a refused tool is named in the log
+    // and the rest still mount, and every handle that did register is released
+    // together on teardown. *Which* one is gone has to be in the log — a worktree
+    // tool the model is never offered fails the same way as one that does not exist.
+    const cleanup = registerToolDefinitions(tools, definitions, (name, error) => {
+      this.ctx.logger.warn(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`)
+    })
+    this.ctx.effect(() => cleanup, 'freecodego: worktree tools')
   }
 
   /**
@@ -4790,6 +4805,13 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
           ...(outcome.fallbackReason === undefined ? {} : { fallbackReason: outcome.fallbackReason }),
         }
       },
+      // The child is created *with* its working directory, so a spawn that fails
+      // after isolation leaves a checkout and a registry entry with no session to
+      // own them. Released here, via the same session-worktree set that created it,
+      // rather than left for a user to find under `.freecodego/worktrees`.
+      discardIsolation: async (input) => {
+        await this.sessionWorktreesFor(input.workspaceRoot).exit({ sessionId: input.sessionId, remove: true })
+      },
       newSessionId: () => randomUUID(),
       callerOf: (exec) => {
         const agent = (exec as { readonly agent?: { readonly session?: { readonly header?: { readonly cwd?: string } } } } | undefined)?.agent
@@ -4800,9 +4822,16 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
       spawn: async (input) => {
         const parent = input.parent as {
           readonly id?: unknown
-          readonly ctx?: { readonly agents?: { create(request: unknown): Promise<{ readonly agent?: unknown }> } }
+          readonly ctx?: {
+            readonly agents?: { create(request: unknown): Promise<{ readonly agent?: unknown }> }
+            get?(name: string): unknown
+          }
         }
-        const agents = parent?.ctx?.agents
+        // An Agent scope does not implicitly inject Host services. Resolve its
+        // scoped registry through get(), retaining the property-only SDK seam.
+        const agents = (parent?.ctx?.get === undefined ? parent?.ctx?.agents : parent.ctx.get('agents')) as {
+          create(request: unknown): Promise<{ readonly agent?: unknown }>
+        } | undefined
         if (agents === undefined) throw new Error('this composition has no agent service, so a persona child cannot be started')
         const handle = await agents.create({
           sessionId: input.sessionId as SessionId,
@@ -4830,16 +4859,10 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
         }))
       },
     }, this.personaRuns)
-    for (const definition of definitions) {
-      try {
-        const dispose = tools.register(definition)
-        const cleanup = typeof dispose === 'function' ? dispose : () => { dispose.dispose?.() }
-        this.ctx.effect(() => () => { cleanup() }, `freecodego: ${definition.name}`)
-      } catch (error) {
-        // One failed registration must not remove the other.
-        this.ctx.logger.warn(`freecodego: ${definition.name} was not registered: ${redactCredentialShapes(String(error))}`)
-      }
-    }
+    const cleanup = registerToolDefinitions(tools, definitions, (name, error) => {
+      this.ctx.logger.warn(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`)
+    })
+    this.ctx.effect(() => cleanup, 'freecodego: persona tools')
   }
 
   /**
@@ -5198,7 +5221,12 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
             }),
             measured: snapshot.measured,
             totalTokens: snapshot.totalTokens,
-            categories: snapshot.categories.map(category => ({ id: category.id, label: category.label, tokens: category.tokens, chars: category.chars, share: category.share })),
+            categories: snapshot.categories.map(category => ({
+              id: category.id, label: category.label, tokens: category.tokens, chars: category.chars,
+              // Empty snapshots have no share. Harness rejects undefined-valued
+              // properties rather than silently dropping them during JSON encoding.
+              ...(category.share === undefined ? {} : { share: category.share }),
+            })),
             // The largest items only: the tree's job is to name the few things a
             // decision turns on, and a full node dump would be the same wall of
             // numbers this tool exists to replace.
@@ -5989,6 +6017,23 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
   @Remote('modelCategorySet')
   async modelCategorySet(input: { readonly key: string; readonly category?: FreeCodeGoModelCategory }): Promise<FreeCodeGoCapabilitySnapshot> {
     return modelCategorySet(this.engineRemotesHost, input)
+  }
+
+  /** Read every provider and model with its effective capacities and the layer that answered. 
+   * @returns the model-tuning snapshot the settings surface renders.
+   */
+  @Remote('modelTuningRead')
+  async modelTuningRead(): Promise<FreeCodeGoModelTuningSnapshot> {
+    return readModelTuning(this.ctx)
+  }
+
+  /** Write one provider- or model-level capacity/thinking edit into the user's Models document. 
+   * @param input - the edit to apply.
+   * @returns the refreshed model-tuning snapshot.
+   */
+  @Remote('modelTuningWrite')
+  async modelTuningWrite(input: FreeCodeGoModelTuningWrite): Promise<FreeCodeGoModelTuningSnapshot> {
+    return writeModelTuning(this.ctx, input)
   }
 
   /** Read automatic third-party plugin conflict protection state and repair history. 

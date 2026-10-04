@@ -51,6 +51,8 @@ import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { HookChainRuntime, type HookChainDispatchResult, type HookChainOutcome, type HookChainStatus } from './hooks/hook-chains.ts'
 import { toolDefinition as rawTool, type ToolDefinitionShape } from './tool-definition.ts'
+import { registerToolDefinitions } from './tool-registration.ts'
+import { redactCredentialShapes } from './secret-scan.ts'
 import { CRON_SEARCH_HORIZON_YEARS, describeCronExpression, parseCronExpression, cronFixedRateSeconds, nextCronOccurrences, type CronOccurrence } from './scheduler/cron.ts'
 import type { FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate } from './types.ts'
 
@@ -269,6 +271,7 @@ export function automationSettingsPatch(value: unknown): FreeCodeGoAutomationSet
 /** Declarative failure recovery (hook chains) plus the calendar planner for one Host. */
 export class FreeCodeGoAutomationRuntime {
   private readonly tools: ToolService | undefined
+  private readonly logger: { warn(message: string): void } | undefined
   private readonly registrations: ToolRegistration[] = []
   private readonly chains: HookChainRuntime
   private readonly now: () => number
@@ -298,10 +301,11 @@ export class FreeCodeGoAutomationRuntime {
   constructor(
     private readonly host: AutomationEventHost | undefined,
     private readonly settings: AutomationSettingsScope | undefined,
-    ctx: { get(name: string): unknown },
+    ctx: { get(name: string): unknown; logger?: { warn(message: string): void } },
     options: AutomationRuntimeOptions = {},
   ) {
     this.tools = ctx.get('tools') as ToolService | undefined
+    this.logger = ctx.logger
     this.now = options.now ?? Date.now
     const collaborators = options.collaborators ?? {}
     this.chains = new HookChainRuntime({
@@ -358,7 +362,15 @@ export class FreeCodeGoAutomationRuntime {
     } catch (error) {
       // `JSON.parse` throws a `SyntaxError` and `configure` throws an `Error` on
       // every path that can reach here, so the message is always available.
-      this.configError = (error as Error).message
+      const message = (error as Error).message
+      // A read that finished after the runtime moved to another workspace is no
+      // longer about the ruleset this runtime answers to, so its failure is the
+      // caller's answer and not a new state: recording it would blame the current
+      // workspace for a file it does not own, and clearing the identity would make
+      // the current workspace's installed ruleset look uninstalled. The next load
+      // for this root re-attempts and reports the same error.
+      if (this.loadedFor !== root) return { configured: false, error: message }
+      this.configError = message
       // Nothing is installed for this read, and a half-applied attempt leaves the
       // runtime inert (`configure` is atomic), so the identity is dropped rather
       // than left describing a ruleset the runtime no longer holds: the next read
@@ -379,6 +391,12 @@ export class FreeCodeGoAutomationRuntime {
    * buys nothing.
    */
   private install(root: string, fingerprint: string, document: unknown): void {
+    // A load that lands after the runtime has claimed another workspace must not
+    // install: `loadedFor` is the workspace this runtime is currently answerable to,
+    // so a ruleset from a different one is the cross-repository recovery the reload
+    // exists to prevent. The next `ensureChainsFor` for this root reloads it — the
+    // superseded load's own promise still resolves, it just installs nothing.
+    if (this.loadedFor !== root) return
     if (this.installedRoot === root && this.installedFingerprint === fingerprint) return
     this.chains.configure(document)
     this.installedRoot = root
@@ -598,15 +616,15 @@ export class FreeCodeGoAutomationRuntime {
     // Annotated rather than inferred: without it `type: 'object'` widens to
     // `string`, which no longer satisfies the registry's JSON-schema node.
     const output: ToolDefinitionShape['output'] = { schema: { type: 'object', additionalProperties: true }, render: (_args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }] }
-    this.registrations.push(this.tools.register(rawTool({
+    const scheduleTool = rawTool({
       name: 'freecodego_schedule_plan',
       description: 'Read a calendar rule and answer when it next falls, so the Harness can be told to schedule it. Give a five-field cron expression (minute hour day-of-month month day-of-week) or an alias such as @daily, and use the returned selectors with the Harness schedule tool: a fixed-rate rule reports fixedRateSeconds and needs one every_seconds reminder, while any other rule reports its occurrences as at selectors because the Harness has no calendar day. Creating, listing, and deleting a reminder is the Harness schedule tool\'s job, not this one\'s.',
       parameters: { type: 'object', additionalProperties: false, required: ['cron'], properties: { cron: { type: 'string' }, count: { type: 'number', description: `How many upcoming occurrences to report, at most ${MAX_SCHEDULE_PLAN_COUNT}.` } } },
       output,
       execute: async (args: { readonly cron: string; readonly count?: number }) => this.schedulePlan(args),
       presentCall: (args: { readonly cron?: string }) => ({ card: 'generic', title: `Schedule plan: ${args?.cron ?? 'cron'}` }),
-    })))
-    this.registrations.push(this.tools.register(rawTool({
+    })
+    const recoveryTool = rawTool({
       name: 'freecodego_recovery_status',
       description: 'Report the declarative failure-recovery rules loaded for this workspace, the guard windows in force, and how many actions have run or been skipped.',
       parameters: { type: 'object', additionalProperties: false, properties: {} },
@@ -616,6 +634,13 @@ export class FreeCodeGoAutomationRuntime {
         return this.status()
       },
       presentCall: () => ({ card: 'generic', title: 'Inspect failure-recovery rules' }),
-    })))
+    })
+    // One batch through the shared registrar. The two `this.tools.register` pushes
+    // this replaces each threw out of the async `registerTools` (called as
+    // `void this.registerTools()`), so a refusal of the second became an unhandled
+    // rejection *and* the tool after it was never attempted.
+    this.registrations.push(registerToolDefinitions(this.tools, [scheduleTool, recoveryTool], (name, error) => {
+      this.logger?.warn(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`)
+    }))
   }
 }

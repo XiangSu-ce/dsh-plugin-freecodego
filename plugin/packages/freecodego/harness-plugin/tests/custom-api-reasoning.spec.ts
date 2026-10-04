@@ -5,7 +5,7 @@
  * A custom endpoint's models are hand-declared, so nothing in `llm-pi-ai`'s
  * catalog says they can think and the picker offers no effort row. These cases
  * pin the three rules that make the fix safe to run on every settings change:
- * the four declared levels plus the provider default, an entry's own answer
+ * the six declared levels plus the provider default, an entry's own answer
  * wins, and a model the adapter already reports reasoning for is left alone.
  */
 
@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { syncCustomApiReasoning } from '../src/custom-api-reasoning.ts'
 
 /** The levels the module is expected to declare, in escalation order. */
-const DECLARED = { off: null, low: 'low', medium: 'medium', high: 'high' }
+const DECLARED = { off: null, low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' }
 
 /** The settings service as the module reads it, with the write recorded for assertions. */
 interface SettingsStub {

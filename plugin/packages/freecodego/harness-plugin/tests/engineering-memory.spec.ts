@@ -757,3 +757,25 @@ describe('memory tag screening', () => {
     store.close()
   })
 })
+
+describe('memory whole-field screening', () => {
+  it('refuses a title or body that is nothing but a bare credential', async () => {
+    // `screenMemoryTags` refuses a tag whose entire value is a digest or an
+    // opaque token, and the canonical `screenMemoryForPersistence` refuses the
+    // same shape in the title and the body (its `opaqueFields`). The store's own
+    // text screen did neither: `screenMemoryCredentials` only redacts the
+    // shape-only *tier*, which a bare hex blob has no vendor prefix to reach, so
+    // the value was written verbatim. The tag test above says the same string
+    // "in the title or the body" is refused, and this is that half: without it a
+    // memory that is entirely a credential is stored, recalled into every later
+    // conversation, and then refused by the export path that renders it — a
+    // record the module wrote and cannot read back.
+    const directory = await mkdtemp(join(tmpdir(), 'freecodego-memory-opaque-'))
+    directories.push(directory)
+    const store = new EngineeringMemoryStore(directory)
+    await store.open()
+    expect(() => store.saveDraft({ cwd: directory, title: 'deadbeefdeadbeefdeadbeefdeadbeef', body: 'A normal body that records a decision.' })).toThrow(/suspected secret/i)
+    expect(() => store.saveDraft({ cwd: directory, title: 'A normal title', body: 'deadbeefdeadbeefdeadbeefdeadbeef' })).toThrow(/suspected secret/i)
+    store.close()
+  })
+})

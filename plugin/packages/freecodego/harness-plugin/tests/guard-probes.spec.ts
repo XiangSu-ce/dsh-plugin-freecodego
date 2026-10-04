@@ -1095,9 +1095,23 @@ const PROBES: readonly GuardProbe[] = [
     // while the POSIX spelling it does list can never appear on that platform.
     name: 'a shell result is reclaimable on a platform whose shell is not spelled bash',
     file: 'src/cache-cold.ts',
-    from: "  'shell', 'bash', 'pwsh', 'exec_command', 'run_command',",
-    to: "  'shell', 'bash', 'exec_command', 'run_command',",
+    from: "  'shell', 'bash', 'pwsh', 'exec', 'exec_command', 'run_command',",
+    to: "  'shell', 'bash', 'exec', 'exec_command', 'run_command',",
     specs: ['packages/freecodego/harness-plugin/tests/cache-cold.spec.ts'],
+  },
+  {
+    // The two tables answer one question — "is this a shell?" — for two consumers:
+    // `CLEARABLE_TOOL_KINDS` decides whether a shell result may be reclaimed, the
+    // `Bash` family whether a hook reaches a spelling. `exec` was in the family and
+    // not here while its siblings `exec_command`/`run_command` were in both, so a
+    // shell arriving under the bare `exec` spelling was invisible to the whole
+    // reclamation policy. The equal-set test is what makes the name load-bearing, and
+    // the probe is what proves it: dropping `exec` here has to fail that test.
+    name: 'the cold-cache list and the hook shell family agree on every shell spelling',
+    file: 'src/cache-cold.ts',
+    from: "  'shell', 'bash', 'pwsh', 'exec', 'exec_command', 'run_command',",
+    to: "  'shell', 'bash', 'pwsh', 'exec_command', 'run_command',",
+    specs: ['packages/freecodego/harness-plugin/tests/hook-surface.spec.ts'],
   },
   {
     // `compileMatcher` anchors its pattern, so a family missing a name does not

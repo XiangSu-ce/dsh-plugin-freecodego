@@ -10,7 +10,7 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAntSeedStatus, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareLoginRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAntSeedStatus, FreeCodeGoBackendSnapshot, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoEngineId, FreeCodeGoGuardSettingsStatus, FreeCodeGoGuardSettingsUpdate, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, FreeCodeGoTrustStatus, FreeCodeGoLogfareLoginRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoPluginConflictStatus, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillDetail, HeadroomStats, WorkBuddyBrowserLogin, WorkBuddyInternationalStatus, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, ProjectConfigReport, FreeCodeGoWebSearchBinding, FreeCodeGoWebSearchBindingStatus, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, FreeCodeGoModelTuningSnapshot, FreeCodeGoModelTuningWrite } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import type { EngineeringMemoryIndex } from './settings-tab.tsx'
 import freeCodeGoRemote from '@deepseek-ai/dsh-freecodego-harness-plugin/remote'
 import { CAPABILITY_CHANGE_EVENT, ENGINEERING_CHANGE_EVENT, EngineeringSettingsSection, FreeCodeGoSettingsSection, McpSettingsSection, PluginConflictNotice, SkillSettingsSection, type EngineeringLoopStatus, type EngineeringSettings, type EngineeringStatus, type EngineeringTeamDecision, type EngineeringTeamImplementation, type EngineeringTeamJob, type EngineeringTeamReport, type EngineeringTeamVerification } from './settings-tab.tsx'
@@ -141,6 +141,9 @@ export const zh = {
   designIntro: '按需开启设计能力。每项功能单独开关，未开启时不占用对话上下文；开启后它提供的工具与技能再按需加载。',
   designMasterOn: '总开关已开启',
   designMasterOff: '总开关已关闭',
+  designNoFeatureOn: '总开关已开启，但下面每一项都还没开——这次会话不会加载任何设计工具或技能。打开你要用的那一项即可。',
+  designSessionTools: '本次会话已注册的设计工具',
+  designSessionSkills: '本次会话已挂载的设计技能',
   designTools: '提供的工具',
   designLoading: '正在读取设计功能状态…',
   designLoadFailed: '无法读取设计功能状态。',
@@ -271,6 +274,9 @@ export const en = {
   designIntro: 'Turn design capabilities on as you need them. Each one has its own switch and costs no conversation context until it is enabled; its tools and Skills load on demand from there.',
   designMasterOn: 'Master switch on',
   designMasterOff: 'Master switch off',
+  designNoFeatureOn: 'The master switch is on, but every capability below is still off — this session loads no design tools or Skills. Switch on the one you want to use.',
+  designSessionTools: 'Design tools registered this session',
+  designSessionSkills: 'Design Skills mounted this session',
   designTools: 'Tools provided',
   designLoading: 'Reading design capability status…',
   designLoadFailed: 'Could not read the design capability status.',
@@ -761,7 +767,7 @@ export function apply(ctx: ClientContext): void {
   const engineeringMemoryReview = (sessionId: string, request: { readonly id: string; readonly decision: 'reviewed' | 'rejected' | 'superseded' }): Promise<RemoteResult<{ readonly id: string; readonly title: string; readonly kind: string; readonly trust: 'captured' | 'draft' | 'reviewed' | 'rejected' | 'superseded'; readonly projectId: string; readonly createdAt: number; readonly detailTokens: number; readonly body: string; readonly tags: readonly string[]; readonly sourceEngine?: string }>> => backendCall('engineeringMemoryReview', sessionId, request)
   const engineeringMemoryDelete = (sessionId: string, id: string): Promise<RemoteResult<{ readonly deleted: true }>> => backendCall('engineeringMemoryDelete', sessionId, id)
   const engineeringMemoryPurgeProject = (sessionId: string, request?: { readonly includeReviewed?: boolean }): Promise<RemoteResult<{ readonly deleted: number }>> => backendCall('engineeringMemoryPurgeProject', sessionId, request)
-  const engineeringMemoryExport = (sessionId: string): Promise<RemoteResult<{ readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly { readonly id: string; readonly title: string; readonly kind: string; readonly trust: 'captured' | 'draft' | 'reviewed' | 'rejected' | 'superseded'; readonly projectId: string; readonly createdAt: number; readonly detailTokens: number; readonly body: string; readonly tags: readonly string[]; readonly sourceEngine?: string }[] }>> => backendCall('engineeringMemoryExport', sessionId)
+  const engineeringMemoryExport = (sessionId: string): Promise<RemoteResult<{ readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly { readonly id: string; readonly title: string; readonly kind: string; readonly trust: 'captured' | 'draft' | 'reviewed' | 'rejected' | 'superseded'; readonly projectId: string; readonly createdAt: number; readonly detailTokens: number; readonly body: string; readonly tags: readonly string[]; readonly sourceEngine?: string }[]; readonly omitted: number }>> => backendCall('engineeringMemoryExport', sessionId)
   const engineeringMemoryBackup = (sessionId: string): Promise<RemoteResult<{ readonly id: string; readonly createdAt: number; readonly bytes: number }>> => backendCall('engineeringMemoryBackup', sessionId)
   const engineeringMemoryRetentionSweep = (sessionId: string, retentionDays?: number): Promise<RemoteResult<{ readonly retentionDays: number; readonly deletedMemories: number; readonly deletedOutboxEntries: number }>> => backendCall('engineeringMemoryRetentionSweep', sessionId, retentionDays)
   const engineeringMemoryConsolidate = (sessionId: string): Promise<RemoteResult<MemoryConsolidation>> => backendCall<MemoryConsolidation>('engineeringMemoryConsolidate', sessionId)
@@ -1175,14 +1181,6 @@ export function apply(ctx: ClientContext): void {
       setLocalCapability: async (key: 'voiceInputEnabled' | 'sessionDeleteEnabled', value: boolean): Promise<void> => {
         await updateFreeCodeGoSettings({ [key]: value })
       },
-      // The third-party-reasoning switch. A direct settings write rather than a
-      // Remote call: the Host reads the value from its own live configuration and
-      // re-runs the pass on this document's change event, so the switch needs no
-      // second entry point — and an older Host with no such field simply keeps the
-      // default the schema declares.
-      customApiReasoningSet: async (enabled: boolean): Promise<void> => {
-        await updateFreeCodeGoSettings({ customApiReasoningEnabled: enabled })
-      },
       setModelCategoryDirect: async (key: string, category: 'text' | 'image' | 'video' | 'audio'): Promise<void> => {
         const value = await readFreeCodeGoSettings()
         const existing = value.modelCategories !== null && typeof value.modelCategories === 'object' && !Array.isArray(value.modelCategories)
@@ -1191,6 +1189,12 @@ export function apply(ctx: ClientContext): void {
         await updateFreeCodeGoSettings({ modelCategories: { ...existing, [key]: category } })
       },
       modelCategorySet: (input: { readonly key: string; readonly category?: 'text' | 'image' | 'video' | 'audio' }) => backendCall<CapabilitySnapshot>('modelCategorySet', input),
+      // The provider/model tuning surface reads and writes through the Host,
+      // which owns both the `llm` registry and the Models settings document: the
+      // browser cannot see either, and a wholesale write from here would have to
+      // restate the API keys it never received.
+      modelTuningRead: () => backendCall<FreeCodeGoModelTuningSnapshot>('modelTuningRead'),
+      modelTuningWrite: (input: FreeCodeGoModelTuningWrite) => backendCall<FreeCodeGoModelTuningSnapshot>('modelTuningWrite', input),
       logfareSetKey,
       accountDetail,
       clineAddAccount,

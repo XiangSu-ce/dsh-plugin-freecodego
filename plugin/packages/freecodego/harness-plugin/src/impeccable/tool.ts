@@ -340,11 +340,18 @@ async function runBuiltin(
     for (const finding of report.findings) found.push({ ...finding, file: file.path })
   }
 
-  const selected = found
+  const inCategory = found
     .filter(finding => options.category === undefined || finding.category === options.category)
-    // Advisories are observations; a caller that did not ask for them gets the
-    // same view upstream's exit code describes.
-    .filter(finding => options.includeAdvisories || finding.severity !== 'advisory')
+  // Advisories are observations; a caller that did not ask for them gets the
+  // same view upstream's exit code describes.
+  const selected = inCategory.filter(finding => options.includeAdvisories || finding.severity !== 'advisory')
+  // Counted against the *category-filtered* set, not against every finding: a
+  // finding the category removed was not withheld because it was an advisory, and
+  // a note that said so would send the caller to `include_advisories` for a rule
+  // their own `category` excluded — the wrong fix for the missing finding.
+  const advisoryWithheld = options.includeAdvisories
+    ? 0
+    : inCategory.reduce((total, finding) => total + (finding.severity === 'advisory' ? 1 : 0), 0)
 
   return {
     result: {
@@ -360,7 +367,7 @@ async function runBuiltin(
         of: IMPECCABLE_UPSTREAM.ruleCount,
         note: `The built-in subset covers the rules a source file can decide, ${String(rules.size)} of upstream's ${String(IMPECCABLE_UPSTREAM.ruleCount)}. The rest need a rendered page or a document model, and an installed engine answers all of them.`,
       },
-      notes: found.length === selected.length ? [] : [`${String(found.length - selected.length)} advisory finding(s) were withheld; pass include_advisories to see them.`],
+      notes: advisoryWithheld === 0 ? [] : [`${String(advisoryWithheld)} advisory finding(s) were withheld; pass include_advisories to see them.`],
     },
   }
 }

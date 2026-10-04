@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { FreeCodeGoDesignRegistry, normalizeDesignFeatures, normalizeDesignSettings } from '../src/design/registry.ts'
 import type { FreeCodeGoDesignStatus } from '../src/design/types.ts'
-import { DESIGN_FEATURES, HYPERFRAMES_FEATURE, REACTBITS_FEATURE, TASTE_FEATURE } from '../src/design/features.ts'
+import { CRAFT_FEATURE, DESIGN_FEATURES, HYPERFRAMES_FEATURE, REACTBITS_FEATURE, TASTE_FEATURE, UIUX_CATALOGUE_FEATURE } from '../src/design/features.ts'
 import { forgetMountedSkillRoots, mountedPluginSkillRoots } from '../src/mounted-skill-roots.ts'
 
 /** One mount the fake fiber recorded. */
@@ -33,7 +33,7 @@ interface Mount {
  * mount is still pending — the window no single-threaded reading of the code
  * would otherwise reach.
  */
-function fakeContext(options: { readonly failMount?: boolean; readonly mountGate?: Promise<void> } = {}): {
+function fakeContext(options: { readonly failMount?: boolean; readonly mountGate?: Promise<void>; readonly failToolRegister?: string } = {}): {
   readonly ctx: {
     effect(factory: () => () => void, name?: string): unknown
     plugin(definition: unknown, config: unknown): Promise<{ dispose(): Promise<void> }>
@@ -76,7 +76,17 @@ function fakeContext(options: { readonly failMount?: boolean; readonly mountGate
       // The disposer removes the name, so a tool that stayed registered after the
       // switch went off is visible here rather than only in the status.
       get: (name: string) => name === 'tools'
-        ? { register: (tool: { readonly name?: string }) => { toolNames.push(tool.name ?? ''); return () => { const at = toolNames.indexOf(tool.name ?? ''); if (at >= 0) toolNames.splice(at, 1) } } }
+        ? {
+            register: (tool: { readonly name?: string }) => {
+              const toolName = tool.name ?? ''
+              // A named registration that throws before it is tracked models a
+              // service that refuses one tool while accepting the others. It must
+              // not leave the accepted ones unowned.
+              if (options.failToolRegister === toolName) throw new Error(`${toolName} exploded`)
+              toolNames.push(toolName)
+              return () => { const at = toolNames.indexOf(toolName); if (at >= 0) toolNames.splice(at, 1) }
+            },
+          }
         : undefined,
     },
     mounts,
@@ -226,6 +236,109 @@ describe('the design pack', () => {
     expect(status.features[0]!.detail).toContain('mount exploded')
   })
 
+  it('retries a failed mount when the same switch is asserted again, instead of replaying the error', async () => {
+    // A mount that failed once is not a mount that must stay failed. Asserting the
+    // switch again is the user asking for it again, and the pack has to try. The
+    // stored error used to be part of the "unchanged" test, so the identical root
+    // list short-circuited the retry and the failure was permanent for the life of
+    // the process: a transient mount error read as a broken build with no way back.
+    const options: { failMount?: boolean } = { failMount: true }
+    world = fakeContext(options)
+    registry = new FreeCodeGoDesignRegistry(world.ctx as never, settings.scope)
+    registry.start()
+    const failed = await registry.setFeatureEnabled(HYPERFRAMES_FEATURE.id, true)
+    expect(failed.skillsError).toBe('mount exploded')
+    expect(world.mounts).toHaveLength(0)
+
+    // The cause is gone; the same switches must now mount rather than replay the
+    // remembered error forever.
+    options.failMount = false
+    const retried = await registry.setFeatureEnabled(HYPERFRAMES_FEATURE.id, true)
+    expect(retried.skillsError).toBeUndefined()
+    expect(retried.skillsReady).toBe(true)
+    expect(world.mounts).toHaveLength(1)
+  })
+
+  it('rolls back and stays retryable when a tool registration throws', async () => {
+    // The registry disposes the old tool set, then registers the new one. A
+    // registration that throws used to escape with the tools it had already
+    // registered still unowned — their handles died with the thrown call, so the
+    // switch could never take them away — and with `registeredTools` still naming
+    // the set just disposed, so the page reported tools it no longer held. Both are
+    // the switch and the registered surface disagreeing, which is the one state the
+    // page must not show.
+    const options: { failToolRegister?: string } = {}
+    world = fakeContext(options)
+    registry = new FreeCodeGoDesignRegistry(world.ctx as never, settings.scope)
+    registry.start()
+
+    // A tool-only feature: no Skill root, so the mount is not in play here.
+    await registry.setFeatureEnabled(UIUX_CATALOGUE_FEATURE.id, true)
+    const uiuxTool = UIUX_CATALOGUE_FEATURE.tools[0]!
+    expect(world.toolNames).toEqual([uiuxTool])
+
+    // A second tool-only feature changes the desired set, so the next reconcile
+    // re-registers — and the craft tool refuses.
+    const craftTool = CRAFT_FEATURE.tools[0]!
+    options.failToolRegister = craftTool
+    // The failure is recorded, not thrown: the settings write still landed, and the
+    // status carries the reason. Throwing here would also have taken down the mount
+    // that has nothing to do with the tool service.
+    const failed = await registry.setFeatureEnabled(CRAFT_FEATURE.id, true)
+    expect(failed.toolsError).toBe(`${craftTool} exploded`)
+
+    // No leak: the tool registered before the throw was rolled back, not abandoned.
+    expect(world.toolNames).toEqual([])
+    // No lie: the page does not list a tool that is gone.
+    expect((await registry.status()).registeredTools).toEqual([])
+
+    // The fault clears, and the same switches must now register both tools rather
+    // than short-circuit on bookkeeping that recorded an attempt that failed.
+    delete options.failToolRegister
+    await registry.setFeatureEnabled(CRAFT_FEATURE.id, true)
+    expect([...world.toolNames].sort()).toEqual([uiuxTool, craftTool].sort())
+  })
+
+  it('still mounts when tool registration fails, and names only the tool failure', async () => {
+    // The two halves have different dependencies: a tool needs the tools service,
+    // a Skill needs an asset root. A tool failure must not stop the mount, and the
+    // status must not report it as a mount failure — one shared error field would
+    // read "the whole pack is down" for a build whose Skills are fine.
+    const tools = HYPERFRAMES_FEATURE.tools
+    world = fakeContext({ failToolRegister: tools[0]! })
+    registry = new FreeCodeGoDesignRegistry(world.ctx as never, settings.scope)
+    registry.start()
+    const status = await registry.setFeatureEnabled(HYPERFRAMES_FEATURE.id, true)
+
+    // The mount was still attempted — and succeeded — despite the tool refusal.
+    expect(world.mounts).toHaveLength(1)
+    expect(status.skillsReady).toBe(true)
+    expect(status.skillsError).toBeUndefined()
+    // The tool failure is reported on its own axis.
+    expect(status.toolsError).toBe(`${tools[0]!} exploded`)
+    expect(status.registeredTools).toEqual([])
+    const row = status.features.find(feature => feature.id === HYPERFRAMES_FEATURE.id)!
+    expect(row.detail).toContain('工具注册失败')
+    expect(row.detail).not.toContain('Skill 挂载失败')
+  })
+
+  it('keeps the tools when only the mount fails, and names only the mount', async () => {
+    // The mirror of the case above: the mount is what broke, and the tools it does
+    // not depend on are still registered and still reported.
+    world = fakeContext({ failMount: true })
+    registry = new FreeCodeGoDesignRegistry(world.ctx as never, settings.scope)
+    registry.start()
+    const status = await registry.setFeatureEnabled(HYPERFRAMES_FEATURE.id, true)
+
+    expect(status.registeredTools).toEqual(HYPERFRAMES_FEATURE.tools)
+    expect(status.toolsError).toBeUndefined()
+    expect(status.skillsReady).toBe(false)
+    expect(status.skillsError).toBe('mount exploded')
+    const row = status.features.find(feature => feature.id === HYPERFRAMES_FEATURE.id)!
+    expect(row.detail).toContain('Skill 挂载失败')
+    expect(row.detail).not.toContain('工具注册失败')
+  })
+
   it('unmounts everything when the master switch goes off but keeps the choices', async () => {
     registry.start()
     await registry.setFeatureEnabled(HYPERFRAMES_FEATURE.id, true)
@@ -271,6 +384,33 @@ describe('the design pack', () => {
     // moment a name is added to the catalogue ahead of its implementation.
     expect(world.toolNames).toEqual([...HYPERFRAMES_FEATURE.tools])
     expect(status.features[0]!.tools).toEqual([...HYPERFRAMES_FEATURE.tools])
+  })
+
+  it('reports the size of the Skills mount, not only that it happened', async () => {
+    // The page's session reading. A row that says "enabled" and a mount that
+    // says "17 Skills" are different statements, and this pins the second.
+    registry.start()
+    const hyperframes = await registry.setFeatureEnabled(HYPERFRAMES_FEATURE.id, true)
+    // 17 directory-shaped Skills under `assets/design/skills`.
+    expect(hyperframes.mountedSkills).toBe(17)
+    expect(hyperframes.registeredTools).toEqual([...HYPERFRAMES_FEATURE.tools])
+    // A second root adds its own, and the React Bits root is the loose-`SKILL.md`
+    // shape a directory-only count reports as zero.
+    const both = await registry.setFeatureEnabled(REACTBITS_FEATURE.id, true)
+    expect(both.mountedSkills).toBe(18)
+    // And the count follows the switches back down rather than sticking.
+    const off = await registry.setEnabled(false)
+    expect(off.mountedSkills).toBe(0)
+    expect(off.registeredTools).toEqual([])
+  })
+
+  it('does not count a document that is not a Skill', async () => {
+    // `assets/design/taste` holds 13 Skill directories and one loose
+    // `PROVENANCE.md`. The provider ignores the latter for want of frontmatter,
+    // so a count that only checked the extension would say 14.
+    registry.start()
+    const status = await registry.setFeatureEnabled(TASTE_FEATURE.id, true)
+    expect(status.mountedSkills).toBe(13)
   })
 
   it('withdraws the tools when the master switch goes off', async () => {

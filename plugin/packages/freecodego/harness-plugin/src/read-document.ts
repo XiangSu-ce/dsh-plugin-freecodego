@@ -77,14 +77,14 @@ const DEFAULT_WINDOW = 2_000
  * unresolvable path keeps the lexical decision standing (the file will fail
  * to open anyway).
  */
-async function resolveDocumentPath(raw: string): Promise<string> {
+async function resolveDocumentPath(raw: string, cwd: string): Promise<string> {
   const trimmed = raw.trim()
   if (trimmed === '') throw new Error('file_path must be a non-empty string')
   let candidate = trimmed
   if (candidate === '~' || candidate.startsWith('~/') || candidate.startsWith('~\\')) {
     candidate = resolve(homedir(), candidate.slice(2))
   }
-  if (!isAbsolute(candidate)) candidate = resolve(process.cwd(), candidate)
+  if (!isAbsolute(candidate)) candidate = resolve(cwd, candidate)
   try {
     return await realpath(candidate)
   } catch {
@@ -880,6 +880,7 @@ export interface ReadDocumentArgs {
 /** The execution context `read_document` receives from the Host. */
 export interface ReadDocumentExec {
   readonly signal?: AbortSignal
+  readonly agent?: { readonly session?: { readonly header?: { readonly cwd?: string } } }
 }
 
 /** The result `read_document` returns once a document was read. */
@@ -955,7 +956,9 @@ export function readDocumentToolDefinition(): ReadDocumentToolDefinition {
     }),
     async execute(args: ReadDocumentArgs, exec: ReadDocumentExec) {
       const rawPath = typeof args?.file_path === 'string' ? args.file_path : ''
-      const resolved = await resolveDocumentPath(rawPath)
+      const sessionCwd = exec?.agent?.session?.header?.cwd
+      const cwd = typeof sessionCwd === 'string' && sessionCwd.trim() !== '' ? sessionCwd : process.cwd()
+      const resolved = await resolveDocumentPath(rawPath, cwd)
       if (isCredentialPath(rawPath) || isCredentialPath(resolved)) {
         throw new Error('Blocked by the FreeCodeGo credential guard: this path looks like a credential or secret file. Ask the user for the needed value instead of reading it.')
       }

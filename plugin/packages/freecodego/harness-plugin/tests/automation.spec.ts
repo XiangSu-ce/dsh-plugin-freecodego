@@ -229,6 +229,34 @@ describe('automation hook chains', () => {
     expect(burst.map(result => result.fired)).toEqual([['second-only'], ['second-only'], ['second-only']])
   })
 
+  it('does not let a superseded workspace load install its rules over the current one', async () => {
+    // Two loads can be in flight at once: a tool failure for one workspace starts a
+    // read, and a turn-end for another claims the runtime before that read finishes.
+    // The slower load is then no longer about the ruleset this runtime answers to, so
+    // installing it would leave the runtime bound to `empty` while running
+    // `withRules`' rules — the cross-repository recovery the reload exists to stop.
+    const withRules = await workspace()
+    const empty = await workspace()
+    await mkdir(join(withRules, '.freecodego'), { recursive: true })
+    await writeFile(join(withRules, HOOK_CHAINS_RELATIVE_PATH), JSON.stringify({
+      defaultCooldownMs: 0,
+      defaultDedupWindowMs: 0,
+      rules: [{ id: 'leaked', cooldownMs: 0, dedupWindowMs: 0, actions: [{ kind: 'notify_team' }] }],
+    }), 'utf8')
+    const runtime = new FreeCodeGoAutomationRuntime(undefined, undefined, hostDouble(undefined), { now: () => 1_000 })
+
+    // `withRules` has a file to read, so its install lands after `empty`'s — which has
+    // no file and installs synchronously.
+    const slow = runtime.loadHookChains(withRules)
+    await runtime.loadHookChains(empty)
+    await slow
+
+    // The runtime is bound to `empty` now, so its rules are `empty`'s (none) and a
+    // dispatch for it must not fire the rules of the workspace it left.
+    expect(runtime.status().hookChains.ruleCount).toBe(0)
+    expect((await runtime.dispatchToolFailure('Edit', empty)).fired).toEqual([])
+  })
+
   it('runs a collaborator when the composition supplies one', async () => {
     const directory = await workspace()
     await mkdir(join(directory, '.freecodego'), { recursive: true })

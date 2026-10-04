@@ -77,9 +77,21 @@ import { tokensFromChars } from './token-estimate.ts'
  * this list, so on that platform command output — the payload the list exists
  * for — was filtered out of every one of them and `reclaimedTokens` stayed 0.
  *
- * The inert names further down (`exec_command`, `run_command`, `cat`, `find`,
- * `list_files`) stay on purpose: they are spellings other agents use, and a name
- * with no registration here is inert while a missing one is a hole.
+ * The inert names further down (`exec`, `exec_command`, `run_command`, `cat`,
+ * `find`, `list_files`) stay on purpose: they are spellings other agents use, and
+ * a name with no registration here is inert while a missing one is a hole. This is
+ * the same policy the shell family in `hooks/surface.ts` applies, and the two lists
+ * are pinned equal by `hook-surface.spec.ts`, because they answer the same question
+ * for two consumers. `exec` was in that family and not here while its siblings
+ * `exec_command`/`run_command` were in both — the "one spelling reached, the sibling
+ * not" asymmetry one name over, and the kind the equal-set test now catches.
+ *
+ * `local_shell` is deliberately absent, here and in the shell family. It is a
+ * guard-only spelling: `tool-guards.ts`'s `SHELL_TOOL_NAMES` carries it because a
+ * broader guard vocabulary can only add a refusal, but no tool in this Host
+ * registers under that name — `dsh-tool-bash` and `dsh-tool-pwsh` register `bash`
+ * and `pwsh`, and `native-tool-guard.ts` projects a Codex approval as `shell` — so
+ * no result can arrive under it and a name kept here would be inert twice over.
  *
  * The last name in the reader group is the one this plugin registers itself:
  * `read_document` is where a PDF's or a notebook's text enters the transcript
@@ -92,7 +104,7 @@ import { tokensFromChars } from './token-estimate.ts'
  */
 export const CLEARABLE_TOOL_KINDS: readonly string[] = [
   'read', 'read_file', 'file_read', 'read_document', 'cat',
-  'shell', 'bash', 'pwsh', 'exec_command', 'run_command',
+  'shell', 'bash', 'pwsh', 'exec', 'exec_command', 'run_command',
   'grep', 'search', 'glob', 'find', 'list_files',
   'web_fetch', 'web_search', 'fetch',
 ]

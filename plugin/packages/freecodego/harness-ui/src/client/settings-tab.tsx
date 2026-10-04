@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type FormEvent, type ReactNode 
 import { decideMediaDefault } from './media-default-preference.ts'
 import { formatAmountInCurrency, formatMoney, roundUpCurrency } from './money-format.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareLoginRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoAntSeedStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
+import type { AgnesStatus, ClineAccountInfo, ClineDeviceLogin, ClineLoginPoll, ClineStatus, DeferredToolStatus, FreeCodeGoMediaToolStatus, FreeCodeGoAutomationSettings, FreeCodeGoAutomationSettingsUpdate, FreeCodeGoVyceStatus, FreeCodeGoDeviceSessions, FreeCodeGoTrustStatus, FreeCodeGoOAuthProvider, FreeCodeGoEngineSnapshot, FreeCodeGoEngineeringCheckpoint as EngineeringCheckpoint, FreeCodeGoEngineeringCheckpointDiff as EngineeringCheckpointDiff, FreeCodeGoEngineeringCheckpointRestoreResult as EngineeringCheckpointRestoreResult, FreeCodeGoBackendSnapshot, FreeCodeGoEngineeringEvalReport, FreeCodeGoEngineeringMemoryRecall, FreeCodeGoEngineeringSkillDraftResult, FreeCodeGoEngineeringSpecBundle, FreeCodeGoGuardSettingsStatus, FreeCodeGoSandboxMode, FreeCodeGoSandboxStatus, WorkBuddyBrowserLogin, WorkBuddyLoginPoll, QoderBrowserLogin, QoderLoginPoll, QoderStatus, TraeModel, TraeStatus, FreeCodeGoCheckinReport, FreeCodeGoGuardSettingsUpdate, FreeCodeGoInspectReport, FreeCodeGoLogfareLoginRequest, FreeCodeGoLogfareStatus, FreeCodeGoNvidiaStatus, FreeCodeGoAntSeedStatus, FreeCodeGoPlanReviewRequest, FreeCodeGoPlanReviewSurface, FreeCodeGoModelTuning, FreeCodeGoModelTuningSnapshot, FreeCodeGoModelTuningWrite, FreeCodeGoReasoningLevel, FreeCodeGoPluginConflictStatus, FreeCodeGoPluginUpdateStatus, FreeCodeGoRegistrationRequest, FreeCodeGoSenseNovaStatus, FreeCodeGoSkillPackStatus, FreeCodeGoSkillPlacement, FreeCodeGoSkillPlacements, HeadroomStats, WorkBuddyInternationalAccountInfo, WorkBuddyInternationalStatus, MemoryConsolidation, MemoryManifest, MemorySessionScope, SessionReclaim, FreeCodeGoReviewStartRequest, FreeCodeGoReviewStatus, FreeCodeGoReviewUpdate, FreeCodeGoSecondModelRoute, FreeCodeGoSecondModelStatus, FreeCodeGoSecondModelUpdate, FreeCodeGoSpeechRouteInput, FreeCodeGoSpeechStatus, FreeCodeGoSpeechTest, ProjectConfigReport } from '@deepseek-ai/dsh-freecodego-harness-plugin'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, InjectFace, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
@@ -1046,9 +1046,12 @@ interface Injected {
    * own live configuration and re-runs the declaration pass on this document's
    * change event, so the switch has no second entry point to keep in step.
    */
-  readonly customApiReasoningSet?: (enabled: boolean) => Promise<void>
   readonly setModelCategoryDirect?: (key: string, category: ModelCategory) => Promise<void>
   readonly modelCategorySet?: (input: { readonly key: string; readonly category?: ModelCategory }) => Promise<RemoteResult<CapabilitySnapshot>>
+  /** Read every provider and model with its effective capacities and thinking levels. */
+  readonly modelTuningRead?: () => Promise<RemoteResult<FreeCodeGoModelTuningSnapshot>>
+  /** Write one provider- or model-level capacity/thinking edit into the Models settings. */
+  readonly modelTuningWrite?: (input: FreeCodeGoModelTuningWrite) => Promise<RemoteResult<FreeCodeGoModelTuningSnapshot>>
   readonly pluginConflictStatus?: () => Promise<RemoteResult<FreeCodeGoPluginConflictStatus>>
   readonly pluginConflictSetEnabled?: (enabled: boolean) => Promise<RemoteResult<FreeCodeGoPluginConflictStatus>>
   readonly headroomStatus?: () => Promise<RemoteResult<HeadroomStats>>
@@ -1146,7 +1149,7 @@ interface Injected {
   readonly engineeringMemoryReview?: (sessionId: string, request: { readonly id: string; readonly decision: 'reviewed' | 'rejected' | 'superseded' }) => Promise<RemoteResult<EngineeringMemoryDetail>>
   readonly engineeringMemoryDelete?: (sessionId: string, id: string) => Promise<RemoteResult<{ readonly deleted: true }>>
   readonly engineeringMemoryPurgeProject?: (sessionId: string, request?: { readonly includeReviewed?: boolean }) => Promise<RemoteResult<{ readonly deleted: number }>>
-  readonly engineeringMemoryExport?: (sessionId: string) => Promise<RemoteResult<{ readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly EngineeringMemoryDetail[] }>>
+  readonly engineeringMemoryExport?: (sessionId: string) => Promise<RemoteResult<{ readonly version: 1; readonly exportedAt: number; readonly projectId: string; readonly records: readonly EngineeringMemoryDetail[]; readonly omitted: number }>>
   readonly engineeringMemoryBackup?: (sessionId: string) => Promise<RemoteResult<{ readonly id: string; readonly createdAt: number; readonly bytes: number }>>
   readonly engineeringMemoryRetentionSweep?: (sessionId: string, retentionDays?: number) => Promise<RemoteResult<{ readonly retentionDays: number; readonly deletedMemories: number; readonly deletedOutboxEntries: number }>>
   readonly engineeringMemoryConsolidate?: (sessionId: string) => Promise<RemoteResult<MemoryConsolidation>>
@@ -1755,10 +1758,20 @@ export function EngineeringMemoryPanel(input: {
       load()
     }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setBusy(false) })
   }
+  /**
+   * Export the reviewed memory to a downloadable file, and say what fit.
+   *
+   * The file itself cannot show what the export cap left out, so the panel
+   * reports it: an export of five records that silently dropped two hundred
+   * would read as the project's entire knowledge, which is the one wrong answer
+   * the `omitted` count exists to prevent. Reporting `0` explicitly is the same
+   * point in the other direction — a user should not have to infer completeness
+   * from silence.
+   */
   const exportReviewed = (): void => {
     const sessionId = input.currentSessionId()
     if (sessionId === undefined || busy) return
-    setBusy(true)
+    setBusy(true); setError(undefined); setMaintenance(undefined)
     void input.exportReviewed(sessionId).then((result) => {
       if (!result.ok) { setError(result.error.message); return }
       const content = JSON.stringify(result.value, null, 2)
@@ -1769,6 +1782,9 @@ export function EngineeringMemoryPanel(input: {
       anchor.download = `freecodego-engineering-memory-${result.value.projectId}.json`
       anchor.click()
       URL.revokeObjectURL(url)
+      setMaintenance(result.value.omitted === 0
+        ? `已导出 ${result.value.records.length} 条长期记忆 · 未触及导出上限`
+        : `已导出 ${result.value.records.length} 条长期记忆 · 导出上限截掉 ${result.value.omitted} 条（未包含在本文件中）`)
     }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { setBusy(false) })
   }
   /**
@@ -3480,7 +3496,7 @@ interface OpenPaymentDialog {
   readonly payCurrency: string | undefined
 }
 
-export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, accountRememberedEmail, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey,  logfareStatus, logfareLogin, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, antSeedStatus, antSeedInstall, antSeedSetGateway, antSeedRevealIdentity, antSeedSetIdentity, antSeedGenerateIdentity, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer,capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, customApiReasoningSet, setModelCategoryDirect, modelCategorySet
+export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRememberedPassword, accountRememberedEmail, login, register, sendVerifyCode, forgotPassword, resetPassword, oauthLogin, oauthPendingSendVerifyCode, oauthPendingBind, oauthPendingCreate, completeMfa, logout, deviceSessions, revokeDeviceSession, revokeAllSessions, setDefaultModel, setDefaultEngine, backendCatalog, readMediaDefaults, nativeModelCatalog, pickerModelDirectory, currentSessionId, vyceStatus, vyceSetKey,  logfareStatus, logfareLogin, logfareSetTrainingOptIn, logfareSetKey, accountDetail, sensenovaStatus, sensenovaSetKey, nvidiaStatus, nvidiaSetKey, antSeedStatus, antSeedInstall, antSeedSetGateway, antSeedRevealIdentity, antSeedSetIdentity, antSeedGenerateIdentity, useConnectionEpoch, paymentPlans, paymentChannels, paymentConfig, gatewayModelPrices, paymentCheckout, paymentOrder, paymentVerify, paymentCancel, paymentReceiptEmail, paymentReceiptDocument, paymentStripeReceiptDocument, paymentOrders, agnesStatus, agnesSendVerification, agnesSendPasswordReset, agnesResetPassword, agnesLogin, agnesRegister, agnesLogout, agnesRemoveAccount, agnesRefresh, agnesCreateApiKey, clineStatus, clineStartLogin, clinePollLogin, clineAddAccount, clineRemoveAccount, clineRefresh, clineLogout, workbuddyStatus, workbuddyImportDesktopLogin, workbuddyStartBrowserLogin, workbuddyPollBrowserLogin, workbuddyLogout, workbuddyRemoveAccount, workbuddyRefreshCredits, qoderStatus, qoderStartBrowserLogin, qoderPollBrowserLogin, qoderLogout, qoderRemoveAccount, qoderSetActiveAccount, qoderRefreshQuota, qoderCheckin: runQoderCheckin, traeStatus, traeStartBrowserLogin, traePollBrowserLogin, traeSubmitCallback, traeCancelBrowserLogin, traeModels: loadTraeModels, traeLogout, traeRemoveAccount, traeSetActiveAccount, traeCheckin: runTraeCheckin, codexRuntimeStatus, codexRuntimePackages, codexRuntimeInstall, codexRuntimeRemove, claudeRuntimeStatus, claudeRuntimePackages, claudeRuntimeInstall, claudeRuntimeRemove, pluginUpdateStatus, pluginUpdateCheck, pluginUpdateSetEnabled, pluginUpdateInstall, pluginUpdateRollback, communityCatalog, communityCatalogIcons, communityEnvironment, communityInstalled, communityInstall, communityUninstall, capabilityMarketplace, mcpPresetInstall, skillPresetInstall, skillPresetRemove, skillPlacements, skillPlacementPrefer,capabilities, readLocalCapabilities, capabilitiesSetEnabled, setLocalCapability, setModelCategoryDirect, modelCategorySet, modelTuningRead, modelTuningWrite
 , pluginConflictStatus, pluginConflictSetEnabled, headroomStatus, headroomSetEnabled, headroomUpdate, deferredToolsStatus, deferredToolsSetEnabled, mediaGenerationStatus, mediaGenerationSetEnabled, reviewStatus, reviewStart, reviewUpdate, secondModelStatus, secondModelUpdate, secondModelRoutes, guardSettingsStatus, guardSettingsUpdate, workbuddySetActiveAccount, automationSettingsStatus, automationSettingsUpdate, sandboxModeStatus, sandboxModeSet, trustFolderStatus, trustFolderGrant, trustFolderRevoke, projectConfigReport, engineeringStatus, engineeringSetEnabled, speechStatus, speechSetRoute, speechTest, language, t }: Props): ReactNode {
   const [state, setState] = useState<State>(() => cachedSettings(language, catalog)?.state ?? { ...fallbackSettings(), syncStatus: 'refreshing' })
   // A fresh catalog render must not infer media defaults until the Host has
@@ -5506,7 +5522,6 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
           <button className={`${css.pageTab} ${settingsPage === 'settings' ? css.pageTabActive : ''}`} type="button" onClick={() => { setSettingsPage('settings') }}>{language === 'zh' ? '设置' : 'Settings'}</button>
         </nav>
         {settingsPage === 'community' && capabilityMarketplace !== undefined && mcpPresetInstall !== undefined && skillPresetInstall !== undefined ? <CommunityPluginsPage communityCatalog={communityCatalog} communityCatalogIcons={communityCatalogIcons} communityEnvironment={communityEnvironment} communityInstalled={communityInstalled} communityInstall={communityInstall} communityUninstall={communityUninstall} capabilityMarketplace={capabilityMarketplace} mcpPresetInstall={mcpPresetInstall} skillPresetInstall={skillPresetInstall} skillPresetRemove={skillPresetRemove} skillPlacements={skillPlacements} skillPlacementPrefer={skillPlacementPrefer} language={language} /> : null}
-        {settingsPage === 'settings' ? <ModelCategorySettingsPage models={nativeModels} categories={capabilitySnapshot?.modelCategories ?? {}} setCategory={modelCategorySet} customApiReasoningEnabled={capabilitySnapshot?.customApiReasoningEnabled !== false} setCustomApiReasoning={customApiReasoningSet} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: message } : previous) }} /> : null}
         {settingsPage === 'settings' ? <><PluginConflictProtection status={pluginConflictStatus} setEnabled={pluginConflictSetEnabled} /><HeadroomPanel status={headroomStatus} setEnabled={headroomSetEnabled} update={headroomUpdate} language={language} /><MediaGenerationPanel status={mediaGenerationStatus} setEnabled={mediaGenerationSetEnabled} language={language} /><DeferredToolsPanel status={deferredToolsStatus} setEnabled={deferredToolsSetEnabled} language={language} /><SecondModelPanel status={secondModelStatus} update={secondModelUpdate} routes={secondModelRoutes} language={language} /><ReviewPanel sessionId={currentSessionId?.()} status={reviewStatus} start={reviewStart} update={reviewUpdate} language={language} /><GuardSettingsPanel status={guardSettingsStatus} update={guardSettingsUpdate} language={language} /><SandboxModePanel sessionId={currentSessionId?.()} status={sandboxModeStatus} setMode={sandboxModeSet} language={language} /><TrustPanel status={trustFolderStatus} grant={trustFolderGrant} revoke={trustFolderRevoke} projectConfig={projectConfigReport} language={language} /><AutomationSettingsPanel status={automationSettingsStatus} update={automationSettingsUpdate} language={language} /><PluginUpdateSettings status={pluginUpdateSnapshot} check={pluginUpdateCheck} setEnabled={pluginUpdateSetEnabled} install={pluginUpdateInstall} rollback={pluginUpdateRollback} language={language} /><CapabilitySettingsPage snapshot={capabilitySnapshot} setEnabled={capabilitiesSetEnabled} setLocalCapability={setLocalCapability} speechStatus={speechStatus} speechSetRoute={speechSetRoute} speechTest={speechTest} language={language} onSnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} onError={(message) => { setState(previous => previous.status === 'ready' ? message === undefined ? previous : { ...previous, actionError: message } : previous) }} /></> : null}
         {settingsPage === 'settings' ? <section className={css.section}><div className={css.sectionHeader}><div><div className={css.kicker}>ENGINEERING</div><strong className={css.sectionName}>工程增强包</strong></div><span className={`${css.badge} ${engineeringSnapshot?.engineeringEnabled ? css.badgeLive : ''}`}>{engineeringSnapshot?.engineeringEnabled ? '已启用' : '未启用'}</span></div><small className={css.sectionMeta}>这里只控制总开关。开启后，工程 Skills、项目长期记忆和代码结构图会在左侧工程页面中管理。</small><div className={css.extensionList}><label className={css.extensionRow}><span><strong>启用工程增强包</strong><small>开启后 AI 会持续理解当前项目，并在不同 Agent 之间共享上下文。</small></span><input className={css.switch} aria-label="启用工程增强包" type="checkbox" checked={engineeringSnapshot?.engineeringEnabled === true} onChange={(event) => { toggleEngineering(event.target.checked) }} disabled={engineeringSetEnabled === undefined || engineeringToggleBusy} /></label></div></section> : null}
         {settingsPage === 'overview' ? <section className={css.section}>
@@ -5551,6 +5566,7 @@ export function FreeCodeGoSettingsTab({ catalog, accountStatus, accountRemembere
           {codexRuntimeStatus === undefined ? null : <div className={css.infoCell}><small className={css.cellLabel}>{t('codexAgent')}</small><strong className={css.cellValue}>{codexStatus?.installed ? t('installed') : t('optionalComponent')}</strong><small className={css.cellHint}>{codexStatus?.installed ? `${codexStatus.platform} · ${codexStatus.runtimeVersion ?? ''}` : (codexStatus?.reason ?? t('unavailable'))}</small><div className={css.accountActions}><button className={css.button} type="button" onClick={() => { openRuntimePicker('codex') }} disabled={codexBusy || codexStatus?.installed === true}>{codexBusy ? t('installing') : codexStatus?.installed ? t('installed') : t('installCodex')}</button>{codexStatus?.installed ? <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={removeCodex} disabled={codexBusy}>{t('remove')}</button> : null}</div>{runtimePicker === 'codex' ? <RuntimePackagePicker packages={codexPackages} busy={codexBusy} onCancel={() => { setRuntimePicker(undefined) }} onInstall={installCodex} language={language} t={t} /> : null}</div>}
           {claudeRuntimeStatus === undefined ? null : <div className={css.infoCell}><small className={css.cellLabel}>{t('engineClaude')}</small><strong className={css.cellValue}>{claudeStatus?.installed ? t('installed') : t('optionalComponent')}</strong><small className={css.cellHint}>{claudeStatus?.installed ? `${claudeStatus.platform} · ${claudeStatus.runtimeVersion ?? ''}` : (claudeStatus?.reason ?? t('unavailable'))}</small><div className={css.accountActions}><button className={css.button} type="button" onClick={() => { openRuntimePicker('claude') }} disabled={claudeBusy || claudeStatus?.installed === true}>{claudeBusy ? t('installing') : claudeStatus?.installed ? t('installed') : t('installClaude')}</button>{claudeStatus?.installed ? <button className={`${css.button} ${css.buttonDanger}`} type="button" onClick={removeClaude} disabled={claudeBusy}>{t('remove')}</button> : null}</div>{runtimePicker === 'claude' ? <RuntimePackagePicker packages={claudePackages} busy={claudeBusy} onCancel={() => { setRuntimePicker(undefined) }} onInstall={installClaude} language={language} t={t} /> : null}</div>}
         </section> : null}
+        {settingsPage === 'overview' ? <ModelTuningSection read={modelTuningRead} write={modelTuningWrite} setModelCategory={modelCategorySet} categories={capabilitySnapshot?.modelCategories ?? {}} onCategorySnapshot={(snapshot) => { setCapabilitySnapshot(snapshot); publishCapabilitySnapshot(snapshot) }} refreshKey={connectionEpoch} language={language} onError={(message) => { setState(previous => previous.status === 'ready' ? { ...previous, actionError: message } : previous) }} /> : null}
         {settingsPage === 'providers' && antSeedStatus !== undefined ? <ProviderCard
           language={language}
           name={language === 'zh' ? '私钥网关' : 'Private Key Gateway'} visibility={providerVisibility('antseed')}
@@ -7475,59 +7491,232 @@ function CapabilitySettingsPage(input: {
   </section>
 }
 
-/** Keeps media classification separate from provider credentials and routing. */
-function ModelCategorySettingsPage(input: {
-  readonly models: readonly NativeCatalogModel[]
+/**
+ * Provider and model tuning: the one surface for the capacities and thinking
+ * levels a route serves.
+ *
+ * Why one surface and not the Models page
+ * ---------------------------------------
+ * The Models page edits hand-written entries one at a time, and a **catalog**
+ * route has no entry to edit — so a user whose provider serves a larger window
+ * than the catalog records, or whose hand-declared endpoint states no thinking
+ * level, has nowhere to say so. This section enumerates every route and model the
+ * `llm` service can serve (built-in providers and the user's own APIs alike),
+ * reports what each one currently resolves to and which layer answered, and
+ * writes an edit back through the Host (`model-tuning.ts`), which lands it in the
+ * route's own entry or in a `modelOverrides` entry for a catalog route.
+ *
+ * It also owns the model-category classification, which used to be a separate
+ * page: the two answer the same question (what is this route/model for, and what
+ * can it do), and keeping them apart made a user visit two screens to describe
+ * one model.
+ *
+ * The compaction hint is the point of the context control: raising a model's
+ * window is what a user does when the plugin compresses too early, so the row
+ * says where compaction will actually fire rather than leaving them to guess.
+ */
+function ModelTuningSection(input: {
+  readonly read: Injected['modelTuningRead']
+  readonly write: Injected['modelTuningWrite']
+  /**
+   * The Host's own classifier, not the browser's settings write: the category a
+   * user picks here is read back from the capability snapshot this section
+   * renders, so the write has to be the one that produces that snapshot.
+   */
+  readonly setModelCategory: Injected['modelCategorySet']
+  readonly onCategorySnapshot: (snapshot: CapabilitySnapshot) => void
   readonly categories: Readonly<Record<string, ModelCategory>>
-  readonly setCategory: Injected['modelCategorySet']
-  readonly customApiReasoningEnabled: boolean
-  readonly setCustomApiReasoning: Injected['customApiReasoningSet']
+  readonly refreshKey: number | undefined
   readonly language: 'zh' | 'en'
-  readonly onSnapshot: (value: CapabilitySnapshot) => void
   readonly onError: (message: string) => void
 }): ReactNode {
+  const zh = input.language === 'zh'
+  const [snapshot, setSnapshot] = useState<FreeCodeGoModelTuningSnapshot | undefined>(undefined)
   const [busyKey, setBusyKey] = useState<string | undefined>(undefined)
-  // The switch holds its own optimistic value until the page is remounted: the
-  // capability snapshot this page is given is read at mount and on the settings
-  // event, and a toggle that waited for that round trip would look inert.
-  const [reasoningOverride, setReasoningOverride] = useState<boolean | undefined>(undefined)
-  const text = input.language === 'zh'
-    ? { title: '模型分类', badge: '多提供商媒体路由', description: '模型、API 地址和 Key 仍在 Harness 的「模型」页面配置。这里识别或手动标记文本、生图、视频与语音能力；媒体分类会进入对应默认模型下拉框，并由插件工具按原提供商地址调用。', empty: '尚未发现模型。请先到 Harness 设置的「模型」页面添加第三方 API 或模型。', auto: '自动识别为', manual: '已手动分类为', aria: (name: string) => `${name} 模型分类`, autoOption: (label: string) => `自动识别（${label}）`, reasoningTitle: '自定义 API 的思考程度', reasoningDetail: '为本体内手写的第三方 API 模型声明 off / low / medium / high 四档思考等级，写进 Harness「模型」页的设置。只补不覆盖：模型自己声明过的、以及目录里已支持思考的都不动，也不会删除已写入的声明。', reasoningAria: '自定义 API 的思考程度' }
-    : { title: 'Model categories', badge: 'Multi-provider media routing', description: 'Models, endpoints, and API keys remain configured on the Harness Models page. Classifications feed the media defaults and route plugin media tools through the model\'s original provider endpoint.', empty: 'No models were found. Add a third-party API or model in the Harness Models page first.', auto: 'Automatically classified as', manual: 'Manually classified as', aria: (name: string) => `${name} model category`, autoOption: (label: string) => `Automatic (${label})`, reasoningTitle: 'Thinking levels for custom APIs', reasoningDetail: 'Declares off / low / medium / high for the third-party models you hand-declared on the Harness Models page, written into that page\'s settings. Additive only: a model that states its own answer, or one the catalog already lets think, is left alone, and a declaration already written is never removed.', reasoningAria: 'Thinking levels for custom APIs' }
-  const setReasoning = (enabled: boolean): void => {
-    if (input.setCustomApiReasoning === undefined) return
-    setReasoningOverride(enabled)
-    void input.setCustomApiReasoning(enabled).catch((error: unknown) => {
-      setReasoningOverride(undefined)
-      input.onError(error instanceof Error ? error.message : String(error))
-    })
-  }
-  const update = (model: NativeCatalogModel, category: string): void => {
-    if (input.setCategory === undefined || busyKey !== undefined) return
-    setBusyKey(model.key)
-    const override = category === '' ? undefined : category as ModelCategory
-    void input.setCategory({ key: model.key, ...(override === undefined ? {} : { category: override }) }).then((result) => {
-      if (result.ok) input.onSnapshot(result.value)
+  const [contextDraft, setContextDraft] = useState<Readonly<Record<string, string>>>({})
+  const [maxDraft, setMaxDraft] = useState<Readonly<Record<string, string>>>({})
+  const [providerDraft, setProviderDraft] = useState<Readonly<Record<string, { readonly context?: string; readonly max?: string; readonly reasoning?: string }>>>({})
+  const [query, setQuery] = useState('')
+  const [onlyCustomized, setOnlyCustomized] = useState(false)
+  useEffect(() => {
+    if (input.read === undefined) return
+    let live = true
+    void input.read().then((result) => {
+      if (!live) return
+      if (result.ok) setSnapshot(result.value)
+      else input.onError(result.error.message)
+    }, ignoreRejection)
+    return () => { live = false }
+  }, [input.read, input.refreshKey])
+  const apply = (edit: FreeCodeGoModelTuningWrite, key: string): void => {
+    if (input.write === undefined) return
+    setBusyKey(key)
+    void input.write(edit).then((result) => {
+      if (result.ok) setSnapshot(result.value)
       else input.onError(result.error.message)
     }, (error: unknown) => { input.onError(error instanceof Error ? error.message : String(error)) }).finally(() => { setBusyKey(undefined) })
   }
+  const text = zh
+    ? {
+      title: '提供商与模型设置', badge: '上下文 · 输出 · 思考档位',
+      description: '统一编辑 Harness 环境内已知的每个提供商及其模型的上下文长度、最大输出与思考档位，直接写回 Harness 的「模型」设置——已接入的提供商和用户自建的第三方 API 一并在列，未接入的提供商也可先设好默认值。目录提供的值会标出来源，「自定义…」写入你自己的值，清空即恢复目录默认。',
+      empty: '尚未发现模型。请先到 Harness 设置的「模型」页面添加提供商或模型。',
+      readOnly: '当前部署没有可写的模型设置层，以下为只读。',
+      providerDefaults: '提供商默认值', applyToAll: '应用到该提供商全部模型',
+      active: '已接入', dormant: '未接入',
+      search: '搜索提供商或模型', onlyCustomized: '只看已自定义', onlyCustomizedHint: '只列出在 Harness「模型」设置里已有条目的模型。',
+      noMatch: '没有匹配的提供商或模型。',
+      context: '上下文长度', maxOutput: '最大输出', reasoning: '思考档位', category: '模型分类',
+      sourceSettings: '已自定义', sourceCatalog: '目录', sourceNone: '未设置', custom: '自定义…',
+      compactHint: (context: number, at: number) => `当前上下文约 ${Math.round(context / 1000)}K，压缩会在约 ${Math.round(at / 1000)}K 时介入。`,
+      autoOption: (label: string) => `自动识别（${label}）`,
+      levelLabel: { off: '关闭', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高' } as Readonly<Record<FreeCodeGoReasoningLevel, string>>,
+    }
+    : {
+      title: 'Providers and models', badge: 'Context · output · thinking level',
+      description: 'Edit every provider the Harness environment knows, and each of its models — context length, maximum output, thinking level — written straight back into the Harness Models settings. Serving providers and the third-party APIs you declared are listed together, and a provider that is not serving yet can still have its defaults preset. A value supplied by the catalog is labelled with its source; “Custom…” stores your own, and clearing it restores the catalog default.',
+      empty: 'No models were found. Add a provider or model in the Harness Models page first.',
+      readOnly: 'This deployment exposes no writable models settings layer, so the fields below are read-only.',
+      providerDefaults: 'Provider defaults', applyToAll: 'Apply to every model on this provider',
+      active: 'serving', dormant: 'not serving',
+      search: 'Search providers or models', onlyCustomized: 'Only customized', onlyCustomizedHint: 'List only the models the Harness Models settings already name.',
+      noMatch: 'No provider or model matches.',
+      context: 'Context length', maxOutput: 'Max output', reasoning: 'Thinking level', category: 'Category',
+      sourceSettings: 'customized', sourceCatalog: 'catalog', sourceNone: 'unset', custom: 'Custom…',
+      compactHint: (context: number, at: number) => `~${Math.round(context / 1000)}K context; compaction steps in around ${Math.round(at / 1000)}K.`,
+      autoOption: (label: string) => `Automatic (${label})`,
+      levelLabel: { off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' } as Readonly<Record<FreeCodeGoReasoningLevel, string>>,
+    }
+  const toPositive = (raw: string): number | undefined => {
+    const value = Number(raw)
+    return Number.isInteger(value) && value > 0 ? value : undefined
+  }
+  const commitContext = (model: FreeCodeGoModelTuning, raw: string): void => {
+    const value = toPositive(raw)
+    setContextDraft((previous) => { const { [tuningKey(model)]: _drop, ...rest } = previous; return rest })
+    if (raw.trim() === '') apply({ provider: model.provider, model: model.model, contextWindow: null }, tuningKey(model))
+    else if (value !== undefined) apply({ provider: model.provider, model: model.model, contextWindow: value }, tuningKey(model))
+  }
+  const commitMax = (model: FreeCodeGoModelTuning, raw: string): void => {
+    const value = toPositive(raw)
+    setMaxDraft((previous) => { const { [tuningKey(model)]: _drop, ...rest } = previous; return rest })
+    if (raw.trim() === '') apply({ provider: model.provider, model: model.model, maxOutputTokens: null }, tuningKey(model))
+    else if (value !== undefined) apply({ provider: model.provider, model: model.model, maxOutputTokens: value }, tuningKey(model))
+  }
+  const presets = snapshot?.contextPresets ?? []
+  // Filtering is a view concern only: the drafts, the busy key and every edit
+  // keep addressing the whole snapshot, so hiding a row can never drop an edit
+  // or move one to a different model.
+  const needle = query.trim().toLowerCase()
+  const matches = (value: string): boolean => value.toLowerCase().includes(needle)
+  const shown = (snapshot?.providers ?? []).map((provider) => {
+    const all = (snapshot?.models ?? []).filter(model => model.provider === provider.provider)
+    // A query that names the provider lists the whole route, so its defaults
+    // stay reachable without the user also typing a model name.
+    const namedProvider = needle === '' || matches(provider.providerName) || matches(provider.provider)
+    const byQuery = namedProvider ? all : all.filter(model => matches(model.name) || matches(model.model))
+    // "Customized" is the declaration the Host already reported: the model the
+    // Models settings name, which is also where a write from this surface lands.
+    const rows = onlyCustomized ? byQuery.filter(model => model.declared) : byQuery
+    return { provider, rows, listed: namedProvider || rows.length > 0 || (needle === '' && !onlyCustomized) }
+  }).filter(entry => entry.listed)
   return <section className={css.section}>
-    <div className={css.sectionHeader}><div><div className={css.kicker}>MODEL CAPABILITIES</div><strong className={css.sectionName}>{text.title}</strong></div><span className={css.badge}>{text.badge}</span></div>
+    <div className={css.sectionHeader}><div><div className={css.kicker}>MODEL SETTINGS</div><strong className={css.sectionName}>{text.title}</strong></div><span className={css.badge}>{text.badge}</span></div>
     <small className={css.sectionMeta}>{text.description}</small>
-    <div className={css.extensionList}>
-      <label className={css.extensionRow}><span><strong>{text.reasoningTitle}</strong><small>{text.reasoningDetail}</small></span><input className={css.switch} aria-label={text.reasoningAria} type="checkbox" checked={reasoningOverride ?? input.customApiReasoningEnabled} onChange={(event) => { setReasoning(event.target.checked) }} disabled={input.setCustomApiReasoning === undefined} /></label>
-    </div>
-    {input.models.length === 0 ? <small className={css.sectionMeta}>{text.empty}</small> : <div className={css.accountList}>
-      {input.models.map((model) => {
-        const configured = input.categories[model.key]
-        const effective = configured ?? inferredModelCategory(model.provider, model.id, model.displayName)
-        return <div className={css.accountRow} key={model.key}>
-          <div className={css.accountIdentity}><strong className={css.accountName}>{model.displayName}</strong><small className={css.accountEmail}>{model.providerName} · {visibleModelId(model.provider, model.id)} · {configured === undefined ? `${text.auto} ${categoryLabel(effective, input.language)}` : `${text.manual} ${categoryLabel(effective, input.language)}`}</small></div>
-          <div className={css.accountActions}><select className={css.select} aria-label={text.aria(model.displayName)} value={configured ?? ''} disabled={input.setCategory === undefined || busyKey === model.key} onChange={(event) => { update(model, event.target.value) }}><option value="">{text.autoOption(categoryLabel(inferredModelCategory(model.provider, model.id, model.displayName), input.language))}</option><option value="text">{categoryLabel('text', input.language)}</option><option value="image">{categoryLabel('image', input.language)}</option><option value="video">{categoryLabel('video', input.language)}</option><option value="audio">{categoryLabel('audio', input.language)}</option></select></div>
+    {snapshot !== undefined && !snapshot.writable ? <small className={css.sectionMeta}>{text.readOnly}</small> : null}
+    {/* A route with no models still renders: its route-level defaults are settable before it serves anything, so "nothing to show" is only true when there is no route at all. */}
+    {snapshot === undefined || (snapshot.providers.length === 0 && snapshot.models.length === 0) ? <small className={css.sectionMeta}>{text.empty}</small> : <>
+      <div className={css.modelCategoryActions}>
+        <input className={css.input} type="search" value={query} placeholder={text.search} aria-label={text.search} onChange={(event) => { setQuery(event.target.value) }} />
+        <label className={css.extensionRow}>
+          <span><strong>{text.onlyCustomized}</strong><small>{text.onlyCustomizedHint}</small></span>
+          <input className={css.switch} type="checkbox" aria-label={text.onlyCustomized} checked={onlyCustomized} onChange={(event) => { setOnlyCustomized(event.target.checked) }} />
+        </label>
+      </div>
+      {shown.length === 0 ? <small className={css.sectionMeta}>{text.noMatch}</small> : <div className={css.accountList}>
+      {shown.map(({ provider, rows }) => {
+        const draft = providerDraft[provider.provider] ?? {}
+        return <div className={css.accountRow} key={provider.provider}>
+          <div className={css.accountIdentity}>
+            <strong className={css.accountName}>{provider.providerName}</strong>
+            <small className={css.accountEmail}>{provider.provider} · {provider.modelCount} {zh ? '个模型' : 'models'} · {provider.live ? text.active : text.dormant}</small>
+          </div>
+          <div className={css.modelCategoryActions}>
+            <span className={css.cellLabel}>{text.providerDefaults}</span>
+            <input className={css.input} type="number" min={1} placeholder={text.context} aria-label={`${provider.providerName} ${text.context}`} value={draft.context ?? ''} onChange={(event) => { setProviderDraft(previous => ({ ...previous, [provider.provider]: { ...draft, context: event.target.value } })) }} />
+            <input className={css.input} type="number" min={1} placeholder={text.maxOutput} aria-label={`${provider.providerName} ${text.maxOutput}`} value={draft.max ?? ''} onChange={(event) => { setProviderDraft(previous => ({ ...previous, [provider.provider]: { ...draft, max: event.target.value } })) }} />
+            <select className={css.select} aria-label={`${provider.providerName} ${text.reasoning}`} value={draft.reasoning ?? ''} onChange={(event) => { setProviderDraft(previous => ({ ...previous, [provider.provider]: { ...draft, reasoning: event.target.value } })) }}>
+              <option value="">{text.reasoning}</option>
+              {(snapshot.reasoningLevels).filter(level => level !== 'off').map(level => <option key={level} value={level}>{text.levelLabel[level]}</option>)}
+            </select>
+            <button className={css.button} type="button" disabled={input.write === undefined || busyKey === provider.provider} onClick={() => {
+              const contextWindow = toPositive(draft.context ?? '')
+              const maxOutputTokens = toPositive(draft.max ?? '')
+              const reasoning = draft.reasoning === undefined || draft.reasoning === '' ? undefined : draft.reasoning as FreeCodeGoReasoningLevel
+              apply({ provider: provider.provider, applyToModels: true, ...(contextWindow === undefined ? {} : { contextWindow }), ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), ...(reasoning === undefined ? {} : { reasoning }) }, provider.provider)
+            }}>{text.applyToAll}</button>
+          </div>
+          {rows.map((model) => {
+            const key = tuningKey(model)
+            const context = model.contextWindow.value
+            const offered = model.reasoningLevels ?? []
+            const currentLevel = [...offered].reverse().find(level => level !== 'off') ?? 'off'
+            const configuredCategory = input.categories[modelCategoryKey(model.provider, model.model)]
+            return <div className={css.accountRow} key={key}>
+              <div className={css.accountIdentity}>
+                <strong className={css.accountName}>{model.name}</strong>
+                <small className={css.accountEmail}>{model.providerName} · {visibleModelId(model.provider, model.model)} · {text.context} {context === undefined ? text.sourceNone : `${context.toLocaleString()} (${model.contextWindow.source === 'settings' ? text.sourceSettings : model.contextWindow.source === 'catalog' ? text.sourceCatalog : text.sourceNone})`}{model.maxOutputTokens.value === undefined ? '' : ` · ${text.maxOutput} ${model.maxOutputTokens.value.toLocaleString()} (${model.maxOutputTokens.source === 'settings' ? text.sourceSettings : text.sourceCatalog})`}{model.reasoningSource === 'none' ? '' : ` · ${text.reasoning} ${model.reasoningLevels === undefined ? text.sourceNone : model.reasoningLevels.map(level => text.levelLabel[level]).join('/')}`}</small>
+                {context === undefined || model.compactionAt === undefined ? null : <small className={css.cellHint}>{text.compactHint(context, model.compactionAt)}</small>}
+              </div>
+              <div className={css.modelCategoryActions}>
+                <select className={css.select} aria-label={`${model.name} ${text.context}`} value={context === undefined ? '' : (presets.includes(context) ? String(context) : 'custom')} disabled={input.write === undefined || busyKey === key} onChange={(event) => {
+                  const value = event.target.value
+                  if (value === '') apply({ provider: model.provider, model: model.model, contextWindow: null }, key)
+                  else if (value === 'custom') setContextDraft(previous => ({ ...previous, [key]: '' }))
+                  else apply({ provider: model.provider, model: model.model, contextWindow: Number(value) }, key)
+                }}>
+                  <option value="">{text.sourceNone}</option>
+                  {presets.map(value => <option key={value} value={String(value)}>{value >= 1_000_000 ? `${Math.round(value / 1000) / 1000}M` : `${Math.round(value / 1000)}K`}</option>)}
+                  <option value="custom">{text.custom}</option>
+                </select>
+                {contextDraft[key] === undefined && (context === undefined || presets.includes(context)) ? null : <input className={css.input} type="number" min={1} aria-label={`${model.name} ${text.context} ${text.custom}`} value={contextDraft[key] ?? (context === undefined ? '' : String(context))} onChange={(event) => { setContextDraft(previous => ({ ...previous, [key]: event.target.value })) }} onBlur={(event) => { commitContext(model, event.target.value) }} />}
+                <input className={css.input} type="number" min={1} aria-label={`${model.name} ${text.maxOutput}`} placeholder={text.maxOutput} value={maxDraft[key] ?? (model.maxOutputTokens.value === undefined ? '' : String(model.maxOutputTokens.value))} onChange={(event) => { setMaxDraft(previous => ({ ...previous, [key]: event.target.value })) }} onBlur={(event) => { commitMax(model, event.target.value) }} disabled={input.write === undefined} />
+                <select className={css.select} aria-label={`${model.name} ${text.reasoning}`} value={currentLevel} disabled={input.write === undefined || busyKey === key} onChange={(event) => {
+                  const chosen = event.target.value as FreeCodeGoReasoningLevel
+                  const levels = chosen === 'off' ? ['off'] as const : snapshot.reasoningLevels.slice(0, snapshot.reasoningLevels.indexOf(chosen) + 1)
+                  apply({ provider: model.provider, model: model.model, reasoningLevels: levels }, key)
+                }}>
+                  {snapshot.reasoningLevels.map(level => <option key={level} value={level}>{text.levelLabel[level]}</option>)}
+                </select>
+                <select className={css.select} aria-label={`${model.name} ${text.category}`} value={configuredCategory ?? ''} disabled={input.setModelCategory === undefined} onChange={(event) => {
+                  const value = event.target.value
+                  if (input.setModelCategory === undefined) return
+                  // The snapshot this section renders comes back from the same
+                  // call, so an accepted edit is visible without a reload.
+                  void input.setModelCategory({ key: modelCategoryKey(model.provider, model.model), ...value === '' ? {} : { category: value as ModelCategory } }).then((result) => {
+                    if (result.ok) input.onCategorySnapshot(result.value)
+                    else input.onError(result.error.message)
+                  }, (error: unknown) => { input.onError(error instanceof Error ? error.message : String(error)) })
+                }}>
+                  <option value="">{text.autoOption(categoryLabel(inferredModelCategory(model.provider, model.model, model.name), input.language))}</option>
+                  <option value="text">{categoryLabel('text', input.language)}</option>
+                  <option value="image">{categoryLabel('image', input.language)}</option>
+                  <option value="video">{categoryLabel('video', input.language)}</option>
+                  <option value="audio">{categoryLabel('audio', input.language)}</option>
+                </select>
+              </div>
+            </div>
+          })}
         </div>
       })}
-    </div>}
+      </div>}
+    </>}
   </section>
+}
+
+/** The draft-state key one tuning row is addressed by. */
+function tuningKey(model: { readonly provider: string; readonly model: string }): string {
+  return `${model.provider}\u0000${model.model}`
 }
 
 /**

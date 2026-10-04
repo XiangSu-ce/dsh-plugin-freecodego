@@ -143,6 +143,11 @@ describeLive(`design render engine (live: ${resolved.kind === 'available' ? reso
             }
             video.onloadedmetadata = function () { report() }
             video.onerror = function () { report({ error: 'the browser refused the file' }) }
+            // CDP can attach after loadedmetadata has already fired. Observe the
+            // current state too; waiting only for a past event falsely rejects
+            // a playable video (readyState=4) on a fast or busy browser launch.
+            if (video.error) report({ error: 'the browser refused the file' })
+            else if (video.readyState >= 1) report()
             setTimeout(function () { report({ error: 'no metadata within 10s, readyState=' + video.readyState }) }, 10000)
           })
         }
@@ -158,6 +163,9 @@ describeLive(`design render engine (live: ${resolved.kind === 'available' ? reso
       height: 180,
     })
     try {
+      // Exercise the late-observer path deterministically rather than depending
+      // on the speed at which CDP attaches. All decoding assertions still apply.
+      await page.waitFor('document.getElementById("v").readyState >= 1 || document.getElementById("v").error !== null')
       // `Runtime.evaluate` has no top-level `await`, so an asynchronous page
       // answer arrives through an async wrapper — the same shape
       // `evaluateJson` uses, and for the same reason.

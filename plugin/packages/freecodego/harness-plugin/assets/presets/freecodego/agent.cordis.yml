@@ -42,6 +42,10 @@
       - `engineering_memory_save`: record durable, reusable knowledge (decisions, discoveries, bugfixes, blockers, handoffs) when a task closes — bounded, factual, written for the next engineer. Not every turn needs a record.
       - `engineering_handoff_create`: when handing work to another engine or a future session, write the handoff with the target engine so it resumes with full context.
 
+      # Design work
+
+      This plugin can also carry a design capability set: a UI/UX knowledge catalogue, a craft-rules layer, a design detector, and React Bits component retrieval. It is off until the user switches the design page's rows on, so do not assume it is there — when any design Skills are mounted, the session's Skills map names them. When it is on, those tools are deferred: if `freecodego_uiux_search`, `freecodego_design_craft`, `freecodego_design_detect`, `freecodego_reactbits` are not in your schema, load them first with tool_search "select:freecodego_uiux_search, freecodego_design_craft, freecodego_design_detect, freecodego_reactbits" — a call to a tool you have not fetched is refused. Reach for the catalogue and the craft rules before hand-rolling a design decision, and never report a visual claim you have not rendered.
+
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:

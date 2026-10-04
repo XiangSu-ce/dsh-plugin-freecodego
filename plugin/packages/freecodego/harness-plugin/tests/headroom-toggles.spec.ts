@@ -12,6 +12,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
 import { FreeCodeGoHeadroomRuntime, type HeadroomSettings } from '../src/headroom/runtime.ts'
+import { headroomSeam } from './support/headroom-seam.ts'
 
 function runtimeWith(initial: HeadroomSettings): { readonly runtime: FreeCodeGoHeadroomRuntime; readonly set: (patch: Partial<HeadroomSettings>) => void } {
   let current = initial
@@ -51,6 +52,26 @@ describe('headroom toggle round trip', () => {
     expect(runtime.status().foldReads).toBe(true)
     set({ headroomFoldReads: false })
     expect(runtime.status().foldReads).toBe(false)
+  })
+
+  it('keeps a read result lossless even when the read-fold switch is on', async () => {
+    // The switch's whole documented effect is that a gated read is *routed
+    // through the lossless folder*: it lifts the byte-exact protection so the
+    // log/search folds may run, and nothing more. But returning "not protected"
+    // from `isProtected` also let a read result fall through into the ordinary
+    // lossy chain whenever the gated fold declined, so a large prose read was
+    // handed to the prose crusher and never counted as protected at all — a
+    // lossy rewrite of a read, on the one setting whose promise is that reads
+    // stay lossless.
+    const prose = Array.from(
+      { length: 120 },
+      (_, index) => `The ${index}th paragraph explains why this particular decision was taken, in ordinary words that repeat no structure at all.`,
+    ).join('\n')
+    const seam = headroomSeam({ headroomEnabled: true, headroomThresholdChars: 1_200, headroomFoldReads: true })
+    const delivered = await seam.run(prose, { toolName: 'read' })
+    expect(delivered).toBe(prose)
+    expect(seam.status().proseCompressions).toBe(0)
+    expect(seam.status().compressions).toBe(0)
   })
 
   it('keeps the enabled flag off when the runtime is disposed, regardless of settings', () => {

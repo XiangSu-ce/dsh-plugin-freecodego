@@ -249,3 +249,53 @@ describe('the runtime-free repo map registers in both engine branches', () => {
     expect(withEngine.tools.map(entry => entry.name)).toContain('engineering_graph_status')
   })
 })
+
+/**
+ * A registration whose handle is only taken after an `await` is not taken at all
+ * when that await throws.
+ *
+ * `registerTools` registers `engineering_status` and `engineering_doctor` (and,
+ * with the memory switch on, six memory tools) before it probes the code-graph
+ * engines, and it used to push the batch's disposer at the very *end* of the
+ * method — after both probes. Every other registration method here is
+ * synchronous, so their end-of-method push is always reached and the pattern
+ * looks safe. This one is the sibling with an async gap, and a probe that rejects
+ * (a runtime manifest that is unreadable, a filesystem that refuses the read)
+ * throws out before the push: the registrar is dropped with the stack frame, the
+ * tools it mounted have no handle left, and `disposeTools`/`dispose` can never
+ * take them down.
+ */
+describe('the engineering tool batch, when an engine probe fails', () => {
+  it('keeps the handles it already registered instead of leaking them', async () => {
+    const mounted = new Set<string>()
+    const ctx = {
+      on: vi.fn(),
+      effect: vi.fn(),
+      get: (name: string) => (name === 'tools'
+        ? {
+            register: (definition: RegisteredTool) => {
+              mounted.add(definition.name)
+              return { dispose: () => { mounted.delete(definition.name) } }
+            },
+          }
+        : undefined),
+      logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+    } as unknown as Context
+    const engineering = new FreeCodeGoEngineeringRegistry(ctx, undefined)
+    const private_ = engineering as unknown as {
+      graphify: { status: () => Promise<unknown> }
+      codeGraph: { status: () => Promise<unknown> }
+      registerTools(): Promise<void>
+      disposeTools(): void
+    }
+    // The batch is mounted before either probe, so the tools below are live when
+    // the probe throws — that is what makes the missing disposer a leak rather
+    // than a registration that never happened.
+    vi.spyOn(private_.graphify, 'status').mockRejectedValue(new Error('the engine probe exploded'))
+    await expect(private_.registerTools()).rejects.toThrow('the engine probe exploded')
+    expect([...mounted]).toContain('engineering_status')
+    // Teardown must be able to release what the failed registration mounted.
+    private_.disposeTools()
+    expect([...mounted]).toEqual([])
+  })
+})

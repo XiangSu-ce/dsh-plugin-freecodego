@@ -59,6 +59,7 @@ import type { ToolCallView, ToolDefinition, ToolExecutionResult, ToolExecutionTo
 
 import { SHELL_TOOL_NAMES } from './tool-guards.ts'
 import { toolDefinition } from './tool-definition.ts'
+import { redactCredentialShapes } from './secret-scan.ts'
 
 /**
  * The registry slice the aliases need: register themselves, find the delegate, and
@@ -253,13 +254,25 @@ export function registerShellAliasTools(deps: {
     return []
   }
   const registered: (() => void)[] = []
+  // One name refusing must not discard the other, and a handle already taken must not
+  // be lost with the throw: the two registrations are two facts, and a registry that
+  // rejects `bash` still leaves `shell` mounted with a disposer the caller never got.
+  // So each registration is attempted on its own, and a refusal is logged and skipped
+  // — the same containment `tool-registration.ts` gives a batch.
+  const registerName = (name: string, definition: ToolDefinition): void => {
+    try {
+      registered.push(registry.register(definition))
+    } catch (error) {
+      ctx.logger.warn?.(`freecodego: ${name} was not registered: ${redactCredentialShapes(String(error))}`)
+    }
+  }
   // Both names are registration *literals* rather than entries in a loop over a list:
   // the manifest's sweep reads this package's source for exactly this shape, and a name
   // assembled at runtime would be a registration no reader — and no gate — can find.
   /* jscpd:ignore-start -- one registration per name, deliberately spelled out so the
      manifest sweep can see both; the two differ only in name and parameter spelling. */
   if (registry.get('shell') === undefined) {
-    registered.push(registry.register(toolDefinition({
+    registerName('shell', toolDefinition({
       name: 'shell',
       description: `Run a shell command. This is the same tool as \`${delegate}\` — same sandbox, same policy, same result — registered under the name a \`shell\` tool is normally called: pass the command as \`cmd\` (\`command\` is accepted too).`,
       parameters: {
@@ -278,10 +291,10 @@ export function registerShellAliasTools(deps: {
       output: FORWARDED_OUTPUT,
       execute: (args: unknown, exec: unknown) => dispatchAlias(registry, delegate, 'shell', args, exec),
       presentCall: (args: unknown): ToolCallView => shellAliasCallView(args),
-    })))
+    }))
   }
   if (registry.get('bash') === undefined) {
-    registered.push(registry.register(toolDefinition({
+    registerName('bash', toolDefinition({
       name: 'bash',
       description: `Run a shell command. This is the same tool as \`${delegate}\` — same sandbox, same policy, same result — registered under the name a \`bash\` tool is normally called: pass the command as \`command\` (\`cmd\` is accepted too).`,
       parameters: {
@@ -300,7 +313,7 @@ export function registerShellAliasTools(deps: {
       output: FORWARDED_OUTPUT,
       execute: (args: unknown, exec: unknown) => dispatchAlias(registry, delegate, 'bash', args, exec),
       presentCall: (args: unknown): ToolCallView => shellAliasCallView(args),
-    })))
+    }))
   }
   /* jscpd:ignore-end */
   if (registered.length === 0) {

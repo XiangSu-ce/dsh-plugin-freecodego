@@ -221,6 +221,13 @@ describe('the craft tool', () => {
     const tooMany = await craft({ action: 'get', sections: shippedSlugs().slice(0, CRAFT_SECTIONS_PER_CALL + 1) })
     expect(tooMany.kind).toBe('refused')
     expect(tooMany.reason).toBe('too-many-sections')
+    // `available` is the catalogue — what exists to choose from — not an echo of the
+    // list the caller just sent: the refusal's whole job is to help pick at most
+    // `CRAFT_SECTIONS_PER_CALL`, and a section the caller did not name is the proof
+    // that this is the catalogue rather than its own oversize request. It is the same
+    // set every other refusal offers, which is what `typo` above already pinned.
+    expect(tooMany.available).toContain('typography')
+    expect(tooMany.available).toEqual(typo.available)
 
     const empty = await craft({ action: 'get', sections: [] })
     expect(empty.kind).toBe('refused')

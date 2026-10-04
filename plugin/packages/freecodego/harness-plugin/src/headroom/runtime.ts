@@ -944,7 +944,17 @@ export class FreeCodeGoHeadroomRuntime {
     const excluded = isExcludedTool(name, this.excludeTools())
     if (!excluded) return false
     // Reads fold only when the user opted in — and then only losslessly.
-    if (this.foldReads()) return false
+    //
+    // The fold itself lives in `foldGatedTool`, which `compressContent` reaches
+    // from the *protected* branch (it calls `foldGatedTool` and returns its
+    // answer, verbatim when it has none). Returning `false` here instead, for a
+    // read whose gated fold declined, sent the payload into the ordinary lossy
+    // chain below — so `headroomFoldReads: true` compressed a large prose read
+    // with the prose crusher (measured through the shipped seam: a 14 KB read
+    // delivered at 7.2 KB with `proseCompressions: 1` and `protectedCount: 0`),
+    // which is the opposite of the setting's whole promise. The switch still has
+    // its effect: it is read inside `foldGatedTool` to admit the log/search
+    // folds. What it must not do is lift the read out of the lossless-only path.
     return true
   }
 

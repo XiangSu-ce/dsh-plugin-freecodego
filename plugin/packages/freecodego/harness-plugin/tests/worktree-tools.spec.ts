@@ -351,6 +351,18 @@ describe('the tools', () => {
     expect(after.held).toBe(false)
   })
 
+  test('exit with remove: true reports the copy as gone rather than still present', async () => {
+    // `WorktreeRow.exists` is documented as "whether the directory is really
+    // there", and `status` measures it. The exit result must not contradict its own
+    // `removed: true` by reporting the worktree it just deleted as present — a
+    // caller reading `worktree.exists` would think the copy survived.
+    const entered = await call('engineering_worktree_enter', { strategy: 'fast' })
+    const removed = await call('engineering_worktree_exit', { remove: true })
+    expect(removed.removed).toBe(true)
+    expect(existsSync(String(entered.path))).toBe(false)
+    expect((removed.worktree as Record<string, unknown>).exists).toBe(false)
+  })
+
   test('list counts bytes and names missing copies', async () => {
     const listed = await call('engineering_worktree_list', {})
     expect(listed.count).toBeGreaterThan(0)
@@ -448,6 +460,32 @@ describe('the shared registry (real git)', () => {
     const exclude = readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8')
     expect(exclude).toContain('.freecodego/worktrees/')
   }, 120_000)
+})
+
+describe('the registry document', () => {
+  test('drops an entry a hand edit left without the fields a reader needs', async () => {
+    // The document's own promise is that a hand-edited file degrades to an
+    // empty registry instead of taking a session down. That held for the
+    // *document's* shape but not for an entry's: the parser kept any object
+    // carrying a string `id`, and the very next read (`worktreeOwner` on
+    // `entry.memberId`) threw on the entry a hand edit had stripped. The fields
+    // a reader actually dereferences are validated alongside the id now, so one
+    // bad entry is dropped rather than the whole listing failing.
+    const root = workspace('registry-shape')
+    const file = join(root, '.freecodego', 'worktrees.json')
+    mkdirSync(join(root, '.freecodego'), { recursive: true })
+    const valid = {
+      id: 'wt_ok', memberId: 'session:s1', branch: 'b',
+      path: join(root, WORKTREE_RELATIVE_DIRECTORY, 'ok'), base: '', createdAt: 1, state: 'active',
+    }
+    // `id` and `path` alone: the shape a hand edit is most likely to leave.
+    const malformed = { id: 'wt_bad', path: join(root, 'whatever') }
+    writeFileSync(file, JSON.stringify({ version: 1, cwd: root, worktrees: [valid, malformed] }))
+    const registry = new WorktreeRegistry(root, file)
+    expect((await registry.list()).map(entry => entry.id)).toEqual(['wt_ok'])
+    const suite = new SessionWorktrees(ports({ registry }))
+    await expect(suite.list()).resolves.toHaveLength(1)
+  })
 })
 
 describe('the isolation note', () => {

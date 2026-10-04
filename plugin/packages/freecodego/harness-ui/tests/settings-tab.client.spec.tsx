@@ -175,6 +175,53 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     expect(screen.getByText(/- alpha — a topic/u)).toBeTruthy()
   })
 
+  it('reports how many reviewed records the export cap left out', async () => {
+    // The downloaded file cannot say what the cap dropped, so the panel must:
+    // an export of two records that silently dropped five would read as the
+    // project's whole knowledge, which is the one wrong answer `omitted`
+    // exists to prevent. The complete case is reported too, so completeness is
+    // stated rather than inferred from silence.
+    const originalCreate = URL.createObjectURL
+    const originalRevoke = URL.revokeObjectURL
+    URL.createObjectURL = vi.fn(() => 'blob:memory-export') as never
+    URL.revokeObjectURL = vi.fn() as never
+    try {
+      const exportReviewed = vi.fn()
+        .mockResolvedValueOnce({ ok: true as const, value: { version: 1, exportedAt: 1, projectId: 'proj', records: [{ id: 'mem_1' }, { id: 'mem_2' }], omitted: 5 } })
+        .mockResolvedValueOnce({ ok: true as const, value: { version: 1, exportedAt: 2, projectId: 'proj', records: [{ id: 'mem_3' }], omitted: 0 } })
+      render(<EngineeringMemoryPanel
+        enabled={true}
+        currentSessionId={() => 'session-1'}
+        list={vi.fn(async () => ({ ok: true as const, value: { records: [] } })) as never}
+        timeline={vi.fn() as never}
+        get={vi.fn() as never}
+        review={vi.fn() as never}
+        remove={vi.fn() as never}
+        purge={vi.fn() as never}
+        exportReviewed={exportReviewed as never}
+        backup={vi.fn() as never}
+        retentionSweep={vi.fn() as never}
+        consolidate={vi.fn() as never}
+        manifest={vi.fn() as never}
+      />)
+
+      // Both exports live behind the 管理 disclosure.
+      fireEvent.click(await screen.findByText('管理'))
+      fireEvent.click(screen.getByText('导出长期记忆'))
+      await waitFor(() => { expect(exportReviewed).toHaveBeenCalledWith('session-1') })
+      const truncated = await screen.findByText(/导出上限截掉 5 条/u)
+      expect(truncated.textContent).toContain('已导出 2 条长期记忆')
+
+      fireEvent.click(screen.getByText('导出长期记忆'))
+      await waitFor(() => { expect(exportReviewed).toHaveBeenCalledTimes(2) })
+      const complete = await screen.findByText(/未触及导出上限/u)
+      expect(complete.textContent).toContain('已导出 1 条长期记忆')
+    } finally {
+      URL.createObjectURL = originalCreate
+      URL.revokeObjectURL = originalRevoke
+    }
+  })
+
   it('publishes AntSeed free image models as image routes, and only those', () => {
     // The adapter keeps image rows out of the Harness model list on purpose, so
     // this catalog pass is the only door they have into the image pickers — and
@@ -491,11 +538,26 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     expect(panel.textContent).toContain('1 条记录在当前运行树中仍然生效。')
   })
 
-  it('declares thinking levels for custom APIs by default, and turning the switch off reaches the setting', async () => {
-    // The declaration is additive, so the default is on; what this pins is that the
-    // switch is offered at all and that flipping it writes the field the Host reads
-    // (`customApiReasoningEnabled`) rather than a local preference nothing consumes.
-    const customApiReasoningSet = vi.fn().mockResolvedValue(undefined)
+  it('lists every route the Host reports and writes one model\u2019s edit back', async () => {
+    // The tuning surface stands in for the Harness Models page for these fields:
+    // it has to show a route the user never hand-wrote (a catalog route), say
+    // which layer answered each value, and land an edit where the value lives.
+    const snapshot = {
+      providers: [{ provider: 'anthropic', providerName: 'Anthropic', modelCount: 1, live: true }],
+      models: [{
+        provider: 'anthropic', providerName: 'Anthropic', model: 'claude-x', name: 'Claude X', declared: false,
+        contextWindow: { value: 200_000, source: 'catalog' as const },
+        maxOutputTokens: { source: 'none' as const },
+        compactionAt: 168_750,
+        reasoningLevels: ['off', 'low', 'high'],
+        reasoningSource: 'catalog' as const,
+      }],
+      reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] as const,
+      contextPresets: [128_000, 270_000, 1_000_000],
+      writable: true,
+    }
+    const modelTuningRead = vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })
+    const modelTuningWrite = vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })
     render(<FreeCodeGoSettingsTab
       {...hostStandardProps}
       close={vi.fn()}
@@ -510,23 +572,35 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
       communityInstall={vi.fn()}
       language="zh"
-      customApiReasoningSet={customApiReasoningSet}
+      modelTuningRead={modelTuningRead}
+      modelTuningWrite={modelTuningWrite}
       useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
       t={(key: string) => key as never}
     />)
-    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
-    fireEvent.click(screen.getByText('设置'))
-    const toggle = await screen.findByLabelText('自定义 API 的思考程度') as HTMLInputElement
-    expect(toggle.checked).toBe(true)
-    fireEvent.click(toggle)
-    await waitFor(() => { expect(customApiReasoningSet).toHaveBeenCalledWith(false) })
+    // No page switch: the surface sits on the overview page, below the model
+    // routing block.
+    await waitFor(() => { expect(screen.getByText('Claude X')).toBeTruthy() })
+    // Scoped to the route's own row: "已接入" is a label this page also uses
+    // elsewhere, so the assertion is about this route reporting itself as served.
+    expect(screen.getByText('Anthropic').closest('div')?.textContent).toContain('已接入')
+    expect(screen.getByText('Claude X').closest('div')?.textContent).toContain('目录')
+    fireEvent.change(screen.getByLabelText('Claude X 上下文长度'), { target: { value: '270000' } })
+    await waitFor(() => { expect(modelTuningWrite).toHaveBeenCalledWith({ provider: 'anthropic', model: 'claude-x', contextWindow: 270_000 }) })
   })
 
-  it('puts the custom-API thinking switch back when the write is refused', async () => {
-    // The switch holds its own optimistic value, so a refusal has to walk it back: a
-    // checkbox left showing a preference the document never took is the one failure
-    // mode of the optimistic update.
-    const customApiReasoningSet = vi.fn().mockRejectedValue(new Error('settings write refused'))
+  it('offers a route that is not serving yet, so its defaults can be preset', async () => {
+    // A provider declared with a missing credential has no adapter and no models
+    // the browser can see. It is still the route a user wants to size before it
+    // goes live, so it renders as a route-level row rather than as an error.
+    const snapshot = {
+      providers: [{ provider: 'my-gateway', providerName: 'My Gateway', modelCount: 0, live: false }],
+      models: [],
+      reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      contextPresets: [128_000, 270_000, 1_000_000],
+      writable: true,
+    }
+    const modelTuningRead = vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })
+    const modelTuningWrite = vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })
     render(<FreeCodeGoSettingsTab
       {...hostStandardProps}
       close={vi.fn()}
@@ -541,16 +615,137 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
       communityInstall={vi.fn()}
       language="zh"
-      customApiReasoningSet={customApiReasoningSet}
+      modelTuningRead={modelTuningRead}
+      modelTuningWrite={modelTuningWrite}
       useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
       t={(key: string) => key as never}
     />)
-    await waitFor(() => { expect(screen.getByText('设置')).toBeTruthy() })
-    fireEvent.click(screen.getByText('设置'))
-    const toggle = await screen.findByLabelText('自定义 API 的思考程度') as HTMLInputElement
-    fireEvent.click(toggle)
-    await waitFor(() => { expect(customApiReasoningSet).toHaveBeenCalledWith(false) })
-    await waitFor(() => { expect((screen.getByLabelText('自定义 API 的思考程度') as HTMLInputElement).checked).toBe(true) })
+    await waitFor(() => { expect(screen.getByText('My Gateway')).toBeTruthy() })
+    expect(screen.getByText('My Gateway').closest('div')?.textContent).toContain('未接入')
+    fireEvent.change(screen.getByLabelText('My Gateway 上下文长度'), { target: { value: '200000' } })
+    fireEvent.click(screen.getByText('应用到该提供商全部模型'))
+    await waitFor(() => { expect(modelTuningWrite).toHaveBeenCalledWith({ provider: 'my-gateway', applyToModels: true, contextWindow: 200_000 }) })
+  })
+
+  it('filters the tuning list by model, and shows a whole route when the query names it', async () => {
+    // The filter is the only way through a route that serves thirty-odd models,
+    // so it has to answer both questions: a model name narrows to that model,
+    // and a provider name widens to the route so its defaults stay reachable.
+    const snapshot = {
+      providers: [
+        { provider: 'anthropic', providerName: 'Anthropic', modelCount: 1, live: true },
+        { provider: 'mine', providerName: 'My API', modelCount: 2, live: true },
+      ],
+      models: [
+        {
+          provider: 'anthropic', providerName: 'Anthropic', model: 'claude-x', name: 'Claude X', declared: false,
+          contextWindow: { value: 200_000, source: 'catalog' as const },
+          maxOutputTokens: { source: 'none' as const },
+          reasoningSource: 'none' as const,
+        },
+        {
+          provider: 'mine', providerName: 'My API', model: 'm1', name: 'M1', declared: true,
+          contextWindow: { value: 270_000, source: 'settings' as const },
+          maxOutputTokens: { source: 'none' as const },
+          reasoningSource: 'none' as const,
+        },
+        {
+          provider: 'mine', providerName: 'My API', model: 'm2', name: 'M2', declared: false,
+          contextWindow: { source: 'none' as const },
+          maxOutputTokens: { source: 'none' as const },
+          reasoningSource: 'none' as const,
+        },
+      ],
+      reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      contextPresets: [128_000, 270_000, 1_000_000],
+      writable: true,
+    }
+    const modelTuningRead = vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'freecodego', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      modelTuningRead={modelTuningRead}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('Claude X')).toBeTruthy() })
+    expect(screen.getByText('M1')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('搜索提供商或模型'), { target: { value: 'claude' } })
+    expect(screen.getByText('Claude X')).toBeTruthy()
+    expect(screen.queryByText('M1')).toBeNull()
+    expect(screen.queryByText('M2')).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('搜索提供商或模型'), { target: { value: 'My API' } })
+    expect(screen.getByText('M1')).toBeTruthy()
+    expect(screen.getByText('M2')).toBeTruthy()
+    expect(screen.queryByText('Claude X')).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('搜索提供商或模型'), { target: { value: 'nothing-here' } })
+    expect(screen.getByText('没有匹配的提供商或模型。')).toBeTruthy()
+  })
+
+  it('shows only the models the Models settings already name when the switch is on', async () => {
+    // "Customized" is the declaration the Host reports, which is also where a
+    // write from this surface lands: the switch is how a user finds the handful
+    // of models they have answered for inside a catalog route.
+    const snapshot = {
+      providers: [{ provider: 'anthropic', providerName: 'Anthropic', modelCount: 2, live: true }],
+      models: [
+        {
+          provider: 'anthropic', providerName: 'Anthropic', model: 'claude-x', name: 'Claude X', declared: false,
+          contextWindow: { value: 200_000, source: 'catalog' as const },
+          maxOutputTokens: { source: 'none' as const },
+          reasoningSource: 'none' as const,
+        },
+        {
+          provider: 'anthropic', providerName: 'Anthropic', model: 'claude-y', name: 'Claude Y', declared: true,
+          contextWindow: { value: 1_000_000, source: 'settings' as const },
+          maxOutputTokens: { value: 8_192, source: 'settings' as const },
+          reasoningSource: 'none' as const,
+        },
+      ],
+      reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      contextPresets: [128_000, 270_000, 1_000_000],
+      writable: true,
+    }
+    const modelTuningRead = vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'freecodego', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      modelTuningRead={modelTuningRead}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('Claude X')).toBeTruthy() })
+    fireEvent.click(screen.getByLabelText('只看已自定义'))
+    expect(screen.getByText('Claude Y')).toBeTruthy()
+    expect(screen.queryByText('Claude X')).toBeNull()
+    // The route itself stays: its defaults are a thing to edit even when no
+    // model on it carries a declaration yet.
+    expect(screen.getByText('Anthropic')).toBeTruthy()
   })
 
   it('keeps automatic plugin conflict repair enabled by default and saves the switch', async () => {

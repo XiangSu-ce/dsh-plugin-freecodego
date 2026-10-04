@@ -4,7 +4,7 @@ import { join, relative } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { LlmError } from '@deepseek-ai/dsh-llm'
-import { AUDIO_FORMATS, gatewayMediaJson, generateAudioWithFallback, generateVideoWithFallback, persistGeneratedImages, pollGeneratedVideo, registerAudioTools, renderGeneratedImages } from '../src/media-generation.ts'
+import { AUDIO_FORMATS, MEDIA_GENERATION_TOOL_NAMES, gatewayMediaJson, generateAudioWithFallback, generateVideoWithFallback, persistGeneratedImages, pollGeneratedVideo, registerAudioTools, registerGenerationTools, renderGeneratedImages } from '../src/media-generation.ts'
 import { MediaRouteLimitation, mediaFallbackAllowed } from '../src/media-utils.ts'
 
 afterEach(() => vi.restoreAllMocks())
@@ -540,5 +540,43 @@ describe('gatewayMediaJson recovery', () => {
       .rejects.toThrow('HTTP 401')
     expect(recoveries).toBe(0)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the names a media registration reports as mounted', () => {
+  /** A host whose `tools` registry refuses one named tool, as a composition's own can. */
+  const hostRefusing = (refused: string, registered: string[], warnings: string[]): unknown => ({
+    ctx: {
+      get: (name: string) => name === 'tools' ? {
+        register: (tool: { readonly name: string }) => {
+          if (tool.name === refused) throw new Error(`the registry refused ${tool.name}`)
+          registered.push(tool.name)
+          return () => undefined
+        },
+      } : undefined,
+      logger: { warn: (message: string) => warnings.push(message) },
+    },
+  })
+
+  it('does not report the image/video tools a registry refused', () => {
+    // `FreeCodeGoMediaToolStatus.registered` is documented as "the subset mounted
+    // right now", and the switch's panel reads it. Naming a tool the registry threw
+    // on would make the panel claim a capability this build does not have.
+    const registered: string[] = []
+    const warnings: string[] = []
+    const host = hostRefusing(MEDIA_GENERATION_TOOL_NAMES.video, registered, warnings)
+    const registration = registerGenerationTools(host as never)
+    expect(registered).toEqual([MEDIA_GENERATION_TOOL_NAMES.image])
+    expect(registration.names).toEqual([MEDIA_GENERATION_TOOL_NAMES.image])
+    expect(warnings.some(message => message.includes(MEDIA_GENERATION_TOOL_NAMES.video))).toBe(true)
+  })
+
+  it('does not report the audio tools a registry refused', () => {
+    const registered: string[] = []
+    const warnings: string[] = []
+    const host = hostRefusing('freecodego_transcribe_audio', registered, warnings)
+    const registration = registerAudioTools(host as never)
+    expect(registered).toEqual(['freecodego_generate_audio'])
+    expect(registration.names).toEqual(['freecodego_generate_audio'])
   })
 })

@@ -696,7 +696,11 @@ export class FreeCodeGoEngineCouncil {
           freeCodeGoReadOnly: true,
           maxTokens: Math.max(400, Math.floor(totalTokenBudget / Math.max(1, runtimes.length))),
         } as unknown as AgentOptions
-        runtime.handle = await parent.ctx.agents.create({
+        // Agent scopes do not implicitly inject services; resolve the scoped
+        // registry, with a property fallback only for legacy SDK contexts.
+        const agents = typeof parent.ctx.get === 'function' ? parent.ctx.get('agents') : parent.ctx.agents
+        if (agents === undefined) throw new Error('engineering council requires an agent service')
+        runtime.handle = await agents.create({
           sessionId,
           meta: { cwd, parentSession: parent.id, origin: 'subagent', delegationDepth: 1 },
           agentOptions,
@@ -704,10 +708,12 @@ export class FreeCodeGoEngineCouncil {
           setup: (childCtx, child) => {
             setSandboxMode(child.session, 'read-only')
             setApprovalPolicy(child.session, 'never')
-            const available = childCtx.tools.schemas(child).map(schema => schema.name)
+            const tools = typeof childCtx.get === 'function' ? childCtx.get('tools') : childCtx.tools
+            if (tools === undefined) throw new Error('engineering council child has no tool service')
+            const available = tools.schemas(child).map(schema => schema.name)
             const allow = available.filter(name => READ_ONLY_ALLOW.has(name))
             if (allow.length === 0) throw new Error('engineering council child has no read-only tools available')
-            childCtx.tools.restrict({ allow })
+            tools.restrict({ allow })
           },
         })
         runtime.agent = runtime.handle.agent

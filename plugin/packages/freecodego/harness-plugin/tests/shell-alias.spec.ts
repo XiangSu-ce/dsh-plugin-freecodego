@@ -166,6 +166,32 @@ describe('registration and nested dispatch', () => {
     expect([...disposed].sort()).toEqual(['bash', 'shell'])
   })
 
+  it('keeps the other alias and its handle when one name is refused', () => {
+    // `shell` and `bash` are two registrations, not one batch: a registry that refuses
+    // the second must not discard the first, and the handle already taken must not be
+    // lost with the throw — otherwise the alias stays registered with no way to stand
+    // it down, which is the leak the shared registrar exists to prevent.
+    const definitions = new Map<string, ToolDefinition>()
+    const disposed = new Set<string>()
+    const warnings: string[] = []
+    const registry: ShellAliasRegistry = {
+      register: (definition) => {
+        if (definition.name === 'bash') throw new Error('the registry refused bash')
+        definitions.set(definition.name, definition)
+        return () => disposed.add(definition.name)
+      },
+      get: name => (['pwsh', 'read'].includes(name) ? {} : undefined),
+      execute: async () => ok(''),
+    }
+    const logger = { debug: () => {}, warn: (message: string) => warnings.push(message) }
+    const disposers = registerShellAliasTools({ ctx: { logger } as unknown as Context, registry })
+    expect([...definitions.keys()]).toEqual(['shell'])
+    expect(disposers).toHaveLength(1)
+    expect(warnings.some(message => message.includes('bash'))).toBe(true)
+    for (const dispose of disposers) dispose()
+    expect([...disposed]).toEqual(['shell'])
+  })
+
   it('declares the parameters a caller sends, as a JSON Schema object', () => {
     // `parameters` is what the provider turns into the model's input schema, so a field
     // missing here is a call the model cannot make: `cmd` is what the measured caller

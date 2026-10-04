@@ -90,5 +90,34 @@ export interface FreeCodeGoDesignStatus {
   readonly skillsReady: boolean
   /** Set only when a mount failed, so a failure is reported as a reason. */
   readonly skillsError?: string
+  /**
+   * Set only when tool registration failed, so the two halves report separately.
+   *
+   * A tool needs the tools service and a Skill needs an asset root: neither can
+   * take the other down, so a build with one working and one broken has to say
+   * which — one shared error field would make "the tools are up but the Skills
+   * are not" read as "the whole pack is down".
+   */
+  readonly toolsError?: string
+  /**
+   * The design tools this session actually registered, across every enabled row.
+   *
+   * The same answer the rows give, gathered in one place: the per-row `tools`
+   * lists say which row contributes what, and this says what the session as a
+   * whole can call — the number a user checks after switching rows on, without
+   * adding them up. Derived from registration, not from the catalogue, so a build
+   * that has not implemented a declared name reports the subset it registered.
+   */
+  readonly registeredTools: readonly string[]
+  /**
+   * Skills discovered under the mounted feature roots this session.
+   *
+   * Counts what the Skills provider is actually serving, so a row that reads
+   * "ready" is distinguishable from one whose assets mounted nothing: the row's
+   * `detail` states the mount, and this states its size. Zero while the pack is
+   * off, nothing is enabled, or the mount failed — all of which the row detail
+   * distinguishes for the row that asked.
+   */
+  readonly mountedSkills: number
   readonly features: readonly FreeCodeGoDesignFeatureState[]
 }

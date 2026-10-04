@@ -66,7 +66,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { isDeferrableByPrefix } from '../src/deferred-tools.ts'
+import { deferredToolFetchHint, isDeferrableByPrefix } from '../src/deferred-tools.ts'
 import { PLAN_MODE_ENFORCEMENT_ADDENDUM, PLAN_MODE_GUIDANCE } from '../src/plan-mode.ts'
 
 const PACKAGE_ROOT = resolve(import.meta.dirname, '..')
@@ -327,5 +327,35 @@ describe('prompt text the model has without a discovery call', () => {
         .map(named => `${path} names ${named} with no fetch hint`),
     )
     expect(offenders).toStrictEqual([])
+  })
+
+  it('carries the fetch hint when a Skill body names the design tools', () => {
+    // A Skill body is the fourth place this text arrives from, and the one no
+    // case above covers: the model reads it when it *loads* the Skill, and
+    // nothing on the way there ran a discovery call. A name in a body therefore
+    // dangles exactly the way a name in an injected section does. The difference
+    // is mechanical — a body cannot call `deferredToolFetchHint` — so it has to
+    // spell the sentence out, and this case compares the two instead of
+    // restating the wording a second time.
+    const body = readFileSync(join(PACKAGE_ROOT, 'assets', 'engineering', 'skills-starter', 'engineering-ui-design', 'SKILL.md'), 'utf8')
+    const named = [...new Set(namedPluginTools(body))].sort()
+    // A body that stopped naming them would make the wall below vacuous, and an
+    // empty scan is the failure this file exists to catch rather than to repeat.
+    expect(named).toStrictEqual([
+      'freecodego_design_craft',
+      'freecodego_design_detect',
+      'freecodego_reactbits',
+      'freecodego_uiux_search',
+    ])
+    // The listed order is the Skill's own, because `deferredToolFetchHint`
+    // renders the caller's order — and the `select:` list inside the sentence is
+    // what the model is told to paste into the search.
+    const hint = deferredToolFetchHint([
+      'freecodego_uiux_search',
+      'freecodego_design_craft',
+      'freecodego_design_detect',
+      'freecodego_reactbits',
+    ])
+    expect(body).toContain(hint.trim())
   })
 })

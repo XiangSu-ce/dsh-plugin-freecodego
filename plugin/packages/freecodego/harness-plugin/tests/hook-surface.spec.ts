@@ -8,6 +8,7 @@
 
 import { describe, expect, test } from 'vitest'
 
+import { CLEARABLE_TOOL_KINDS } from '../src/cache-cold.ts'
 import {
   CURSOR_EVENT_ALIASES,
   HOOK_EVENTS,
@@ -284,6 +285,31 @@ describe('matchers', () => {
     // The member that was already there, so the pair is asserted together rather
     // than the new name alone.
     expect(matchesHookMatcher('Bash', 'shell', toolNameCandidates('shell'))).toBe(true)
+  })
+
+  test('agrees with the cold-cache list about which spellings are a shell', () => {
+    // The two tables answer the same question — "is this a shell?" — for two
+    // consumers: `CLEARABLE_TOOL_KINDS` decides whether a shell result may be
+    // reclaimed, and this family decides whether a user's `Bash` matcher reaches a
+    // spelling. A name in one and not the other is the drift this repository
+    // centralizes its vocabularies to prevent, so the two are pinned equal rather
+    // than asserted one member at a time. The equality is the lock: removing a name
+    // from either table — the mutation each sibling probe performs — breaks it.
+    //
+    // Both carry the Host's real shells (`bash`, `pwsh`) so the equality cannot
+    // pass vacuously, and both keep the same inert cross-agent spellings. Neither
+    // carries `local_shell`: this Host registers no such tool (`dsh-tool-bash` and
+    // `dsh-tool-pwsh` are the only producers, and `native-tool-guard.ts` projects a
+    // Codex approval as `shell`), so it stays a guard-only spelling in
+    // `SHELL_TOOL_NAMES` and is deliberately absent from both payload tables.
+    const spellings = ['bash', 'shell', 'exec', 'exec_command', 'run_command', 'pwsh', 'local_shell'] as const
+    const clearable = spellings.filter(name => CLEARABLE_TOOL_KINDS.includes(name))
+    const reachedByBash = spellings.filter(name => matchesHookMatcher('Bash', name, toolNameCandidates(name)))
+    expect(clearable).toStrictEqual(reachedByBash)
+    // The Host's own shells, so neither table can be emptied and still agree.
+    for (const host of ['bash', 'pwsh']) {
+      expect(clearable, `both tables must know ${host}`).toContain(host)
+    }
   })
 
   test('matches the reader this Host registers for the formats `read` cannot serve', () => {

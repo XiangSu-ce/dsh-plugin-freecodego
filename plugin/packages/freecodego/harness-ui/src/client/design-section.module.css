@@ -147,6 +147,39 @@
   font-size: 12px;
 }
 
+.notice {
+  background: var(--dsh-surface-raised, #1d2130);
+  border-left: 2px solid var(--dsh-accent, #438de7);
+  border-radius: 0 6px 6px 0;
+  color: var(--dsh-text-secondary, #8b93a1);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 62ch;
+  padding: 8px 12px;
+}
+
+.session {
+  align-items: baseline;
+  background: var(--dsh-surface-raised, #1d2130);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 10px 12px;
+}
+
+.sessionStat {
+  align-items: baseline;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.sessionCount {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
 .error {
   color: #e46c61;
   font-size: 12px;

@@ -139,6 +139,18 @@ function screenMemoryCredentials(title: string, body: string): { readonly title:
   if (KEYWORD_SECRET_PATTERN.test(source)) throw new Error('engineering memory rejected a suspected secret')
   const scanned = scanForSecrets(source)
   if (scanned.blocked.length > 0) throw new Error(`engineering memory rejected a suspected secret (${describeSecretFindings(scanned.blocked)})`)
+  // A whole field that is nothing but a credential shape the curated rules cannot
+  // name — a bare digest, an opaque token — is refused rather than redacted, the
+  // same way `screenMemoryTags` treats a tag. `scanForSecrets` only reports the
+  // *tier* below; a 32-character hex blob or a mixed-case alphanumeric token has
+  // no vendor prefix for it to match, so without this the value was written
+  // verbatim while the canonical `screenMemoryForPersistence` (its `opaqueFields`)
+  // refused the identical title or body, and the export path that renders the
+  // record refused it again — a memory the module stored, recalled into later
+  // sessions, and then could not read back. Refusing a field with no readable
+  // content left is the honest answer for durable knowledge.
+  if (looksLikeMemorySecretValue(title)) throw new Error('engineering memory rejected a suspected secret (the title is a bare credential shape)')
+  if (looksLikeMemorySecretValue(body)) throw new Error('engineering memory rejected a suspected secret (the body is a bare credential shape)')
   // Offsets are relative to `source`, so a finding inside the title is redacted in the
   // title and only the body's findings are shifted onto the body. The title used to be
   // left alone, on the reasoning that a finding inside it "has nothing to redact in the
@@ -368,6 +380,10 @@ export class EngineeringMemoryStore {
     const tags = normalizeTags(input.tags)
     screenMemoryTags(tags)
     const projectId = projectIdFor(input.cwd)
+    // The schema offers a closed kind vocabulary. A kind outside it is stored
+    // verbatim today and then read back by every listing as a category the reader
+    // does not know; refuse it at the one write path instead of persisting it.
+    if (input.kind !== undefined && !isMemoryKind(input.kind)) throw new Error(`engineering memory kind is invalid: ${String(input.kind)}`)
     const kind = input.kind ?? 'note'
     const sourceEngine = input.sourceEngine?.trim() || undefined
     // The hash is the *whole* save, not just its prose. It used to cover only

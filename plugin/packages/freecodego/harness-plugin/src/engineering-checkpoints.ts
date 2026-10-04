@@ -146,6 +146,9 @@ type ManifestRow = {
   readonly captured_truncated?: number | null
 }
 
+/** The exact hash shape `capture` writes (`createHash('sha256').digest('hex')`). */
+const SHA256_HEX = /^[a-f0-9]{64}$/i
+
 /**
  * Whether one stored entry can be acted on.
  *
@@ -154,6 +157,13 @@ type ManifestRow = {
  * .split('/'))`. Anything else is refused: a stored `../x` writes outside the
  * workspace, and on Windows a backslash survives the `/`-split and is still a
  * separator to `join`, which the same check has to catch.
+ *
+ * The hash is validated for the same reason and it is the other half of the same
+ * rule: `readBlob` joins it into a path too (`<blobs>/<hash[0..2]>/<hash>`), so a
+ * hash that is not the exact SHA-256 form `capture` writes is a name the reader
+ * cannot honour — `../secret.txt` reaches a file outside the blob tree, and a
+ * restore would copy whatever it found into the workspace. The path check alone
+ * left that door open.
  */
 function isRestorableEntry(value: unknown): value is CheckpointEntry {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
@@ -161,6 +171,7 @@ function isRestorableEntry(value: unknown): value is CheckpointEntry {
   if (typeof entry.file !== 'string' || typeof entry.hash !== 'string') return false
   if (typeof entry.bytes !== 'number' || !Number.isFinite(entry.bytes)) return false
   if (entry.file === '' || entry.file.includes('\\') || entry.file.includes('\0') || isAbsolute(entry.file)) return false
+  if (!SHA256_HEX.test(entry.hash)) return false
   return !entry.file.split('/').some(segment => segment === '' || segment === '.' || segment === '..')
 }
 
