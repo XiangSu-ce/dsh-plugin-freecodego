@@ -117,7 +117,38 @@ jobs:
       # family renames `pnpm pack`'s output to `freecodego-<Harness version>.tgz`
       # inside this step — so nothing downstream renames it again.
       # `packages/freecodego/AGENTS.md` is the naming contract.
-      - run: pnpm run release:pack --family freecodego --out dist/freecodego
+      # The step is retried, and a failure is reported as an annotation rather
+      # than only as output: a failed step's own output is readable only through
+      # an authenticated Actions log request, and this job is the only place the
+      # Linux packing path ever runs.
+      - name: Pack the FreeCodeGo bundle
+        run: |
+          set -u
+          set -o pipefail
+          log="${RUNNER_TEMP}/release-pack.log"
+          status=0
+          for attempt in 1 2 3; do
+            echo "::group::release:pack attempt ${attempt}"
+            if pnpm run release:pack --family freecodego --out dist/freecodego 2>&1 | tee "${log}"; then
+              echo "::endgroup::"
+              echo "release:pack succeeded on attempt ${attempt}"
+              exit 0
+            else
+              status=$?
+            fi
+            echo "::endgroup::"
+            echo "release:pack attempt ${attempt} failed with status ${status}"
+            echo "--- build record ---"
+            cat .dsh-build/client-build-environment.json 2>/dev/null || echo "(no build record)"
+            echo "--- worktree ---"
+            git status --porcelain=v1 --untracked-files=normal | head -n 20 || true
+            sleep 15
+          done
+          echo "--- last release:pack output ---"
+          tail -n 25 "${log}" || true
+          detail="$(tail -n 25 "${log}" 2>/dev/null | sed -e 's/%/%25/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/%0A/g')"
+          echo "::error title=release:pack failed after 3 attempts::${detail}"
+          exit "${status}"
       # FreeCodeGo publishes libraries and a profile bundle, not an executable.
       # OAuth authorization is verified by the Host/API tests; the generic
       # executable consumer probe has no meaningful entry point for this family.

@@ -94,6 +94,13 @@ export function buildGates(
     for (const step of libraryBuildSteps(root, 'all')) {
       gates.push(libraryGate(step, step.id === 'host-src' ? ['native'] : step.needs, env))
     }
+    // Both root tsdown faces exclude the fork's own packages (`!packages/freecodego/*`), so nothing
+    // above emits their runtime entries, and the bundle's `prepack` resolves each of them through
+    // `exports` to `lib/index.js`. Without this step a clean checkout -- which is what the release
+    // workflow builds in -- has no such file and the pack job dies in `builtEntry`. `build:freecodego`
+    // is the fork's own compilation and bundling pass, run after the Host bundle because it consumes
+    // what that face emits, which is the order `build:lib:host` already uses.
+    gates.push(pnpmGate('freecodego-lib', 'FreeCodeGo package libraries', ['run', 'build:freecodego'], ['host-bundle'], env))
     gates.push(pnpmGate('web', 'Web build', ['run', 'build:web'], ['client-bundle'], env))
   }
   if (scope === 'typecheck') {

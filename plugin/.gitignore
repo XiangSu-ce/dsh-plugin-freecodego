@@ -155,6 +155,13 @@
 # (`client-build-environment`, `pnpm-invocation`) are whitelisted there too.
 !/scripts/build.ts
 
+# That script is the fork's, so its artifact graph carries the fork's own step:
+# `build:freecodego`, which emits the FreeCodeGo packages' runtime entries that the
+# bundle's `prepack` resolves through `exports`. Upstream's synced `build.spec.ts`
+# pins the graph without that step, so the divergence has to be pinned by a spec a
+# clone receives — the same reason the lint-workflow contract below is whitelisted.
+!/scripts/build.spec.ts
+
 # The published FreeCodeGo bundle's `prepack` runs this assembly script, and
 # `release:pack` runs `pnpm pack`, so a clone that lacks it cannot build the
 # tarball a release publishes. (`prepack` is npm's lifecycle, not npm's

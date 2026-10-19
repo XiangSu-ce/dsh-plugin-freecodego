@@ -18,6 +18,38 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.2.1-rc.2.2 — 2026-10-20
+
+### English
+
+The bundle mounts on the Harness `0.2.1-rc.2` line and moves one dotted segment
+deeper on it, so the tag names the exact version while the asset keeps naming the
+Harness line: `freecodego-0.2.1-rc.2.tgz`.
+
+#### Fixed
+
+- **The release build emits the FreeCodeGo packages' runtime entries, so a
+  release can be packed at all.** `release:pack` runs the bundle's `prepack`,
+  which resolves every aliased package through its `exports` and refuses to
+  assemble a package whose entry file is missing. The artifact build
+  (`pnpm run build:official`) excluded `packages/freecodego/*` from both root
+  tsdown faces and ran no step of its own for them, so it left
+  `packages/freecodego/freecodego-api/lib/index.js` — and every sibling entry —
+  absent, and the pack step ended reporting exactly that. The artifact graph now
+  runs `build:freecodego` after the host bundle, the pass
+  `pnpm run build:lib:host` already ran, so every artifact scope that packs a
+  bundle builds what that bundle resolves. A working tree holding those files
+  from an earlier manual build hid this: the pack succeeded locally and failed in
+  a fresh clone.
+
+### 中文
+
+插件挂载在 Harness `0.2.1-rc.2` 线路上，自身版本在该线路上深一段，因此 tag 命名确切版本，而资产名仍命名 Harness 线路：`freecodego-0.2.1-rc.2.tgz`。
+
+#### 修复
+
+- **发布构建会产出 FreeCodeGo 各包的运行入口，发布包因此才能被组装出来。** `release:pack` 会运行该 bundle 的 `prepack`，它按 `exports` 解析每个被别名的包，并在入口文件缺失时拒绝组装。产物构建（`pnpm run build:official`）在两个根 tsdown 面里都排除了 `packages/freecodego/*`，自身也没有为它们安排步骤，于是 `packages/freecodego/freecodego-api/lib/index.js` 以及同类的入口文件都不存在，打包步骤就以这一点报错退出。产物图现在在 host bundle 之后运行 `build:freecodego`，也就是 `pnpm run build:lib:host` 早已执行的那一步；凡是要打包 bundle 的产物作用域，都会构建该 bundle 所解析的东西。此前本地看不出问题，是因为工作树里留着早先手工构建的产物：本地打包成功，干净 clone 里失败。
+
 ## 0.2.1-rc.2.1 — 2026-10-19
 
 ### English
