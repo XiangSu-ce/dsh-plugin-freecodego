@@ -18,12 +18,13 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
-## 0.2.1-rc.2 — 2026-10-19
+## 0.2.1-rc.2.1 — 2026-10-19
 
 ### English
 
-The bundle mounts on the Harness `0.2.1-rc.2` line, and its own version is that
-same version, so this release's asset is `freecodego-0.2.1-rc.2.tgz`.
+The bundle mounts on the Harness `0.2.1-rc.2` line and moves one dotted segment
+deeper on it, so the tag names the exact version while the asset keeps naming the
+Harness line: `freecodego-0.2.1-rc.2.tgz`.
 
 #### Fixed
 
@@ -60,7 +61,7 @@ same version, so this release's asset is `freecodego-0.2.1-rc.2.tgz`.
 
 ### 中文
 
-插件挂载在 Harness `0.2.1-rc.2` 线路上，自身版本号也与该线路一致，因此本次发布的资产是 `freecodego-0.2.1-rc.2.tgz`。
+插件挂载在 Harness `0.2.1-rc.2` 线路上，自身版本在该线路上深一段，因此 tag 命名确切版本，而资产名仍命名 Harness 线路：`freecodego-0.2.1-rc.2.tgz`。
 
 #### 修复
 
