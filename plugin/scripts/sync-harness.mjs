@@ -39,15 +39,31 @@
  *   HARNESS_SYNC_COPY_ONLY  `1` performs the copies described above and stops
  *                           before the forks, so a fixture source can exercise the
  *                           copy contract on its own
+ *
+ * Subcommands, as `node scripts/sync-harness.mjs <command> [--dry-run]`:
+ *
+ *   sync        (the default) mirror the locked tree, then apply the forks
+ *   config      three-way-merge the root config files: `package.json` key by key,
+ *               `pnpm-workspace.yaml` and `tsconfig.base.json` through
+ *               `git merge-file`, and `patches/` by baseline ownership
+ *   scripts     refresh the upstream-owned files under `scripts/`, which the
+ *               add-only mirror deliberately never overwrites
+ *   references  re-point `tsconfig.host.json` and `tsconfig.client.json` at
+ *               upstream's own reference, include and exclude lists
+ *   all         `config`, then `scripts`, then `references`
+ *
+ * `--dry-run` (or `HARNESS_SYNC_DRY_RUN=1`) prints every change and writes none of
+ * them, so each step can be reviewed before it touches the tree.
  */
 
 import { cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
 const root = resolve(process.env.HARNESS_SYNC_ROOT ?? resolve(import.meta.dirname, '..'))
-const dryRun = process.env.HARNESS_SYNC_DRY_RUN === '1'
+let dryRun = process.env.HARNESS_SYNC_DRY_RUN === '1'
 const lock = JSON.parse(await readFile(join(root, 'harness.lock.json'), 'utf8'))
 const config = JSON.parse(await readFile(join(root, 'harness.config.json'), 'utf8'))
 const repository = lock.repository ?? config.repository
@@ -92,6 +108,39 @@ const DESKTOP_PROFILE_BUNDLES_DECLARATION = 'const DESKTOP_PROFILE_BUNDLES: read
 if (process.env.HARNESS_SYNC_PATCH_ONLY === '1') {
   await applyForks(root)
   console.log(`sync-harness: re-applied forks under ${root} (patch-only; nothing copied)`)
+  process.exit(0)
+}
+
+/**
+ * The subcommands, in the order `all` runs them.
+ *
+ * `sync` is the mirror that was here before and stays the default, so an existing
+ * `node scripts/sync-harness.mjs` invocation means what it always did.
+ */
+const commands = new Set(['sync', 'config', 'scripts', 'references', 'all'])
+const argv = process.argv.slice(2)
+for (const argument of argv) {
+  if (argument.startsWith('-') && argument !== '--dry-run') throw new Error(`unknown option ${argument}; only --dry-run is understood`)
+}
+const command = argv.find(argument => !argument.startsWith('-')) ?? 'sync'
+if (!commands.has(command)) throw new Error(`unknown command ${command}; expected one of ${[...commands].join(', ')}`)
+if (argv.includes('--dry-run')) dryRun = true
+
+if (command !== 'sync') {
+  const source = await resolveSource()
+  await assertSourceUsable(source)
+  const baseline = lock.baseline?.ref ?? config.baselineRef
+  if (typeof baseline !== 'string' || baseline === '') {
+    throw new Error(`harness.lock.json must name baseline.ref (or harness.config.json baselineRef) for ${command}`)
+  }
+  const selected = command === 'all' ? ['config', 'scripts', 'references'] : [command]
+  for (const name of selected) {
+    console.log(`sync-harness: ${name}${dryRun ? ' (dry run)' : ''} against ${baseline}..${commit}`)
+    if (name === 'config') await mergeRootConfigs(source, baseline, dryRun)
+    if (name === 'scripts') await refreshScripts(source, baseline, dryRun)
+    if (name === 'references') await alignAggregates(source, dryRun)
+  }
+  console.log(`sync-harness: ${selected.join(', ')} ${dryRun ? 'planned; nothing written' : 'done'}`)
   process.exit(0)
 }
 
@@ -436,12 +485,27 @@ for (const directory of copiedDirectories) {
 
 // Official packages are copied one package at a time so the private overlay
 // survives every refresh without requiring a second source checkout.
+// The stale scope sweep below depends on `sourcePackages` being the source of
+// truth for which scopes exist.
 const sourcePackages = join(sourceRoot, 'packages')
 const targetPackages = join(root, 'packages')
 for (const entry of await readdir(sourcePackages, { withFileTypes: true })) {
   if (entry.name === 'freecodego') continue
   if (!dryRun) summary.swept += await mirrorDirectory(join(sourcePackages, entry.name), join(targetPackages, entry.name))
   summary.mirrored += 1
+}
+
+// A scope directory upstream moved is invisible to the loop above: it only
+// descends into names the source still has, so `packages/webhook/` would survive
+// every sync after upstream moved it to `packages/experimental/webhook/`. Sweep
+// the scope level the same way, never touching the private overlay.
+if (!dryRun) {
+  for (const entry of await readdir(targetPackages, { withFileTypes: true })) {
+    if (entry.name === 'freecodego') continue
+    if (existsSync(join(sourcePackages, entry.name))) continue
+    await rm(join(targetPackages, entry.name), { recursive: true, force: true })
+    summary.swept += 1
+  }
 }
 
 // Upstream's own files under `scripts/`, added where the destination has none.
@@ -606,21 +670,29 @@ export function providerNameOf(
     await writeFile(indexPath, index)
   }
 
-  // ModelSelect.tsx: the composer trigger's fallback label, the load-failure
-  // row, and the group heading the 0.2.0 `MenuGroup` renders.
+  // ModelSelect.tsx: the load-failure row and the per-provider display name the
+  // 0.2.1 `MenuGroup` group heading renders.
+  //
+  // 0.2.1-alpha.2 rebuilt this file: the group heading now reads
+  // `group.provider.name`, the provider name is mapped once in the `groups`
+  // memo, and the trigger's `provider/model` fallback is gone (it falls back to
+  // the model name). So the fork's two old anchors no longer exist, and the
+  // rename now happens at the one place the heading reads.
   let modelSelect = await readFile(modelSelectPath, 'utf8')
   if (!modelSelect.includes('providerNameOf')) {
-    const importAnchor = "import type { ModelSelectInjected } from './slots.ts'"
-    const fallbackAnchor = "      ?? (state.current === null ? t('trigger.fallback') : \`\${state.current.provider}/\${state.current.model}\`)"
+    const importAnchor = "import type { ModelLabelOwner, ModelSelectInjected } from './slots.ts'"
+    const accountAnchor = "  const accountProviderName = t('provider.account')\n"
+    const groupAnchor = "      name: group.id === 'deepseek-account' ? accountProviderName : group.name,"
+    const depsAnchor = "  })), [state.groups, accountProviderName])"
     const warningAnchor = "                  <span>{t('warning.groupLoad', { name: failure.id === 'deepseek-account' ? t('provider.account') : failure.name, message: failure.message })}</span>"
-    const groupAnchor = "                    <MenuGroup key={group.id} label={group.id === 'deepseek-account' ? t('provider.account') : group.name}>"
-    for (const anchor of [importAnchor, fallbackAnchor, warningAnchor, groupAnchor]) {
+    for (const anchor of [importAnchor, accountAnchor, groupAnchor, depsAnchor, warningAnchor]) {
       if (!modelSelect.includes(anchor)) throw new Error('ModelSelect.tsx no longer matches the provider-name anchor')
     }
     modelSelect = modelSelect.replace(importAnchor, `${importAnchor}\nimport { providerNameOf } from './locales.ts'`)
-    modelSelect = modelSelect.replace(fallbackAnchor, "      ?? (state.current === null\n        ? t('trigger.fallback')\n        : \`\${providerNameOf(state.current.provider, state.current.provider, t)}/\${state.current.model}\`)")
+    modelSelect = modelSelect.replace(accountAnchor, '')
+    modelSelect = modelSelect.replace(groupAnchor, '      name: providerNameOf(group.id, group.name, t),')
+    modelSelect = modelSelect.replace(depsAnchor, '  })), [state.groups, t])')
     modelSelect = modelSelect.replace(warningAnchor, "                  <span>{t('warning.groupLoad', { name: providerNameOf(failure.id, failure.name, t), message: failure.message })}</span>")
-    modelSelect = modelSelect.replace(groupAnchor, "                    <MenuGroup key={group.id} label={providerNameOf(group.id, group.name, t)}>")
     await writeFile(modelSelectPath, modelSelect)
   }
 }
@@ -1807,4 +1879,403 @@ async function patchHarnessV013Compatibility(root) {
   // of them never arrive and whatever is checked in is what `tsconfig.host.json`
   // typechecks. Refreshing them is a deliberate act -- copy the upstream file, then
   // re-apply what this repository needs on top -- not something a sync performs.
+}
+// ---------------------------------------------------------------------------
+// Upgrade subcommands
+//
+// The 0.2.1 bump needed four steps the mirror does not cover: three-way-merge the
+// root config files, refresh the upstream-owned files under `scripts/`, re-point
+// the check aggregates at upstream's project list, and then read the tsc output by
+// hand. The first three are mechanical, and doing them by hand is how a fork pin
+// gets silently reverted or an upstream fix never arrives, so they are subcommands
+// with a dry run. Each one is idempotent: run it twice and the second run reports
+// nothing to do.
+// ---------------------------------------------------------------------------
+
+/**
+ * One file at one upstream revision, or `undefined` when that revision lacks it.
+ *
+ * `git show` against the source checkout, which is a full clone of the upstream
+ * repository: the baseline release is one command away, so a three-way merge needs
+ * no second copy of the tree on disk.
+ * @param sourceRoot - the upstream checkout this run copies from.
+ * @param revision - a tag, branch or commit reachable from that checkout.
+ * @param path - workspace-relative path.
+ * @returns the file's bytes, or `undefined`.
+ */
+function upstreamFileAt(sourceRoot, revision, path) {
+  const result = spawnSync('git', ['-C', sourceRoot, 'show', `${revision}:${path}`], { windowsHide: true })
+  return result.status === 0 ? result.stdout : undefined
+}
+
+/**
+ * Every path a revision range changed under one directory, with its status.
+ *
+ * One `git diff` rather than a byte comparison per file: `scripts/` holds hundreds
+ * of files, and only the handful upstream touched can need work.
+ * @param sourceRoot - the upstream checkout.
+ * @param from - the baseline revision.
+ * @param to - the locked commit.
+ * @param directory - workspace-relative directory to restrict the diff to.
+ * @returns one `{ status, from, to }` per changed path; `status` is the git letter.
+ */
+function upstreamChanges(sourceRoot, from, to, directory) {
+  const result = spawnSync(
+    'git',
+    ['-C', sourceRoot, 'diff', '--name-status', '--find-renames', from, to, '--', directory],
+    { encoding: 'utf8', windowsHide: true },
+  )
+  if (result.status !== 0) {
+    throw new Error(`git diff ${from} ${to} -- ${directory} failed: ${result.stderr.trim()}`)
+  }
+  return result.stdout
+    .split('\n')
+    .filter(line => line.trim() !== '')
+    .map((line) => {
+      const [status, ...paths] = line.split('\t')
+      return { status: status[0], from: paths[0], to: paths[paths.length - 1] }
+    })
+}
+
+/** Parse a tsconfig: line comments and trailing commas are legal there. */
+function parseJsonc(text) {
+  return JSON.parse(text.replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([\]}])/g, '$1'))
+}
+
+/**
+ * The `[ … ]` slice that follows one key, found by bracket depth.
+ *
+ * A slice rather than a re-render, so the comments upstream keeps inside its arrays
+ * come along instead of being flattened away.
+ * @param text - the file text.
+ * @param key - the key whose array is wanted.
+ * @returns the array slice including its brackets, or `undefined`.
+ */
+function arraySlice(text, key) {
+  const start = text.indexOf(`"${key}"`)
+  if (start < 0) return undefined
+  const open = text.indexOf('[', start)
+  if (open < 0) return undefined
+  let depth = 0
+  for (let index = open; index < text.length; index += 1) {
+    if (text[index] === '[') depth += 1
+    else if (text[index] === ']') {
+      depth -= 1
+      if (depth === 0) return text.slice(open, index + 1)
+    }
+  }
+  return undefined
+}
+
+/**
+ * Append rendered entries to an array slice, keeping the slice's own body.
+ *
+ * The appended block carries a one-line note saying why it is there: the entries
+ * are the fork's own, and the next reader of the file has no way to tell an
+ * upstream entry from one this repository added.
+ * @param slice - the upstream array slice, brackets included.
+ * @param extras - rendered entries to append.
+ * @param comment - the note to write above them, omitted when empty.
+ * @returns the merged slice.
+ */
+function appendToSlice(slice, extras, comment) {
+  if (slice === undefined || extras.length === 0) return slice
+  const body = slice.slice(0, -1).replace(/\s*$/, '')
+  const separator = body.endsWith(',') || body.endsWith('[') ? '' : ','
+  const note = comment === undefined ? '' : `\n    // ${comment}`
+  return `${body}${separator}${note}\n${extras.map(entry => `    ${entry}`).join(',\n')}\n  ]`
+}
+
+/** Replace one array slice inside a file text, leaving everything else untouched. */
+function replaceSlice(text, key, slice) {
+  if (slice === undefined) return text
+  const current = arraySlice(text, key)
+  if (current === undefined) return text
+  const start = text.indexOf(current)
+  return `${text.slice(0, start)}${slice}${text.slice(start + current.length)}`
+}
+
+/**
+ * Whether an `include` glob names anything in this workspace.
+ *
+ * An entry whose file the fork does not have would be a hard `TS6053`, so a stale
+ * one is dropped by name rather than carried into the merged list.
+ * @param pattern - one `include` entry.
+ * @returns true when at least one file or directory matches.
+ */
+function includeMatchesAnything(pattern) {
+  if (!pattern.includes('*')) return existsSync(join(root, pattern))
+  const prefix = pattern.slice(0, pattern.indexOf('*'))
+  const directory = join(root, prefix.endsWith('/') ? prefix : prefix.slice(0, prefix.lastIndexOf('/') + 1))
+  return existsSync(directory)
+}
+
+/**
+ * Three-way merge one text file, through `git merge-file`.
+ *
+ * The baseline release is the common ancestor: the fork's own additions survive
+ * because only upstream's side of that diff is applied to them, and a genuine
+ * overlap is reported as a conflict rather than resolved by guesswork.
+ * @param oursText - the file as it is here.
+ * @param baseText - the file at the baseline release.
+ * @param theirsText - the file at the locked commit.
+ * @param label - the file's name, for the error message.
+ * @returns the merged text and whether git reported a conflict.
+ */
+function mergeThreeWay(oursText, baseText, theirsText, label) {
+  const scratch = mkdtempSync(join(tmpdir(), 'dsh-sync-'))
+  const at = name => join(scratch, name)
+  try {
+    writeFileSync(at('ours'), oursText)
+    writeFileSync(at('base'), baseText)
+    writeFileSync(at('theirs'), theirsText)
+    const result = spawnSync(
+      'git',
+      ['merge-file', '-p', '-L', 'fork', '-L', 'baseline', '-L', 'upstream', at('ours'), at('base'), at('theirs')],
+      { encoding: 'utf8', windowsHide: true },
+    )
+    // `git merge-file` answers 1 for conflicts, more than 1 for its own failure.
+    if (result.status === 1) return { text: result.stdout, conflicted: true }
+    if (result.status !== 0) throw new Error(`${label}: git merge-file failed (${String(result.status)}): ${result.stderr.trim()}`)
+    return { text: result.stdout, conflicted: false }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}
+/**
+ * Merge the root config files onto the fork's tree.
+ *
+ * These are the inputs the mirror deliberately does not own, because each carries a
+ * fork-only entry: `package.json` its own scripts and pins, `pnpm-workspace.yaml`
+ * the `linkWorkspacePackages` switch and the vendored/pi-ai overrides,
+ * `tsconfig.base.json` the FreeCodeGo aliases. `packages/` and `apps/` are mirrored
+ * wholesale, so this is the one step that cannot be "copy the source over".
+ * @param sourceRoot - the upstream checkout.
+ * @param baseline - the baseline release ref, used as the merge ancestor.
+ * @param isDryRun - report the plan and write nothing.
+ * @returns how many changes were found (and, unless dry, applied).
+ */
+async function mergeRootConfigs(sourceRoot, baseline, isDryRun) {
+  let changed = 0
+  const note = (message) => {
+    changed += 1
+    console.log(`  ${isDryRun ? 'would ' : ''}${message}`)
+  }
+
+  // package.json, key by key. A key upstream has and the fork does not is added; a
+  // key the fork never touched follows upstream; a key the fork wrote stays, even
+  // when upstream also moved it.
+  const manifestPath = join(root, 'package.json')
+  const ours = JSON.parse(await readFile(manifestPath, 'utf8'))
+  const theirs = JSON.parse(await readFile(join(sourceRoot, 'package.json'), 'utf8'))
+  const baselineManifest = upstreamFileAt(sourceRoot, baseline, 'package.json')
+  const base = baselineManifest === undefined ? undefined : JSON.parse(baselineManifest.toString('utf8'))
+  const before = JSON.stringify(ours)
+  for (const key of ['version', 'packageManager']) {
+    if (theirs[key] === undefined || ours[key] === theirs[key]) continue
+    note(`package.json ${key}: ${String(ours[key])} -> ${String(theirs[key])}`)
+    ours[key] = theirs[key]
+  }
+  for (const block of ['scripts', 'devDependencies', 'dependencies']) {
+    const upstreamBlock = theirs[block]
+    if (upstreamBlock === undefined) continue
+    ours[block] ??= {}
+    for (const [key, value] of Object.entries(upstreamBlock)) {
+      const own = ours[block][key]
+      if (own === value) continue
+      // A key the baseline had and the fork left alone is upstream's to move; one
+      // the fork wrote is the fork's, whichever side also touched it.
+      if (own !== undefined && base?.[block]?.[key] !== own) continue
+      note(`package.json ${block}.${key}: ${own === undefined ? '(new)' : String(own)} -> ${String(value)}`)
+      ours[block][key] = value
+    }
+  }
+  if (JSON.stringify(ours) !== before && !isDryRun) await writeFile(manifestPath, `${JSON.stringify(ours, null, 2)}\n`)
+
+  // The two text configs with fork-only blocks: a real three-way merge, so an
+  // unrelated upstream edit lands and a fork block survives without a second list
+  // of anchors to keep in step.
+  for (const relative of ['pnpm-workspace.yaml', 'tsconfig.base.json']) {
+    const baselineFile = upstreamFileAt(sourceRoot, baseline, relative)
+    if (baselineFile === undefined) {
+      console.log(`  ${relative}: not in ${baseline}; left alone`)
+      continue
+    }
+    const oursText = await readFile(join(root, relative), 'utf8')
+    const merged = mergeThreeWay(oursText, baselineFile.toString('utf8'), await readFile(join(sourceRoot, relative), 'utf8'), relative)
+    if (merged.conflicted) {
+      throw new Error(`${relative}: upstream and the fork changed the same hunk; resolve by hand and re-run (nothing written)`)
+    }
+    if (merged.text === oursText) continue
+    note(`${relative}: merged ${commit} over the fork's copy`)
+    if (!isDryRun) await writeFile(join(root, relative), merged.text)
+  }
+
+  // `patches/` is upstream's directory -- pnpm applies it by filename -- and the
+  // fork owns none of it. A patch that is still the baseline's copy is refreshed,
+  // one the fork edited is reported, and one upstream dropped is removed only while
+  // it is untouched.
+  const sourcePatches = join(sourceRoot, 'patches')
+  const targetPatches = join(root, 'patches')
+  if (existsSync(sourcePatches) && existsSync(targetPatches)) {
+    for (const entry of await readdir(sourcePatches, { withFileTypes: true })) {
+      if (!entry.isFile()) continue
+      const relative = `patches/${entry.name}`
+      const source = join(sourcePatches, entry.name)
+      const target = join(targetPatches, entry.name)
+      if (existsSync(target) && (await readFile(target)).equals(await readFile(source))) continue
+      const baselineCopy = upstreamFileAt(sourceRoot, baseline, relative)
+      if (existsSync(target) && baselineCopy === undefined) {
+        // Present here before the baseline had it: this is the fork's own patch, and
+        // there is no third version to merge it against.
+        console.log(`  ${relative}: fork-owned (predates ${baseline}); left alone`)
+        continue
+      }
+      if (existsSync(target) && !(await readFile(target)).equals(baselineCopy)) {
+        console.log(`  ${relative}: edited here; left alone`)
+        continue
+      }
+      note(`${relative}: ${existsSync(target) ? 'refreshed' : 'added'} from ${commit}`)
+      if (!isDryRun) await cp(source, target, { dereference: true })
+    }
+    for (const entry of await readdir(targetPatches, { withFileTypes: true })) {
+      if (!entry.isFile() || existsSync(join(sourcePatches, entry.name))) continue
+      const relative = `patches/${entry.name}`
+      const baselineCopy = upstreamFileAt(sourceRoot, baseline, relative)
+      const oursFile = await readFile(join(targetPatches, entry.name))
+      if (baselineCopy === undefined || !oursFile.equals(baselineCopy)) {
+        console.log(`  ${relative}: dropped upstream, edited here; left alone`)
+        continue
+      }
+      note(`${relative}: dropped upstream`)
+      if (!isDryRun) await rm(join(targetPatches, entry.name), { force: true })
+    }
+  }
+
+  console.log(`sync-harness: ${String(changed)} config change(s) ${isDryRun ? 'planned' : 'applied'}`)
+}
+
+/**
+ * Refresh the upstream-owned files under `scripts/`.
+ *
+ * `addMissingScriptFiles` only *adds*, because `scripts/` holds upstream and
+ * fork-owned files side by side and a wholesale copy would sweep the fork's own.
+ * The cost is that an upstream edit to a script the fork has never touched never
+ * arrives, and the host type gate then reports errors inside upstream code. A file
+ * is upstream-owned when its bytes still equal the baseline release's copy -- the
+ * same test the earlier bumps used -- so a fork edit is never overwritten.
+ * @param sourceRoot - the upstream checkout.
+ * @param baseline - the baseline release ref.
+ * @param isDryRun - report the plan and write nothing.
+ * @returns how many scripts were refreshed (or would be).
+ */
+async function refreshScripts(sourceRoot, baseline, isDryRun) {
+  const changes = upstreamChanges(sourceRoot, baseline, commit, 'scripts')
+  let touched = 0
+  for (const change of changes) {
+    const relative = change.to
+    const source = join(sourceRoot, relative)
+    const target = join(root, relative)
+    if (change.status === 'D' || !existsSync(source)) {
+      // Upstream removed it. Reported, not deleted: a stale copy is cheaper than
+      // deleting a file the fork may have adopted.
+      if (existsSync(target)) console.log(`  ! ${relative}: removed upstream; still present here`)
+      continue
+    }
+    if (!existsSync(target)) {
+      console.log(`  + ${relative}`)
+      touched += 1
+      if (!isDryRun) {
+        await mkdir(dirname(target), { recursive: true })
+        await cp(source, target, { dereference: true })
+      }
+      continue
+    }
+    if ((await readFile(target)).equals(await readFile(source))) continue
+    const baselineFile = upstreamFileAt(sourceRoot, baseline, relative)
+    if (baselineFile === undefined || !(await readFile(target)).equals(baselineFile)) {
+      console.log(`  ! ${relative}: differs from ${baseline} and from ${commit}; left alone`)
+      continue
+    }
+    console.log(`  ~ ${relative}`)
+    touched += 1
+    if (!isDryRun) await cp(source, target, { dereference: true })
+  }
+  console.log(`sync-harness: ${String(touched)} of ${String(changes.length)} changed upstream script(s) ${isDryRun ? 'to refresh' : 'refreshed'}`)
+}
+
+/**
+ * Re-point the two check aggregates at upstream's own project lists.
+ *
+ * `tsconfig.host.json` and `tsconfig.client.json` are the fork's aggregates, but
+ * their `references` mirror upstream's package set: 0.2.x adds packages and
+ * per-face project files (`packages/api/remote-access/tsconfig.host.json`), and a
+ * package absent from the list makes `tsc -b` report `TS6307` for every file it
+ * pulls into the program. `include`/`exclude` are the other half of that contract,
+ * which is why they are merged here too: an `include` glob that sweeps a package's
+ * `*.host.ts` fixture into the client program fails the same way.
+ *
+ * Upstream's order is the base and the fork's own entries are appended, so the
+ * result is stable across runs and a fork-only test file is never dropped.
+ * @param sourceRoot - the upstream checkout.
+ * @param isDryRun - report the plan and write nothing.
+ * @returns how many aggregates changed (or would).
+ */
+async function alignAggregates(sourceRoot, isDryRun) {
+  let changed = 0
+  for (const file of ['tsconfig.host.json', 'tsconfig.client.json']) {
+    const path = join(root, file)
+    const text = await readFile(path, 'utf8')
+    const upstreamText = await readFile(join(sourceRoot, file), 'utf8')
+    const current = parseJsonc(text)
+    const upstream = parseJsonc(upstreamText)
+    const planned = []
+
+    // References: keyed by path, and a path upstream spells with a
+    // `tsconfig.*.json` suffix is the same package as the directory form.
+    const upstreamRefs = upstream.references.map(reference => reference.path)
+    const upstreamRefSet = new Set(upstreamRefs)
+    const upstreamBases = new Set(upstreamRefs.map(entry => entry.replace(/\/tsconfig\.[a-z]+\.json$/, '')))
+    const forkRefs = current.references
+      .map(reference => reference.path)
+      .filter((entry) => {
+        const base = entry.replace(/\/tsconfig\.[a-z]+\.json$/, '')
+        return !upstreamRefSet.has(entry) && !upstreamBases.has(base)
+      })
+    let next = replaceSlice(
+      text,
+      'references',
+      appendToSlice(
+        arraySlice(upstreamText, 'references'),
+        forkRefs.map(entry => `{ "path": ${JSON.stringify(entry)} }`),
+        'Fork-only projects: upstream does not build these, so a sync keeps them here.',
+      ),
+    )
+    planned.push(`references ${String(current.references.length)} -> ${String(upstreamRefs.length + forkRefs.length)}`)
+
+    for (const key of ['include', 'exclude']) {
+      const upstreamList = upstream[key]
+      if (upstreamList === undefined) continue
+      const upstreamSet = new Set(upstreamList)
+      const extras = (current[key] ?? []).filter(entry => !upstreamSet.has(entry) && (key !== 'include' || includeMatchesAnything(entry)))
+      // The FreeCodeGo packages are checked by their own tsconfigs through
+      // `build:freecodego`, so `exclude` keeps them out of this program while
+      // `include` keeps the fork's e2e files in it.
+      next = replaceSlice(next, key, appendToSlice(
+        arraySlice(upstreamText, key),
+        extras.map(entry => JSON.stringify(entry)),
+        'Fork-owned entries: upstream does not list them, so a sync must keep them.',
+      ))
+      planned.push(`${key} ${String((current[key] ?? []).length)} -> ${String(upstreamList.length + extras.length)}`)
+    }
+
+    if (next === text) {
+      console.log(`  ${file}: already aligned`)
+      continue
+    }
+    changed += 1
+    console.log(`  ${file}: ${isDryRun ? 'would change' : 'changed'} - ${planned.join(', ')}`)
+    if (!isDryRun) await writeFile(path, next)
+  }
+  console.log(`sync-harness: ${String(changed)} aggregate(s) ${isDryRun ? 'to align' : 'aligned'}`)
 }

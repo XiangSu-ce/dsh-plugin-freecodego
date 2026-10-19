@@ -49,7 +49,10 @@ const ownPackages = {
  * but no bundle mounts the package that turns them into model-facing tools and it
  * is absent from the `dsh` install contract too — so an unmodified install can
  * search no prior session at all. It ships here rather than as a row naming the
- * official package because it has to work with nothing installed.
+ * official package because it has to work with nothing installed. (0.2.1 moved
+ * the package out of `packages/session-query/` into `packages/experimental/`; the
+ * directory below is the one that holds its manifest, and the name is the
+ * identity that matters.)
  *
  * Shipping these artifacts and mounting their rows is what closes each gap
  * without this plugin owning a second implementation of anything.
@@ -61,7 +64,7 @@ const ownPackages = {
 const upstreamArtifacts = {
   '@deepseek-ai/dsh-subagent-codex': 'packages/subagent/subagent-codex',
   '@deepseek-ai/dsh-subagent-claude-code': 'packages/subagent/subagent-claude-code',
-  '@deepseek-ai/dsh-tool-session-query': 'packages/session-query/tool-session-query',
+  '@deepseek-ai/dsh-tool-session-query': 'packages/experimental/tool-session-query',
 }
 
 /**

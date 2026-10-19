@@ -3,12 +3,9 @@
  *
  * Which peer services exist is only knowable then: `ctx.get` answers `undefined`
  * for a service whose providing entry has not activated yet, and a plugin
- * constructor runs before the rows declared after it. Two modules in this package
- * need that answer before their first read — the agent-preset install, which has
- * to know whether a roster registry is composed at all, and
- * `custom-api-reasoning.ts`, which has to know whether the settings service is up
- * before it looks for the user's third-party routes — so the seam lives here
- * rather than in either of them.
+ * constructor runs before the rows declared after it. The agent-preset install
+ * needs that answer before its first read — it has to know whether a roster
+ * registry is composed at all — so the seam lives here rather than in it.
  *
  * The same `ctx.root.loader.await()` seam is what the harness settings service
  * itself uses for its legacy import (`packages/settings/settings/src/index.ts`,

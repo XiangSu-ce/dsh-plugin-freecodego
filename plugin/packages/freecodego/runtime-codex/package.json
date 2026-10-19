@@ -1,8 +1,10 @@
 {
   "name": "@deepseek-ai/dsh-freecodego-runtime-codex",
   "description": "Codex app-server JSONL worker for the FreeCodeGo Harness runtime",
-  "version": "0.2.0-rc.2",
-  "publishConfig": { "access": "public" },
+  "version": "0.2.1-rc.2",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/XiangSu-ce/dsh-plugin-freecodego.git",
@@ -11,13 +13,29 @@
   "type": "module",
   "main": "lib/index.mjs",
   "types": "lib/types/index.d.ts",
-  "exports": { ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.mjs" }, "./worker": "./lib/worker.mjs", "./src/*": "./src/*" },
-  "files": ["lib/index.mjs", "lib/worker.mjs", "lib/types/**/*.d.ts", "artifacts/**"],
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.mjs"
+    },
+    "./worker": "./lib/worker.mjs",
+    "./src/*": "./src/*"
+  },
+  "files": [
+    "lib/index.mjs",
+    "lib/worker.mjs",
+    "lib/types/**/*.d.ts",
+    "artifacts/**"
+  ],
   "license": "AGPL-3.0-only",
   "dependencies": {
     "@deepseek-ai/dsh-freecodego-native-runtime-protocol": "workspace:^",
     "@deepseek-ai/dsh-freecodego-root-agent": "workspace:^"
   },
-  "peerDependencies": { "@deepseek-ai/cordis": "workspace:^" },
-  "devDependencies": { "@deepseek-ai/cordis": "workspace:^" }
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^"
+  }
 }

@@ -13,9 +13,15 @@ import {
   parseWorkBuddyLoginPoll,
   workBuddyReasoningOptions,
   workBuddyContextWindow,
+  workBuddyUserAgent,
+  workBuddySurfaceIdentity,
+  workBuddyIdentity,
+  decorateWorkBuddyLoginUrl,
   prepareWorkBuddyChatBody,
+  prepareWorkBuddyReasoning,
   type WorkBuddyIntlRoute,
 } from '../src/workbuddy-intl.ts'
+import { assertSurfaceIdentity } from '../src/request-identity.ts'
 
 const HOUR = 3_600_000
 const IN_WINDOW = Date.parse('2026-09-13T00:00:00Z')
@@ -219,6 +225,95 @@ describe('WorkBuddy chat body', () => {
     const prepared = prepareWorkBuddyChatBody({ messages: [{ role: 'developer', content: 'be terse' }, { role: 'user', content: 'hi' }] })
     expect(prepared.messages).toEqual([{ role: 'system', content: 'be terse' }, { role: 'user', content: 'hi' }])
   })
+
+  it('prices the turn by the conversation, and never over a key the caller stated', () => {
+    // The backend turns prefix caching on only when the key is present, so a turn
+    // without one reports no cache hits at several times the cost of the same
+    // turn with it. A caller that already decided its own key keeps it: this
+    // module states a default, not a correction.
+    expect(prepareWorkBuddyChatBody({ model: 'auto', messages: [] }, 'sess-1')).toMatchObject({ prompt_cache_key: 'sess-1' })
+    expect(prepareWorkBuddyChatBody({ model: 'auto', messages: [], prompt_cache_key: 'mine' }, 'sess-1')).toMatchObject({ prompt_cache_key: 'mine' })
+    expect(prepareWorkBuddyChatBody({ model: 'auto', messages: [] })).not.toHaveProperty('prompt_cache_key')
+  })
+})
+
+describe('WorkBuddy login URL', () => {
+  it('adds the desktop client\'s two parameters without rebuilding what the server minted', () => {
+    // `platform` and `state` are the server's: the browser step binds the issued
+    // tokens to that state, and a URL rebuilt on this side drops one of them and
+    // leaves the poll answering "still signing in" forever.
+    const decorated = new URL(decorateWorkBuddyLoginUrl('http://localhost:8787/login?platform=CLI&state=54e29ffe'))
+    expect(decorated.searchParams.get('platform')).toBe('CLI')
+    expect(decorated.searchParams.get('state')).toBe('54e29ffe')
+    expect(decorated.searchParams.get('version')).toBe('5.5.2')
+    // A per-attempt id, so two attempts are two lines in the server's log.
+    expect(decorated.searchParams.get('loginSessionId')).toMatch(/^[0-9a-f-]{36}$/u)
+    const second = new URL(decorateWorkBuddyLoginUrl('http://localhost:8787/login?state=54e29ffe'))
+    expect(second.searchParams.get('loginSessionId')).not.toBe(decorated.searchParams.get('loginSessionId'))
+  })
+
+  it('hands back an unparsable URL unchanged rather than a different one', () => {
+    expect(decorateWorkBuddyLoginUrl('not a url')).toBe('not a url')
+  })
+})
+
+describe('WorkBuddy DeepSeek reasoning switch', () => {
+  const body = { model: 'deepseek-v4.1-flash', messages: [] }
+  const declared = { efforts: ['low', 'high'] as const, defaultEffort: 'high' }
+
+  it('states the route\'s own tier when the caller stated none', () => {
+    // The flag and the tier are one switch on this host: neither alone produces
+    // `reasoning_content`, so a route that declares a ladder gets both.
+    expect(prepareWorkBuddyReasoning(body, 'deepseek-v4.1-flash', declared)).toEqual({
+      ...body, thinking: { type: 'enabled' }, reasoning_effort: 'high',
+    })
+  })
+
+  it('carries the flag alone when the route declares no ladder to choose from', () => {
+    expect(prepareWorkBuddyReasoning(body, 'deepseek-v4.1-flash', undefined)).toEqual({
+      ...body, thinking: { type: 'enabled' },
+    })
+  })
+
+  it('leaves an explicit off alone', () => {
+    // A user who turned reasoning off on a route that offers off must not have it
+    // switched back on by the fallback this module states for everyone else.
+    expect(prepareWorkBuddyReasoning(body, 'deepseek-v4.1-flash', declared, 'off')).toEqual(body)
+  })
+
+  it('replaces a tier the route does not accept instead of sending a refusal', () => {
+    expect(prepareWorkBuddyReasoning(body, 'deepseek-v4.1-flash', declared, 'medium')).toMatchObject({ reasoning_effort: 'high' })
+    // A route with no `high` falls back to the lowest tier it does accept.
+    expect(prepareWorkBuddyReasoning(body, 'deepseek-v4.1-flash', { efforts: ['low', 'medium'], defaultEffort: 'medium' }, 'xhigh'))
+      .toMatchObject({ reasoning_effort: 'medium' })
+  })
+
+  it('keeps an accepted tier, and spells xhigh the way the wire does', () => {
+    expect(prepareWorkBuddyReasoning({ ...body, reasoning_effort: 'high' }, 'deepseek-v4.1-flash', declared, 'high')).toMatchObject({ reasoning_effort: 'high' })
+    expect(prepareWorkBuddyReasoning(body, 'deepseek-v4.1-flash', { efforts: ['xhigh'], defaultEffort: 'xhigh' }))
+      .toMatchObject({ reasoning_effort: 'max' })
+  })
+
+  it('touches no other model family, whose thinking switch is their own', () => {
+    for (const model of ['glm-5.2', 'hy3', 'kimi-k2.6', 'minimax-m2.5', 'auto']) {
+      expect(prepareWorkBuddyReasoning({ ...body, model }, model, declared), model).toEqual({ ...body, model })
+    }
+  })
+})
+
+describe('WorkBuddy chat identity', () => {
+  it('resolves the User-Agent by the model family the route belongs to', () => {
+    // The international lines are served to the international client form and the
+    // domestic ones to the domestic form; one User-Agent for every route is a
+    // client that does not exist. An unknown prefix keeps the international form,
+    // which is the shape a newly published route is reached through.
+    expect(workBuddyUserAgent('gpt-5.6-sol')).toBe('WorkBuddy/5.5.2 WorkBuddy AI/5.5.2 CLI/5.5.2')
+    expect(workBuddyUserAgent('claude-sonnet-5')).toBe('WorkBuddy/5.5.2 WorkBuddy AI/5.5.2 CLI/5.5.2')
+    expect(workBuddyUserAgent('auto')).toBe('WorkBuddy/5.5.2 WorkBuddy AI/5.5.2 CLI/5.5.2')
+    for (const domestic of ['glm-5.2', 'hy3', 'hy4-preview-f', 'kimi-k2.6', 'minimax-m2.5']) {
+      expect(workBuddyUserAgent(domestic), domestic).toBe('WorkBuddy/5.5.2 WorkBuddy/5.5.2 CLI/5.5.2')
+    }
+  })
 })
 
 describe('WorkBuddy browser authorization', () => {
@@ -290,15 +385,64 @@ describe('WorkBuddy browser authorization', () => {
 })
 
 describe('WorkBuddyIntlClient', () => {
-  it('carries the uid as X-User-Id and the login domain as X-Domain', async () => {
+  it('names the destination as X-Domain rather than the credential login snapshot', async () => {
+    // The account's `domain` is where it signed in, which is not necessarily where
+    // this build talks: an imported credential can still carry the host the
+    // desktop client used before it moved. A request whose declared identity and
+    // destination disagree is the one the gateway refuses.
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('{}', { status: 200 }))
     const client = new WorkBuddyIntlClient(store([account('a')]))
     await client.chat({ model: 'auto', messages: [{ role: 'user', content: 'hi' }] })
     const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
     expect(headers.get('x-user-id')).toBe('uid-a')
-    expect(headers.get('x-domain')).toBe('workbuddy.ai')
+    expect(headers.get('x-domain')).toBe('www.workbuddy.ai')
     expect(headers.get('x-no-enterprise-id')).toBe('1')
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://www.workbuddy.ai/v2/chat/completions')
+  })
+
+  it('sends the desktop chat identity the turn is attributed by', async () => {
+    // The chat route is served to the desktop client, and that client names itself
+    // in headers the plugin surface does not carry: the attribution name as
+    // `X-Product` (the deployment kind `SaaS` files the turn under no product at
+    // all), the IDE identity the usage columns are read from, and the conversation
+    // ids. Without them the turn is answered as an unknown client, if at all.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('{}', { status: 200 }))
+    const client = new WorkBuddyIntlClient(store([{ ...account('a'), enterpriseId: 'e-1' }]))
+    await client.chat(
+      { model: 'glm-5.2', messages: [{ role: 'user', content: 'hi' }] },
+      undefined,
+      { sessionId: 'sess-7' },
+    )
+    const call = fetchMock.mock.calls[0]
+    const headers = new Headers(call?.[1]?.headers)
+    expect(headers.get('x-product')).toBe('WorkBuddy')
+    expect(headers.get('x-product-code')).toBe('workbuddy')
+    expect(headers.get('x-agent-purpose')).toBe('conversation')
+    expect(headers.get('x-ide-name')).toBe('WorkBuddy')
+    expect(headers.get('x-ide-type')).toBe('WorkBuddy')
+    expect(headers.get('x-ide-version')).toBe('5.5.2')
+    // The domestic line, so the domestic client form. A `glm-` route asked for as
+    // the international build is a request for a client this route is not served to.
+    expect(headers.get('user-agent')).toBe('WorkBuddy/5.5.2 WorkBuddy/5.5.2 CLI/5.5.2')
+    expect(headers.get('x-conversation-id')).toBe('sess-7')
+    for (const header of ['x-conversation-message-id', 'x-conversation-request-id']) {
+      expect(headers.get(header), header).toMatch(/^[0-9a-f-]{36}$/u)
+    }
+    expect(headers.get('x-conversation-message-id')).not.toBe(headers.get('x-conversation-request-id'))
+    // Both spellings of one enterprise identity travel together.
+    expect(headers.get('x-enterprise-id')).toBe('e-1')
+    expect(headers.get('x-tenant-id')).toBe('e-1')
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ prompt_cache_key: 'sess-7' })
+  })
+
+  it('gives one turn without a session its own conversation instead of sharing one', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }))
+    const client = new WorkBuddyIntlClient(store([account('a')]))
+    await client.chat({ model: 'auto', messages: [] })
+    await client.chat({ model: 'auto', messages: [] })
+    const ids = fetchMock.mock.calls.map(call => new Headers(call[1]?.headers).get('x-conversation-id'))
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/u)
+    expect(ids[0]).not.toBe(ids[1])
   })
 
   it('exchanges a rotating refresh token once for two concurrent requests', async () => {
@@ -621,8 +765,11 @@ describe('WorkBuddy reasoning wire', () => {
   /** Run one turn and hand back the JSON body the adapter actually posted. */
   async function postedBody(effort?: string): Promise<Record<string, unknown>> {
     const bodies: string[] = []
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-      bodies.push(String((init)?.body ?? ''))
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      // Only the chat POST is the turn: a DeepSeek route also reads the live route
+      // directory first, because the tier fallback below may only state a level
+      // that document declares, and that read is a bodyless GET.
+      if (String(input).endsWith('/v2/chat/completions')) bodies.push(String((init)?.body ?? ''))
       return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
         status: 200,
         headers: { 'content-type': 'text/event-stream' },
@@ -707,5 +854,63 @@ describe('WorkBuddyIntlAdapter failures', () => {
     })()
     expect(failure).toMatchObject({ code: 'AUTH' })
     expect((failure as LlmError).message).toContain('WORKBUDDY_LOGIN_REQUIRED')
+  })
+})
+
+/** Every header a surface declares, filled with a placeholder, for the positive case. */
+function surfaceHeaders(surface: 'chat' | 'credits' | 'catalog'): Record<string, string> {
+  const identity = workBuddySurfaceIdentity(surface)
+  const extras = Object.keys(identity.extraHeaders)
+  const names = identity.required.flatMap(entry => typeof entry === 'string' ? [entry] : [entry[0]])
+  return Object.fromEntries([...names, ...extras].map(name => [name, 'placeholder']))
+}
+
+// The table is only a guard if a violation is loud. These run the assertion the
+// adapters run on every request, in both directions: a declaration that is
+// satisfied passes, and a request missing one header names exactly that header.
+describe('the identity table refuses requests that are missing a declared header', () => {
+  it('accepts each surface when every declared header is present', () => {
+    for (const surface of ['chat', 'credits', 'catalog'] as const) {
+      expect(() => assertSurfaceIdentity(workBuddyIdentity, surface, surfaceHeaders(surface)), surface).not.toThrow()
+    }
+  })
+
+  it('names the missing chat header and the surface it belongs to', () => {
+    const headers = surfaceHeaders('chat')
+    delete headers['x-ide-version']
+    expect(() => assertSurfaceIdentity(workBuddyIdentity, 'chat', headers)).toThrow(/WORKBUDDY_IDENTITY_INCOMPLETE: the chat request is missing x-ide-version/)
+  })
+
+  it('matches header names case-insensitively, as the wire does', () => {
+    const headers = Object.fromEntries(Object.entries(surfaceHeaders('catalog')).map(([name, value]) => [name.toUpperCase(), value]))
+    expect(() => assertSurfaceIdentity(workBuddyIdentity, 'catalog', headers)).not.toThrow()
+  })
+
+  it('accepts either spelling of an either-or header and demands one of them', () => {
+    const byUser = surfaceHeaders('credits')
+    expect(byUser['x-user-id']).toBe('placeholder')
+    expect(() => assertSurfaceIdentity(workBuddyIdentity, 'credits', byUser)).not.toThrow()
+
+    const anonymous = { ...byUser }
+    delete anonymous['x-user-id']
+    anonymous['x-no-user-id'] = '1'
+    expect(() => assertSurfaceIdentity(workBuddyIdentity, 'credits', anonymous)).not.toThrow()
+
+    const neither = { ...byUser }
+    delete neither['x-user-id']
+    expect(() => assertSurfaceIdentity(workBuddyIdentity, 'credits', neither)).toThrow(/missing x-user-id \| x-no-user-id/)
+  })
+
+  it('keeps the chat surface on the attribution name the reference sends', () => {
+    // The plugin shim may not appear in any of these three header values: the
+    // gateway matches the IDE's own identity, and the parity spec pins the rest.
+    const chat = workBuddySurfaceIdentity('chat')
+    expect(chat.product).toBe('WorkBuddy')
+    expect(chat.extraHeaders['x-ide-name']).toBe('WorkBuddy')
+    expect(chat.extraHeaders['x-ide-type']).toBe('WorkBuddy')
+    expect(JSON.stringify(chat)).not.toMatch(/freecodego|freebuff|plugin/i)
+    // Credits and the catalog speak as the deployment, not the IDE.
+    expect(workBuddySurfaceIdentity('credits').product).toBe('SaaS')
+    expect(workBuddySurfaceIdentity('catalog').product).toBe('SaaS')
   })
 })

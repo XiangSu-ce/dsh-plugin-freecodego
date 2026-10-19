@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-ui-renderer/src/client/bind.ts'
@@ -59,8 +61,22 @@ const useSessionStatus: GlobalStandardProps['useSessionStatus'] = selector => se
 const useSessionRetainInfo: GlobalStandardProps['useSessionRetainInfo'] =
   (() => undefined) as unknown as GlobalStandardProps['useSessionRetainInfo']
 
-/** The five hooks the host merges into every settings-section's props. */
-const hostStandardProps = { usePanelInfo, useSessionRetainInfo, useSessionStatus, useSessions, useWorkspaces } as const
+/**
+ * The three access gates 0.2.1 merged into the global slot contract.
+ *
+ * They are not selectors: each answers a permission question about one resource,
+ * and the sections in this file own local settings rather than a remote peer's
+ * resources, so nothing here consults them. They are declared because a fixture
+ * has to carry the hooks the host actually merges — the failure this file was
+ * written to prevent — and each answers "permitted" so a control the local peer
+ * owns is never gated by a stub that never asked a question.
+ */
+const useRemoteAccess: GlobalStandardProps['useRemoteAccess'] = () => true
+const useSessionAccess: GlobalStandardProps['useSessionAccess'] = () => true
+const useWorkspaceAccess: GlobalStandardProps['useWorkspaceAccess'] = () => true
+
+/** The eight hooks the host merges into every settings-section's props. */
+const hostStandardProps = { usePanelInfo, useRemoteAccess, useSessionAccess, useSessionRetainInfo, useSessionStatus, useSessions, useWorkspaceAccess, useWorkspaces } as const
 
 describe('FreeCodeGoSettingsTab reconnect behavior', () => {
   it('shows a recoverable panel instead of a blank settings section when rendering fails', async () => {
@@ -579,11 +595,16 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     />)
     // No page switch: the surface sits on the overview page, below the model
     // routing block.
-    await waitFor(() => { expect(screen.getByText('Claude X')).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText('Anthropic')).toBeTruthy() })
     // Scoped to the route's own row: "已接入" is a label this page also uses
     // elsewhere, so the assertion is about this route reporting itself as served.
     expect(screen.getByText('Anthropic').closest('div')?.textContent).toContain('已接入')
-    expect(screen.getByText('Claude X').closest('div')?.textContent).toContain('目录')
+    // The editor holds no control for a model nobody ticked: that is the density
+    // fix, not a rendering accident.
+    expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(0)
+    fireEvent.click(screen.getByLabelText('Anthropic · 1 个模型'))
+    await waitFor(() => { expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(1) })
+    expect(screen.getAllByText('Claude X').at(-1)?.closest('div')?.textContent).toContain('目录')
     fireEvent.change(screen.getByLabelText('Claude X 上下文长度'), { target: { value: '270000' } })
     await waitFor(() => { expect(modelTuningWrite).toHaveBeenCalledWith({ provider: 'anthropic', model: 'claude-x', contextWindow: 270_000 }) })
   })
@@ -622,6 +643,10 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
     />)
     await waitFor(() => { expect(screen.getByText('My Gateway')).toBeTruthy() })
     expect(screen.getByText('My Gateway').closest('div')?.textContent).toContain('未接入')
+    // A route with no models carries no model to tick, so ticking the route is
+    // the only way to reach its defaults.
+    fireEvent.click(screen.getByLabelText('My Gateway'))
+    await waitFor(() => { expect(screen.getByLabelText('My Gateway 上下文长度')).toBeTruthy() })
     fireEvent.change(screen.getByLabelText('My Gateway 上下文长度'), { target: { value: '200000' } })
     fireEvent.click(screen.getByText('应用到该提供商全部模型'))
     await waitFor(() => { expect(modelTuningWrite).toHaveBeenCalledWith({ provider: 'my-gateway', applyToModels: true, contextWindow: 200_000 }) })
@@ -679,8 +704,10 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
       t={(key: string) => key as never}
     />)
-    await waitFor(() => { expect(screen.getByText('Claude X')).toBeTruthy() })
-    expect(screen.getByText('M1')).toBeTruthy()
+    await waitFor(() => { expect(screen.getByText('Anthropic')).toBeTruthy() })
+    // Collapsed by default: a route's models are not in the page until a filter
+    // or a tick asks for them.
+    expect(document.querySelectorAll('[class*="tuningPickerModel"]')).toHaveLength(0)
 
     fireEvent.change(screen.getByLabelText('搜索提供商或模型'), { target: { value: 'claude' } })
     expect(screen.getByText('Claude X')).toBeTruthy()
@@ -739,13 +766,205 @@ describe('FreeCodeGoSettingsTab reconnect behavior', () => {
       useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
       t={(key: string) => key as never}
     />)
-    await waitFor(() => { expect(screen.getByText('Claude X')).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText('Anthropic')).toBeTruthy() })
     fireEvent.click(screen.getByLabelText('只看已自定义'))
     expect(screen.getByText('Claude Y')).toBeTruthy()
     expect(screen.queryByText('Claude X')).toBeNull()
     // The route itself stays: its defaults are a thing to edit even when no
     // model on it carries a declaration yet.
     expect(screen.getByText('Anthropic')).toBeTruthy()
+  })
+
+  it('keeps thirteen models from collapsing, and picks them from a checkbox list', async () => {
+    // The reported garbling came from the editor laying every model out at once:
+    // a route with thirteen models left each grid track a sliver wide, so the
+    // Chinese labels wrapped one character per line. The surface now renders no
+    // editor row until something is ticked, and the row grid has a 220px floor.
+    const models = Array.from({ length: 13 }, (_, index) => ({
+      provider: 'opencode', providerName: 'OpenCode', model: `m${index + 1}`, name: `M${index + 1}`, declared: false,
+      contextWindow: { value: 128_000, source: 'catalog' as const },
+      maxOutputTokens: { source: 'none' as const },
+      reasoningSource: 'none' as const,
+    }))
+    const snapshot = {
+      providers: [{ provider: 'opencode', providerName: 'OpenCode', modelCount: models.length, live: true }],
+      models,
+      reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      contextPresets: [128_000, 270_000, 1_000_000],
+      writable: true,
+    }
+    const specPath = expect.getState().testPath ?? ''
+    const layout = readFileSync(join(dirname(specPath), '../src/client/settings-tab.module.css'), 'utf8')
+    // The reason the cards cannot collapse to ten pixels: a 220px floor per
+    // track, auto-fit so a narrow container drops to one column, and text that
+    // breaks only between words rather than between every character.
+    expect(layout).toContain('grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))')
+    expect(layout).toMatch(/\.tuningEditRow \{[^}]*min-width: 0/)
+    expect(layout).toMatch(/\.tuningEditRow \.cellLabel \{[^}]*word-break: break-word/)
+
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'freecodego', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      modelTuningRead={vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })}
+      modelTuningWrite={vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('OpenCode')).toBeTruthy() })
+    // Nothing is laid out until it is asked for.
+    expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(0)
+    expect(screen.getByText('已选 0 项')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('展开模型'))
+    expect(document.querySelectorAll('[class*="tuningPickerModels"] > label')).toHaveLength(13)
+    fireEvent.click(screen.getByLabelText('M1'))
+    expect(screen.getByText('已选 1 项')).toBeTruthy()
+    expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(1)
+    // The grid, not a single flex line: the picked rows share a wrapping grid.
+    expect(document.querySelectorAll('[class*="tuningEditGrid"]')).toHaveLength(1)
+
+    // The provider box is the whole route in one click, and the count follows.
+    fireEvent.click(screen.getByLabelText('OpenCode · 13 个模型'))
+    expect(screen.getByText('已选 13 项')).toBeTruthy()
+    expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(13)
+    // ... and it reaches every model control, not just the visible ones.
+    expect(screen.getByLabelText('M13 上下文长度')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('清空'))
+    expect(screen.getByText('已选 0 项')).toBeTruthy()
+    expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(0)
+  })
+
+  it('renders an editor row only for the models that are ticked', async () => {
+    const snapshot = {
+      providers: [{ provider: 'mine', providerName: 'My API', modelCount: 2, live: true }],
+      models: [
+        {
+          provider: 'mine', providerName: 'My API', model: 'm1', name: 'M1', declared: true,
+          contextWindow: { value: 270_000, source: 'settings' as const },
+          maxOutputTokens: { source: 'none' as const },
+          reasoningSource: 'none' as const,
+        },
+        {
+          provider: 'mine', providerName: 'My API', model: 'm2', name: 'M2', declared: false,
+          contextWindow: { source: 'none' as const },
+          maxOutputTokens: { source: 'none' as const },
+          reasoningSource: 'none' as const,
+        },
+      ],
+      reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      contextPresets: [128_000, 270_000, 1_000_000],
+      writable: true,
+    }
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'freecodego', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      modelTuningRead={vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })}
+      modelTuningWrite={vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('My API')).toBeTruthy() })
+    fireEvent.click(screen.getByText('展开模型'))
+    fireEvent.click(screen.getByLabelText('M1'))
+
+    const rows = () => [...document.querySelectorAll('[class*="tuningEditRow"]')].map(row => row.textContent ?? '')
+    expect(rows()).toHaveLength(1)
+    expect(rows()[0]).toContain('M1')
+    expect(rows()[0]).not.toContain('M2')
+    // The unticked model gets no control, so no edit can land on it.
+    expect(screen.queryByLabelText('M2 上下文长度')).toBeNull()
+    expect(screen.getByLabelText('M1 上下文长度')).toBeTruthy()
+  })
+
+  it('keeps a ticked row when search and the customized switch hide it', async () => {
+    // Filtering hides rows from the picker, never from the editor: a write must
+    // keep addressing the model whose row carried the input, whatever the query
+    // currently shows.
+    const snapshot = {
+      providers: [{ provider: 'mine', providerName: 'My API', modelCount: 2, live: true }],
+      models: [
+        {
+          provider: 'mine', providerName: 'My API', model: 'm1', name: 'M1', declared: true,
+          contextWindow: { value: 270_000, source: 'settings' as const },
+          maxOutputTokens: { source: 'none' as const },
+          reasoningSource: 'none' as const,
+        },
+        {
+          provider: 'mine', providerName: 'My API', model: 'm2', name: 'M2', declared: false,
+          contextWindow: { source: 'none' as const },
+          maxOutputTokens: { source: 'none' as const },
+          reasoningSource: 'none' as const,
+        },
+      ],
+      reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      contextPresets: [128_000, 270_000, 1_000_000],
+      writable: true,
+    }
+    const modelTuningWrite = vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })
+    render(<FreeCodeGoSettingsTab
+      {...hostStandardProps}
+      close={vi.fn()}
+      useSessions={vi.fn() as never}
+      useWorkspaces={vi.fn() as never}
+      catalog={vi.fn().mockResolvedValue({ ok: true as const, value: { defaultEngine: 'freecodego', engines: [] } })}
+      accountStatus={vi.fn().mockResolvedValue({ ok: true as const, value: { status: 'backend-not-configured' as const } })}
+      login={vi.fn()}
+      logout={vi.fn()}
+      communityCatalog={vi.fn().mockResolvedValue({ ok: true as const, value: { plugins: [] } })}
+      communityEnvironment={vi.fn().mockResolvedValue({ ok: true as const, value: { ready: false, platform: 'test', node: 'test', profile: 'test' } })}
+      communityInstalled={vi.fn().mockResolvedValue({ ok: true as const, value: { installed: {}, activation: {} } })}
+      communityInstall={vi.fn()}
+      language="zh"
+      modelTuningRead={vi.fn().mockResolvedValue({ ok: true as const, value: snapshot })}
+      modelTuningWrite={modelTuningWrite}
+      useConnectionEpoch={bindSnapshotSelector(createSnapshotStore(0))}
+      t={(key: string) => key as never}
+    />)
+    await waitFor(() => { expect(screen.getByText('My API')).toBeTruthy() })
+    fireEvent.click(screen.getByText('展开模型'))
+    fireEvent.click(screen.getByLabelText('M1'))
+    expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(1)
+
+    // A query that matches nothing hides every picker row but keeps the editor.
+    fireEvent.change(screen.getByLabelText('搜索提供商或模型'), { target: { value: 'zzz-nothing' } })
+    expect(screen.getByText('没有匹配的提供商或模型。')).toBeTruthy()
+    expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(1)
+
+    // The customized switch narrows the same way, and the editor still holds it.
+    fireEvent.change(screen.getByLabelText('搜索提供商或模型'), { target: { value: '' } })
+    fireEvent.click(screen.getByLabelText('只看已自定义'))
+    expect(screen.getAllByText('M1').length).toBeGreaterThan(0)
+    expect(screen.queryByText('M2')).toBeNull()
+    expect(document.querySelectorAll('[class*="tuningEditRow"]')).toHaveLength(1)
+
+    // The input belongs to M1, so the write names M1 — never the model the
+    // filter happens to be showing.
+    fireEvent.change(screen.getByLabelText('M1 最大输出'), { target: { value: '4096' } })
+    fireEvent.blur(screen.getByLabelText('M1 最大输出'))
+    await waitFor(() => { expect(modelTuningWrite).toHaveBeenCalledWith({ provider: 'mine', model: 'm1', maxOutputTokens: 4096 }) })
   })
 
   it('keeps automatic plugin conflict repair enabled by default and saves the switch', async () => {

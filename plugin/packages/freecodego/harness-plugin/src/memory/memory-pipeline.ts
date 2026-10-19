@@ -76,6 +76,7 @@ import {
 } from './dream.ts'
 import { forgetObservation, type ForgetContext, type ForgetEvidence, type ForgetResult } from './forget.ts'
 import { MEMORY_MANIFEST_FILENAME, renderMemoryManifest, type MemoryManifest, type MemoryManifestEntry } from './manifest.ts'
+import { isReservedWindowsDeviceName } from './memory-security.ts'
 import { resolveMemoryRollout, type MemoryRolloutDecision } from './rollout.ts'
 import { buildMemoryTelemetry, type MemoryTelemetryRecord } from './telemetry.ts'
 
@@ -185,17 +186,13 @@ export function sessionDirectoryName(sessionId: string): string | undefined {
   const name = sessionId.trim()
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) return undefined
   if (name.includes('..') || name.endsWith('.')) return undefined
-  const stem = (name.split('.')[0] ?? '').toUpperCase()
-  if (WINDOWS_RESERVED_NAMES.has(stem)) return undefined
+  // The device list lives with the other name reductions and is shared with the
+  // topic writer, which needs the same rule for the same reason: a name legal by
+  // every character check that still cannot be created is the one a character
+  // check alone reports as usable.
+  if (isReservedWindowsDeviceName(name)) return undefined
   return name
 }
-
-/** Names Windows reserves for devices, which no directory may be called there. */
-const WINDOWS_RESERVED_NAMES: ReadonlySet<string> = new Set([
-  'CON', 'PRN', 'AUX', 'NUL',
-  ...Array.from({ length: 9 }, (_unused, index) => `COM${String(index + 1)}`),
-  ...Array.from({ length: 9 }, (_unused, index) => `LPT${String(index + 1)}`),
-])
 
 /**
  * What one session's temporary memory layer holds, as a surface reports it.

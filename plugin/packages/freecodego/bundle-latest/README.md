@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.2.1-alpha.1.1`, targeting Harness baseline `0.2.1-alpha.1`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.2.1-alpha.1.1`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
+Installable single-package FreeCodeGo composition for DeepSeek Harness `freecodego@0.2.1-rc.2`, targeting Harness baseline `0.2.1-rc.2`. The npm artifact contains the compiled Host plugin, browser client, session-event prerequisite, native worker entrypoints, and the bundled Harness Agent Teams composition. A release publishes on npm's `next` dist-tag, and its plugin version intentionally matches the Harness version it targets exactly; for a reproducible install, name the version (`freecodego@0.2.1-rc.2`) instead of the channel. Official Codex and Claude runtime binaries remain optional platform downloads — the package does not embed every platform's native binary.
 
 ## Table of Contents
 
@@ -33,10 +33,10 @@ Install the release for the Harness baseline you run; each release carries one t
 
 ```sh
 dsh plugin --profile web add --save-exact \
-  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.1-alpha.1.1/freecodego-0.2.1-alpha.1.tgz
+  https://github.com/XiangSu-ce/dsh-plugin-freecodego/releases/download/freecodego-v0.2.1-rc.2/freecodego-0.2.1-rc.2.tgz
 ```
 
-`freecodego-0.2.1-alpha.1.tgz` is the bundle for Harness `0.2.1-alpha.1`: substitute the version you run, which the settings page shows beside the installed plugin version. The asset name is the naming contract in `packages/freecodego/AGENTS.md`.
+`freecodego-0.2.1-rc.2.tgz` is the bundle for Harness `0.2.1-rc.2`: substitute the version you run, which the settings page shows beside the installed plugin version. The asset name is the naming contract in `packages/freecodego/AGENTS.md`.
 
 The `dsh` command is provided by the Harness CLI, not this bundle. In a normal terminal install it first with `npm install --global @deepseek-ai/dsh` (and ensure `pnpm` is available). Desktop launches the same command through its private shims and passes the active `DSH_HOME`, so Web and Desktop use one Profile data directory when they select the same Harness home.
 
@@ -55,16 +55,16 @@ The workflow verifies the family, builds, packs, and creates the GitHub release 
 ## Free Models
 
 <!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
-Every free row below comes from the provider's own directory, read when you open the picker, so this is what those directories returned on 2026-10-05 (sorted, where the picker keeps directory order) — and the picker is the count that is true when you look.
+Every free row below comes from the provider's own directory, read when you open the picker, so this is what those directories returned on 2026-10-19 (sorted, where the picker keeps directory order) — and the picker is the count that is true when you look.
 
 | Provider | Free models | Directory |
 |---|---|---|
 | **Private Key Gateway** | the free routes in the picker, read live | no sign-up and no API key |
-| **OpenCode** | `big-pickle`, `deepseek-v4-flash-free`, `fledge-alpha-free`, `jev-1.13-free`, `ling-3.0-flash-fin-free`, `ling-3.1-flash-free`, `longcat-2.5-preview-free`, `mimo-v2.5-free`, `mimo-v2.6-flash-free`, `muse-spark-1.2`, `muse-spark-1.2-contributor-free`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, `space-bunny-free` | 16 of 86 rows; public, no sign-in |
-| **Kilo** | `apodex/apodex-1.1-mini:free`, `cohere/north-mini-code:free`, `dots-studio/dots-3-note-preview:free`, `inclusionai/ling-3.0-flash-sante:free`, `inclusionai/ling-3.1-flash`, `kilo-auto/free`, `liquid/lfm-2.5-2.6b:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-content-safety:free`, `nvidia/nemotron-3.5-lightning:free`, `openrouter/free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `qwen/qwen3.8-27b:free`, `stealth/space-bunny-alpha`, `stepfun/step-3.7-flash:free`, `thinkingmachines/inkling-small:free` | 19 of 401 rows; public, 200 requests/hour per egress IP |
-| **Logfare** | chat `claude-opus-4.6`, `claude-sonnet-4.6`, `deepseek-v3.2`, `gemma-4-26b`, `gemma-4-31b`, `glm-5`, `gpt-oss-120b`, `grok-4.6`, `kimi-k2-thinking`, `kimi-k2.5`, `logfare/auto`, `qwen-3.8-27b`, `space-bunny-alpha`; images `flux-1-schnell`, `flux-2-dev`, `flux-2-klein-4b`, `flux-2-klein-9b`, `sdxl-lightning`; audio `whisper-large-v3-turbo`; other routes `aura-2-en`, `lucid-origin`, `nova-3`, `phoenix-1.0` | 23 rows; 16 need a training-data opt-in, the other 7 do not |
+| **OpenCode** | `beam-free`, `big-pickle`, `deepseek-v4.1-flash-free`, `glm-5.3-flash-free`, `jev-1.13-free`, `longcat-2.5-preview-free`, `mimo-v2.6-flash-free`, `minimax-m3.1-flash-free`, `muse-spark-1.2`, `muse-spark-1.3`, `nemotron-3.5-lightning-free`, `nemotron-3.5-super-vl-free` | 12 of 85 rows; public, no sign-in |
+| **Kilo** | `cohere/north-mini-code:free`, `dots-studio/dots-3-note-preview:free`, `kilo-auto/free`, `liquid/lfm-2.5-2.6b:free`, `minimax/minimax-m3.1-flash:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3.5-content-safety:free`, `nvidia/nemotron-3.5-lightning:free`, `nvidia/nemotron-3.5-super-vl:free`, `openrouter/free`, `poolside/laguna-s-2.1:free`, `poolside/laguna-xs-2.1:free`, `reflection/beam-free`, `stealth/glyph-cluster`, `thinkingmachines/inkling-small:free`, `xingchen-agi/xing4.0-29b-a4b:free` | 18 of 400 rows; public, 200 requests/hour per egress IP |
+| **Logfare** | chat `claude-haiku-5-5`, `deepseek-v4-pro-0813`, `deepseek-v4.1-flash`, `gemma-4-26b`, `glm-5.3`, `glm-5.3-flash`, `kimi-k2.6`, `logfare/auto`, `minimax-m3.1-flash`, `qwen-3.8-27b`; images `flux-1-schnell`, `flux-2-dev`, `flux-2-klein-4b`, `flux-2-klein-9b`, `sdxl-lightning`; audio `whisper-large-v3-turbo`; other routes `8ball`, `aura-2-en`, `clef`, `clef-flash`, `lucid-origin`, `nova-3`, `phoenix-1.0` | 23 rows; 14 need a training-data opt-in, the other 9 do not |
 | **Qoder** | `Qwen 3.8 Flash` (route `qmodel_38flash`) | the free flash route, plus daily check-in campaigns |
-| **NVIDIA** | `google/gemma-4-31b-it`, `moonshotai/kimi-k3`, `z-ai/glm-5.3`, `z-ai/glm-5.3-flash` — the roster also names `deepseek-ai/deepseek-v4-flash-0731` and `deepseek-ai/deepseek-v4-pro-0813`, which are gone from NVIDIA's live catalogue of 81 rows | an API key is required to call them; cross-checked 2026-10-05 |
+| **NVIDIA** | `google/gemma-4-31b-it`, `z-ai/glm-5.3`, `z-ai/glm-5.3-flash` — the roster also names `deepseek-ai/deepseek-v4-flash-0731`, `deepseek-ai/deepseek-v4-pro-0813` and `moonshotai/kimi-k3`, which are gone from NVIDIA's live catalogue of 81 rows | an API key is required to call them; cross-checked 2026-10-19 |
 | **SenseNova** | `deepseek-v4-flash`, `deepseek-v4-pro`, `glm-5.2`, `kimi-k3`, `sensenova-6.8-flash-lite` | roster ships in the bundle; an API key is required |
 | **TRAE** | the rows its directory lists | free credits reset daily, per account |
 | **Cline** | the rows the directory marks `×0 · 官方免费模型`, `deepseek-v4.1-flash` among them | an account pool |
@@ -77,7 +77,7 @@ These lists follow their directories: a route upstream retires leaves the table 
 
 TRAE, Cline, WorkBuddy International, Agnes publish no stable roster, so their rows are counted when they arrive rather than listed here.
 
-16 Logfare rows sit behind a training-data opt-in, which the picker labels rather than hides.
+14 Logfare rows sit behind a training-data opt-in, which the picker labels rather than hides.
 
 `deepseek-v4.1-flash` is also free here through two of the account pools above: Cline keeps it in its free half, and WorkBuddy International covers it for as long as its promotion runs.
 

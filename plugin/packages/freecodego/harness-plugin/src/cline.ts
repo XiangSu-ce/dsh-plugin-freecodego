@@ -28,6 +28,7 @@ import { credentialRef, type CredentialProvider, type CredentialRef } from '@dee
 import { LlmAdapter, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { activeAccountIdAfterRemoval, activeAccountIdAfterWrite } from './account-utils.ts'
+import { clineClientHeaders, clineTokenHeaders } from './cline-identity.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 import { asNumber as number, asRecord as object, asString as string } from './untrusted-json.ts'
 import { llmCodeForUpstreamStatus } from './upstream-status-code.ts'
@@ -68,47 +69,10 @@ const WORKOS_AUTHENTICATE_URL = 'https://api.workos.com/user_management/authenti
 /** Public WorkOS client id used by the official Cline clients. */
 const WORKOS_CLIENT_ID = 'client_01K3A541FN8TA3EPPHTD2325AR'
 
-/**
- * The client identity Cline's product API requires on a free route.
- *
- * Cline's free promotions are gated on the *client* that asks for them, not on
- * the account: a request that does not identify itself as a Cline product
- * surface is refused with HTTP 403 and
- * "<model> is only available via Cline product surfaces. If you are using an old
- * version of Cline, please update to the latest version". A bearer token alone
- * is not enough — the request has to carry the same `X-CLIENT-*` / `X-PLATFORM`
- * / `X-CORE-VERSION` / `User-Agent` triple the official clients send, and
- * `X-Task-ID` has to name the same session as the body's `session_id`.
- *
- * These are the values the reference Cline CLI client reports (the same set a
- * working Cline proxy relays), not invented ones: the upstream compares them
- * against a known-product allowlist, so a plausible-looking substitute is
- * refused exactly like no header at all.
- */
-const CLINE_CLIENT_IDENTITY: Readonly<Record<string, string>> = {
-  'user-agent': 'Cline/3.0.50',
-  'http-referer': 'https://cline.bot',
-  'x-title': 'Cline',
-  'x-is-multiroot': 'false',
-  'x-client-type': 'cline-cli',
-  'x-client-version': '3.0.50',
-  'x-platform': 'terminal',
-  'x-platform-version': '3.0.50',
-  'x-core-version': '0.0.70',
-}
-
-/**
- * The identity headers for one request, with its session id attached.
- *
- * `taskId` is the same value the request body carries as `session_id`: the
- * upstream treats a task id that disagrees with the body as a mismatched
- * surface, and one id built in two places is how they come to disagree.
- * @param taskId - the task/session id to attach as `x-task-id`.
- * @returns the identity headers for the request.
- */
-export function clineClientHeaders(taskId: string): Record<string, string> {
-  return { ...CLINE_CLIENT_IDENTITY, 'x-task-id': taskId }
-}
+// The client identity this adapter's gateway requests carry, and the guard that
+// refuses one that is missing a field of it, are declared in `./cline-identity.ts`:
+// the allowlist those values are matched against is a fact about the *surface*, not
+// about this adapter's transport.
 
 const CLINE_MODELS_CACHE_TTL_MS = 5 * 60_000
 const CLINE_REQUEST_TIMEOUT_MS = 30_000
@@ -553,7 +517,7 @@ export class ClineClient {
           ?? store.accounts.find(credentialsUsable)
         if (active === undefined) return empty
         const accessToken = await this.accessToken(active)
-        const headers = { ...clineClientHeaders(newTaskId()), authorization: `Bearer workos:${accessToken}` }
+        const headers = clineClientHeaders(newTaskId(), { authorization: `Bearer workos:${accessToken}` })
         const response = await fetch(CLINE_USAGE_URL, {
           method: 'GET',
           headers,
@@ -850,12 +814,11 @@ async removeAccount(accountId: string): Promise<void> {
     const taskId = taskIdOf(body) ?? newTaskId()
     return fetch(CLINE_CHAT_URL, {
       method: 'POST',
-      headers: {
-        ...clineClientHeaders(taskId),
+      headers: clineClientHeaders(taskId, {
         authorization: `Bearer workos:${accessToken}`,
         'content-type': 'application/json',
         accept: 'text/event-stream',
-      },
+      }),
       body,
       signal: signal ?? AbortSignal.timeout(CLINE_CHAT_TIMEOUT_MS),
     })
@@ -896,7 +859,7 @@ async removeAccount(accountId: string): Promise<void> {
   private async refreshTokens(refreshToken: string): Promise<ClineAccountUpdate> {
     const response = await fetch(CLINE_REFRESH_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: clineTokenHeaders(),
       body: JSON.stringify({ refreshToken, grantType: 'refresh_token' }),
       signal: AbortSignal.timeout(CLINE_REQUEST_TIMEOUT_MS),
     })
@@ -921,7 +884,7 @@ async removeAccount(accountId: string): Promise<void> {
   private async registerWorkosTokens(workosAccess: string, workosRefresh: string): Promise<void> {
     const response = await fetch(CLINE_REGISTER_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: clineTokenHeaders(),
       body: JSON.stringify({ accessToken: workosAccess, refreshToken: workosRefresh }),
       signal: AbortSignal.timeout(CLINE_REQUEST_TIMEOUT_MS),
     })
@@ -1007,7 +970,7 @@ async removeAccount(accountId: string): Promise<void> {
         const accessToken = await this.accessToken(account)
         const response = await fetch(url, {
           ...init,
-          headers: { ...clineClientHeaders(newTaskId()), authorization: `Bearer workos:${accessToken}` },
+          headers: clineClientHeaders(newTaskId(), { authorization: `Bearer workos:${accessToken}` }),
           signal: AbortSignal.timeout(CLINE_MODELS_TIMEOUT_MS),
         })
         // `await` is load-bearing: without it a JSON parse rejection escapes this

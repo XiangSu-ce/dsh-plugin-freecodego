@@ -28,7 +28,7 @@ import type { WorkBuddyPoolService } from './workbuddy-pool.ts'
 import type { ClineClient } from './cline.ts'
 import { accountIdentity, accountSnapshot, backendNotConfigured } from './account-utils.ts'
 import { importWorkBuddyDesktopCredential } from './workbuddy-intl-auth.ts'
-import { parseWorkBuddyAuthState, parseWorkBuddyLoginAccount, parseWorkBuddyLoginPoll, type WorkBuddyDeviceAuthorization } from './workbuddy-intl.ts'
+import { decorateWorkBuddyLoginUrl, parseWorkBuddyAuthState, parseWorkBuddyLoginAccount, parseWorkBuddyLoginPoll, type WorkBuddyDeviceAuthorization } from './workbuddy-intl.ts'
 import { openUrlInSystemBrowser } from './system-browser.ts'
 import { generateOAuthLoginState, oauthHandoffPollUrl, oauthPendingActionUrl, oauthPendingStatusUrl, oauthPollRejection, OAUTH_HANDOFF_STATE_HEADER, OAUTH_LOGIN_POLL_INTERVAL_MS, OAUTH_LOGIN_POLL_REQUEST_TIMEOUT_MS, OAUTH_LOGIN_POLL_TIMEOUT_MS, parseOAuthHandoffPoll, parseOAuthPendingRegistration, pluginOAuthStartUrl, type OAuthLoginPendingRegistration, type OAuthLoginProvider } from './oauth-login.ts'
 import { toJsonValue } from './engineering-remote-utils.ts'
@@ -1168,7 +1168,11 @@ async function requestWorkbuddyDeviceAuthorization(): Promise<WorkBuddyDeviceAut
   if (grant === undefined) {
     throw new Error(`WORKBUDDY_LOGIN_FAILED: 无法向 WorkBuddy 申请授权（HTTP ${response.status}）。 Could not start the WorkBuddy authorization (HTTP ${response.status}).`)
   }
-  return grant
+  // The desktop client opens this page with `version` and `loginSessionId` it
+  // chose, not with the server's bare URL, and the sign-in page is the one place
+  // the client's own params are part of the request shape. The state stays the
+  // server's: it is what the browser step binds the issued tokens to.
+  return { ...grant, authUrl: decorateWorkBuddyLoginUrl(grant.authUrl) }
 }
 
 /** Open the WorkBuddy International sign-in page in the user's browser. 

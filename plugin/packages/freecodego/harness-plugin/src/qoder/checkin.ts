@@ -19,6 +19,7 @@
 import { asNumber, asRecord, asString } from '../untrusted-json.ts'
 import { redactCredentialShapes } from '../secret-scan.ts'
 import { QODER_CAMPAIGNS_PATH, qoderEndpoints } from './endpoints.ts'
+import { assertQoderIdentity, qoderSurfaceHeaders } from './identity.ts'
 import type { FreeCodeGoCheckinOutcome } from '../types.ts'
 import type { QoderRegion } from './types.ts'
 
@@ -29,7 +30,7 @@ import type { QoderRegion } from './types.ts'
  * this header says the caller is a desktop client; without it the same token is
  * refused. There is no signature to compute here, unlike the chat endpoints.
  */
-const QODER_COSY_CLIENT_TYPE = '10'
+
 
 /** One campaign the account can be awarded. */
 export interface QoderCampaign {
@@ -49,13 +50,20 @@ export interface QoderCheckinOutcome {
   readonly refused?: string
 }
 
-/** The headers one campaign call carries. */
+/**
+ * The headers one campaign call carries.
+ *
+ * The three fixed fields are declared in `./identity.ts`; only the account's own
+ * bearer token is supplied here. The guard runs on the finished set, so a change
+ * to the declaration that this builder does not answer fails at the call rather
+ * than at the upstream.
+ * @param deviceToken - the account's bearer token.
+ * @returns the headers for the call.
+ */
 function campaignHeaders(deviceToken: string): Record<string, string> {
-  return {
-    authorization: `Bearer ${deviceToken}`,
-    accept: 'application/json',
-    'cosy-clienttype': QODER_COSY_CLIENT_TYPE,
-  }
+  const headers = qoderSurfaceHeaders('campaign', { authorization: `Bearer ${deviceToken}` })
+  assertQoderIdentity('campaign', headers)
+  return headers
 }
 
 /** The campaign list URL for one region. */
@@ -129,7 +137,7 @@ export async function claimQoderCampaigns(
   for (const campaign of list.campaigns) {
     const response = await fetch(claimUrl(region, campaign.campaignId), {
       method: 'POST',
-      headers: { ...campaignHeaders(deviceToken), 'content-type': 'application/json' },
+      headers: campaignHeaders(deviceToken),
       body: '{}',
       signal: signal ?? AbortSignal.timeout(20_000),
     }).catch(() => undefined)

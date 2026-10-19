@@ -29,6 +29,7 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/workbuddy-intl
  */
 
+import { randomUUID } from 'node:crypto'
 import { credentialRef, type CredentialProvider, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { attributionHeaders, LlmAdapter, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -37,6 +38,7 @@ import { parseSse } from './wire-shared.ts'
 import { redactCredentialShapes } from './secret-scan.ts'
 import { asNumber as number, asRecord as record, asString as string } from './untrusted-json.ts'
 import { llmCodeForUpstreamStatus, upstreamStatusCategory, type UpstreamStatusCategory } from './upstream-status-code.ts'
+import { assertSurfaceIdentity, surfaceIdentityHeaders, type RequestIdentityTable, type SurfaceDeclaration } from './request-identity.ts'
 import { isHttpUrl } from './system-browser.ts'
 import type { WorkBuddyCreditPackage, WorkBuddyCredits, WorkBuddyInternationalAccount, WorkBuddyInternationalModel } from './types.ts'
 import {
@@ -67,6 +69,329 @@ export const WORKBUDDY_INTL_STORE_REF: CredentialRef = credentialRef('WORKBUDDY_
 
 /** The CLI identity the product host expects on every request. */
 const WORKBUDDY_USER_AGENT = 'CLI/2.63.2 CodeBuddy/2.63.2'
+/**
+ * The chat route's own identity, which is the desktop client's and not the CLI's.
+ *
+ * `/v2/chat/completions` is served to the WorkBuddy desktop build, and that build
+ * names itself in a header family the other routes do not carry: the attribution
+ * name, the IDE identity, and the conversation ids. The credits and catalog routes
+ * are the `/plugin` surface and keep the CLI User-Agent above — a request that
+ * mixes the two is the shape the gateway rejects rather than serves.
+ */
+const WORKBUDDY_ATTRIBUTION_NAME = 'WorkBuddy'
+/** The desktop build whose header family this module speaks. */
+const WORKBUDDY_CLIENT_VERSION = '5.5.2'
+/**
+ * The `X-Product-Code` both the IDE and the plugin surfaces send.
+ *
+ * Not the billing body's `ProductCode` (`{@link WORKBUDDY_INTL_PRODUCT_CODE}`,
+ * the metering package id): this one names the *product* to the header-filtering
+ * gateway, and the two are read by different services.
+ */
+const WORKBUDDY_IDE_PRODUCT_CODE = 'workbuddy'
+/**
+ * `X-Domain`: the host this request itself talks to.
+ *
+ * Never the credential's `domain`, which is a snapshot of the site the account
+ * signed in at — an account imported from an older build still carries a host the
+ * gateway no longer serves (the desktop client moved on), and a request whose
+ * declared identity and destination disagree is refused. The credential's value
+ * is only a fallback for a build that names no host at all.
+ */
+const WORKBUDDY_INTL_DOMAIN: string = 'www.workbuddy.ai'
+/**
+ * The desktop User-Agent, per model family.
+ *
+ * The gateway attributes a turn to a client form, and the two forms are not
+ * interchangeable: the international model lines are served to the international
+ * build, while the domestic lines (`glm`, `hy`, `kimi`, `minimax`) are served to
+ * the domestic one. One User-Agent for every route is what makes a turn look like
+ * it came from a client that does not exist.
+ */
+const WORKBUDDY_CHAT_USER_AGENT_INTL = 'WorkBuddy/5.5.2 WorkBuddy AI/5.5.2 CLI/5.5.2'
+const WORKBUDDY_CHAT_USER_AGENT_CN = 'WorkBuddy/5.5.2 WorkBuddy/5.5.2 CLI/5.5.2'
+/** Model-id prefixes the domestic client form serves. */
+const WORKBUDDY_CHAT_CN_MODEL_PREFIXES: readonly string[] = ['glm-', 'hy', 'kimi-', 'minimax-']
+
+/**
+ * The User-Agent one route's chat request carries.
+ *
+ * First match wins, and an unknown prefix keeps the international form: that is
+ * the shape a newly published route is reached through, where the domestic form
+ * would name a client the gateway does not know.
+ * @param model - the route id the request asks for.
+ * @returns the User-Agent string for that route's client form.
+ */
+export function workBuddyUserAgent(model: string): string {
+  return WORKBUDDY_CHAT_CN_MODEL_PREFIXES.some(prefix => model.startsWith(prefix))
+    ? WORKBUDDY_CHAT_USER_AGENT_CN
+    : WORKBUDDY_CHAT_USER_AGENT_INTL
+}
+
+/**
+ * The `X-Domain` header for one account, as a one-key map.
+ *
+ * `X-No-*` is the upstream's own "this field is absent" spelling: sending the
+ * header empty is rejected, so a host nothing can name is declared missing
+ * instead of guessed.
+ * @param credentialDomain - the login-site snapshot carried by the account.
+ * @returns the header map to spread into a request.
+ */
+function domainHeader(credentialDomain: string | undefined): Record<string, string> {
+  const host = WORKBUDDY_INTL_DOMAIN !== '' ? WORKBUDDY_INTL_DOMAIN : credentialDomain
+  return host === undefined || host === '' ? { 'x-no-department-info': '1' } : { 'x-domain': host }
+}
+
+/**
+ * The sign-in page's URL, carrying the two parameters the desktop client adds.
+ *
+ * The gateway mints the `authUrl` and the browser sign-in binds the issued
+ * tokens to the `state` inside it, so nothing here is rebuilt: `version` states
+ * the build that opened the page and `loginSessionId` is a per-attempt id the
+ * server keeps for its own log trail. It validates nothing, which is exactly why
+ * a fresh value per attempt is the correct one — and why a URL this side
+ * reconstructed instead of extended (losing `platform` or rewriting the state)
+ * is the "still signing in" loop the poll exists to end.
+ * @param authUrl - the URL the product issued for this attempt.
+ * @returns the same URL with `version` and `loginSessionId` set.
+ */
+export function decorateWorkBuddyLoginUrl(authUrl: string): string {
+  try {
+    const url = new URL(authUrl)
+    url.searchParams.set('version', WORKBUDDY_CLIENT_VERSION)
+    url.searchParams.set('loginSessionId', randomUUID())
+    return url.toString()
+  } catch {
+    // An unparsable URL is the caller's error to report against the server's own
+    // bytes; decorating must not replace it with a different one.
+    return authUrl
+  }
+}
+
+/** The deployment kind both products are served under on the plugin surface. */
+const WORKBUDDY_DEPLOYMENT_TYPE = 'SaaS'
+
+/**
+ * The three surfaces one pool serves, each with its own identity.
+ *
+ * They are three requests to one host, and the host tells them apart by what
+ * they call themselves: the chat route is the desktop client's, the credits and
+ * catalog routes are the plugin surface's, and a header from one family on the
+ * other's request is worse than a missing one — `X-Product: SaaS` on a chat turn
+ * files it under no product at all, and `WorkBuddy` on a credits call names a
+ * deployment the metering route does not serve.
+ *
+ * This table is the single place those identities are written down, because
+ * their last form was three literals spread across three methods, and the drift
+ * between them was invisible until a turn stopped being answered: the same value
+ * declared once per caller is a value that can disagree with itself.
+ */
+export type WorkBuddyRequestSurface = 'chat' | 'credits' | 'catalog'
+
+/** One surface's declaration: what it calls itself and what it must carry. */
+export interface WorkBuddySurfaceIdentity {
+  /** `X-Product`: the deployment kind, or the attribution name on the chat route. */
+  readonly product: string
+  /** `X-Product-Code`, naming the product to the header-filtering gateway. */
+  readonly productCode: string
+  /** The `Accept` this surface asks with. */
+  readonly accept: string
+  /** The `Content-Type` when the request carries a body; a read states none. */
+  readonly contentType?: string
+  /**
+   * Which User-Agent the surface speaks as: the per-model-family desktop one, the
+   * CLI one the plugin surface uses, or the App-shaped one the catalog read needs.
+   */
+  readonly userAgent: 'model' | 'cli' | 'catalog'
+  /** Headers this surface alone sends. */
+  readonly extraHeaders: Readonly<Record<string, string>>
+  /**
+   * Every header a request on this surface has to carry. An entry that is a list
+   * is a choice: one of its names must be present (`X-No-*` declares a field the
+   * account never captured, which is not the same as omitting the header).
+   */
+  readonly required: readonly (string | readonly string[])[]
+}
+
+/** The identity table, one entry per surface. */
+const WORKBUDDY_SURFACES: Readonly<Record<WorkBuddyRequestSurface, WorkBuddySurfaceIdentity>> = {
+  chat: {
+    product: WORKBUDDY_ATTRIBUTION_NAME,
+    productCode: WORKBUDDY_IDE_PRODUCT_CODE,
+    accept: 'text/event-stream',
+    contentType: 'application/json',
+    userAgent: 'model',
+    extraHeaders: {
+      'x-agent-purpose': 'conversation',
+      'x-ide-name': WORKBUDDY_ATTRIBUTION_NAME,
+      'x-ide-type': WORKBUDDY_ATTRIBUTION_NAME,
+      'x-ide-version': WORKBUDDY_CLIENT_VERSION,
+    },
+    required: [
+      'authorization', 'content-type', 'accept', 'origin', 'referer', 'user-agent', 'x-requested-with',
+      'x-product', 'x-product-code', 'x-domain', ['x-user-id', 'x-no-user-id'],
+      ['x-enterprise-id', 'x-no-enterprise-id'], 'x-agent-purpose', 'x-ide-name', 'x-ide-type', 'x-ide-version',
+      'x-conversation-id', 'x-conversation-message-id', 'x-conversation-request-id',
+    ],
+  },
+  credits: {
+    product: WORKBUDDY_DEPLOYMENT_TYPE,
+    productCode: WORKBUDDY_IDE_PRODUCT_CODE,
+    accept: 'application/json, text/plain, */*',
+    contentType: 'application/json',
+    userAgent: 'cli',
+    // The product's own plans-and-usage page always sends this, and the gateway
+    // treats its absence as an unknown client on some routes.
+    extraHeaders: { 'x-client-platform': 'web' },
+    required: [
+      'authorization', 'content-type', 'accept', 'origin', 'referer', 'user-agent', 'x-requested-with',
+      'x-product', 'x-product-code', 'x-domain', 'x-client-platform', ['x-user-id', 'x-no-user-id'],
+      ['x-enterprise-id', 'x-no-enterprise-id'],
+    ],
+  },
+  catalog: {
+    product: WORKBUDDY_DEPLOYMENT_TYPE,
+    productCode: WORKBUDDY_IDE_PRODUCT_CODE,
+    accept: 'application/json',
+    userAgent: 'catalog',
+    extraHeaders: {},
+    required: [
+      'authorization', 'accept', 'origin', 'referer', 'user-agent', 'x-requested-with',
+      'x-product', 'x-product-code', 'x-domain', ['x-user-id', 'x-no-user-id'],
+      ['x-enterprise-id', 'x-no-enterprise-id'],
+    ],
+  },
+}
+
+/**
+ * One surface's declaration, for callers that have to state what it sends.
+ * @param surface - the request surface to describe.
+ * @returns the surface's identity declaration.
+ */
+export function workBuddySurfaceIdentity(surface: WorkBuddyRequestSurface): WorkBuddySurfaceIdentity {
+  return WORKBUDDY_SURFACES[surface]
+}
+
+/**
+ * The three ids a chat turn is filed under, per turn.
+ *
+ * Generated rather than declared: they name *this* turn (a fresh message and
+ * request id each time), while the conversation id is the one value that repeats
+ * across a conversation — which is why it is also the prefix-cache key.
+ * @param conversationId - the conversation the turn belongs to.
+ * @returns the per-turn conversation headers.
+ */
+function conversationHeaders(conversationId: string): Record<string, string> {
+  return {
+    'x-conversation-id': conversationId,
+    'x-conversation-message-id': randomUUID(),
+    'x-conversation-request-id': randomUUID(),
+  }
+}
+
+/**
+ * One surface's declaration in the shared shape: the fixed half of what it sends.
+ *
+ * Derived from {@link WORKBUDDY_SURFACES} rather than written out again, so the
+ * identity a request is *checked* against cannot drift from the identity it is
+ * *built* from — which is the whole failure mode the table exists to end.
+ * @param surface - the surface to declare.
+ * @returns the surface's fixed headers and the names its requests must carry.
+ */
+function declaredSurface(surface: WorkBuddyRequestSurface): SurfaceDeclaration {
+  const identity = WORKBUDDY_SURFACES[surface]
+  return {
+    headers: {
+      accept: identity.accept,
+      ...(identity.contentType === undefined ? {} : { 'content-type': identity.contentType }),
+      'x-product': identity.product,
+      'x-product-code': identity.productCode,
+      ...identity.extraHeaders,
+      // The chat surface's User-Agent is resolved per model family, so the caller
+      // supplies it; the other two are fixed values and belong in the table.
+      ...(identity.userAgent === 'model'
+        ? {}
+        : { 'user-agent': identity.userAgent === 'catalog' ? WORKBUDDY_INTL_CATALOG_USER_AGENT : WORKBUDDY_USER_AGENT }),
+    },
+    required: identity.required,
+  }
+}
+
+/**
+ * The three identities in the shared shape, for the guard every request passes.
+ *
+ * A missing header is not a cosmetic problem on this host: the gateway answers
+ * with a 400 or files the turn under nothing, so the failure that reaches the log
+ * is a refusal whose cause is one absent name. Naming them here is what makes
+ * that cause the error message instead of the symptom.
+ */
+export const workBuddyIdentity: RequestIdentityTable<WorkBuddyRequestSurface> = {
+  code: 'WORKBUDDY',
+  surfaces: {
+    chat: declaredSurface('chat'),
+    credits: declaredSurface('credits'),
+    catalog: declaredSurface('catalog'),
+  },
+}
+
+/**
+ * The `reasoning_effort` value one tier travels as.
+ *
+ * `xhigh` is this plugin's own name for the tier the wire spells `max`, and the
+ * serializer applies the same rewrite when the caller picks an effort; this one
+ * exists so a tier chosen as a fallback is spelled the same way.
+ * @param tier - the declared tier.
+ * @returns the wire spelling.
+ */
+function reasoningWireEffort(tier: WorkBuddyReasoningTier): string {
+  return tier === 'xhigh' ? 'max' : tier
+}
+
+/**
+ * Apply the reasoning switch a DeepSeek route on this host needs, and only there.
+ *
+ * A DeepSeek route is not made to think by `thinking` alone: that flag and an
+ * effort tier are one switch, and a request carrying neither is answered with an
+ * empty `reasoning_content` however the route is described. So the flag travels
+ * on every DeepSeek turn, and the tier is filled in when the caller stated none
+ * — from the product's own default for that route, then `high`, then the lowest
+ * tier it accepts.
+ *
+ * Two answers are deliberately left alone. `off` is a decision, not an absence:
+ * a route whose ladder offers it keeps reasoning off, because a switch that turns
+ * itself back on is worse than a route that never reasons. And a tier the route's
+ * own ladder does not list is replaced rather than sent, since an unsupported
+ * level is a refused request (`400`) — while a route that declares no ladder at
+ * all leaves the caller's word alone, because nothing here can judge it.
+ * @param body - the serialized chat body.
+ * @param model - the route the request asks for.
+ * @param declared - the ladder the live document declares for that route, when it declares one.
+ * @param requestedEffort - the tier the caller chose, `off` included; absent when it chose none.
+ * @returns the body with the DeepSeek reasoning switch applied.
+ */
+export function prepareWorkBuddyReasoning(
+  body: Record<string, unknown>,
+  model: string,
+  declared?: { readonly efforts: readonly WorkBuddyReasoningTier[]; readonly defaultEffort: string },
+  requestedEffort?: string,
+): Record<string, unknown> {
+  if (!/^deepseek/iu.test(model.trim())) return body
+  if (requestedEffort === 'off') return body
+  const efforts = declared?.efforts ?? []
+  const ladder = efforts.map(reasoningWireEffort)
+  const stated = declared?.defaultEffort
+  const declaredFallback = stated !== undefined && efforts.some(tier => tier === stated)
+    ? reasoningWireEffort(stated as WorkBuddyReasoningTier)
+    : undefined
+  const fallback = declaredFallback ?? ladder.find(effort => effort === 'high') ?? ladder[0]
+  const enabled = { ...body, thinking: { type: 'enabled' } }
+  // The caller's own tier stands whenever the route accepts it, or whenever the
+  // route declared no ladder to judge it by.
+  if (requestedEffort !== undefined) {
+    return ladder.length === 0 || ladder.includes(requestedEffort) ? enabled : { ...enabled, reasoning_effort: fallback }
+  }
+  return fallback === undefined ? enabled : { ...enabled, reasoning_effort: fallback }
+}
 /** Refresh this long before the recorded expiry so a stream never dies mid-turn. */
 const WORKBUDDY_INTL_REFRESH_BUFFER_MS = 5 * 60_000
 const WORKBUDDY_INTL_MODELS_CACHE_TTL_MS = 5 * 60_000
@@ -619,17 +944,42 @@ export function workBuddyModelDescription(route: WorkBuddyIntlRoute, now = Date.
  * first message is not `system` is refused with HTTP 400 code 11128. The
  * prepended line contains no user content, and existing messages keep their
  * order: this only satisfies the gateway, it never steers the model.
+ *
+ * `prompt_cache_key` is the exception that is not a precondition but a price:
+ * the backend enables prefix caching only when the key is present, and a turn of
+ * the same conversation repeated without it reports `prompt_cache_hit_tokens: 0`
+ * at several times the cost of the identical turn sent with it. A caller that
+ * already stated a key keeps it.
  * @param body - the serialized chat body.
+ * @param cacheKey - the conversation's prefix-cache key, normally the session id.
  * @returns the body with the international endpoint's preconditions applied.
  */
-export function prepareWorkBuddyChatBody(body: Record<string, unknown>): Record<string, unknown> {
+export function prepareWorkBuddyChatBody(body: Record<string, unknown>, cacheKey?: string): Record<string, unknown> {
   const source = Array.isArray(body.messages) ? body.messages : []
   const messages = source.map((message) => {
     const row = record(message)
     return row.role === 'developer' ? { ...row, role: 'system' } : row
   })
   if (record(messages[0]).role !== 'system') messages.unshift({ role: 'system', content: WORKBUDDY_SYSTEM_PREAMBLE })
-  return { ...body, messages, stream: true }
+  return {
+    ...body,
+    messages,
+    stream: true,
+    ...(cacheKey === undefined || body.prompt_cache_key !== undefined ? {} : { prompt_cache_key: cacheKey }),
+  }
+}
+
+/**
+ * What one chat turn declares about itself.
+ *
+ * The desktop client sends a session identity on every turn as both
+ * `X-Conversation-ID` and the prefix-cache key, so the two are one value here:
+ * a turn whose cache key changed per request would warm a fresh prefix every
+ * time and pay full price for a conversation that is otherwise identical.
+ */
+export interface WorkBuddyChatConversation {
+  /** The conversation this turn belongs to; a turn without one starts a new conversation. */
+  readonly sessionId?: string
 }
 
 /** One credential pair a finished browser authorization issued. */
@@ -1069,14 +1419,7 @@ export class WorkBuddyIntlClient {
   private async sendJson(credential: WorkBuddyInternationalAccount, url: string, body: unknown): Promise<{ readonly status: number; readonly payload: unknown }> {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        ...attributionHeaders(),
-        authorization: `Bearer ${credential.accessToken}`,
-        'content-type': 'application/json',
-        accept: 'application/json, text/plain, */*',
-        'x-client-platform': 'web',
-        ...this.identityHeaders(credential),
-      },
+      headers: this.surfaceHeaders('credits', credential),
       body: JSON.stringify(body ?? {}),
       signal: AbortSignal.timeout(WORKBUDDY_INTL_BILLING_TIMEOUT_MS),
     })
@@ -1196,11 +1539,12 @@ export class WorkBuddyIntlClient {
   }
 
   /** Stream one chat completion, rotating accounts on auth and credit failures. 
+   * @param body - the chat-completions body to stream.
    * @param signal - aborts the request when the caller cancels.
+   * @param conversation - the conversation identity this turn belongs to; absent means the turn starts one.
    * @returns the response.
- * @param body - the chat-completions body to stream.
    */
-  async chat(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+  async chat(body: Record<string, unknown>, signal?: AbortSignal, conversation?: WorkBuddyChatConversation): Promise<Response> {
     const selected = await readWorkBuddyIntlActiveId(this.credentials)
     const pool = await this.accounts()
     if (pool.length === 0) throw new Error('WORKBUDDY_LOGIN_REQUIRED: sign in to WorkBuddy International first')
@@ -1214,7 +1558,12 @@ export class WorkBuddyIntlClient {
     // the pool is still tried once before the turn gives up.
     const candidates = ready.length > 0 ? ready : ordered
     const start = selected === undefined ? this.cursor : 0
-    const payload = JSON.stringify(prepareWorkBuddyChatBody(body))
+    // One conversation identity for the whole turn, so every retry in the walk
+    // below is the same conversation to the gateway — which is also what lets a
+    // retried request reuse the prefix cache the first one warmed.
+    const conversationId = conversation?.sessionId ?? randomUUID()
+    const model = string(body.model) ?? ''
+    const payload = JSON.stringify(prepareWorkBuddyChatBody(body, conversationId))
     let lastStatus = 0
     let lastDetail = ''
     for (let index = 0; index < candidates.length; index++) {
@@ -1228,7 +1577,7 @@ export class WorkBuddyIntlClient {
         lastDetail = lastDetail === '' ? failureDetail(error) : lastDetail
         continue
       }
-      let response = await this.send(credential, payload, signal)
+      let response = await this.send(credential, payload, model, conversationId, signal)
       if (response.status === 401) {
         // A stale token and a dead account look identical from here; one forced
         // refresh decides which one this is.
@@ -1241,7 +1590,7 @@ export class WorkBuddyIntlClient {
           lastDetail = failureDetail(error)
           continue
         }
-        response = await this.send(credential, payload, signal)
+        response = await this.send(credential, payload, model, conversationId, signal)
       }
       if (response.ok) {
         this.cooldowns.delete(account.id)
@@ -1275,44 +1624,64 @@ export class WorkBuddyIntlClient {
     return detail
   }
 
-  private async send(account: WorkBuddyInternationalAccount, payload: string, signal?: AbortSignal): Promise<Response> {
+  private async send(account: WorkBuddyInternationalAccount, payload: string, model: string, conversationId: string, signal?: AbortSignal): Promise<Response> {
     return fetch(WORKBUDDY_INTL_CHAT_URL, {
       method: 'POST',
-      headers: {
-        ...attributionHeaders(),
-        authorization: `Bearer ${account.accessToken}`,
-        'content-type': 'application/json',
-        accept: 'text/event-stream',
-        ...this.identityHeaders(account),
-      },
+      headers: this.surfaceHeaders('chat', account, { model, conversationId }),
       body: payload,
       signal: signal ?? AbortSignal.timeout(WORKBUDDY_INTL_CHAT_TIMEOUT_MS),
     })
   }
 
   /**
-   * The header set the product host expects.
+   * The complete header set one request carries, per surface.
    *
-   * `X-No-*` is the upstream's own "this field is absent" spelling: sending the
-   * header empty is rejected, so a field the import never captured is declared
-   * missing instead of guessed.
+   * Read from {@link WORKBUDDY_SURFACES} instead of written per caller. What is
+   * shared is shared here — the account's uid and enterprise pair, the
+   * destination host, the `X-No-*` spelling of a field the import never captured
+   * (sending one empty is rejected, so it is declared missing instead of
+   * guessed) — and what differs is the surface's own declaration. The result is
+   * checked before it leaves, so a surface that loses a header fails loudly here
+   * rather than silently at the gateway.
+   * @param surface - which request this is.
+   * @param account - the account the request is sent as.
+   * @param extras - the values only a chat turn has: its route and its conversation.
+   * @returns the header map for the request.
+   * @throws {Error} when the surface's declared identity is incomplete.
    */
-  private identityHeaders(account: WorkBuddyInternationalAccount): Record<string, string> {
+  private surfaceHeaders(
+    surface: WorkBuddyRequestSurface,
+    account: WorkBuddyInternationalAccount,
+    extras: { readonly model?: string; readonly conversationId?: string } = {},
+  ): Record<string, string> {
+    const identity = WORKBUDDY_SURFACES[surface]
     const uid = string(account.uid)
-    const domain = string(account.domain)
     const enterpriseId = string(account.enterpriseId)
-    return {
-      origin: WORKBUDDY_INTL_BASE_URL,
-      referer: `${WORKBUDDY_INTL_BASE_URL}/`,
-      'user-agent': WORKBUDDY_USER_AGENT,
-      'x-requested-with': 'XMLHttpRequest',
-      'x-product': 'SaaS',
-      ...(enterpriseId === undefined ? { 'x-no-enterprise-id': '1' } : { 'x-enterprise-id': enterpriseId }),
-      ...(domain === undefined ? { 'x-no-department-info': '1' } : { 'x-domain': domain }),
-      // The uid, never the address: the host routes on it, and an email in this
-      // slot is an identity the account does not have.
-      ...(uid === undefined ? { 'x-no-user-id': '1' } : { 'x-user-id': uid }),
+    // The attribution headers come first, as they did when this set was written
+    // out by hand: the identity below states the product, and a layer further down
+    // must not be able to restate it.
+    const headers: Record<string, string> = {
+      ...attributionHeaders(),
+      ...surfaceIdentityHeaders(workBuddyIdentity, surface, {
+        authorization: `Bearer ${account.accessToken}`,
+        origin: WORKBUDDY_INTL_BASE_URL,
+        referer: `${WORKBUDDY_INTL_BASE_URL}/`,
+        'x-requested-with': 'XMLHttpRequest',
+        ...(identity.userAgent === 'model' ? { 'user-agent': workBuddyUserAgent(extras.model ?? '') } : {}),
+        // Both spellings of one enterprise identity, because the routes behind this
+        // base do not agree on which one they read.
+        ...(enterpriseId === undefined
+          ? { 'x-no-enterprise-id': '1' }
+          : { 'x-enterprise-id': enterpriseId, 'x-tenant-id': enterpriseId }),
+        ...domainHeader(string(account.domain)),
+        // The uid, never the address: the host routes on it, and an email in this
+        // slot is an identity the account does not have.
+        ...(uid === undefined ? { 'x-no-user-id': '1' } : { 'x-user-id': uid }),
+        ...(surface === 'chat' ? conversationHeaders(extras.conversationId ?? randomUUID()) : {}),
+      }),
     }
+    assertSurfaceIdentity(workBuddyIdentity, surface, headers)
+    return headers
   }
 
   /** A valid access token for one account, refreshing when it is near expiry. */
@@ -1395,15 +1764,10 @@ export class WorkBuddyIntlClient {
         try {
           const credential = await this.accessToken(account)
           const response = await fetch(WORKBUDDY_INTL_MODELS_URL, {
-            headers: {
-              ...attributionHeaders(),
-              authorization: `Bearer ${credential.accessToken}`,
-              accept: 'application/json',
-              ...this.identityHeaders(credential),
-              // The gateway answers the App document only to the App-shaped UA;
-              // chat and refresh keep the CLI identity.
-              'user-agent': WORKBUDDY_INTL_CATALOG_USER_AGENT,
-            },
+            // The gateway answers the App document only to the App-shaped UA,
+            // which is why the surface declares its own; chat and refresh keep
+            // the CLI identity.
+            headers: this.surfaceHeaders('catalog', credential),
             signal: AbortSignal.timeout(WORKBUDDY_INTL_CATALOG_TIMEOUT_MS),
           })
           if (!response.ok) continue
@@ -1496,6 +1860,25 @@ export class WorkBuddyIntlAdapter extends LlmAdapter {
     }))
   }
 
+  /**
+   * The reasoning ladder the live document declares for one route.
+   *
+   * Read from the same directory {@link resolveModel} publishes, so a tier chosen
+   * as a fallback can never be one the picker does not offer. A failed read skips
+   * the fallback rather than failing the turn: the caller's own body then travels
+   * exactly as serialized.
+   * @param model - the route to look up.
+   * @returns the declared ladder, or undefined when the document declares none.
+   */
+  private async declaredReasoning(model: string): Promise<{ readonly efforts: readonly WorkBuddyReasoningTier[]; readonly defaultEffort: string } | undefined> {
+    try {
+      const known = (await this.client.allModels()).find(route => route.id === model)
+      return workBuddyReasoningOptions(known)
+    } catch {
+      return undefined
+    }
+  }
+
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
     // The whole directory: a metered route the user switched on has to resolve
     // to its own name, context window, and reasoning ladder, and reading only
@@ -1525,10 +1908,20 @@ export class WorkBuddyIntlAdapter extends LlmAdapter {
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    const body = serializeRequest(options)
+    const body = prepareWorkBuddyReasoning(
+      serializeRequest(options),
+      options.model,
+      await this.declaredReasoning(options.model),
+      options.reasoningEffort === undefined ? undefined : String(options.reasoningEffort),
+    )
     let response: Response
     try {
-      response = await this.client.chat(body, options.signal)
+      // The session id is the conversation identity: the chat route names the
+      // conversation in three headers and prices the prefix cache by it, and a
+      // turn that omitted it would start a new conversation every request.
+      response = await this.client.chat(body, options.signal, {
+        ...(options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) }),
+      })
     } catch (error) {
       if (options.signal?.aborted) throw new LlmError('WorkBuddy request aborted by caller', 'ABORTED', { cause: error })
       throw workBuddyLlmError(error)

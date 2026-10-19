@@ -1166,15 +1166,12 @@ export function apply(ctx: ClientContext): void {
       skillPlacementPrefer: (placement?: import('@deepseek-ai/dsh-freecodego-harness-plugin').FreeCodeGoSkillPlacement) => backendCall<CapabilitySnapshot>('skillPlacementPrefer', placement),
       capabilities: () => backendCall<CapabilitySnapshot>('capabilities'),
       readLocalCapabilities: async () => {
-        const fallback = { voiceInputEnabled: true, sessionDeleteEnabled: true, customApiReasoningEnabled: true }
+        const fallback = { voiceInputEnabled: true, sessionDeleteEnabled: true }
         let value: Record<string, unknown>
         try { value = await readFreeCodeGoSettings() } catch { return fallback }
         return {
           voiceInputEnabled: value.voiceInputEnabled !== false,
           sessionDeleteEnabled: value.sessionDeleteEnabled !== false,
-          // Absent reads as on, like every other switch here: the Host's own
-          // default is on, and an older stored document named none.
-          customApiReasoningEnabled: value.customApiReasoningEnabled !== false,
         }
       },
       capabilitiesSetEnabled: (input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }) => backendCall<CapabilitySnapshot>('capabilitiesSetEnabled', input),

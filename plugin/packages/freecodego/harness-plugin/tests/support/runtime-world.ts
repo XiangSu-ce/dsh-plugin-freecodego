@@ -61,11 +61,17 @@ export interface RuntimeWorld {
  * @param settings - the plugin settings document, mutated in place by `commit`.
  * @param mountPlugin - mount the whole plugin (engineering, design, worktrees,
  *   prompt composition) instead of only the deferred-tool layer.
+ * @param services - extra Host services the mounted plugin reads, keyed by the
+ *   name `ctx.get` uses. Provided *before* the plugin is constructed, which is
+ *   the only moment that matters: a constructor reads them through
+ *   `ctx.get`, and a service provided afterwards is invisible to code that has
+ *   already run. The deferred-only world ignores them.
  * @returns the world.
  */
 export async function runtimeWorld(
   settings: Record<string, unknown> = {},
   mountPlugin = false,
+  services: Readonly<Record<string, unknown>> = {},
 ): Promise<RuntimeWorld> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
@@ -80,6 +86,7 @@ export async function runtimeWorld(
     },
   })
   const deferred = new FreeCodeGoDeferredTools(ctx, policy)
+  for (const [name, fake] of Object.entries(services)) provideHostServiceAs<object>(ctx, name, fake as object)
   let plugin: FreeCodeGoHarnessPlugin | undefined
   if (mountPlugin) {
     provideHostServiceAs<AgentEnginesFace>(ctx, 'agentEngines', { setAvailability: () => undefined })

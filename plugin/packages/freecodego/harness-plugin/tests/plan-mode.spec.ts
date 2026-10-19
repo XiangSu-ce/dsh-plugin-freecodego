@@ -386,7 +386,7 @@ describe('where the edit fence actually lives', () => {
     // against.
     let source: string
     try {
-      source = await readFile(new URL('../../../session-query/tool-session-query/src/index.ts', import.meta.url), 'utf8')
+      source = await readFile(new URL('../../../experimental/tool-session-query/src/index.ts', import.meta.url), 'utf8')
     } catch {
       return
     }

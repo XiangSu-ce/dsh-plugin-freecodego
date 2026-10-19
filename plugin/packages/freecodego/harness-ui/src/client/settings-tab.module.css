@@ -1173,3 +1173,64 @@ body .payDialog {
 .pickerVisibilityPaid { flex: 0 0 auto; padding: 0 6px; border-radius: var(--fcg-radius-full); background: color-mix(in srgb, var(--fcg-danger) 12%, transparent); color: var(--fcg-danger); font-size: 10px; font-style: normal; font-weight: 700; line-height: 16px; }
 .pickerVisibilityFree { flex: 0 0 auto; padding: 0 6px; border-radius: var(--fcg-radius-full); background: color-mix(in srgb, var(--fcg-success) 12%, transparent); color: var(--fcg-success); font-size: 10px; font-style: normal; font-weight: 700; line-height: 16px; }
 .pickerVisibilityEmpty { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; }
+/* The tuning surface is two steps: a picker that chooses routes and models, and
+   an editor that carries a control for each chosen one. The picker is its own
+   scroll box so a route with thirty-odd models still fits on the page.
+   The editor grid is the fix for the reported garbling: `auto-fit` with a
+   220px floor means thirteen cards share the row instead of collapsing to a
+   sliver — a track is never narrower than 220px, and when the container cannot
+   hold two of them the grid falls back to a single column. */
+.tuningPicker {
+  display: grid;
+  gap: var(--fcg-space-2);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--fcg-line-subtle);
+  border-radius: var(--fcg-radius-md);
+  background: var(--fcg-bg-layer-1);
+  scrollbar-color: var(--fcg-line-strong) transparent;
+  scrollbar-width: thin;
+}
+.tuningPickerSummary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.tuningPickerCount { min-width: 0; color: var(--fcg-text-secondary); font-size: var(--fcg-font-caption); line-height: 18px; }
+.tuningPickerGroup { display: grid; gap: 6px; min-width: 0; padding: 8px 10px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-sm); background: var(--fcg-bg-layer-2); }
+.tuningPickerProviderRow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.tuningPickerToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--fcg-line-subtle);
+  border-radius: var(--fcg-radius-sm);
+  background: var(--fcg-bg-layer-1);
+  color: var(--fcg-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fcg-font-caption);
+  line-height: 18px;
+}
+.tuningPickerToggle:hover { color: var(--fcg-text-primary); border-color: var(--fcg-line); }
+.tuningPickerToggle:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--fcg-brand) 22%, transparent); }
+.tuningPickerChevron { flex: 0 0 auto; transition: transform 120ms ease; }
+.tuningPickerToggle[aria-expanded="true"] .tuningPickerChevron { transform: rotate(180deg); }
+.tuningPickerLabel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; cursor: pointer; }
+.tuningPickerName { min-width: 0; color: var(--fcg-text-primary); font-weight: 600; overflow-wrap: anywhere; word-break: break-word; }
+.tuningPickerMeta { min-width: 0; color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); line-height: 18px; overflow-wrap: anywhere; word-break: break-word; }
+.tuningPickerModels { display: grid; gap: 2px; }
+.tuningPickerModel { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 6px; border-radius: var(--fcg-radius-sm); cursor: pointer; }
+.tuningPickerModel:hover { background: var(--fcg-bg-layer-1); }
+.tuningPickerEmptyHint { color: var(--fcg-text-tertiary); font-size: var(--fcg-font-caption); }
+.tuningEditGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--fcg-space-2); align-items: start; margin-top: var(--fcg-space-2); }
+.tuningEditCell { display: grid; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--fcg-line-subtle); border-radius: var(--fcg-radius-md); background: var(--fcg-bg-layer-1); }
+.tuningEditRow { display: grid; gap: 8px; min-width: 0; }
+.tuningEditHead { display: grid; gap: 2px; min-width: 0; }
+.tuningEditRow .cellLabel { margin-bottom: 0; overflow-wrap: anywhere; word-break: break-word; }
+.tuningEditRow .select, .tuningEditRow .input, .tuningEditRow .button { min-width: 0; }
+.tuningDefaultsCell { border-color: var(--fcg-line); background: var(--fcg-bg-layer-2); }
+.tuningDefaultsActions { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; align-items: end; }
+@media (max-width: 520px) {
+  .tuningPicker { max-height: 260px; }
+  .tuningEditGrid, .tuningDefaultsActions { grid-template-columns: 1fr; }
+}

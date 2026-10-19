@@ -1274,7 +1274,7 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
     await ctx.fiber.dispose()
   })
 
-  it('keeps the retired Mystery Provider 2 route unresolvable for new selection', async () => {
+  it('keeps the retired Mystery Provider 2 endpoint out of the bare glm-5.3-flash route', async () => {
     const ctx = new Context()
     await ctx.plugin(AgentEngineRegistry)
     const originalFetch = globalThis.fetch
@@ -1285,12 +1285,20 @@ describe('FreeCodeGoHarnessPlugin engine defaults', () => {
       } | undefined>
       listFreeCodeGoModels: (provider: string) => Promise<readonly { id: string; name: string; description?: string }[]>
     }
-    // The public Empero mirror was retired: `glm-5.3-flash` now lives behind
-    // the B.AI catalog (bai/glm-5.3-flash), and no bare-id direct route may
-    // send traffic to the old endpoint.
-    await expect(plugin.directConnection('glm-5.3-flash')).resolves.toBeUndefined()
-    globalThis.fetch = (async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) as typeof globalThis.fetch
+    // The public Empero mirror was retired: `glm-5.3-flash` lived behind the
+    // B.AI catalog (bai/glm-5.3-flash), and the old endpoint must not come back
+    // through the bare id. A bare id now maps to the row OpenCode's own free
+    // directory serves (`glm-5.3-flash-free`) — a current route, not the
+    // retired mirror — so the assertion is about *where* the id resolves, and
+    // the route stays the same one the built-in roster names when the
+    // directory read fails.
+    globalThis.fetch = (async (input) => String(input) === 'https://opencode.ai/zen/v1/models'
+      ? new Response(JSON.stringify({ data: [{ id: 'glm-5.3-flash-free', object: 'model' }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      : new Response(JSON.stringify({ data: [] }), { status: 200 })) as typeof globalThis.fetch
     try {
+      await expect(plugin.directConnection('glm-5.3-flash')).resolves.toMatchObject({
+        connection: { baseURL: 'https://opencode.ai/zen/v1', model: 'glm-5.3-flash-free' },
+      })
       await expect(plugin.listFreeCodeGoModels('freecodego')).resolves.not.toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'glm-5.3-flash' }),
       ]))

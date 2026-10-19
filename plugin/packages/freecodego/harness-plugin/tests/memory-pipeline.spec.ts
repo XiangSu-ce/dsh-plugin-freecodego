@@ -709,6 +709,32 @@ describe('topic commits are all-or-nothing per topic', () => {
     expect(files.size).toBe(0)
   })
 
+  test('a slug Windows resolves to a device is skipped rather than written', () => {
+    // The guard's own class one name over, and the reason is not cosmetic: a
+    // reserved device name cannot be created as a file there, so the topic write
+    // throws instead of landing, and the pass reports a failure that is really a
+    // refusal. The `.md` extension does not save it — Windows resolves the name
+    // *before* the extension, so `nul.md` is the device too, which is the same
+    // rule `skills/installer.ts` states for the segments it checks.
+    const { io, files } = memoryIo()
+    const written = commitTopics({
+      plan: {
+        commit: true,
+        topics: [
+          { slug: 'con', title: 'Console', markdown: 'Body.', sources: [] },
+          { slug: 'nul', title: 'Null', markdown: 'Body.', sources: [] },
+          { slug: 'com1', title: 'Serial', markdown: 'Body.', sources: [] },
+          { slug: 'lpt9', title: 'Printer', markdown: 'Body.', sources: [] },
+          { slug: 'kept', title: 'Kept', markdown: 'Body.', sources: [] },
+        ],
+      },
+      directory: '/t',
+      io,
+    })
+    expect(written).toEqual(['kept'])
+    expect([...files.keys()]).toEqual(['/t/kept.md'])
+  })
+
   test('writes each topic into the directory its scope names', () => {
     const { io, files } = memoryIo()
     const written = commitTopics({

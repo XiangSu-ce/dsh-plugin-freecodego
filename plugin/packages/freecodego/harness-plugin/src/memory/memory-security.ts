@@ -91,6 +91,38 @@ export function sanitizeMemoryIdentifier(value: string, maxLength: number = MAX_
 }
 
 /**
+ * Names Windows resolves to a device rather than to a file, whatever directory
+ * they appear in.
+ *
+ * One list, in the module that already reduces titles and identifiers to
+ * filesystem-safe shapes, because this package has three callers for it and a
+ * second copy is how one of them silently stops enforcing it — the failure
+ * {@link MEMORY_TAG_PATTERN} below records for a shape that was stated twice.
+ */
+const WINDOWS_RESERVED_DEVICE_NAMES: ReadonlySet<string> = new Set([
+  'CON', 'PRN', 'AUX', 'NUL',
+  ...Array.from({ length: 9 }, (_unused, index) => `COM${String(index + 1)}`),
+  ...Array.from({ length: 9 }, (_unused, index) => `LPT${String(index + 1)}`),
+])
+
+/**
+ * Whether one path segment names a Windows device instead of a file.
+ *
+ * The *stem* is tested rather than the whole segment, because Windows resolves
+ * the name before the extension: `nul.md` is the device, not a file called
+ * `nul.md`. Case does not affect that resolution, so it does not affect this
+ * either. A segment that is legal by every character rule and still cannot be
+ * created is the case a character test alone reports as usable, which is how a
+ * refusal becomes an exception inside the write that trusted it.
+ * @param segment - one path segment, containing no separator.
+ * @returns true when no file can be created under that name on Windows.
+ */
+export function isReservedWindowsDeviceName(segment: string): boolean {
+  const stem = segment.split('.')[0]?.toUpperCase() ?? ''
+  return WINDOWS_RESERVED_DEVICE_NAMES.has(stem)
+}
+
+/**
  * Cut `value` at `maxLength` without splitting a character.
  *
  * Every other cap in this plugin measures UTF-16 code units, so a boundary can

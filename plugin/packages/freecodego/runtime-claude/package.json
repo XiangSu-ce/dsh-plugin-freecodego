@@ -1,8 +1,10 @@
 {
   "name": "@deepseek-ai/dsh-freecodego-runtime-claude",
   "description": "Claude Agent SDK runtime for the FreeCodeGo Harness, driven in the Host process",
-  "version": "0.2.0-rc.2",
-  "publishConfig": { "access": "public" },
+  "version": "0.2.1-rc.2",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/XiangSu-ce/dsh-plugin-freecodego.git",
@@ -11,8 +13,18 @@
   "type": "module",
   "main": "lib/index.mjs",
   "types": "lib/types/index.d.ts",
-  "exports": { ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.mjs" }, "./package.json": "./package.json", "./src/*": "./src/*" },
-  "files": ["lib/*.mjs", "lib/types/**/*.d.ts"],
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.mjs"
+    },
+    "./package.json": "./package.json",
+    "./src/*": "./src/*"
+  },
+  "files": [
+    "lib/*.mjs",
+    "lib/types/**/*.d.ts"
+  ],
   "license": "AGPL-3.0-only",
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.246",
@@ -20,6 +32,10 @@
     "@deepseek-ai/dsh-freecodego-root-agent": "workspace:^",
     "zod": "^4.0.0"
   },
-  "peerDependencies": { "@deepseek-ai/cordis": "workspace:^" },
-  "devDependencies": { "@deepseek-ai/cordis": "workspace:^" }
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^"
+  }
 }

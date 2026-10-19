@@ -39,6 +39,7 @@ import { KnownCatalogAdapter, KnownCatalogDirectory } from './known-provider-cat
 import { expandGroupPinnedModels, imageInputModalities, mergeCatalogModels, modelMultiplierDescription, modelRowGroupBlock, parseGroupPin } from './model-catalog.ts'
 import { ANTSEED_PROVIDER_ID, readAntSeedCatalog, resolveAntSeedConnection, toAntSeedModelInfo } from './antseed/provider.ts'
 import { activeAccountIdAfterRemoval, backendNotConfigured } from './account-utils.ts'
+import { storedContextWindows } from './model-tuning.ts'
 
 /** Bilingual hint appended to every direct-provider 429 error: the proxy
  * exit IP is the usual cause of rate limiting on these free upstreams. */
@@ -124,6 +125,8 @@ export const FREE_UPSTREAM_MODELS: readonly OpenCodeFreeModel[] = [
   { id: 'hy3', name: 'HY3', upstreamId: 'hy3-free' },
   { id: 'nemotron-3-ultra', name: 'Nemotron 3 Ultra', upstreamId: 'nemotron-3-ultra-free' },
   { id: 'nemotron-3.5-lightning', name: 'Nemotron 3.5 Lightning', upstreamId: 'nemotron-3.5-lightning-free' },
+  { id: 'deepseek-v4.1-flash', name: 'Deepseek V4.1 Flash', upstreamId: 'deepseek-v4.1-flash-free' },
+  { id: 'glm-5.3-flash', name: 'Glm 5.3 Flash', upstreamId: 'glm-5.3-flash-free' },
 ]
 
 const LOGFARE_FALLBACK_MODELS: readonly LogfareModel[] = [
@@ -568,7 +571,9 @@ export class FreeCodeGoManagedCatalogs {
       },
       omitDefaultMaxTokens: true,
       omitMaxTokens: true,
-      defaultContextWindow: 1_000_000,
+      // OpenCode's directory names its free routes and no window, so every one
+      // of them resolves at this value unless the tuning surface states its own.
+      defaultContextWindow: 200_000,
       defaultMaxTokens: 256_000,
     })
     this.registerKnownAdapter(['opencode'], adapter)
@@ -1110,9 +1115,15 @@ export class FreeCodeGoManagedCatalogs {
     const models = await this.openCodeFreeModels()
     const health = this.openCodeHealthCache?.health ?? new Map<string, LogfareHealth>()
     this.refreshLocalHealthInBackground(models)
-    const autoRow = { provider, id: OPENCODE_AUTO_MODEL.id, name: OPENCODE_AUTO_MODEL.name, description: `OpenCode · ×0 · ${openCodeAutoPreference(models).name}`, availability: 'available' as const, inputModalities: ['text'] as const }
+    // The window the tuning surface wrote for a model, read back here because
+    // pi-ai reads `modelOverrides` only for the routes it serves itself and this
+    // is not one of them: without this the save reached no consumer on this route.
+    const configured = storedContextWindows(this.deps.ctx, provider)
+    const autoWindow = configured.get(OPENCODE_AUTO_MODEL.id)
+    const autoRow = { provider, id: OPENCODE_AUTO_MODEL.id, name: OPENCODE_AUTO_MODEL.name, description: `OpenCode · ×0 · ${openCodeAutoPreference(models).name}`, availability: 'available' as const, inputModalities: ['text'] as const, ...(autoWindow === undefined ? {} : { contextWindow: autoWindow }) }
     return [autoRow, ...models.map((model) => {
       const status = health.get(model.id)?.status ?? 'unknown'
+      const contextWindow = configured.get(model.id)
       return {
         provider,
         id: model.id,
@@ -1122,6 +1133,9 @@ export class FreeCodeGoManagedCatalogs {
           ? { availability: 'unavailable' as const, unavailableReason: MODEL_REASON_OPENCODE_UNAVAILABLE }
           : { availability: 'available' as const }),
         inputModalities: imageInputModalities(model.id, model.name),
+        // Carried as an extra row field, which is the same field the adapter
+        // reads before falling back to its one declared window.
+        ...(contextWindow === undefined ? {} : { contextWindow }),
       }
     })]
   }

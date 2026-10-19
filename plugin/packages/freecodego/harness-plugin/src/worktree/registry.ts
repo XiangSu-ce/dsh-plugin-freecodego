@@ -65,6 +65,17 @@ export interface WorktreeEntry {
   readonly strategy?: 'git' | 'fast'
   /** Session that holds it, when the entry is keyed on a conversation. */
   readonly sessionId?: string
+  /**
+   * The repository the copy was cut from.
+   *
+   * Recorded because a removal has to be issued from the *main* checkout: `git -C
+   * <worktree> worktree remove <worktree>` fails with a permission error on Windows
+   * and refuses plainly elsewhere, since the process's own directory is the one it
+   * is deleting. Absent on entries written before this field existed, where the
+   * path itself remains the fallback. It also matters for a copy the official
+   * `create_worktree` runtime made outside `.freecodego/worktrees`.
+   */
+  readonly repoRoot?: string
 }
 
 interface WorktreeDocument {
@@ -189,6 +200,7 @@ function isReadableWorktreeEntry(value: unknown): value is WorktreeEntry {
   if (entry.state !== 'active' && entry.state !== 'merged' && entry.state !== 'abandoned') return false
   if (entry.strategy !== undefined && entry.strategy !== 'git' && entry.strategy !== 'fast') return false
   if (entry.sessionId !== undefined && typeof entry.sessionId !== 'string') return false
+  if (entry.repoRoot !== undefined && (typeof entry.repoRoot !== 'string' || entry.repoRoot === '')) return false
   if (entry.mergedAt !== undefined && (typeof entry.mergedAt !== 'number' || !Number.isFinite(entry.mergedAt))) return false
   return true
 }

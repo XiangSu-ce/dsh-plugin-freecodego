@@ -12,10 +12,12 @@
 
 import { createCipheriv, createHash, createPublicKey, publicEncrypt, randomBytes, randomUUID, constants } from 'node:crypto'
 import { asRecord, asString } from '../untrusted-json.ts'
+import { COSY_VERSION, assertQoderIdentity, qoderSurfaceHeaders } from './identity.ts'
 import type { QoderIdentity, QoderSession } from './types.ts'
 
-/** Protocol version advertised in the session payload. */
-export const COSY_VERSION = '1.0.10'
+// The protocol version is declared with the identity that states it, so the value
+// in the headers and the value in the session payload cannot disagree.
+export { COSY_VERSION }
 /** Application code in the legacy signature. */
 const COSY_APP_CODE = 'cosy'
 /** `base64("war, war never changes")`, the constant legacy secret. */
@@ -210,27 +212,21 @@ export function buildCosyHeaders(
   const payloadB64 = cosyBuildPayload(session.info)
   const date = `${Math.floor(Date.now() / 1000)}`
   const signature = cosySignRequest(payloadB64, session.cosyKey, date, body, pathSig)
-  return {
-    'cosy-data-policy': 'agree',
-    'content-type': 'application/json',
+  const headers = qoderSurfaceHeaders('cosy', {
     'cosy-machinetype': session.machineType,
-    'cosy-clienttype': '5',
     'cosy-date': date,
     'cosy-user': session.identity.uid,
     'cosy-key': session.cosyKey,
-    'cache-control': 'no-cache',
     accept,
     authorization: cosyComposeBearer(payloadB64, signature),
-    'cosy-version': COSY_VERSION,
     'cosy-machineid': session.machineId,
     'cosy-machinetoken': session.machineToken,
-    'login-version': 'v2',
-    'user-agent': 'Go-http-client/2.0',
-    'cosy-scene': 'assistant',
-    'cosy-business-product': 'ide',
-    'cosy-business-type': 'agent',
     ...extra,
-  }
+  })
+  // Every signed request this connector sends is built here, so the identity is
+  // checked once, at its single source, rather than at each caller.
+  assertQoderIdentity('cosy', headers)
+  return headers
 }
 
 /** Read the first string of the given keys off an untrusted record. */

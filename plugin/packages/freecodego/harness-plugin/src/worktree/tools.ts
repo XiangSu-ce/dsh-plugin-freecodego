@@ -116,9 +116,47 @@ export interface WorktreeRegistryPort {
   register(entry: WorktreeEntry): Promise<void>
 }
 
+/**
+ * A working copy the official `create_worktree` runtime made.
+ *
+ * Structural rather than imported from `@deepseek-ai/dsh-experimental-worktree`:
+ * that package is an optional bundle a deployment may not mount, and this plugin
+ * has to keep loading without it. The four fields are the tool's own output
+ * schema, which is what makes them a stable thing to read here.
+ */
+export interface OfficialWorktreeCreation {
+  readonly path: string
+  readonly branch: string
+  readonly baseCommit: string
+  readonly repositoryRoot: string
+}
+
+/**
+ * The official worktree runtime, as this module reads it.
+ *
+ * `create` is the whole surface used: it creates the branch and the checkout and
+ * moves the calling session's working directory, which is the one thing the
+ * plugin's own `enter` cannot do. A copy made this way is adopted into this
+ * plugin's registry so `exit`/`status`/`list` keep working over it.
+ */
+export interface OfficialWorktreeRuntime {
+  create(
+    agent: unknown,
+    input: { readonly name?: string; readonly from?: string },
+    signal?: AbortSignal,
+  ): Promise<OfficialWorktreeCreation>
+}
+
 /** Everything the session worktrees need from the outside world, injected. */
 export interface SessionWorktreePorts {
   readonly registry: WorktreeRegistryPort
+  /**
+   * The workspace this instance is scoped to.
+   *
+   * Carried because a removal has to name the *main* checkout, and the only place
+   * that knows it after a copy has become the session's working directory is here.
+   */
+  readonly workspaceRoot?: string
   /** Create the working copy; `creator.ts` is the only intended implementation. */
   readonly create: (input: {
     readonly repoRoot: string
@@ -375,6 +413,7 @@ export class SessionWorktrees {
       createdAt: this.now,
       state: 'active',
       strategy: created.strategy,
+      repoRoot,
     }
     await this.ports.registry.register(worktree)
     return {
@@ -384,6 +423,46 @@ export class SessionWorktrees {
       ...(created.fallbackReason === undefined ? {} : { fallbackReason: created.fallbackReason }),
       isolation: isolationNote(created.path, false),
     }
+  }
+
+  /**
+   * Record a working copy someone else created, so the session surface can hand it
+   * back.
+   *
+   * The official `create_worktree` runtime makes the copy and moves the session's
+   * working directory, but knows nothing about this plugin's registry. Without this
+   * the copy would exist and be invisible: `status` would say the session holds
+   * nothing, `list` would not name it, and `exit` would have nothing to release.
+   *
+   * The entry keeps the plugin's own id, derived from the session, because that is
+   * what `held`, `exit` and `status` look up; the branch and path are the official
+   * runtime's, and `repoRoot` is what a later removal has to run from.
+   * @param input - the workspace, the session, and what the official runtime made.
+   * @returns the entry as registered.
+   */
+  async adopt(input: {
+    readonly workspaceRoot: string
+    readonly sessionId: string
+    readonly path: string
+    readonly branch: string
+    readonly base?: string
+    readonly repositoryRoot?: string
+  }): Promise<WorktreeEntry> {
+    const plan = sessionWorktreePlan({ workspaceRoot: input.workspaceRoot, sessionId: input.sessionId })
+    const entry: WorktreeEntry = {
+      id: plan.id,
+      memberId: plan.memberId,
+      sessionId: plan.sessionId,
+      branch: input.branch,
+      path: input.path,
+      base: input.base ?? '',
+      createdAt: this.now,
+      state: 'active',
+      strategy: 'git',
+      ...(input.repositoryRoot === undefined ? {} : { repoRoot: input.repositoryRoot }),
+    }
+    await this.ports.registry.register(entry)
+    return entry
   }
 
   /**
@@ -407,8 +486,13 @@ export class SessionWorktrees {
     }
     if (input.remove === true) {
       const strategy = recordedStrategy(worktree)
+      // The entry's own repository first: a copy the official runtime made is the
+      // session's working directory, and git refuses to remove the directory it is
+      // running in (a permission error on Windows). The passed `repoRoot` is the
+      // caller's guess from the *current* cwd, which for such a copy is the copy.
+      const repoRoot = worktree.repoRoot ?? input.repoRoot ?? worktree.path
       try {
-        await this.ports.remove({ repoRoot: input.repoRoot ?? worktree.path, path: worktree.path, strategy })
+        await this.ports.remove({ repoRoot, path: worktree.path, strategy })
       } catch (error) {
         // The registry entry is kept active on a failed removal: marking it
         // released while the directory is still there is how a worktree becomes
@@ -519,6 +603,21 @@ export function isolationNote(path: string, reused: boolean): string {
 }
 
 /**
+ * The sentence for a copy the official runtime made.
+ *
+ * The difference from `isolationNote` is the whole point of preferring it: this
+ * copy *is* the session's working directory, so the caller does not have to pass
+ * absolute paths and a child spawned here inherits the redirect for free.
+ * @param path - the working copy the session was moved into.
+ * @returns the note, saying what the copy changed.
+ */
+export function officialIsolationNote(path: string): string {
+  return `This session's working copy is ${path}, created by the Harness's own create_worktree runtime, which moved `
+    + 'this session\'s working directory into it: file and shell calls now resolve there without being given absolute '
+    + 'paths. The copy and its branch stay after the session leaves.'
+}
+
+/**
  * The registry entry for a session, formatted for a tool result.
  *
  * Absent facts are omitted rather than sent as `null`, except `branch`, where the
@@ -573,6 +672,14 @@ export interface WorktreeToolDeps {
   readonly sessionOf: (exec: unknown) => WorktreeSessionContext | undefined
   /** Resolve a repository root from a workspace; defaults to the workspace itself. */
   readonly repoRootOf?: (cwd: string) => Promise<string | undefined>
+  /**
+   * The official `create_worktree` runtime, when the Host composes it.
+   *
+   * Read per call rather than captured once, because the bundle that provides it is
+   * optional: a deployment without `experimental/worktree` composes no runtime, and
+   * the plugin's own creator is then the only way to isolate a session.
+   */
+  readonly official?: (exec: unknown) => OfficialWorktreeRuntime | undefined
 }
 
 /**
@@ -594,7 +701,7 @@ export function worktreeToolDefinitions(deps: WorktreeToolDeps): readonly ToolDe
   return [
     {
       name: 'engineering_worktree_enter',
-      description: 'Give this conversation its own copy of the repository under .freecodego/worktrees, so its writes cannot interleave with anyone else\'s. Returns the copy\'s path. Note that a running session\'s working directory is fixed by the Harness, so pass absolute paths under that copy to work in it; a child session created with the copy as its working directory gets the redirect for real. Re-entering returns the copy the session already holds.',
+      description: 'Give this conversation its own copy of the repository, so its writes cannot interleave with anyone else\'s. Returns the copy\'s path. When the Harness composes its own create_worktree runtime this delegates to it, and the session\'s working directory moves into the copy; otherwise the plugin creates one under .freecodego/worktrees and the copy has to be addressed with absolute paths, because a running session\'s working directory is fixed by the Harness. Re-entering returns the copy the session already holds.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -609,7 +716,42 @@ export function worktreeToolDefinitions(deps: WorktreeToolDeps): readonly ToolDe
         const context = contextOf(exec)
         if ('error' in context) return context
         const requested = args?.strategy === 'git' || args?.strategy === 'fast' ? args.strategy : 'auto'
-        const outcome = await deps.sessions(context.cwd).enter({
+        const sessions = deps.sessions(context.cwd)
+        // The official runtime first, when it is composed and the caller has not
+        // asked for a copy without git. It is the only creator that can move the
+        // session's working directory, so its copy is strictly the better isolation;
+        // the plugin's own `enter` is the fallback, not the primary.
+        let officialFailure: string | undefined
+        const official = requested === 'fast' ? undefined : deps.official?.(exec)
+        if (official !== undefined && (await sessions.held(context.id)) === undefined) {
+          try {
+            const created = await official.create(
+              (exec as { readonly agent?: unknown } | undefined)?.agent,
+              args?.ref === undefined ? {} : { from: args.ref },
+              (exec as { readonly signal?: AbortSignal } | undefined)?.signal,
+            )
+            const entry = await sessions.adopt({
+              workspaceRoot: context.cwd,
+              sessionId: context.id,
+              path: created.path,
+              branch: created.branch,
+              base: created.baseCommit,
+              repositoryRoot: created.repositoryRoot,
+            })
+            return {
+              ...summarizeWorktree({ worktree: entry, owner: 'session', sessionId: context.id, exists: true }),
+              reused: false,
+              provider: 'official',
+              isolation: officialIsolationNote(created.path),
+            }
+          } catch (error) {
+            // The fallback is the point of the try: a Host whose worktree runtime
+            // refuses still gets an isolated copy, and the reason is reported so a
+            // reader knows why the path is not the official one.
+            officialFailure = redactCredentialShapes(error instanceof Error ? error.message : String(error))
+          }
+        }
+        const outcome = await sessions.enter({
           workspaceRoot: context.cwd,
           sessionId: context.id,
           repoRoot: args?.repo_root ?? await repoRootFor(context.cwd),
@@ -619,8 +761,11 @@ export function worktreeToolDefinitions(deps: WorktreeToolDeps): readonly ToolDe
         return {
           ...summarizeWorktree({ worktree: outcome.worktree, owner: 'session', sessionId: context.id, exists: true }),
           reused: outcome.reused,
+          provider: 'plugin',
           isolation: outcome.isolation,
-          ...(outcome.fallbackReason === undefined ? {} : { fallbackReason: outcome.fallbackReason }),
+          ...(officialFailure === undefined && outcome.fallbackReason === undefined
+            ? {}
+            : { fallbackReason: [officialFailure, outcome.fallbackReason].filter(reason => reason !== undefined).join('; ') }),
         }
       },
       presentCall: () => ({ card: 'generic', title: 'Enter an isolated working copy' }),

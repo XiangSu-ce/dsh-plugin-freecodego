@@ -50,16 +50,16 @@ FreeCodeGo **不是** DeepSeek 的产品，本仓库也不是 DeepSeek 的官方
 ## 免费模型
 
 <!-- generated:free-models:begin by scripts/generate-free-model-tables.ts -->
-下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-10-05 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
+下面每一行都来自各提供商自己的目录，在你打开选择器时读取；也就是说，这是那些目录在 2026-10-19 返回的结果（按名称排序，选择器里保持目录顺序），而选择器里的数量才是你查看时真正成立的数量。
 
 | 提供商 | 免费模型 | 目录 |
 |---|---|---|
 | **私钥网关** | 选择器里实时读到的免费路由 | 无需注册，也无需 API Key |
-| **OpenCode** | `big-pickle`、`deepseek-v4-flash-free`、`fledge-alpha-free`、`jev-1.13-free`、`ling-3.0-flash-fin-free`、`ling-3.1-flash-free`、`longcat-2.5-preview-free`、`mimo-v2.5-free`、`mimo-v2.6-flash-free`、`muse-spark-1.2`、`muse-spark-1.2-contributor-free`、`muse-spark-1.3`、`muse-spark-1.3-contributor-free`、`nemotron-3-ultra-free`、`nemotron-3.5-lightning-free`、`space-bunny-free` | 86 行中的 16 行；公开，无需登录 |
-| **Kilo** | `apodex/apodex-1.1-mini:free`、`cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`inclusionai/ling-3.0-flash-sante:free`、`inclusionai/ling-3.1-flash`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`qwen/qwen3.8-27b:free`、`stealth/space-bunny-alpha`、`stepfun/step-3.7-flash:free`、`thinkingmachines/inkling-small:free` | 401 行中的 19 行；公开，每个出口 IP 每小时 200 次 |
-| **Logfare** | 对话 `claude-opus-4.6`、`claude-sonnet-4.6`、`deepseek-v3.2`、`gemma-4-26b`、`gemma-4-31b`、`glm-5`、`gpt-oss-120b`、`grok-4.6`、`kimi-k2-thinking`、`kimi-k2.5`、`logfare/auto`、`qwen-3.8-27b`、`space-bunny-alpha`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`；音频 `whisper-large-v3-turbo`；其他路由 `aura-2-en`、`lucid-origin`、`nova-3`、`phoenix-1.0` | 23 行；16 行需要训练数据授权，其余 7 行不需要 |
+| **OpenCode** | `beam-free`、`big-pickle`、`deepseek-v4.1-flash-free`、`glm-5.3-flash-free`、`jev-1.13-free`、`longcat-2.5-preview-free`、`mimo-v2.6-flash-free`、`minimax-m3.1-flash-free`、`muse-spark-1.2`、`muse-spark-1.3`、`nemotron-3.5-lightning-free`、`nemotron-3.5-super-vl-free` | 85 行中的 12 行；公开，无需登录 |
+| **Kilo** | `cohere/north-mini-code:free`、`dots-studio/dots-3-note-preview:free`、`kilo-auto/free`、`liquid/lfm-2.5-2.6b:free`、`minimax/minimax-m3.1-flash:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3-super-120b-a12b:free`、`nvidia/nemotron-3-ultra-550b-a55b:free`、`nvidia/nemotron-3.5-content-safety:free`、`nvidia/nemotron-3.5-lightning:free`、`nvidia/nemotron-3.5-super-vl:free`、`openrouter/free`、`poolside/laguna-s-2.1:free`、`poolside/laguna-xs-2.1:free`、`reflection/beam-free`、`stealth/glyph-cluster`、`thinkingmachines/inkling-small:free`、`xingchen-agi/xing4.0-29b-a4b:free` | 400 行中的 18 行；公开，每个出口 IP 每小时 200 次 |
+| **Logfare** | 对话 `claude-haiku-5-5`、`deepseek-v4-pro-0813`、`deepseek-v4.1-flash`、`gemma-4-26b`、`glm-5.3`、`glm-5.3-flash`、`kimi-k2.6`、`logfare/auto`、`minimax-m3.1-flash`、`qwen-3.8-27b`；图片 `flux-1-schnell`、`flux-2-dev`、`flux-2-klein-4b`、`flux-2-klein-9b`、`sdxl-lightning`；音频 `whisper-large-v3-turbo`；其他路由 `8ball`、`aura-2-en`、`clef`、`clef-flash`、`lucid-origin`、`nova-3`、`phoenix-1.0` | 23 行；14 行需要训练数据授权，其余 9 行不需要 |
 | **Qoder** | `Qwen 3.8 Flash`（路由 `qmodel_38flash`） | 免费 flash 路由，另有每日签到活动 |
-| **NVIDIA** | `google/gemma-4-31b-it`、`moonshotai/kimi-k3`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731` 与 `deepseek-ai/deepseek-v4-pro-0813`，这两个名字已不在 NVIDIA 实时目录（81 行）中 | 调用需要 API key；核对于 2026-10-05 |
+| **NVIDIA** | `google/gemma-4-31b-it`、`z-ai/glm-5.3`、`z-ai/glm-5.3-flash` —— 名单里另有 `deepseek-ai/deepseek-v4-flash-0731`、`deepseek-ai/deepseek-v4-pro-0813` 与 `moonshotai/kimi-k3`，这两个名字已不在 NVIDIA 实时目录（81 行）中 | 调用需要 API key；核对于 2026-10-19 |
 | **SenseNova** | `deepseek-v4-flash`、`deepseek-v4-pro`、`glm-5.2`、`kimi-k3`、`sensenova-6.8-flash-lite` | 名单随 bundle 内置；需要 API key |
 | **TRAE** | 其目录列出的那些行 | 免费额度每日重置，按账号 |
 | **Cline** | 目录标记 `×0 · 官方免费模型` 的那些行 —— 其中包含 `deepseek-v4.1-flash` | 账号池 |
@@ -72,7 +72,7 @@ FreeCodeGo **不是** DeepSeek 的产品，本仓库也不是 DeepSeek 的官方
 
 TRAE、Cline、WorkBuddy 国际版、Agnes 不公布固定名单，因此它们的行在到达时计数，而不在此列名。
 
-Logfare 有 16 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
+Logfare 有 14 行位于训练数据授权之后，选择器会标注而不是隐藏它们。
 
 `deepseek-v4.1-flash` 在这里还通过上面两个账号池免费提供：Cline 把它留在免费那一半，WorkBuddy 国际版则在推广期内覆盖它。
 

@@ -23,7 +23,7 @@ function formStub(value: WebSearchNamespaceValue): {
 } {
   const mutations: (readonly Record<string, unknown>[])[] = []
   const snapshot: ConfigFormSnapshot<WebSearchNamespaceValue> = {
-    status: 'ready', value, base: undefined, user: undefined, revision: 3, writable: true, mode: 'host',
+    status: 'ready', value, base: undefined, user: undefined, revision: 3, writable: true,
   }
   const form: ConfigForm<WebSearchNamespaceValue> = {
     getSnapshot: () => snapshot,

@@ -98,6 +98,11 @@ describe('WorkBuddy sign-in button flow', () => {
     // The poll key and the opened URL are the product's own pair, not ours.
     expect(url.searchParams.get('state')).toBe(ticket.state)
     expect(ticket.state).toBe('srv-state-1')
+    // Plus the two parameters the desktop client adds and the server does not:
+    // the build it reports and its own per-attempt log id. Both are appended, so
+    // the pair above still travels in the same URL.
+    expect(url.searchParams.get('version')).toBe('5.5.2')
+    expect(url.searchParams.get('loginSessionId')).toMatch(/^[0-9a-f-]{36}$/u)
     expect(ticket.expiresAt).toBeGreaterThan(Date.now())
   })
 

@@ -26,19 +26,12 @@
 
 import { asNumber, asRecord, asString } from '../untrusted-json.ts'
 import { DONE } from '../wire-shared.ts'
-import {
-  TRAE_APP_ID,
-  TRAE_APP_VERSION,
-  TRAE_DEVICE_BRAND,
-  TRAE_DEVICE_TYPE,
-  TRAE_FUNCTION,
-  TRAE_OS_VERSION,
-  traeChatUrl,
-} from './endpoints.ts'
+import { TRAE_FUNCTION, traeChatUrl } from './endpoints.ts'
 import { randomBytes } from 'node:crypto'
 import { withTraeThinkEffort } from './reasoning.ts'
 import { TraeUpstreamError } from './errors.ts'
 import { traeIdeVersionCode, traeRealmConfig } from './realms.ts'
+import { assertTraeIdentity, traeSurfaceHeaders } from './identity.ts'
 import type { TraeAccount } from './types.ts'
 
 /** The upstream event names this bridge reads; the rest are acknowledged. */
@@ -66,8 +59,9 @@ export function buildTraeSoloHeaders(
   // no trace id is one the client never made.
   const traceId = randomBytes(16).toString('hex')
   const spanId = randomBytes(8).toString('hex')
-  return {
-    'content-type': 'application/json',
+  // The fixed half of this identity is declared in `./identity.ts` and merged
+  // first, so a value stated there cannot be overridden from below it.
+  const headers = traeSurfaceHeaders('solo', {
     accept: stream ? 'text/event-stream' : 'application/json',
     'user-agent': `Trae/${config.ideVersion}`,
     // Three spellings of one access token: the conversation endpoint reads all
@@ -76,23 +70,20 @@ export function buildTraeSoloHeaders(
     'x-cloudide-token': account.accessToken,
     'x-ide-token': account.accessToken,
     ...(account.uid === '' ? {} : { 'x-uid': account.uid }),
-    'x-app-id': TRAE_APP_ID,
-    'x-app-version': TRAE_APP_VERSION,
     'x-app-version-code': versionCode,
     'x-ide-version': config.ideVersion,
     'x-ide-version-code': versionCode,
-    'x-ide-version-type': 'stable',
-    'x-device-type': TRAE_DEVICE_TYPE,
-    'x-os-version': TRAE_OS_VERSION,
-    'x-device-brand': TRAE_DEVICE_BRAND,
-    'request-traffic-type': 'prod',
     'x-custom-trace-id': traceId,
     'x-flow-traceparent': `04-${traceId}-${spanId}-01`,
     ...(stream ? { 'x-request-id': traceId, 'x-trae-request-id': traceId } : {}),
     ...(account.machineId === '' ? {} : { 'x-machine-id': account.machineId }),
     ...(account.deviceId === '' ? {} : { 'x-device-id': account.deviceId }),
     ...extra,
-  }
+  })
+  // Every request the conversation and the directory paths send goes through this
+  // builder, so the identity is checked once, here, for all of them.
+  assertTraeIdentity('solo', headers)
+  return headers
 }
 
 /** Flatten one message's content to the text SOLO transports as a block. */

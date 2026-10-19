@@ -42,6 +42,8 @@ import {
   TRAE_USER_REGION,
 } from './endpoints.ts'
 import { traeAhaDeviceId, traeCheckinDeviceNumbers, traeClientAhaDeviceId } from './device.ts'
+import { traeMarketClientHeaders } from './client-identity.ts'
+import { assertTraeIdentity } from './identity.ts'
 import { TraeUpstreamError } from './errors.ts'
 import { traeRealmConfig } from './realms.ts'
 import type { FreeCodeGoCheckinOutcome } from '../types.ts'
@@ -65,21 +67,30 @@ export interface TraeCheckinOutcome {
 }
 
 /**
- * The headers a check-in call carries: the session's, the region, and the device
- * number this attempt presents.
+ * The headers a check-in call carries: the IDE session's, the marketplace client's,
+ * the region, and the device number this attempt presents.
  *
- * The number is stated last, because it *replaces* the hashed identity the
- * conversation path sends — that identity is what the risk control refuses (see
- * `trae/device.ts`), and a request carrying both would state neither.
+ * The number replaces the hashed identity the conversation path sends — that
+ * identity is what the risk control refuses (see `trae/device.ts`), and a request
+ * carrying both would state neither.
  * @param account - the account the call is signed with.
  * @param deviceId - the 16-digit Aha number for this attempt.
  * @returns the headers.
  */
 function checkinHeaders(account: TraeAccount, deviceId: string): Record<string, string> {
-  return buildTraeSoloHeaders(account, false, {
+  // Two identities on one request, and both are declared in `./identity.ts`: the
+  // IDE protocol family this connector has always signed with, and the marketplace
+  // client the campaign's own client presents (`trae/client-identity.ts` says why
+  // the second is there). The device number replaces the conversation path's
+  // hashed identity rather than being sent beside it — that identity is what the
+  // risk control refuses.
+  const headers = buildTraeSoloHeaders(account, false, {
     'x-user-region': TRAE_USER_REGION,
     'x-device-id': deviceId,
+    ...traeMarketClientHeaders(account.uid, traeRealmConfig(account.realm).ideVersion),
   })
+  assertTraeIdentity('checkin', headers)
+  return headers
 }
 
 /**

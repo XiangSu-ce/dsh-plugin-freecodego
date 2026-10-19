@@ -453,7 +453,7 @@ export interface CapabilitySkillFile { readonly path: string; readonly bytes: nu
 /** Body and companion files for the Skill detail dialog, loaded on demand. */
 export interface CapabilitySkillDetail extends CapabilitySkillEntry { readonly content: string; readonly files: readonly CapabilitySkillFile[]; readonly file?: { readonly path: string; readonly bytes: number; readonly content: string } }
 
-export interface CapabilitySnapshot { readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean; readonly customApiReasoningEnabled?: boolean; readonly modelCategories?: Readonly<Record<string, ModelCategory>>; readonly mcpServers: readonly CapabilityMcpServer[]; readonly skillRoots: readonly CapabilitySkillRoot[];  readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly CapabilitySkillEntry[]; readonly skillInvocationOverrides?: Readonly<Record<string, boolean>> | undefined; readonly mountErrors?: readonly { readonly id: string; readonly message: string }[]; readonly trustRefusals?: readonly { readonly id: string; readonly message: string }[] }
+export interface CapabilitySnapshot { readonly mcpEnabled: boolean; readonly skillEnabled: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean; readonly modelCategories?: Readonly<Record<string, ModelCategory>>; readonly mcpServers: readonly CapabilityMcpServer[]; readonly skillRoots: readonly CapabilitySkillRoot[];  readonly mcpTools: readonly { readonly name: string; readonly description: string }[]; readonly skills: readonly CapabilitySkillEntry[]; readonly skillInvocationOverrides?: Readonly<Record<string, boolean>> | undefined; readonly mountErrors?: readonly { readonly id: string; readonly message: string }[]; readonly trustRefusals?: readonly { readonly id: string; readonly message: string }[] }
 interface MarketplaceMcpItem { readonly id: string; readonly kind: 'mcp'; readonly title: string; readonly description: string; readonly category: string; readonly sourceUrl: string; readonly iconUrl?: string; readonly author?: string; readonly popularity: number; readonly installed: boolean; readonly installable: boolean; readonly requiresConfiguration?: boolean }
 interface MarketplaceMcpPage { readonly kind: 'mcp'; readonly total: number; readonly offset: number; readonly limit: number; readonly items: readonly MarketplaceMcpItem[] }
 /** Durable phase of a goal, mirrored from the Host boundary type. */
@@ -1017,7 +1017,7 @@ interface Injected {
   /** Remember the chosen Skill destination, or clear it when no axes are named. */
   readonly skillPlacementPrefer?: (placement?: FreeCodeGoSkillPlacement) => Promise<RemoteResult<CapabilitySnapshot>>
   readonly capabilities?: () => Promise<RemoteResult<CapabilitySnapshot>>
-  readonly readLocalCapabilities?: () => Promise<{ readonly voiceInputEnabled: boolean; readonly sessionDeleteEnabled: boolean; readonly customApiReasoningEnabled: boolean }>
+  readonly readLocalCapabilities?: () => Promise<{ readonly voiceInputEnabled: boolean; readonly sessionDeleteEnabled: boolean; }>
   readonly capabilitiesSetEnabled?: (input: { readonly mcpEnabled?: boolean; readonly skillEnabled?: boolean; readonly voiceInputEnabled?: boolean; readonly sessionDeleteEnabled?: boolean }) => Promise<RemoteResult<CapabilitySnapshot>>
   /**
    * The microphone's route: which recognizer, at which address, with which model.
@@ -7538,6 +7538,13 @@ function ModelTuningSection(input: {
   const [providerDraft, setProviderDraft] = useState<Readonly<Record<string, { readonly context?: string; readonly max?: string; readonly reasoning?: string }>>>({})
   const [query, setQuery] = useState('')
   const [onlyCustomized, setOnlyCustomized] = useState(false)
+  // Which rows the editor renders. Selection is view state and is kept apart
+  // from the snapshot on purpose: the drafts, the busy key and every write keep
+  // addressing the whole snapshot, so ticking a box can never move an edit onto
+  // a different model.
+  const [selectedModels, setSelectedModels] = useState<ReadonlySet<string>>(new Set())
+  const [selectedProviders, setSelectedProviders] = useState<ReadonlySet<string>>(new Set())
+  const [expandedProviders, setExpandedProviders] = useState<ReadonlySet<string>>(new Set())
   useEffect(() => {
     if (input.read === undefined) return
     let live = true
@@ -7566,6 +7573,11 @@ function ModelTuningSection(input: {
       active: '已接入', dormant: '未接入',
       search: '搜索提供商或模型', onlyCustomized: '只看已自定义', onlyCustomizedHint: '只列出在 Harness「模型」设置里已有条目的模型。',
       noMatch: '没有匹配的提供商或模型。',
+      picker: '选择要设置的提供商与模型', pickerHint: '按提供商勾选，或展开后逐个勾选模型；未勾选的不显示在下方编辑区。',
+      selectedCount: (count: number) => `已选 ${count} 项`, clearSelection: '清空', expand: '展开模型', collapse: '收起模型',
+      pickerEmptyHint: '该提供商没有可选的模型，勾选后可直接设置它的默认值。',
+      editTitle: '编辑已选模型', editHint: '这里只列出被勾选的模型；提供商默认值出现在勾选了该提供商之后。',
+      editEmpty: '还没有勾选任何提供商或模型。请在上方勾选后再编辑。',
       context: '上下文长度', maxOutput: '最大输出', reasoning: '思考档位', category: '模型分类',
       sourceSettings: '已自定义', sourceCatalog: '目录', sourceNone: '未设置', custom: '自定义…',
       compactHint: (context: number, at: number) => `当前上下文约 ${Math.round(context / 1000)}K，压缩会在约 ${Math.round(at / 1000)}K 时介入。`,
@@ -7581,6 +7593,11 @@ function ModelTuningSection(input: {
       active: 'serving', dormant: 'not serving',
       search: 'Search providers or models', onlyCustomized: 'Only customized', onlyCustomizedHint: 'List only the models the Harness Models settings already name.',
       noMatch: 'No provider or model matches.',
+      picker: 'Choose providers and models', pickerHint: 'Tick a provider, or expand it and tick individual models. Anything unticked stays out of the editor below.',
+      selectedCount: (count: number) => `${count} selected`, clearSelection: 'Clear', expand: 'Show models', collapse: 'Hide models',
+      pickerEmptyHint: 'This provider lists no models; tick it to set its defaults directly.',
+      editTitle: 'Edit chosen models', editHint: 'Only ticked models appear here; a provider’s defaults appear once that provider is ticked.',
+      editEmpty: 'No provider or model is ticked yet. Tick one above to edit it.',
       context: 'Context length', maxOutput: 'Max output', reasoning: 'Thinking level', category: 'Category',
       sourceSettings: 'customized', sourceCatalog: 'catalog', sourceNone: 'unset', custom: 'Custom…',
       compactHint: (context: number, at: number) => `~${Math.round(context / 1000)}K context; compaction steps in around ${Math.round(at / 1000)}K.`,
@@ -7604,10 +7621,35 @@ function ModelTuningSection(input: {
     else if (value !== undefined) apply({ provider: model.provider, model: model.model, maxOutputTokens: value }, tuningKey(model))
   }
   const presets = snapshot?.contextPresets ?? []
+  // Ticking a provider is a selection convenience over the models a filter
+  // currently shows; clearing it clears those same models. The two sets stay in
+  // step, so a filter change can never leave a box ticked for a row the editor
+  // no longer carries.
+  const toggleProvider = (provider: string, models: readonly FreeCodeGoModelTuning[]): void => {
+    const keys = models.map(model => tuningKey(model))
+    const on = !selectedProviders.has(provider)
+    setSelectedProviders(previous => {
+      const next = new Set(previous)
+      // A route with no models carries nothing to tick, so its defaults block is
+      // kept chosen once chosen: clearing it there could only lose the row.
+      if (on || keys.length > 0) next.delete(provider)
+      if (on) next.add(provider)
+      return next
+    })
+    setSelectedModels(previous => {
+      const next = new Set(previous)
+      for (const key of keys) {
+        if (on) next.add(key)
+        else next.delete(key)
+      }
+      return next
+    })
+  }
   // Filtering is a view concern only: the drafts, the busy key and every edit
   // keep addressing the whole snapshot, so hiding a row can never drop an edit
   // or move one to a different model.
   const needle = query.trim().toLowerCase()
+  const filterActive = needle !== '' || onlyCustomized
   const matches = (value: string): boolean => value.toLowerCase().includes(needle)
   const shown = (snapshot?.providers ?? []).map((provider) => {
     const all = (snapshot?.models ?? []).filter(model => model.provider === provider.provider)
@@ -7620,29 +7662,146 @@ function ModelTuningSection(input: {
     const rows = onlyCustomized ? byQuery.filter(model => model.declared) : byQuery
     return { provider, rows, listed: namedProvider || rows.length > 0 || (needle === '' && !onlyCustomized) }
   }).filter(entry => entry.listed)
+  /** One model's context, output, thinking-level and category controls. */
+  const modelControls = (model: FreeCodeGoModelTuning): ReactNode => {
+    const key = tuningKey(model)
+    const context = model.contextWindow.value
+    const offered = model.reasoningLevels ?? []
+    const currentLevel = [...offered].reverse().find(level => level !== 'off') ?? 'off'
+    const configuredCategory = input.categories[modelCategoryKey(model.provider, model.model)]
+    const reasoningLevels = snapshot?.reasoningLevels ?? []
+    return <div className={css.modelCategoryActions}>
+      <select className={css.select} aria-label={`${model.name} ${text.context}`} value={context === undefined ? '' : (presets.includes(context) ? String(context) : 'custom')} disabled={input.write === undefined || busyKey === key} onChange={(event) => {
+        const value = event.target.value
+        if (value === '') apply({ provider: model.provider, model: model.model, contextWindow: null }, key)
+        else if (value === 'custom') setContextDraft(previous => ({ ...previous, [key]: '' }))
+        else apply({ provider: model.provider, model: model.model, contextWindow: Number(value) }, key)
+      }}>
+        <option value="">{text.sourceNone}</option>
+        {presets.map(value => <option key={value} value={String(value)}>{value >= 1_000_000 ? `${Math.round(value / 1000) / 1000}M` : `${Math.round(value / 1000)}K`}</option>)}
+        <option value="custom">{text.custom}</option>
+      </select>
+      {contextDraft[key] === undefined && (context === undefined || presets.includes(context)) ? null : <input className={css.input} type="number" min={1} aria-label={`${model.name} ${text.context} ${text.custom}`} value={contextDraft[key] ?? (context === undefined ? '' : String(context))} onChange={(event) => { setContextDraft(previous => ({ ...previous, [key]: event.target.value })) }} onBlur={(event) => { commitContext(model, event.target.value) }} />}
+      <input className={css.input} type="number" min={1} aria-label={`${model.name} ${text.maxOutput}`} placeholder={text.maxOutput} value={maxDraft[key] ?? (model.maxOutputTokens.value === undefined ? '' : String(model.maxOutputTokens.value))} onChange={(event) => { setMaxDraft(previous => ({ ...previous, [key]: event.target.value })) }} onBlur={(event) => { commitMax(model, event.target.value) }} disabled={input.write === undefined} />
+      <select className={css.select} aria-label={`${model.name} ${text.reasoning}`} value={currentLevel} disabled={input.write === undefined || busyKey === key} onChange={(event) => {
+        const chosen = event.target.value as FreeCodeGoReasoningLevel
+        const levels = chosen === 'off' ? ['off'] as const : reasoningLevels.slice(0, reasoningLevels.indexOf(chosen) + 1)
+        apply({ provider: model.provider, model: model.model, reasoningLevels: levels }, key)
+      }}>
+        {reasoningLevels.map(level => <option key={level} value={level}>{text.levelLabel[level]}</option>)}
+      </select>
+      <select className={css.select} aria-label={`${model.name} ${text.category}`} value={configuredCategory ?? ''} disabled={input.setModelCategory === undefined} onChange={(event) => {
+        const value = event.target.value
+        if (input.setModelCategory === undefined) return
+        // The snapshot this section renders comes back from the same
+        // call, so an accepted edit is visible without a reload.
+        void input.setModelCategory({ key: modelCategoryKey(model.provider, model.model), ...value === '' ? {} : { category: value as ModelCategory } }).then((result) => {
+          if (result.ok) input.onCategorySnapshot(result.value)
+          else input.onError(result.error.message)
+        }, (error: unknown) => { input.onError(error instanceof Error ? error.message : String(error)) })
+      }}>
+        <option value="">{text.autoOption(categoryLabel(inferredModelCategory(model.provider, model.model, model.name), input.language))}</option>
+        <option value="text">{categoryLabel('text', input.language)}</option>
+        <option value="image">{categoryLabel('image', input.language)}</option>
+        <option value="video">{categoryLabel('video', input.language)}</option>
+        <option value="audio">{categoryLabel('audio', input.language)}</option>
+      </select>
+    </div>
+  }
+  // Which rows the editor below renders. A model is chosen by its own tick or by
+  // its provider's; the set is derived from the snapshot so a reload can never
+  // leave a chosen key pointing at a model that no longer exists.
+  const providerModels = (snapshot?.providers ?? []).map((provider) => {
+    const all = (snapshot?.models ?? []).filter(model => model.provider === provider.provider)
+    return { provider, rows: all, chosen: all.filter(model => selectedModels.has(tuningKey(model))) }
+  })
+  // A route's own defaults block counts once, and only when the route carries no
+  // chosen model of its own — counting both would report thirteen ticks as
+  // fourteen.
+  const chosenCount = providerModels.reduce((sum, entry) => sum
+    + (entry.chosen.length > 0 ? entry.chosen.length : selectedProviders.has(entry.provider.provider) ? 1 : 0), 0)
   return <section className={css.section}>
     <div className={css.sectionHeader}><div><div className={css.kicker}>MODEL SETTINGS</div><strong className={css.sectionName}>{text.title}</strong></div><span className={css.badge}>{text.badge}</span></div>
     <small className={css.sectionMeta}>{text.description}</small>
     {snapshot !== undefined && !snapshot.writable ? <small className={css.sectionMeta}>{text.readOnly}</small> : null}
     {/* A route with no models still renders: its route-level defaults are settable before it serves anything, so "nothing to show" is only true when there is no route at all. */}
     {snapshot === undefined || (snapshot.providers.length === 0 && snapshot.models.length === 0) ? <small className={css.sectionMeta}>{text.empty}</small> : <>
-      <div className={css.modelCategoryActions}>
-        <input className={css.input} type="search" value={query} placeholder={text.search} aria-label={text.search} onChange={(event) => { setQuery(event.target.value) }} />
-        <label className={css.extensionRow}>
-          <span><strong>{text.onlyCustomized}</strong><small>{text.onlyCustomizedHint}</small></span>
-          <input className={css.switch} type="checkbox" aria-label={text.onlyCustomized} checked={onlyCustomized} onChange={(event) => { setOnlyCustomized(event.target.checked) }} />
-        </label>
+      {/* Step one is the picker: nothing is listed in the editor below until it is
+          ticked here, which is what keeps a thirty-model route from becoming
+          thirty rows of controls. */}
+      <strong className={css.sectionName}>{text.picker}</strong>
+      <div className={css.tuningPicker}>
+        <div className={css.tuningPickerSummary}>
+          <div className={css.modelCategoryActions}>
+            <input className={css.input} type="search" value={query} placeholder={text.search} aria-label={text.search} onChange={(event) => { setQuery(event.target.value) }} />
+            <label className={css.extensionRow}>
+              <span><strong>{text.onlyCustomized}</strong><small>{text.onlyCustomizedHint}</small></span>
+              <input className={css.switch} type="checkbox" aria-label={text.onlyCustomized} checked={onlyCustomized} onChange={(event) => { setOnlyCustomized(event.target.checked) }} />
+            </label>
+          </div>
+          <div className={css.modelCategoryActions}>
+            <span className={css.tuningPickerCount}>{text.selectedCount(chosenCount)}</span>
+            <button className={css.button} type="button" disabled={chosenCount === 0} onClick={() => { setSelectedModels(new Set()); setSelectedProviders(new Set()) }}>{text.clearSelection}</button>
+          </div>
+        </div>
+        <small className={css.sectionMeta}>{text.pickerHint}</small>
+      {shown.length === 0 ? <small className={css.sectionMeta}>{text.noMatch}</small> : shown.map(({ provider, rows }) => {
+        const providerLabel = provider.modelCount > 0 ? `${provider.providerName} · ${provider.modelCount} ${zh ? '个模型' : 'models'}` : provider.providerName
+        // A narrowing filter opens the route it matched: the point of typing a
+        // model name is to find that model, which a collapsed group would hide.
+        const expanded = filterActive || expandedProviders.has(provider.provider)
+        const providerFull = rows.length > 0 && rows.every(model => selectedModels.has(tuningKey(model)))
+        const providerSome = rows.some(model => selectedModels.has(tuningKey(model)))
+        return <div className={css.tuningPickerGroup} key={provider.provider}>
+          <div className={css.tuningPickerProviderRow}>
+            <label className={css.tuningPickerLabel}>
+              <input className={css.pickerVisibilityCheck} type="checkbox" aria-label={providerLabel} checked={selectedProviders.has(provider.provider) || providerFull} ref={(node) => { if (node !== null) node.indeterminate = !selectedProviders.has(provider.provider) && !providerFull && providerSome }} onChange={() => { toggleProvider(provider.provider, rows) }} />
+              <strong className={css.tuningPickerName}>{provider.providerName}</strong>
+              <small className={css.tuningPickerMeta}>{provider.provider} · {provider.modelCount} {zh ? '个模型' : 'models'} · {provider.live ? text.active : text.dormant}</small>
+            </label>
+            <button className={css.tuningPickerToggle} type="button" aria-expanded={expanded} onClick={() => {
+              setExpandedProviders(previous => {
+                const next = new Set(previous)
+                if (next.has(provider.provider)) next.delete(provider.provider)
+                else next.add(provider.provider)
+                return next
+              })
+            }}>
+              <span className={css.tuningPickerChevron} aria-hidden="true">{expanded ? '\u25be' : '\u25b8'}</span>
+              {expanded ? text.collapse : text.expand}
+            </button>
+          </div>
+          {expanded ? rows.length === 0 ? <small className={css.tuningPickerEmptyHint}>{text.pickerEmptyHint}</small> : <div className={css.tuningPickerModels}>
+            {rows.map(model => <label className={css.tuningPickerModel} key={tuningKey(model)}>
+              <input className={css.pickerVisibilityCheck} type="checkbox" aria-label={model.name} checked={selectedModels.has(tuningKey(model))} onChange={(event) => {
+                setSelectedModels(previous => {
+                  const next = new Set(previous)
+                  if (event.target.checked) next.add(tuningKey(model))
+                  else next.delete(tuningKey(model))
+                  return next
+                })
+              }} />
+              <strong className={css.tuningPickerName}>{model.name}</strong>
+              <small className={css.tuningPickerMeta}>{visibleModelId(model.provider, model.model)}</small>
+            </label>)}
+          </div> : null}
+        </div>
+      })}
       </div>
-      {shown.length === 0 ? <small className={css.sectionMeta}>{text.noMatch}</small> : <div className={css.accountList}>
-      {shown.map(({ provider, rows }) => {
+      {/* Step two is the editor: one cell per chosen model, each carrying the
+          context, output, thinking-level and category controls. */}
+      <strong className={css.sectionName}>{text.editTitle}</strong>
+      <small className={css.sectionMeta}>{text.editHint}</small>
+      {chosenCount === 0 ? <small className={css.sectionMeta}>{text.editEmpty}</small> : providerModels.filter(entry => entry.chosen.length > 0 || selectedProviders.has(entry.provider.provider)).map(({ provider, chosen }) => {
         const draft = providerDraft[provider.provider] ?? {}
-        return <div className={css.accountRow} key={provider.provider}>
-          <div className={css.accountIdentity}>
+        return <div className={css.tuningEditCell} key={provider.provider}>
+          <div className={css.tuningEditHead}>
             <strong className={css.accountName}>{provider.providerName}</strong>
             <small className={css.accountEmail}>{provider.provider} · {provider.modelCount} {zh ? '个模型' : 'models'} · {provider.live ? text.active : text.dormant}</small>
           </div>
-          <div className={css.modelCategoryActions}>
+          <div className={css.tuningDefaultsCell}>
             <span className={css.cellLabel}>{text.providerDefaults}</span>
+            <div className={css.tuningDefaultsActions}>
             <input className={css.input} type="number" min={1} placeholder={text.context} aria-label={`${provider.providerName} ${text.context}`} value={draft.context ?? ''} onChange={(event) => { setProviderDraft(previous => ({ ...previous, [provider.provider]: { ...draft, context: event.target.value } })) }} />
             <input className={css.input} type="number" min={1} placeholder={text.maxOutput} aria-label={`${provider.providerName} ${text.maxOutput}`} value={draft.max ?? ''} onChange={(event) => { setProviderDraft(previous => ({ ...previous, [provider.provider]: { ...draft, max: event.target.value } })) }} />
             <select className={css.select} aria-label={`${provider.providerName} ${text.reasoning}`} value={draft.reasoning ?? ''} onChange={(event) => { setProviderDraft(previous => ({ ...previous, [provider.provider]: { ...draft, reasoning: event.target.value } })) }}>
@@ -7655,61 +7814,24 @@ function ModelTuningSection(input: {
               const reasoning = draft.reasoning === undefined || draft.reasoning === '' ? undefined : draft.reasoning as FreeCodeGoReasoningLevel
               apply({ provider: provider.provider, applyToModels: true, ...(contextWindow === undefined ? {} : { contextWindow }), ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }), ...(reasoning === undefined ? {} : { reasoning }) }, provider.provider)
             }}>{text.applyToAll}</button>
+            </div>
           </div>
-          {rows.map((model) => {
+          {chosen.length === 0 ? null : <div className={css.tuningEditGrid}>
+          {chosen.map((model) => {
             const key = tuningKey(model)
             const context = model.contextWindow.value
-            const offered = model.reasoningLevels ?? []
-            const currentLevel = [...offered].reverse().find(level => level !== 'off') ?? 'off'
-            const configuredCategory = input.categories[modelCategoryKey(model.provider, model.model)]
-            return <div className={css.accountRow} key={key}>
-              <div className={css.accountIdentity}>
+            return <div className={css.tuningEditRow} key={key}>
+              <div className={css.tuningEditHead}>
                 <strong className={css.accountName}>{model.name}</strong>
                 <small className={css.accountEmail}>{model.providerName} · {visibleModelId(model.provider, model.model)} · {text.context} {context === undefined ? text.sourceNone : `${context.toLocaleString()} (${model.contextWindow.source === 'settings' ? text.sourceSettings : model.contextWindow.source === 'catalog' ? text.sourceCatalog : text.sourceNone})`}{model.maxOutputTokens.value === undefined ? '' : ` · ${text.maxOutput} ${model.maxOutputTokens.value.toLocaleString()} (${model.maxOutputTokens.source === 'settings' ? text.sourceSettings : text.sourceCatalog})`}{model.reasoningSource === 'none' ? '' : ` · ${text.reasoning} ${model.reasoningLevels === undefined ? text.sourceNone : model.reasoningLevels.map(level => text.levelLabel[level]).join('/')}`}</small>
                 {context === undefined || model.compactionAt === undefined ? null : <small className={css.cellHint}>{text.compactHint(context, model.compactionAt)}</small>}
               </div>
-              <div className={css.modelCategoryActions}>
-                <select className={css.select} aria-label={`${model.name} ${text.context}`} value={context === undefined ? '' : (presets.includes(context) ? String(context) : 'custom')} disabled={input.write === undefined || busyKey === key} onChange={(event) => {
-                  const value = event.target.value
-                  if (value === '') apply({ provider: model.provider, model: model.model, contextWindow: null }, key)
-                  else if (value === 'custom') setContextDraft(previous => ({ ...previous, [key]: '' }))
-                  else apply({ provider: model.provider, model: model.model, contextWindow: Number(value) }, key)
-                }}>
-                  <option value="">{text.sourceNone}</option>
-                  {presets.map(value => <option key={value} value={String(value)}>{value >= 1_000_000 ? `${Math.round(value / 1000) / 1000}M` : `${Math.round(value / 1000)}K`}</option>)}
-                  <option value="custom">{text.custom}</option>
-                </select>
-                {contextDraft[key] === undefined && (context === undefined || presets.includes(context)) ? null : <input className={css.input} type="number" min={1} aria-label={`${model.name} ${text.context} ${text.custom}`} value={contextDraft[key] ?? (context === undefined ? '' : String(context))} onChange={(event) => { setContextDraft(previous => ({ ...previous, [key]: event.target.value })) }} onBlur={(event) => { commitContext(model, event.target.value) }} />}
-                <input className={css.input} type="number" min={1} aria-label={`${model.name} ${text.maxOutput}`} placeholder={text.maxOutput} value={maxDraft[key] ?? (model.maxOutputTokens.value === undefined ? '' : String(model.maxOutputTokens.value))} onChange={(event) => { setMaxDraft(previous => ({ ...previous, [key]: event.target.value })) }} onBlur={(event) => { commitMax(model, event.target.value) }} disabled={input.write === undefined} />
-                <select className={css.select} aria-label={`${model.name} ${text.reasoning}`} value={currentLevel} disabled={input.write === undefined || busyKey === key} onChange={(event) => {
-                  const chosen = event.target.value as FreeCodeGoReasoningLevel
-                  const levels = chosen === 'off' ? ['off'] as const : snapshot.reasoningLevels.slice(0, snapshot.reasoningLevels.indexOf(chosen) + 1)
-                  apply({ provider: model.provider, model: model.model, reasoningLevels: levels }, key)
-                }}>
-                  {snapshot.reasoningLevels.map(level => <option key={level} value={level}>{text.levelLabel[level]}</option>)}
-                </select>
-                <select className={css.select} aria-label={`${model.name} ${text.category}`} value={configuredCategory ?? ''} disabled={input.setModelCategory === undefined} onChange={(event) => {
-                  const value = event.target.value
-                  if (input.setModelCategory === undefined) return
-                  // The snapshot this section renders comes back from the same
-                  // call, so an accepted edit is visible without a reload.
-                  void input.setModelCategory({ key: modelCategoryKey(model.provider, model.model), ...value === '' ? {} : { category: value as ModelCategory } }).then((result) => {
-                    if (result.ok) input.onCategorySnapshot(result.value)
-                    else input.onError(result.error.message)
-                  }, (error: unknown) => { input.onError(error instanceof Error ? error.message : String(error)) })
-                }}>
-                  <option value="">{text.autoOption(categoryLabel(inferredModelCategory(model.provider, model.model, model.name), input.language))}</option>
-                  <option value="text">{categoryLabel('text', input.language)}</option>
-                  <option value="image">{categoryLabel('image', input.language)}</option>
-                  <option value="video">{categoryLabel('video', input.language)}</option>
-                  <option value="audio">{categoryLabel('audio', input.language)}</option>
-                </select>
-              </div>
+              {modelControls(model)}
             </div>
           })}
+          </div>}
         </div>
       })}
-      </div>}
     </>}
   </section>
 }

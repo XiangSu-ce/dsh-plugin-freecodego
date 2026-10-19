@@ -27,7 +27,7 @@ describe('FreeCodeGo RC.1 composition', () => {
     const patch = await readFile(resolve(bundleDirectory, 'cordis.patch.yml'), 'utf8')
 
     expect(manifest.name).toBe('freecodego')
-    expect(manifest.freecodego?.harnessBaseline).toBe('0.2.1-alpha.1')
+    expect(manifest.freecodego?.harnessBaseline).toBe('0.2.1-rc.2')
     // `dsh.bootstrap` used to be declared here, naming `bootstrapFreeCodeGoHarness`. It was
     // never part of the Harness contract — `DshManifest` declares `bundle`, `profile` and
     // `client` — and no reader anywhere resolved it, so the pre-Loader window it advertised
@@ -282,7 +282,7 @@ describe('FreeCodeGo RC.1 composition', () => {
     expect(override[0]?.body).toMatch(/^\s+openAt:\s*first-search\s*$/mu)
     expect(override[0]?.body).toMatch(/^\s+path:\s*!!js\s+dshHomePath\('session-index\.db'\)\s*$/mu)
 
-    const toolEntry = resolve(workspaceDirectory, 'packages/session-query/tool-session-query/src/index.ts')
+    const toolEntry = resolve(workspaceDirectory, 'packages/experimental/tool-session-query/src/index.ts')
     const basePath = resolve(workspaceDirectory, 'packages/bundle/base/cordis.patch.yml')
     if (!existsSync(toolEntry) || !existsSync(basePath)) return
 

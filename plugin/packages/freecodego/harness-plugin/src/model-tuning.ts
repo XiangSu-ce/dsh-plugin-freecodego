@@ -161,6 +161,42 @@ function storedModel(profile: Record<string, unknown> | undefined, model: string
   return override === undefined ? {} : { override }
 }
 
+/**
+ * The context windows the user's Models entry states for one route's models.
+ *
+ * A window this surface writes is read back by pi-ai, which serves the routes
+ * pi-ai itself owns. A route the plugin serves from its own directory is not one
+ * of them: its adapter declares one window for every row the directory names, so
+ * without this read a saved edit changes the stored document and nothing about
+ * the window that route resolves at.
+ *
+ * Best-effort like the rest of this module: an absent settings service, an
+ * unreadable document, or a value that is not a positive integer states no
+ * override, and the caller keeps its own default.
+ * @param ctx - context carrying the settings service.
+ * @param provider - the route whose stored models are read.
+ * @returns each model id the entry states a window for; empty when none is stated.
+ */
+export function storedContextWindows(ctx: Context, provider: string): ReadonlyMap<string, number> {
+  const profile = maybeRecord(storedProviders(settingsEditor(ctx)).providers[provider])
+  const windows = new Map<string, number>()
+  const models = profile?.models
+  if (Array.isArray(models)) {
+    for (const entry of models) {
+      const row = maybeRecord(entry)
+      const id = typeof row?.id === 'string' ? row.id : undefined
+      const window = storedNumber(row, 'contextWindow')
+      if (id !== undefined && window !== undefined) windows.set(id, window)
+    }
+  }
+  // Last, so an override wins over a declared entry that names the same id.
+  for (const [id, entry] of Object.entries(maybeRecord(profile?.modelOverrides) ?? {})) {
+    const window = storedNumber(maybeRecord(entry), 'contextWindow')
+    if (window !== undefined) windows.set(id, window)
+  }
+  return windows
+}
+
 /** Map a stored or adapter-reported effort id onto an offered level. */
 function toOfferedLevel(id: string): FreeCodeGoReasoningLevel | undefined {
   return (OFFERED_REASONING_LEVELS as readonly string[]).includes(id)

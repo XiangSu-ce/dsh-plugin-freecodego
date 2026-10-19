@@ -1,4 +1,4 @@
-# Standard DeepSeek Harness 0.2.1-alpha.1 FreeCodeGo composition.
+# Standard DeepSeek Harness 0.2.1-rc.2 FreeCodeGo composition.
 # Neither official route is disabled. The `llm-deepseek` row (which mounts
 # `@deepseek-ai/dsh-llm-deepseek-api-key` since 0.1.7-rc.2) is the only row that
 # registers provider `deepseek-official`, and the base composition names that

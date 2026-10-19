@@ -43,6 +43,7 @@
  * @module @deepseek-ai/dsh-freecodego-harness-plugin/memory/dream
  */
 
+import { isReservedWindowsDeviceName } from './memory-security.ts'
 import type { MemoryScope } from './manifest.ts'
 
 /** Default lease lifetime: long enough for a slow model, short enough to recover. */
@@ -356,9 +357,18 @@ function scopedDirectory(
   return input.sessionDirectory
 }
 
-/** A slug that cannot escape its directory. */
+/**
+ * A slug that cannot escape its directory, or name a device instead of a file.
+ *
+ * The character rule answers the first half only: `con`, `nul` and `com1` match
+ * it and are still uncreatable on Windows, so accepting one moves the failure
+ * from a skipped slug the caller reports to an exception inside the topic
+ * write. The file this names is `<slug>.md`, and the extension does not help —
+ * Windows resolves the name before it, which is why the stem is what gets
+ * tested.
+ */
 function isSafeSlug(slug: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)
+  return /^[a-z0-9][a-z0-9-]{0,62}$/.test(slug) && !isReservedWindowsDeviceName(slug)
 }
 
 /** Render one topic, with its provenance. */

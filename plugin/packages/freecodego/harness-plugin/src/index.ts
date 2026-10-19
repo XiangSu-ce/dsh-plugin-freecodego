@@ -91,10 +91,7 @@ import type { PlacementContext } from './skills/placement.ts'
 import { freeCodeGoDataHome, harnessHomeDirectory } from './data-home.ts'
 import { ensureDesktopDshShim, requireClaudeEngineManifestPath } from './runtime-assets.ts'
 import { installFreeCodeGoAgentPresets } from './agent-preset-install.ts'
-import { syncCustomApiReasoning } from './custom-api-reasoning.ts'
 import { readModelTuning, writeModelTuning } from './model-tuning.ts'
-import { loaderSettled } from './loader-settled.ts'
-import { MODELS_SETTINGS_ENTRY } from './peer-settings.ts'
 import { PendingWriteDrain } from './abort-drain.ts'
 import { FreeCodeGoHeadroomRuntime, type HeadroomStats } from './headroom/runtime.ts'
 import { FreeCodeGoDeferredTools, type DeferredToolStatus } from './deferred-tools.ts'
@@ -646,15 +643,6 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
     // left"; without this the answer to "too much of *what*" is a guess, which is
     // what leaves the tool block and an over-long transcript indistinguishable.
     promptCompositionEnabled: z.boolean().default(true).volatile(),
-
-    // Settings — custom third-party API reasoning (`custom-api-reasoning.ts`)
-    //
-    // Default on, because the write is additive and answerable: it only ever
-    // *adds* a declaration for a hand-declared model that states none, never
-    // overwrites a model's own answer, and never unsets. Off is the escape hatch
-    // for a deployment that would rather this plugin not edit another entry's
-    // settings document at all.
-    customApiReasoningEnabled: z.boolean().default(true).volatile(),
 
     // Settings — folder trust (`trust.ts`)
     /**
@@ -1260,53 +1248,6 @@ export class FreeCodeGoHarnessPlugin extends TypertRemoteService {
       void this.pendingWrites.run(() => presets.done)
       return presets.release
     }, 'freecodego: agent presets')
-    // The user's own third-party API routes are hand-declared, so nothing gives
-    // their models a thinking-level control; `custom-api-reasoning.ts` states why
-    // the declaration is written into that entry's settings and why it is
-    // additive. Driven by the Models entry's own change event rather than a
-    // timer: a route the user adds has to gain the control without a restart, and
-    // a pass that finds every model already answered writes nothing — which is
-    // also what stops its own write from looping back through the event.
-    //
-    // The first pass waits for the Loader: a constructor runs before the rows
-    // declared after it, so reading `settings` here would find nothing on every
-    // cold start. Best-effort and tracked, like the preset install above: a
-    // locked settings document must never fail a boot.
-    ctx.effect(() => {
-      let timer: ReturnType<typeof setTimeout> | undefined
-      let running = false
-      const run = (): void => {
-        // The switch is read at the moment the pass acts, not captured at
-        // construction: it is a live settings reference, so turning it off has to
-        // stop the very next pass without a remount. Off leaves the other entry's
-        // document alone; what the plugin already declared stays declared, which is
-        // the additive rule `custom-api-reasoning.ts` states.
-        if (running || this.policy.get()?.customApiReasoningEnabled === false) return
-        running = true
-        void this.pendingWrites.run(() => syncCustomApiReasoning(ctx))
-          .catch((error: unknown) => { console.warn(`[freecodego] custom API reasoning sync failed: ${error instanceof Error ? error.message : String(error)}`) })
-          .finally(() => { running = false })
-      }
-      const schedule = (): void => {
-        if (timer !== undefined) clearTimeout(timer)
-        // Debounced: one edit to the Models page can emit several document
-        // updates, and the pass reads the settled document either way.
-        timer = setTimeout(() => { timer = undefined; run() }, 250)
-      }
-      void loaderSettled(ctx).then(run, run)
-      // Both documents matter: a Models-page edit is what gives the pass something
-      // to declare, and this plugin's own entry is where the switch above lives, so
-      // turning it back on has to apply without waiting for a restart. The entry id
-      // is read live for the same reason the writer reads it per write — a reload
-      // replaces the entry the plugin was constructed under.
-      const off = ctx.on('settings/document-updated', (ns) => {
-        if (ns === MODELS_SETTINGS_ENTRY || ns === ctx.fiber.entry?.options.id) schedule()
-      })
-      return () => {
-        if (timer !== undefined) clearTimeout(timer)
-        off()
-      }
-    }, 'freecodego: custom API reasoning')
     // Harness v0.1.3 rejects a persisted session whose event vocabulary is
     // unknown to the running process. Keep every plugin-owned durable event
     // registered while this plugin is mounted, including historical engine
@@ -4684,6 +4625,7 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     }
     const sessions = new SessionWorktrees({
       registry,
+      workspaceRoot,
       create: async (input): Promise<WorktreeCreation> => createWorktree({
         repoRoot: input.repoRoot,
         targetPath: input.targetPath,
@@ -4735,6 +4677,19 @@ nativeRuntimeStatus(): FreeCodeGoCodexRuntimeStatus { return this.codexRuntime.s
     if (tools?.register === undefined) return
     const definitions = worktreeToolDefinitions({
       sessions: workspaceRoot => this.sessionWorktreesFor(workspaceRoot),
+      // The official runtime is read per call and never required: 0.2.1 ships it as
+      // the optional `experimental/tool-worktree` bundle, and a deployment that does
+      // not mount it still gets the plugin's own creator. Its `create` is the only
+      // surface used -- it creates the checkout and moves the session's working
+      // directory, which is what the plugin's `enter` cannot do.
+      official: () => {
+        const candidate = (() => {
+          try { return this.ctx.get('worktrees') } catch { return undefined }
+        })() as { readonly create?: unknown } | undefined
+        return typeof candidate?.create === 'function'
+          ? candidate as unknown as { create: (agent: unknown, input: { readonly name?: string; readonly from?: string }, signal?: AbortSignal) => Promise<{ readonly path: string; readonly branch: string; readonly baseCommit: string; readonly repositoryRoot: string }> }
+          : undefined
+      },
       sessionOf: (exec) => {
         const agent = (exec as { readonly agent?: { readonly id?: unknown; readonly session?: { readonly id?: unknown; readonly header?: { readonly cwd?: string } } } } | undefined)?.agent
         const id = typeof agent?.session?.id === 'string' ? agent.session.id : agent?.id
