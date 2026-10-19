@@ -18,6 +18,61 @@ two language groups stay inside the version they belong to. Sections older than
 that one are English only: they were published that way, and rewriting them would
 change notes people have already read.
 
+## 0.2.1-rc.2 — 2026-10-19
+
+### English
+
+The bundle mounts on the Harness `0.2.1-rc.2` line, and its own version is that
+same version, so this release's asset is `freecodego-0.2.1-rc.2.tgz`.
+
+#### Fixed
+
+- **The provider/model tuning panel no longer garbles, and a save no longer
+  goes nowhere.** Its model rows were laid out in the shared two-column grid
+  whose first track is `minmax(0, 1fr)`: a provider with thirteen models
+  collapsed every track to about ten pixels, so Chinese copy broke one
+  character per line, and the provider-defaults block was pushed into implicit
+  grid rows until the "apply to every model" button overlapped the cards. The
+  panel is now a two-step picker: a searchable selection area with provider
+  checkboxes (indeterminate state included), per-model checkboxes, a selected
+  count and a clear action, plus an edit area that renders only the selected
+  models, with a 220 px minimum column width and wrapping text.
+- **A saved context window is now the window the route resolves.** The panel
+  wrote `providers.<id>.modelOverrides.<model>.contextWindow`, a key pi-ai owns
+  that a plugin-served route never read: the write succeeded and changed
+  nothing. The managed adapters now read that override when they resolve a
+  model, so the value a save states is the value compaction and the context
+  gauge use; a model the write does not name keeps the adapter's own default.
+
+#### Changed
+
+- **OpenCode routes resolve a 200,000-token context window**, down from
+  1,000,000. Every free route the OpenCode directory serves inherits it unless a
+  per-model override states another window.
+- **Harness baseline `0.2.1-rc.2`.** Provider request identity moved into
+  `request-identity.ts` for Cline, Qoder and Trae; the worktree registry keeps
+  official checkouts first; `custom-api-reasoning` is gone because upstream now
+  owns reasoning-level editing; the pi-ai patch moves to 1.1.0 and an
+  app-builder-lib patch joins it.
+- **The free-model tables are refreshed** against today's provider directories:
+  OpenCode gains `beam-free`, and routes that left its directory are out of the
+  table.
+
+### 中文
+
+插件挂载在 Harness `0.2.1-rc.2` 线路上，自身版本号也与该线路一致，因此本次发布的资产是 `freecodego-0.2.1-rc.2.tgz`。
+
+#### 修复
+
+- **「提供商与模型设置」不再乱码，保存也不会再落空。** 该面板的模型行原本铺在共用的两列网格里，第一列是 `minmax(0, 1fr)`：一个提供商有十三个模型时每列被压到约十像素，中文逐字换行；「提供商默认值」区块还被挤进隐式网格行，「应用到该提供商全部模型」按钮与卡片重叠。面板现在改为两步式：选择区可搜索，带提供商复选框（含半选状态）、模型级复选框、已选计数与清空；编辑区只渲染被勾选的模型，列宽下限 220 像素且文本换行。
+- **保存的上下文窗口现在就是该路由解析出的窗口。** 面板写的是 `providers.<id>.modelOverrides.<model>.contextWindow`，这个键归 pi-ai 所有、插件自管的路由从不读取，于是写入成功却毫无效果。托管适配器现在在解析模型时读取该覆盖值，保存所说的值就是压缩与上下文指示器使用的值；没有被写入的模型仍用适配器自己的默认值。
+
+#### 变更
+
+- **OpenCode 路由解析 200,000 token 的上下文窗口**，由 1,000,000 下调；除非 per-model 覆盖另说了窗口，目录里提供的免费路由都继承它。
+- **Harness 基线 `0.2.1-rc.2`。** Cline、Qoder、Trae 的请求身份移入 `request-identity.ts`；worktree 注册表优先官方检出；`custom-api-reasoning` 已删除，因为上游现在自己管思考档位编辑；pi-ai 补丁升到 1.1.0，并新增一个 app-builder-lib 补丁。
+- **免费模型表按今天的提供商目录重刷**：OpenCode 新增 `beam-free`，已离开其目录的路由移出表外。
+
 ## 0.2.1-alpha.1.3 — 2026-10-05
 
 ### English
